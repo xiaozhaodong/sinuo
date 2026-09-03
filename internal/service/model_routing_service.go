@@ -80,10 +80,11 @@ func (s *ModelRoutingService) SetScopePruner(pruner func(validScopeKeys map[stri
 	}
 }
 
-// pruneRuntimeLocked 让组级运行态与 retained 跟随最新快照收敛。
-// scope key 含 RouteRevision，所以这里同时回收了「组已删除」和「组 revision 已 bump」
-// 两种陈旧 retained——后者在 revision 变化的瞬间就已失效，此处只是回收内存。
-func (s *ModelRoutingService) pruneRuntimeLocked(snapshot *modelrouting.Snapshot) {
+// publishSnapshotLocked 在 runtimeMu 内原子完成「发布快照 + 收敛组运行态」。
+// 快照发布与运行态写入共用同一把锁，NoteDecision / SettleDecision 的「校验作用域 + 写入」
+// 才能与发布线性化，否则校验通过后、写入前发布新快照，旧作用域仍会覆盖当前组运行态。
+// scope key 含 RouteRevision，retained 剪枝只是回收内存，放在锁外执行以缩短临界区。
+func (s *ModelRoutingService) publishSnapshotLocked(snapshot *modelrouting.Snapshot, status string) {
 	groups := snapshot.Groups()
 	validScopeKeys := make(map[string]struct{}, len(groups))
 	validGroupIDs := make(map[int64]struct{}, len(groups))
@@ -98,14 +99,19 @@ func (s *ModelRoutingService) pruneRuntimeLocked(snapshot *modelrouting.Snapshot
 	}
 
 	s.runtimeMu.Lock()
-	for groupID := range s.runtime {
-		if _, ok := validGroupIDs[groupID]; !ok {
-			delete(s.runtime, groupID)
+	s.snapshot.Store(snapshot)
+	s.status.Store(status)
+	// 加载失败快照没有任何组，此时保留运行态：配置恢复后组仍能显示最近命中。
+	if !snapshot.LoadFailed() {
+		for groupID := range s.runtime {
+			if _, ok := validGroupIDs[groupID]; !ok {
+				delete(s.runtime, groupID)
+			}
 		}
 	}
 	s.runtimeMu.Unlock()
 
-	if s.scopePruner != nil {
+	if s.scopePruner != nil && !snapshot.LoadFailed() {
 		s.scopePruner(validScopeKeys)
 	}
 }
@@ -155,35 +161,42 @@ func (s *ModelRoutingService) ResolveScope(model string) (endpoint.RouteScope, b
 // NoteDecision 记录组内本次选中的端点。带 fencing：在途请求期间模型被改派、组策略变更
 // 或路由被关闭后，旧作用域不再允许写入组运行态，否则面板会显示已失效组的「最近命中」。
 func (s *ModelRoutingService) NoteDecision(scope endpoint.RouteScope, effectiveEndpoint string) {
-	if !s.ScopeStillValid(scope) {
-		return
-	}
-	s.runtimeMu.Lock()
-	runtime := s.runtime[scope.GroupID]
-	runtime.LastEffectiveEndpoint = effectiveEndpoint
-	runtime.LastDecisionAt = time.Now()
-	s.runtime[scope.GroupID] = runtime
-	s.runtimeMu.Unlock()
+	s.updateRuntimeFenced(scope, func(runtime *ModelRoutingGroupRuntime) {
+		runtime.LastEffectiveEndpoint = effectiveEndpoint
+	})
 }
 
 // SettleDecision 记录组内本次请求的终态。fencing 语义同 NoteDecision。
 func (s *ModelRoutingService) SettleDecision(scope endpoint.RouteScope, effectiveEndpoint, outcome string) {
-	if !s.ScopeStillValid(scope) {
+	s.updateRuntimeFenced(scope, func(runtime *ModelRoutingGroupRuntime) {
+		if effectiveEndpoint != "" {
+			runtime.LastEffectiveEndpoint = effectiveEndpoint
+		}
+		runtime.LastOutcome = outcome
+	})
+}
+
+// updateRuntimeFenced 在 runtimeMu 内先校验作用域再写入。
+// 校验与写入必须在同一临界区：快照发布同样持有 runtimeMu（见 publishSnapshotLocked），
+// 因此「校验通过 → 新快照发布 → 旧作用域写入」的交错不可能发生。
+func (s *ModelRoutingService) updateRuntimeFenced(scope endpoint.RouteScope, apply func(*ModelRoutingGroupRuntime)) {
+	if s == nil {
 		return
 	}
 	s.runtimeMu.Lock()
-	runtime := s.runtime[scope.GroupID]
-	if effectiveEndpoint != "" {
-		runtime.LastEffectiveEndpoint = effectiveEndpoint
+	defer s.runtimeMu.Unlock()
+	if !s.ScopeStillValid(scope) {
+		return
 	}
-	runtime.LastOutcome = outcome
+	runtime := s.runtime[scope.GroupID]
+	apply(&runtime)
 	runtime.LastDecisionAt = time.Now()
 	s.runtime[scope.GroupID] = runtime
-	s.runtimeMu.Unlock()
 }
 
 // ScopeStillValid 判断作用域是否仍是当前快照中的有效组作用域：
 // 快照版本与组 RouteRevision 都必须一致，任一变化都视为作用域失效。
+// 本方法只做无锁快照读取；需要与写入原子的调用方（updateRuntimeFenced）自行持有 runtimeMu。
 func (s *ModelRoutingService) ScopeStillValid(scope endpoint.RouteScope) bool {
 	if s == nil || scope.Kind != endpoint.RouteScopeUpstreamGroup || scope.GroupID == 0 {
 		return false
@@ -626,9 +639,7 @@ func (s *ModelRoutingService) rebuildSnapshotLocked(ctx context.Context) error {
 		return fail(err)
 	}
 	snapshot.Version = s.version.Add(1)
-	s.snapshot.Store(snapshot)
-	s.status.Store(ModelRoutingStatusReady)
-	s.pruneRuntimeLocked(snapshot)
+	s.publishSnapshotLocked(snapshot, ModelRoutingStatusReady)
 	return nil
 }
 
@@ -637,8 +648,7 @@ func (s *ModelRoutingService) rebuildSnapshotLocked(ctx context.Context) error {
 func (s *ModelRoutingService) publishLoadFailure(desiredEnabled bool, err error) error {
 	snapshot := modelrouting.FailedSnapshot(desiredEnabled)
 	snapshot.Version = s.version.Add(1)
-	s.snapshot.Store(snapshot)
-	s.status.Store(ModelRoutingStatusLoadFailed)
+	s.publishSnapshotLocked(snapshot, ModelRoutingStatusLoadFailed)
 	return err
 }
 

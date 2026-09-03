@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/modelrouting"
 	"cc-forwarder/internal/store"
 	_ "modernc.org/sqlite"
 )
@@ -283,5 +285,84 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	service.SettleDecision(fresh, "endpoint-b", "success")
 	if runtime := service.GroupRuntime(groupB.ID); runtime.LastOutcome != "" {
 		t.Fatalf("scope must be fenced after routing is disabled, got %#v", runtime)
+	}
+}
+
+// TestModelRoutingService_RuntimeFencingIsAtomicWithPublish 锁定 fencing 的原子性：
+// 「校验作用域 + 写入运行态」与「发布新快照」必须共用 runtimeMu，
+// 否则校验通过后、写入前发布新快照，旧作用域仍能覆盖当前组运行态（TOCTOU）。
+// 测试直接持有 runtimeMu 制造交错窗口，只有校验发生在锁内才能通过。
+func TestModelRoutingService_RuntimeFencingIsAtomicWithPublish(t *testing.T) {
+	service, _ := newModelRoutingServiceForTest(t, func(name string) bool { return name == "endpoint-a" })
+	ctx := context.Background()
+	if err := service.Initialize(ctx); err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	group, err := service.CreateGroup(ctx, &store.ModelUpstreamGroupRecord{Name: "group-a", MembersJSON: `["endpoint-a"]`, RouteMode: "auto"})
+	if err != nil {
+		t.Fatalf("create group failed: %v", err)
+	}
+	assignment, err := service.CreateAssignment(ctx, &store.ModelRoutingAssignmentRecord{ModelName: "claude-sonnet", GroupID: group.ID, Enabled: true})
+	if err != nil {
+		t.Fatalf("create assignment failed: %v", err)
+	}
+	settings, err := service.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("get settings failed: %v", err)
+	}
+	settings.ClaudeEnabled = true
+	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("enable model routing failed: %v", err)
+	}
+	scope, ok := service.ResolveScope("claude-sonnet")
+	if !ok || !service.ScopeStillValid(scope) {
+		t.Fatalf("expected a valid in-flight scope, got %#v", scope)
+	}
+
+	// 交错 1：写入方在校验前就被 runtimeMu 挡住；此时发布新快照，再放行写入。
+	// 校验若在锁外发生会看到旧快照并放行写入；在锁内发生则必须看到新快照并拒绝。
+	service.runtimeMu.Lock()
+	settled := make(chan struct{})
+	go func() {
+		defer close(settled)
+		service.SettleDecision(scope, "endpoint-stale", "success")
+	}()
+	time.Sleep(20 * time.Millisecond) // 给写入方机会先跑到（锁外的）校验点
+	stale := modelrouting.FailedSnapshot(true)
+	stale.Version = service.version.Add(1)
+	service.snapshot.Store(stale)
+	service.runtimeMu.Unlock()
+	<-settled
+	if runtime := service.GroupRuntime(group.ID); runtime.LastOutcome != "" || runtime.LastEffectiveEndpoint != "" {
+		t.Fatalf("scope invalidated before the write acquired the lock must not write runtime, got %#v", runtime)
+	}
+
+	// 交错 2：发布方必须与运行态写入共用同一把锁——持有 runtimeMu 时快照不得被替换。
+	if err := service.Initialize(ctx); err != nil {
+		t.Fatalf("re-initialize failed: %v", err)
+	}
+	before := service.SnapshotVersion()
+	service.runtimeMu.Lock()
+	published := make(chan error, 1)
+	go func() {
+		enabled := false
+		published <- service.UpdateAssignment(ctx, assignment.ID, ModelRoutingAssignmentPatch{Enabled: &enabled})
+	}()
+	select {
+	case err := <-published:
+		service.runtimeMu.Unlock()
+		t.Fatalf("publish must block while runtimeMu is held, but returned early: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if service.SnapshotVersion() != before {
+		service.runtimeMu.Unlock()
+		t.Fatal("snapshot was replaced while runtimeMu was held; publish is not linearized with runtime writes")
+	}
+	service.runtimeMu.Unlock()
+	if err := <-published; err != nil {
+		t.Fatalf("publish failed after lock release: %v", err)
+	}
+	if service.SnapshotVersion() == before {
+		t.Fatal("snapshot version should advance once the lock is released")
 	}
 }
