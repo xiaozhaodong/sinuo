@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Boxes, Database, Info, Plus, RefreshCw, Route } from 'lucide-react';
+import { Activity, AlertTriangle, Boxes, Database, Info, Plus, RefreshCw, Route, Split } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import { DeleteConfirmDialog, EndpointCard, EndpointForm, EndpointRow, EndpointScheduleDrawer, ViewModeSwitcher, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import ClaudeModelsPanel from './components/ClaudeModelsPanel.jsx';
+import ModelRoutingDrawer from './components/model-routing/ModelRoutingDrawer.jsx';
 import {
   clearClaudeRoutingOverride,
   createEndpointRecord,
   deleteEndpointRecord,
   getClaudeRoutingState,
+  getModelRoutingSettings,
   isWailsEnvironment,
   setClaudeRoutingOverride,
   subscribeToEvent,
@@ -32,10 +34,12 @@ const EndpointsPage = () => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
+  const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false, binding_count: 0 });
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -52,7 +56,9 @@ const EndpointsPage = () => {
 
   const loadRouting = useCallback(async () => {
     if (!isWailsEnvironment()) return;
-    setRoutingState(await getClaudeRoutingState());
+    const [nextRouting, nextModelRouting] = await Promise.all([getClaudeRoutingState(), getModelRoutingSettings()]);
+    setRoutingState(nextRouting);
+    setModelRoutingSettings(nextModelRouting);
   }, []);
 
   const loadSnapshot = useCallback(async () => {
@@ -71,7 +77,13 @@ const EndpointsPage = () => {
     const unsubscribe = subscribeToEvent('claude-routing:update', (state) => {
       if (state && typeof state === 'object') setRoutingState(state);
     });
-    return () => unsubscribe?.();
+    const unsubscribeModelRouting = subscribeToEvent('model-routing:update', (state) => {
+      if (state && typeof state === 'object') setModelRoutingSettings(state);
+    });
+    return () => {
+      unsubscribe?.();
+      unsubscribeModelRouting?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -137,16 +149,22 @@ const EndpointsPage = () => {
           <Button variant="secondary" icon={Activity} onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'}>批量测试</Button>
           <Button variant="secondary" icon={Route} onClick={() => setDrawerOpen(true)}>调度快照</Button>
           <Button variant="secondary" icon={Boxes} onClick={() => setModelsOpen(true)}>模型目录</Button>
+          <Button variant="secondary" icon={Split} onClick={() => setRoutingOpen(true)}>模型路由</Button>
           <Button icon={Plus} onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }}>新建端点</Button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl border border-accent-line bg-accent-soft/60 p-4 sm:col-span-2 xl:col-span-1">
-          <div className="text-xs text-accent">Claude 路由</div>
-          <div className="mt-1 truncate font-semibold text-accent-fg">{routeMode === 'auto' ? '自动调度' : routeMode === 'manual_fixed' ? '手动固定' : '手动优选'}</div>
-          <div className="mt-1 truncate text-xs text-accent" title={routeTarget || effectiveEndpoint}>{routeTarget || effectiveEndpoint || '等待请求命中'}</div>
-        </div>
+        <button
+          type="button"
+          onClick={() => setRoutingOpen(true)}
+          title="打开模型路由"
+          className="rounded-xl border border-accent-line bg-accent-soft/60 p-4 text-left transition-colors hover:bg-accent-soft sm:col-span-2 xl:col-span-1"
+        >
+          <div className="text-xs text-accent">{modelRoutingSettings?.claude_enabled ? '模型路由' : 'Claude 路由'}</div>
+          <div className="mt-1 truncate font-semibold text-accent-fg">{modelRoutingSettings?.claude_enabled ? `${modelRoutingSettings.binding_count || 0} 个模型` : routeMode === 'auto' ? '自动调度' : routeMode === 'manual_fixed' ? '手动固定' : '手动优选'}</div>
+          <div className="mt-1 truncate text-xs text-accent" title={routeTarget || effectiveEndpoint}>{modelRoutingSettings?.claude_enabled ? '按请求模型选择端点' : routeTarget || effectiveEndpoint || '等待请求命中'}</div>
+        </button>
         {statsCards.map(([label, value, color]) => (
           <div key={label} className="rounded-xl border border-line bg-surface p-4 shadow-sm"><div className={`text-2xl font-bold ${color}`}>{value}</div><div className="mt-1 text-xs text-fg-muted">{label}</div></div>
         ))}
@@ -183,6 +201,7 @@ const EndpointsPage = () => {
                         onAutoScheduleChange={(name, enabled) => run(`auto:${name}`, () => setAutoSchedule(name, enabled))}
                         onClearCooldown={(name) => run(`cooldown:${name}`, () => clearCooldown(name))}
                         onSetRouting={setRouting}
+                        modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
                       />
                     ))}
                   </tbody>
@@ -203,6 +222,7 @@ const EndpointsPage = () => {
                     onAutoScheduleChange={(name, enabled) => run(`auto:${name}`, () => setAutoSchedule(name, enabled))}
                     onClearCooldown={(name) => run(`cooldown:${name}`, () => clearCooldown(name))}
                     onSetRouting={setRouting}
+                    modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
                   />
                 ))}
               </div>
@@ -213,6 +233,7 @@ const EndpointsPage = () => {
 
       <EndpointScheduleDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
       <ClaudeModelsPanel open={modelsOpen} onClose={() => setModelsOpen(false)} />
+      <ModelRoutingDrawer open={routingOpen} onClose={() => { setRoutingOpen(false); loadRouting().catch(() => {}); }} endpoints={endpoints} />
       {formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
       {deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>

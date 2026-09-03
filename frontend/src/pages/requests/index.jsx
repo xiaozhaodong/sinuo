@@ -19,6 +19,7 @@ import {
   fetchUsageStats,
   fetchEndpoints,
   fetchClaudeRoutingState,
+  fetchModelRoutingSettings,
   setClaudeRoutingOverride,
   clearClaudeRoutingOverride,
   clearNegativeHitCache,
@@ -55,6 +56,7 @@ const RequestsPage = () => {
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
   const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
+  const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false });
   const [accounts, setAccounts] = useState([]);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
   const [routeSwitching, setRouteSwitching] = useState(false);
@@ -210,13 +212,17 @@ const RequestsPage = () => {
       setError(null);
 
       // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, modelsData, endpointsData, routeStateData, accountsData, latestSnapshotData] = await Promise.all([
+      const [, modelsData, endpointsData, routeStateData, modelRoutingData, accountsData, latestSnapshotData] = await Promise.all([
         refreshRequestData(),
         fetchModels(),
         fetchEndpoints(),
         fetchClaudeRoutingState().catch((err) => {
           console.error('❌ 加载 Claude 路由状态失败:', err);
           return { mode: 'auto', endpointName: '', fallbackEnabled: true };
+        }),
+        fetchModelRoutingSettings().catch((err) => {
+          console.error('❌ 加载模型路由状态失败:', err);
+          return { claude_enabled: false };
         }),
         fetchUpstreamAccounts().catch((err) => {
           console.error('❌ 加载账号池账号失败:', err);
@@ -246,6 +252,7 @@ const RequestsPage = () => {
       setClaudeRoutingState(routeStateData && typeof routeStateData === 'object'
         ? routeStateData
         : { mode: 'auto', endpointName: '', fallbackEnabled: true });
+      setModelRoutingSettings(modelRoutingData && typeof modelRoutingData === 'object' ? modelRoutingData : { claude_enabled: false });
 
       setAccounts(Array.isArray(accountsData) ? accountsData : []);
       setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
@@ -476,10 +483,14 @@ const RequestsPage = () => {
       if (!state || typeof state !== 'object') return;
       setClaudeRoutingState(state);
     });
+    const unsubscribeModelRouting = subscribeToEvent('model-routing:update', (state) => {
+      if (state && typeof state === 'object') setModelRoutingSettings(state);
+    });
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
+      if (typeof unsubscribeModelRouting === 'function') unsubscribeModelRouting();
     };
   }, []);
 
@@ -527,6 +538,7 @@ const RequestsPage = () => {
             autoRefresh={autoRefresh}
             endpoints={endpoints}
             claudeRoutingState={claudeRoutingState}
+            modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
             onClaudeEndpointSwitch={handleClaudeEndpointSwitch}
             onRestoreClaudeAuto={handleRestoreClaudeAuto}
             onClearRouteCache={handleClearRouteCache}

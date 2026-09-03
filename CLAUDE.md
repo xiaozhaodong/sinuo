@@ -13,6 +13,11 @@
 ### 当前核心能力
 
 - 多端点智能路由、健康检查、故障转移与自愈
+- Claude 模型路由：按原始请求模型为每个模型单独指定一组上游端点；支持自动、优选、固定和独立 retained，未分配模型明确返回 422
+  - 交互语义是「一个模型 → 一组端点」，一条映射独占一个后端上游组（组名自动跟随模型名，不在 UI 暴露）；删除映射级联回收该组
+  - `model_upstream_groups` + `model_routing_assignments` 的写入走单事务聚合 API（`ModelRouteBinding`），避免建组成功、建分配失败留下孤儿组
+  - 配置加载失败按 fail-closed 处理：开关处于打开状态时所有 Claude 请求返回 422（`model_routing_load_failed`），不静默回落到全局端点路由；开关从未打开过则保持全局路由
+  - `/v1/messages/count_tokens` 不参与 422 契约，未分配模型一律降级为本地估算
 - 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
 - 数据库时间统一 UTC：真实时间点以固定微秒精度 UTC 文本存储，前端按顶层 IANA `timezone` 显示并生成业务日期范围（DST 日按真实 23/25 小时计算）
@@ -85,6 +90,10 @@
 - `internal/service/account_pool_profile.go`：账号画像与 quota 刷新
 - `internal/store/account_pool.go`：`upstream_accounts` 存储层
 - `internal/modelrewrite/`：Codex 账号池与 Claude 端点共用的模型改写解析、校验与匹配引擎
+- `internal/modelrouting/`：Claude 模型到端点集合的精确匹配编译与校验引擎
+- `internal/endpoint/route_scope.go`：全局、模型端点集合与未分配请求的统一路由作用域契约
+- `internal/service/model_routing_service.go` / `app_api_model_routing.go`：模型路由配置、运行态和 Wails API
+- `internal/service/model_routing_bindings.go`：「模型 → 端点集合」的事务聚合读写（专属组建/改/回收、历史共享组分裂）
 - `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
@@ -105,6 +114,8 @@
 - `frontend/src/pages/requests/components/AccountPoolSwitcher.jsx`：请求页 Codex 账号切换器
 - `frontend/src/utils/api.js`：HTTP/Wails 统一 API 封装
 - `frontend/src/utils/wailsApi.js`：Wails 绑定适配层
+- `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
+- `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
 
 ## 关键数据流
@@ -220,6 +231,8 @@ cd frontend && npm run build
 - `internal/privacy/*` / `internal/service/privacy_service.go` / `internal/store/privacy_rules.go`：`go test ./internal/privacy ./internal/service ./internal/store`
 - `internal/proxy/handlers/privacy.go` / 隐私链路接入点：`go test ./internal/proxy ./internal/proxy/handlers`
 - `frontend/src/pages/privacy-protection/*`：`node --test frontend/src/pages/privacy-protection/utils/privacyRules.test.js`
+- `internal/service/model_routing_bindings.go` / `internal/store/model_routing.go` / `app_api_model_routing.go`：`go test ./internal/service ./internal/store .`
+- `frontend/src/pages/endpoints/components/model-routing/*`：`node --test frontend/src/pages/endpoints/utils/modelRouting.test.js`
 
 ## 调试提示
 

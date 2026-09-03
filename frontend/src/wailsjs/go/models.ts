@@ -1,3 +1,24 @@
+export namespace endpoint {
+	
+	export class UpstreamGroupSnapshot {
+	    id: number;
+	    name: string;
+	    members: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UpstreamGroupSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.members = source["members"];
+	    }
+	}
+
+}
+
 export namespace logging {
 	
 	export class LogEntry {
@@ -750,6 +771,13 @@ export namespace main {
 	    route_mode: string;
 	    route_endpoint_name: string;
 	    route_fallback_enabled: boolean;
+	    route_scope_kind?: string;
+	    route_scope?: string;
+	    route_scope_group_id?: number;
+	    route_scope_group_name?: string;
+	    upstream_group?: endpoint.UpstreamGroupSnapshot;
+	    request_model?: string;
+	    model_routing_version?: number;
 	    failover_enabled: boolean;
 	    final_outcome: string;
 	    final_error: string;
@@ -771,6 +799,13 @@ export namespace main {
 	        this.route_mode = source["route_mode"];
 	        this.route_endpoint_name = source["route_endpoint_name"];
 	        this.route_fallback_enabled = source["route_fallback_enabled"];
+	        this.route_scope_kind = source["route_scope_kind"];
+	        this.route_scope = source["route_scope"];
+	        this.route_scope_group_id = source["route_scope_group_id"];
+	        this.route_scope_group_name = source["route_scope_group_name"];
+	        this.upstream_group = this.convertValues(source["upstream_group"], endpoint.UpstreamGroupSnapshot);
+	        this.request_model = source["request_model"];
+	        this.model_routing_version = source["model_routing_version"];
 	        this.failover_enabled = source["failover_enabled"];
 	        this.final_outcome = source["final_outcome"];
 	        this.final_error = source["final_error"];
@@ -845,6 +880,189 @@ export namespace main {
 	        this.total_count = source["total_count"];
 	        this.has_default = source["has_default"];
 	    }
+	}
+	export class ModelRoutingMemberInfo {
+	    name: string;
+	    exists: boolean;
+	    priority: number;
+	    availability_enabled: boolean;
+	    auto_schedule_enabled: boolean;
+	    healthy: boolean;
+	    cooldown_until?: string;
+	    cooldown_reason?: string;
+	    detail?: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRoutingMemberInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.exists = source["exists"];
+	        this.priority = source["priority"];
+	        this.availability_enabled = source["availability_enabled"];
+	        this.auto_schedule_enabled = source["auto_schedule_enabled"];
+	        this.healthy = source["healthy"];
+	        this.cooldown_until = source["cooldown_until"];
+	        this.cooldown_reason = source["cooldown_reason"];
+	        this.detail = source["detail"];
+	        this.status = source["status"];
+	    }
+	}
+	export class ModelRouteBindingInfo {
+	    assignment_id: number;
+	    model: string;
+	    endpoints: ModelRoutingMemberInfo[];
+	    route_mode: string;
+	    route_target: string;
+	    enabled: boolean;
+	    note: string;
+	    shared_models: string[];
+	    last_effective_endpoint?: string;
+	    last_decision_at?: string;
+	    last_outcome?: string;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRouteBindingInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assignment_id = source["assignment_id"];
+	        this.model = source["model"];
+	        this.endpoints = this.convertValues(source["endpoints"], ModelRoutingMemberInfo);
+	        this.route_mode = source["route_mode"];
+	        this.route_target = source["route_target"];
+	        this.enabled = source["enabled"];
+	        this.note = source["note"];
+	        this.shared_models = source["shared_models"];
+	        this.last_effective_endpoint = source["last_effective_endpoint"];
+	        this.last_decision_at = source["last_decision_at"];
+	        this.last_outcome = source["last_outcome"];
+	        this.updated_at = source["updated_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ModelRouteBindingInput {
+	    model: string;
+	    endpoints: string[];
+	    route_mode: string;
+	    route_target: string;
+	    enabled: boolean;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRouteBindingInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.endpoints = source["endpoints"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target = source["route_target"];
+	        this.enabled = source["enabled"];
+	        this.note = source["note"];
+	    }
+	}
+	
+	export class ModelRoutingSettingsInfo {
+	    claude_enabled: boolean;
+	    status: string;
+	    version: number;
+	    updated_at: string;
+	    binding_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRoutingSettingsInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.claude_enabled = source["claude_enabled"];
+	        this.status = source["status"];
+	        this.version = source["version"];
+	        this.updated_at = source["updated_at"];
+	        this.binding_count = source["binding_count"];
+	    }
+	}
+	export class ModelRoutingTestInput {
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRoutingTestInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	    }
+	}
+	export class ModelRoutingTestResult {
+	    model: string;
+	    assigned: boolean;
+	    scope_kind: string;
+	    group_id?: number;
+	    group_name?: string;
+	    route_mode?: string;
+	    route_target?: string;
+	    unassigned_reason?: string;
+	    members: ModelRoutingMemberInfo[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelRoutingTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.assigned = source["assigned"];
+	        this.scope_kind = source["scope_kind"];
+	        this.group_id = source["group_id"];
+	        this.group_name = source["group_name"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target = source["route_target"];
+	        this.unassigned_reason = source["unassigned_reason"];
+	        this.members = this.convertValues(source["members"], ModelRoutingMemberInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class MoveUpstreamAccountToTierResult {
 	    success: boolean;
@@ -1671,6 +1889,18 @@ export namespace main {
 	        this.cache_creation_tokens = source["cache_creation_tokens"];
 	        this.cache_read_tokens = source["cache_read_tokens"];
 	        this.total_tokens = source["total_tokens"];
+	    }
+	}
+	export class UpdateModelRoutingSettingsInput {
+	    claude_enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateModelRoutingSettingsInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.claude_enabled = source["claude_enabled"];
 	    }
 	}
 	

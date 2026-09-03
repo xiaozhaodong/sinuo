@@ -45,6 +45,7 @@ const (
 	EndpointScheduleOutcomePassthroughRaw           = "passthrough_raw"
 	EndpointScheduleOutcomeNoCandidates             = "no_candidates"
 	EndpointScheduleOutcomeManualFixedBlocked       = "manual_fixed_blocked"
+	EndpointScheduleOutcomeModelRoutingUnassigned   = "model_routing_unassigned"
 	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
 	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
 	EndpointScheduleOutcomeRateLimited              = "rate_limited"
@@ -61,12 +62,25 @@ type EndpointScheduleSnapshot struct {
 	RouteMode              string                     `json:"route_mode"`
 	RouteEndpointName      string                     `json:"route_endpoint_name"`
 	RouteFallbackEnabled   bool                       `json:"route_fallback_enabled"`
+	RouteScopeKind         string                     `json:"route_scope_kind,omitempty"`
+	RouteScope             string                     `json:"route_scope,omitempty"`
+	RouteScopeGroupID      int64                      `json:"route_scope_group_id,omitempty"`
+	RouteScopeGroupName    string                     `json:"route_scope_group_name,omitempty"`
+	UpstreamGroup          *UpstreamGroupSnapshot     `json:"upstream_group,omitempty"`
+	RequestModel           string                     `json:"request_model,omitempty"`
+	ModelRoutingVersion    int64                      `json:"model_routing_version,omitempty"`
 	FailoverEnabled        bool                       `json:"failover_enabled"`
 	CandidateAttemptBudget int                        `json:"candidate_attempt_budget,omitempty"`
 	FinalOutcome           string                     `json:"final_outcome"`
 	FinalError             string                     `json:"final_error"`
 	Summary                string                     `json:"summary"`
 	Decisions              []EndpointScheduleDecision `json:"decisions"`
+}
+
+type UpstreamGroupSnapshot struct {
+	ID      int64    `json:"id"`
+	Name    string   `json:"name"`
+	Members []string `json:"members"`
 }
 
 type endpointScheduleSnapshotEntry struct {
@@ -169,9 +183,10 @@ func (s *endpointScheduleSnapshotStore) updateAttempt(requestID, endpointName, o
 	}
 }
 
-func (s *endpointScheduleSnapshotStore) complete(requestID, endpointName, outcome, finalError string) {
+// complete 写入终态并返回收口后的快照副本（nil 表示没有匹配到草稿，调用方不应持久化）。
+func (s *endpointScheduleSnapshotStore) complete(requestID, endpointName, outcome, finalError string) *EndpointScheduleSnapshot {
 	if s == nil {
-		return
+		return nil
 	}
 
 	s.mu.Lock()
@@ -183,7 +198,7 @@ func (s *endpointScheduleSnapshotStore) complete(requestID, endpointName, outcom
 		entry = endpointScheduleSnapshotEntry{sequence: s.latestSequence, snapshot: cloneEndpointScheduleSnapshot(s.latest)}
 	}
 	if !ok || entry.snapshot == nil {
-		return
+		return nil
 	}
 	if requestID != "" {
 		delete(s.pending, requestID)
@@ -214,6 +229,7 @@ func (s *endpointScheduleSnapshotStore) complete(requestID, endpointName, outcom
 	if entry.sequence == s.latestSequence {
 		s.latest = cloneEndpointScheduleSnapshot(snapshot)
 	}
+	return cloneEndpointScheduleSnapshot(snapshot)
 }
 
 func (s *endpointScheduleSnapshotStore) getLatest() *EndpointScheduleSnapshot {
@@ -253,7 +269,7 @@ func endpointScheduleSummary(snapshot *EndpointScheduleSnapshot) string {
 		return fmt.Sprintf("端点 %s 返回了不完整响应", snapshot.SelectedEndpoint)
 	case EndpointScheduleOutcomePassthroughRaw:
 		return fmt.Sprintf("原样返回端点 %s 的客户端错误", snapshot.SelectedEndpoint)
-	case EndpointScheduleOutcomeNoCandidates, EndpointScheduleOutcomeManualFixedBlocked:
+	case EndpointScheduleOutcomeNoCandidates, EndpointScheduleOutcomeManualFixedBlocked, EndpointScheduleOutcomeModelRoutingUnassigned:
 		return "本次请求没有可路由端点"
 	case EndpointScheduleOutcomeAllCandidatesFailed:
 		return "全部候选端点均失败"
@@ -280,10 +296,35 @@ func (m *Manager) BeginEndpointScheduleSnapshot(requestID, requestPath string, s
 			RouteMode:            override.Mode,
 			RouteEndpointName:    override.EndpointName,
 			RouteFallbackEnabled: override.FallbackEnabled,
+			RouteScopeKind:       RouteScopeGlobal,
+			RouteScope:           RouteScopeGlobal,
 			FailoverEnabled:      cfg.Failover.Enabled,
 		}
 	}
 	m.scheduleSnapshots.saveDraft(requestID, requestPath, snapshot)
+}
+
+// BeginEndpointScheduleSnapshotForScope 记录尚未进入候选计算的前置分支。
+func (m *Manager) BeginEndpointScheduleSnapshotForScope(requestID, requestPath string, scope RouteScope) {
+	if m == nil {
+		return
+	}
+	cfg := m.getConfigSnapshot()
+	m.BeginEndpointScheduleSnapshot(requestID, requestPath, &EndpointScheduleSnapshot{
+		CapturedAt:           time.Now(),
+		RouteMode:            scope.Mode,
+		RouteEndpointName:    scope.Target,
+		RouteFallbackEnabled: scope.FallbackEnabled,
+		RouteScopeKind:       scope.Kind,
+		RouteScope:           scope.Kind,
+		RouteScopeGroupID:    scope.GroupID,
+		RouteScopeGroupName:  scope.GroupName,
+		UpstreamGroup:        upstreamGroupSnapshot(scope),
+		RequestModel:         scope.Model,
+		ModelRoutingVersion:  scope.SnapshotVersion,
+		FailoverEnabled:      cfg.Failover.Enabled,
+		FinalOutcome:         EndpointScheduleOutcomePending,
+	})
 }
 
 // RecordEndpointScheduleAttempt 更新候选端点的运行结果。
@@ -294,12 +335,13 @@ func (m *Manager) RecordEndpointScheduleAttempt(requestID, endpointName, outcome
 	m.scheduleSnapshots.updateAttempt(requestID, endpointName, outcome, runtimeError)
 }
 
-// CompleteEndpointScheduleSnapshot 写入最终 Outcome。
-func (m *Manager) CompleteEndpointScheduleSnapshot(requestID, endpointName, outcome, finalError string) {
+// CompleteEndpointScheduleSnapshot 写入最终 Outcome，并返回终态快照副本。
+// 调用方可将该副本持久化到请求生命周期；nil 表示没有匹配到当前请求草稿。
+func (m *Manager) CompleteEndpointScheduleSnapshot(requestID, endpointName, outcome, finalError string) *EndpointScheduleSnapshot {
 	if m == nil || m.scheduleSnapshots == nil {
-		return
+		return nil
 	}
-	m.scheduleSnapshots.complete(requestID, endpointName, outcome, finalError)
+	return m.scheduleSnapshots.complete(requestID, endpointName, outcome, finalError)
 }
 
 // GetLatestEndpointScheduleSnapshot 返回深拷贝，避免 UI 读取与管线更新产生竞态。
@@ -333,6 +375,7 @@ type EndpointScheduleResult struct {
 	Candidates            []*Endpoint // 与 Plans 对齐；attempt 前必须经 AcquireEndpointAttempt 重校验
 	Plans                 []EndpointAttemptPlan
 	RouteOverrideRevision int64
+	Scope                 RouteScope
 	Snapshot              *EndpointScheduleSnapshot
 }
 
@@ -396,17 +439,25 @@ func findEndpointCandidateSnapshot(snapshot []endpointScheduleCandidateSnapshot,
 // Failover.Enabled=false 时只保留第一个逻辑候选。
 func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteRequestProfile) EndpointScheduleResult {
 	cfg := m.getConfigSnapshot()
-	override := m.routeOverride.Snapshot()
+	scope := m.ResolveRouteScope(profile)
 
 	snapshot := m.snapshotEndpointCandidates()
 
 	result := EndpointScheduleResult{
-		RouteOverrideRevision: override.Revision,
+		RouteOverrideRevision: scope.Revision,
+		Scope:                 scope.Clone(),
 		Snapshot: &EndpointScheduleSnapshot{
 			CapturedAt:             time.Now(),
-			RouteMode:              override.Mode,
-			RouteEndpointName:      override.EndpointName,
-			RouteFallbackEnabled:   override.FallbackEnabled,
+			RouteMode:              scope.Mode,
+			RouteEndpointName:      scope.Target,
+			RouteFallbackEnabled:   scope.FallbackEnabled,
+			RouteScopeKind:         scope.Kind,
+			RouteScope:             scope.Kind,
+			RouteScopeGroupID:      scope.GroupID,
+			RouteScopeGroupName:    scope.GroupName,
+			UpstreamGroup:          upstreamGroupSnapshot(scope),
+			RequestModel:           scope.Model,
+			ModelRoutingVersion:    scope.SnapshotVersion,
 			FailoverEnabled:        cfg.Failover.Enabled,
 			CandidateAttemptBudget: cfg.Failover.MaxCandidateAttempts,
 			FinalOutcome:           EndpointScheduleOutcomePending,
@@ -426,6 +477,19 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 	if !m.IsClaudeRoutingReady() {
 		record("", endpointDecisionSkipped, "routing_not_ready", time.Time{})
 		return result
+	}
+	if scope.Kind == RouteScopeUnassigned {
+		record("", endpointDecisionSkipped, scope.UnassignedReason, time.Time{})
+		return result
+	}
+	memberSet := make(map[string]struct{}, len(scope.Members))
+	if scope.Kind == RouteScopeUpstreamGroup {
+		for _, member := range scope.Members {
+			memberSet[member] = struct{}{}
+			if findEndpointCandidateSnapshot(snapshot, member) == nil {
+				record(member, endpointDecisionSkipped, "member_missing", time.Time{})
+			}
+		}
 	}
 
 	appendPlan := func(candidate endpointScheduleCandidateSnapshot, source string) {
@@ -447,10 +511,16 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 	}
 
 	// manual_fixed：只考虑目标端点，不可路由时不静默转移
-	if override.Mode == RouteModeManualFixed && override.EndpointName != "" {
-		target := findEndpointCandidateSnapshot(snapshot, override.EndpointName)
+	if scope.Mode == RouteModeManualFixed && scope.Target != "" {
+		if scope.Kind == RouteScopeUpstreamGroup {
+			if _, ok := memberSet[scope.Target]; !ok {
+				record(scope.Target, endpointDecisionSkipped, "manual_fixed_target_not_member", time.Time{})
+				return result
+			}
+		}
+		target := findEndpointCandidateSnapshot(snapshot, scope.Target)
 		if target == nil {
-			record(override.EndpointName, endpointDecisionSkipped, "manual_fixed_target_missing", time.Time{})
+			record(scope.Target, endpointDecisionSkipped, "manual_fixed_target_missing", time.Time{})
 			return result
 		}
 		if !target.config.IsAvailabilityEnabled() {
@@ -466,10 +536,14 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 	}
 
 	// manual_preferred 目标（不受 auto flag 影响，§8.2）
+	// 组作用域只多一道成员校验，其余判定与全局作用域完全一致。
 	var preferredTarget *endpointScheduleCandidateSnapshot
-	if override.Mode == RouteModeManualPreferred && override.EndpointName != "" {
-		if target := findEndpointCandidateSnapshot(snapshot, override.EndpointName); target == nil {
-			record(override.EndpointName, endpointDecisionSkipped, "manual_preferred_target_missing", time.Time{})
+	if scope.Mode == RouteModeManualPreferred && scope.Target != "" {
+		_, isMember := memberSet[scope.Target]
+		if scope.Kind == RouteScopeUpstreamGroup && !isMember {
+			record(scope.Target, endpointDecisionSkipped, "manual_preferred_target_not_member", time.Time{})
+		} else if target := findEndpointCandidateSnapshot(snapshot, scope.Target); target == nil {
+			record(scope.Target, endpointDecisionSkipped, "manual_preferred_target_missing", time.Time{})
 		} else if !target.config.IsAvailabilityEnabled() {
 			record(target.config.Name, endpointDecisionSkipped, "manual_preferred_availability_disabled", time.Time{})
 		} else if ok, reason, availableAt := m.classifyEndpointSnapshotRoutable(*target, profile); !ok {
@@ -482,6 +556,12 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 	// Auto 候选：硬启用 + auto schedule + 健康过滤（preferred 目标去重）
 	eligible := make([]endpointScheduleCandidateSnapshot, 0, len(snapshot))
 	for _, candidate := range snapshot {
+		if scope.Kind == RouteScopeUpstreamGroup {
+			if _, ok := memberSet[candidate.config.Name]; !ok {
+				record(candidate.config.Name, endpointDecisionSkipped, "outside_model_group", time.Time{})
+				continue
+			}
+		}
 		if preferredTarget != nil && candidate.config.Name == preferredTarget.config.Name {
 			continue
 		}
@@ -520,7 +600,7 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		}
 
 		bestTier = m.sortEndpointCandidateSnapshots(ctx, bestTier)
-		retainedName := m.RetainedInTier(bestPriority)
+		retainedName := m.RetainedInTierForScope(scope.Key(), bestPriority)
 		if retainedName != "" {
 			for i, candidate := range bestTier {
 				if candidate.config.Name == retainedName && i > 0 {
@@ -563,6 +643,13 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 
 	result.Snapshot.Decisions = orderEndpointScheduleDecisions(result.Snapshot.Decisions, result.Plans)
 	return result
+}
+
+func upstreamGroupSnapshot(scope RouteScope) *UpstreamGroupSnapshot {
+	if scope.Kind != RouteScopeUpstreamGroup {
+		return nil
+	}
+	return &UpstreamGroupSnapshot{ID: scope.GroupID, Name: scope.GroupName, Members: append([]string(nil), scope.Members...)}
 }
 
 // orderEndpointScheduleDecisions 让候选决策顺序与实际尝试顺序一致，

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     first_token_ms INTEGER,                 -- 上游请求写完到首个有效流式响应耗时(毫秒，仅流式请求)
     completion_ms INTEGER,                  -- 首个有效流式响应到流式完成耗时(毫秒，仅流式请求)
     upstream_write_ms INTEGER,              -- v6.2: 成功尝试上游请求写完相对 start_time 偏移（含此前失败尝试耗时）
-    schedule_snapshot_json TEXT,            -- v6.2: Codex 账号池调度快照（白名单 DTO JSON，端点链路恒为 NULL）
+    schedule_snapshot_json TEXT,            -- v6.2+: 账号池/端点调度快照（白名单 DTO JSON，终态覆盖写）
     privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）
     
     -- 转发信息
@@ -472,4 +472,72 @@ CREATE TRIGGER IF NOT EXISTS update_privacy_exact_secrets_timestamp
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE privacy_exact_secrets SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+END;
+
+-- ============================================================================
+-- 按模型选择 Claude 上游组（P0）
+-- members_json 保存端点名称数组；route_revision 用于后续运行态写入的版本校验
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS model_routing_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    claude_enabled INTEGER NOT NULL DEFAULT 0 CHECK (claude_enabled IN (0, 1)),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+);
+
+INSERT OR IGNORE INTO model_routing_settings (id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS model_upstream_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    family TEXT NOT NULL DEFAULT 'claude' CHECK (family IN ('claude', 'codex')),
+    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    members_json TEXT NOT NULL CHECK (json_valid(members_json) AND json_type(members_json) = 'array'),
+    route_mode TEXT NOT NULL DEFAULT 'auto' CHECK (route_mode IN ('auto', 'manual_preferred', 'manual_fixed')),
+    route_target TEXT NOT NULL DEFAULT '',
+    route_revision INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_model_upstream_groups_family_name
+    ON model_upstream_groups(family, lower(name));
+
+CREATE TABLE IF NOT EXISTS model_routing_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    family TEXT NOT NULL DEFAULT 'claude' CHECK (family IN ('claude', 'codex')),
+    match_type TEXT NOT NULL DEFAULT 'exact' CHECK (match_type IN ('exact', 'prefix')),
+    model_name TEXT NOT NULL CHECK (length(trim(model_name)) > 0),
+    group_id INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    note TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_model_routing_assignments_family_model
+    ON model_routing_assignments(family, match_type, lower(model_name));
+CREATE INDEX IF NOT EXISTS idx_model_routing_assignments_group
+    ON model_routing_assignments(group_id);
+
+CREATE TRIGGER IF NOT EXISTS update_model_routing_settings_timestamp
+    AFTER UPDATE ON model_routing_settings
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE model_routing_settings SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_model_upstream_groups_timestamp
+    AFTER UPDATE ON model_upstream_groups
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE model_upstream_groups SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_model_routing_assignments_timestamp
+    AFTER UPDATE ON model_routing_assignments
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE model_routing_assignments SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;

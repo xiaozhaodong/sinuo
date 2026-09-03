@@ -320,6 +320,97 @@ export const clearClaudeRoutingOverride = async () => {
   return normalizeClaudeRoutingState(state);
 };
 
+const normalizeModelRoutingSettings = (settings = {}) => ({
+  claude_enabled: settings.claude_enabled ?? settings.claudeEnabled ?? false,
+  status: settings.status || 'ready',
+  version: settings.version ?? 0,
+  updated_at: settings.updated_at || settings.updatedAt || '',
+  binding_count: settings.binding_count ?? settings.bindingCount ?? 0
+});
+
+const normalizeRoutingEndpoint = (member = {}) => ({
+  name: member.name || member.Name || '',
+  exists: member.exists ?? member.Exists ?? false,
+  priority: member.priority ?? member.Priority ?? 0,
+  availability_enabled: member.availability_enabled ?? member.availabilityEnabled ?? false,
+  auto_schedule_enabled: member.auto_schedule_enabled ?? member.autoScheduleEnabled ?? false,
+  healthy: member.healthy ?? member.Healthy ?? false,
+  cooldown_until: member.cooldown_until || member.cooldownUntil || '',
+  cooldown_reason: member.cooldown_reason || member.cooldownReason || '',
+  detail: member.detail || member.Detail || '',
+  status: member.status || 'missing'
+});
+
+const normalizeModelRouteBinding = (binding = {}) => ({
+  assignment_id: parseEntityId(binding.assignment_id ?? binding.assignmentId),
+  model: binding.model || binding.Model || '',
+  endpoints: (binding.endpoints || binding.Endpoints || []).map(normalizeRoutingEndpoint),
+  route_mode: binding.route_mode || binding.routeMode || 'auto',
+  route_target: binding.route_target || binding.routeTarget || '',
+  enabled: binding.enabled ?? true,
+  note: binding.note || '',
+  shared_models: binding.shared_models || binding.sharedModels || [],
+  last_effective_endpoint: binding.last_effective_endpoint || binding.lastEffective || '',
+  last_decision_at: binding.last_decision_at || binding.lastDecisionAt || '',
+  last_outcome: binding.last_outcome || binding.lastOutcome || '',
+  updated_at: binding.updated_at || binding.updatedAt || ''
+});
+
+const toModelRouteBindingPayload = (input = {}) => ({
+  model: (input.model || '').trim(),
+  endpoints: (input.endpoints || []).map((name) => String(name).trim()).filter(Boolean),
+  route_mode: input.route_mode || input.routeMode || 'auto',
+  // 自动模式下后端拒收非空目标，这里先归零，避免用户切回自动时被校验打回。
+  route_target: (input.route_mode || input.routeMode) === 'auto' ? '' : (input.route_target || input.routeTarget || '').trim(),
+  enabled: input.enabled ?? true,
+  note: input.note || ''
+});
+
+export const getModelRoutingSettings = async () => {
+  await initWails();
+  if (!WailsApp) return { unsupported: true, ...normalizeModelRoutingSettings() };
+  return normalizeModelRoutingSettings(await getWailsMethod('GetModelRoutingSettings')());
+};
+
+export const updateModelRoutingSettings = async ({ claude_enabled, claudeEnabled } = {}) => {
+  await initWails();
+  if (!WailsApp) return { unsupported: true, ...normalizeModelRoutingSettings() };
+  return normalizeModelRoutingSettings(await getWailsMethod('UpdateModelRoutingSettings')({ claude_enabled: claude_enabled ?? claudeEnabled ?? false }));
+};
+
+export const listModelRouteBindings = async () => {
+  await initWails();
+  if (!WailsApp) return [];
+  return (await getWailsMethod('ListModelRouteBindings')()).map(normalizeModelRouteBinding);
+};
+
+export const createModelRouteBinding = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return normalizeModelRouteBinding(await getWailsMethod('CreateModelRouteBinding')(toModelRouteBindingPayload(input)));
+};
+
+export const updateModelRouteBinding = async (assignmentId, input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  await getWailsMethod('UpdateModelRouteBinding')(assignmentId, toModelRouteBindingPayload(input));
+  return { success: true };
+};
+
+export const deleteModelRouteBinding = async (assignmentId) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  await getWailsMethod('DeleteModelRouteBinding')(assignmentId);
+  return { success: true };
+};
+
+export const testModelRouting = async (model) => {
+  await initWails();
+  if (!WailsApp) return { unsupported: true, model, assigned: false, scope_kind: 'global', members: [] };
+  const result = await getWailsMethod('TestModelRouting')({ model: model || '' });
+  return { ...result, members: (result?.members || []).map(normalizeRoutingEndpoint) };
+};
+
 export const clearNegativeHitCache = async (endpointName = '') => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');

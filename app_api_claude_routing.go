@@ -64,13 +64,17 @@ func (a *App) SetClaudeRoutingOverride(input SetClaudeRoutingOverrideInput) (Cla
 	if !manager.IsClaudeRoutingReady() {
 		return ClaudeRoutingState{}, fmt.Errorf("Claude 路由未就绪（routing_not_ready），请稍后重试")
 	}
-
 	// v8 §6.4：串行协调器，事务持久化成功后再原子发布运行态；
 	// 用户意图只写 route override，不再先激活 endpoint（§11.2 规则 4）。
 	// 端点存在性检查必须在 routingMu 内：删除流程同样持 routingMu，
 	// 消除「检查存在 → 端点被删 → 写入 fixed」的竞态窗口
 	a.routingMu.Lock()
 	defer a.routingMu.Unlock()
+	if a.modelRoutingService != nil {
+		if snapshot := a.modelRoutingService.CurrentSnapshot(); snapshot != nil && snapshot.Enabled() {
+			return ClaudeRoutingState{}, fmt.Errorf("按模型路由已启用，请在模型路由配置中调整组内策略")
+		}
+	}
 
 	if manager.GetEndpointByNameAny(input.EndpointName) == nil {
 		return ClaudeRoutingState{}, fmt.Errorf("端点 '%s' 不存在", input.EndpointName)

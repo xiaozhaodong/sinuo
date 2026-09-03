@@ -25,7 +25,10 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	db := adapter.GetDB()
 	ctx := context.Background()
 
-	for _, table := range []string{"privacy_settings", "privacy_rules", "privacy_exact_secrets"} {
+	for _, table := range []string{
+		"privacy_settings", "privacy_rules", "privacy_exact_secrets",
+		"model_routing_settings", "model_upstream_groups", "model_routing_assignments",
+	} {
 		var name string
 		err := db.QueryRowContext(ctx,
 			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
@@ -62,6 +65,13 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("privacy_settings row count = %d, want 1", count)
+	}
+	var routingSettingsCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_routing_settings`).Scan(&routingSettingsCount); err != nil {
+		t.Fatalf("count model routing settings failed: %v", err)
+	}
+	if routingSettingsCount != 1 {
+		t.Errorf("model_routing_settings row count = %d, want 1", routingSettingsCount)
 	}
 
 	var builtinCount int

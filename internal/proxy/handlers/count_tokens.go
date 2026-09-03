@@ -71,10 +71,12 @@ const (
 func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, connID string) {
 	slog.Info(fmt.Sprintf("🔢 [Token计数] [%s] 收到count_tokens请求", connID))
 	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
-	override := h.endpointManager.GetClaudeRoutingOverride()
+	scope := h.endpointManager.ResolveRouteScope(routeProfile)
 
 	// Manual Fixed：只用目标，不 fallback、不估算（§10.1）
-	if override.Mode == endpoint.RouteModeManualFixed {
+	// 未分配作用域刻意排除在外：count_tokens 不参与模型路由的 422 契约，
+	// 未分配模型一律降级到本地估算，不要"修"成返回 422。
+	if scope.Kind != endpoint.RouteScopeUnassigned && scope.Mode == endpoint.RouteModeManualFixed {
 		h.handleManualFixed(ctx, w, r, bodyBytes, routeProfile, connID)
 		return
 	}
@@ -160,7 +162,7 @@ func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, 
 func (h *CountTokensHandler) handleManualFixed(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, profile endpoint.RouteRequestProfile, connID string) {
 	result := h.endpointManager.PrepareRouteCandidates(ctx, profile)
 	if len(result.Candidates) == 0 {
-		if block := h.endpointManager.GetManualFixedRouteBlock(profile); block != nil {
+		if block := h.endpointManager.GetRouteBlock(profile); block != nil {
 			writeCountTokensError(w, block.StatusCode, block.Code, block.Message)
 			return
 		}

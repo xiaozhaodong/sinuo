@@ -206,6 +206,41 @@ export const clearNegativeHitCache = async (endpointName = '') => {
   };
 };
 
+export const fetchModelRoutingSettings = async () => {
+  if (isWailsEnvironment()) return await WailsApi.getModelRoutingSettings();
+  return { unsupported: true, claude_enabled: false, status: 'unsupported', version: 0, binding_count: 0 };
+};
+
+export const updateModelRoutingSettings = async (input) => {
+  if (isWailsEnvironment()) return await WailsApi.updateModelRoutingSettings(input);
+  return { unsupported: true, message: '当前运行环境暂不支持模型路由配置' };
+};
+
+export const fetchModelRouteBindings = async () => {
+  if (isWailsEnvironment()) return await WailsApi.listModelRouteBindings();
+  return [];
+};
+
+export const createModelRouteBinding = async (input) => {
+  if (isWailsEnvironment()) return await WailsApi.createModelRouteBinding(input);
+  throw new Error('当前运行环境暂不支持模型路由配置');
+};
+
+export const updateModelRouteBinding = async (assignmentId, input) => {
+  if (isWailsEnvironment()) return await WailsApi.updateModelRouteBinding(assignmentId, input);
+  throw new Error('当前运行环境暂不支持模型路由配置');
+};
+
+export const deleteModelRouteBinding = async (assignmentId) => {
+  if (isWailsEnvironment()) return await WailsApi.deleteModelRouteBinding(assignmentId);
+  throw new Error('当前运行环境暂不支持模型路由配置');
+};
+
+export const testModelRouting = async (model) => {
+  if (isWailsEnvironment()) return await WailsApi.testModelRouting(model);
+  return { unsupported: true, model, assigned: false, scope_kind: 'global', members: [] };
+};
+
 // ============================================
 // 使用统计 API
 // ============================================

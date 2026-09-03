@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, LockKeyhole, RotateCcw, Route, Server } from 'lucide-react';
 
-const ClaudeEndpointSwitcher = ({ endpoints = [], routingState = {}, onSwitch, onRestoreAuto, loading = false }) => {
+const ClaudeEndpointSwitcher = ({ endpoints = [], routingState = {}, onSwitch, onRestoreAuto, loading = false, modelRoutingEnabled = false }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const sorted = useMemo(() => [...endpoints].filter((endpoint) => endpoint.availabilityEnabled !== false).sort((left, right) => (left.priority ?? 1) - (right.priority ?? 1) || String(left.name).localeCompare(String(right.name))), [endpoints]);
@@ -16,6 +16,8 @@ const ClaudeEndpointSwitcher = ({ endpoints = [], routingState = {}, onSwitch, o
   }, []);
 
   if (sorted.length === 0) return <div className="flex items-center gap-2 rounded-lg border border-line bg-surface-sub px-3 py-1.5 text-sm text-fg-subtle"><AlertCircle className="h-3.5 w-3.5" />无可用 Claude 端点</div>;
+
+  if (modelRoutingEnabled) return <div className="flex w-[220px] items-center gap-2 rounded-lg border border-accent-line bg-accent-soft px-3 py-1.5 text-xs text-accent-fg" title="模型路由启用时，按请求模型选择上游端点"><Route className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Claude: 按模型路由</span></div>;
 
   const label = mode === 'auto' ? `Auto${effective ? ` · ${effective}` : ''}` : target || '未选择';
   return (

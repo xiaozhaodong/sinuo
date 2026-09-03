@@ -9,7 +9,7 @@ import EndpointQuickActions from './EndpointQuickActions.jsx';
 import ToggleSwitch from './ToggleSwitch.jsx';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
-const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown }) => {
+const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown, modelRoutingEnabled = false }) => {
   const { formatTimestamp } = useTimezone();
   const rewrite = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || '');
   const lastCheckRaw = getEndpointLastCheckDisplayValue(endpoint);
@@ -40,7 +40,7 @@ const EndpointRow = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, o
       </td>
       <td className="px-3 py-3 align-top">{rewrite ? <span className="tone-cyan block max-w-[150px] truncate rounded-md border px-2 py-1 text-[11px]" title={rewrite.title}>{rewrite.label}</span> : <span className="text-xs text-fg-subtle/60">无</span>}</td>
       <td className="px-3 py-3 align-top">
-        <ActionButtons endpointName={endpoint.name} routingState={routingState} onSetRouting={onSetRouting} disabled={busy || !endpoint.availabilityEnabled} />
+        <ActionButtons endpointName={endpoint.name} routingState={routingState} onSetRouting={onSetRouting} disabled={busy || !endpoint.availabilityEnabled || modelRoutingEnabled} disabledReason="模型路由开启中，请在模型路由面板按模型设置" />
         <EndpointQuickActions endpoint={endpoint} busy={busy} onEdit={onEdit} onDelete={onDelete} onTest={onTest} className="mt-2 justify-end" />
       </td>
     </tr>

@@ -384,7 +384,7 @@ type UpdateOptions struct {
 
 	// v6.2 生命周期面板新增字段
 	UpstreamWriteMs      *int64  // 上游请求写完相对 start_time 的偏移（毫秒），write-once
-	ScheduleSnapshotJSON *string // Codex 账号池调度快照 JSON（裁剪 DTO），覆盖写
+	ScheduleSnapshotJSON *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
 	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写
 }
 

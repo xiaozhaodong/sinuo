@@ -5,6 +5,8 @@ package main
 
 import (
 	"fmt"
+
+	"cc-forwarder/internal/endpoint"
 )
 
 // ============================================================
@@ -34,20 +36,27 @@ type EndpointScheduleDecisionInfo struct {
 
 // LatestEndpointScheduleSnapshotInfo 最近一次端点调度快照。
 type LatestEndpointScheduleSnapshotInfo struct {
-	HasSnapshot          bool                           `json:"has_snapshot"`
-	RequestID            string                         `json:"request_id,omitempty"`
-	CapturedAt           string                         `json:"captured_at"`
-	UpdatedAt            string                         `json:"updated_at"`
-	RequestPath          string                         `json:"request_path"`
-	SelectedEndpoint     string                         `json:"selected_endpoint"`
-	RouteMode            string                         `json:"route_mode"`
-	RouteEndpointName    string                         `json:"route_endpoint_name"`
-	RouteFallbackEnabled bool                           `json:"route_fallback_enabled"`
-	FailoverEnabled      bool                           `json:"failover_enabled"`
-	FinalOutcome         string                         `json:"final_outcome"`
-	FinalError           string                         `json:"final_error"`
-	Summary              string                         `json:"summary"`
-	Decisions            []EndpointScheduleDecisionInfo `json:"decisions"`
+	HasSnapshot          bool                            `json:"has_snapshot"`
+	RequestID            string                          `json:"request_id,omitempty"`
+	CapturedAt           string                          `json:"captured_at"`
+	UpdatedAt            string                          `json:"updated_at"`
+	RequestPath          string                          `json:"request_path"`
+	SelectedEndpoint     string                          `json:"selected_endpoint"`
+	RouteMode            string                          `json:"route_mode"`
+	RouteEndpointName    string                          `json:"route_endpoint_name"`
+	RouteFallbackEnabled bool                            `json:"route_fallback_enabled"`
+	RouteScopeKind       string                          `json:"route_scope_kind,omitempty"`
+	RouteScope           string                          `json:"route_scope,omitempty"`
+	RouteScopeGroupID    int64                           `json:"route_scope_group_id,omitempty"`
+	RouteScopeGroupName  string                          `json:"route_scope_group_name,omitempty"`
+	UpstreamGroup        *endpoint.UpstreamGroupSnapshot `json:"upstream_group,omitempty"`
+	RequestModel         string                          `json:"request_model,omitempty"`
+	ModelRoutingVersion  int64                           `json:"model_routing_version,omitempty"`
+	FailoverEnabled      bool                            `json:"failover_enabled"`
+	FinalOutcome         string                          `json:"final_outcome"`
+	FinalError           string                          `json:"final_error"`
+	Summary              string                          `json:"summary"`
+	Decisions            []EndpointScheduleDecisionInfo  `json:"decisions"`
 }
 
 // GetEndpoints 获取所有端点状态
@@ -109,6 +118,13 @@ func (a *App) GetLatestEndpointScheduleSnapshot() (LatestEndpointScheduleSnapsho
 		RouteMode:            snapshot.RouteMode,
 		RouteEndpointName:    snapshot.RouteEndpointName,
 		RouteFallbackEnabled: snapshot.RouteFallbackEnabled,
+		RouteScopeKind:       snapshot.RouteScopeKind,
+		RouteScope:           snapshot.RouteScope,
+		RouteScopeGroupID:    snapshot.RouteScopeGroupID,
+		RouteScopeGroupName:  snapshot.RouteScopeGroupName,
+		UpstreamGroup:        snapshot.UpstreamGroup,
+		RequestModel:         snapshot.RequestModel,
+		ModelRoutingVersion:  snapshot.ModelRoutingVersion,
 		FailoverEnabled:      snapshot.FailoverEnabled,
 		FinalOutcome:         snapshot.FinalOutcome,
 		FinalError:           snapshot.FinalError,

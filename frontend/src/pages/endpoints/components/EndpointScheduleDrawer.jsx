@@ -32,6 +32,7 @@ export const resolveSnapshotOutcome = (snapshot = {}) => {
     privacy_blocked: { label: '隐私策略拦截', className: 'tone-amber', isAbnormal: true },
     no_candidates: { label: '无可用候选', className: 'tone-amber', isAbnormal: true },
     manual_fixed_blocked: { label: '固定目标不可用', className: 'tone-amber', isAbnormal: true },
+    model_routing_unassigned: { label: '模型未配置上游端点', className: 'tone-amber', isAbnormal: true },
     all_candidates_failed: { label: '全部候选失败', className: 'tone-amber', isAbnormal: true },
     rejected_by_failure_tracker: { label: '失败阈值拦截', className: 'tone-amber', isAbnormal: true },
     rate_limited: { label: '限流', className: 'tone-amber', isAbnormal: true }
@@ -70,7 +71,13 @@ const reasonLabels = {
   manual_fixed_target_missing: '手动固定目标不存在',
   manual_fixed_paused: '手动固定目标已暂停',
   manual_fixed_cooldown: '手动固定目标冷却中',
-  manual_fixed_failure_threshold_tripped: '手动固定目标触发失败阈值'
+    manual_fixed_failure_threshold_tripped: '手动固定目标触发失败阈值',
+    model_routing_unassigned: '模型未配置上游端点',
+    model_routing_missing_model: '请求未携带模型',
+    member_missing: '组成员不存在',
+    outside_model_group: '不在该模型的端点集合中',
+    manual_fixed_target_not_member: '固定目标不在该模型的端点集合中',
+    manual_preferred_target_not_member: '优选目标不在该模型的端点集合中'
 };
 
 const negativeCacheLabels = {
@@ -190,6 +197,9 @@ const EndpointScheduleDrawer = ({ open = false, onClose, snapshot = {}, unsuppor
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
                   <span>请求：<span className="font-mono text-fg-body">{snapshot.requestPath || '-'}</span></span>
+                  {snapshot.requestModel && <span>模型：<span className="font-mono text-fg-body">{snapshot.requestModel}</span></span>}
+                  {/* 组名是后端自动维护的实现细节，同行左侧已有「模型」，这里只标明路由方式。 */}
+                  <span>{snapshot.routeScopeKind === 'upstream_group' ? '模型路由：已分配' : snapshot.routeScopeKind === 'unassigned' ? '模型路由：未分配' : '全局路由'}</span>
                   <span>候选 {counts.candidates} · 跳过 {counts.skipped}</span>
                 </div>
 

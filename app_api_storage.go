@@ -372,6 +372,15 @@ func (a *App) DeleteEndpointRecord(name string) error {
 	//    安全且无悬空目标）。manual fixed 的删除确认由前端在调用本 API 前完成。
 	a.routingMu.Lock()
 	defer a.routingMu.Unlock()
+	if a.modelRoutingService != nil {
+		models, refErr := a.modelRoutingService.ModelsUsingEndpoint(ctx, name)
+		if refErr != nil {
+			return fmt.Errorf("检查模型路由端点引用失败: %w", refErr)
+		}
+		if len(models) > 0 {
+			return fmt.Errorf("端点 '%s' 仍被模型 %s 使用，请先在模型路由中取消选择", name, strings.Join(models, "、"))
+		}
+	}
 
 	var clearedOverride *endpoint.RouteOverrideState
 	if manager != nil {

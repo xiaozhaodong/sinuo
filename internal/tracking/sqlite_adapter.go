@@ -459,7 +459,75 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	if err := s.migrateModelRewriteRulesToExact(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureModelRoutingSchema(ctx); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// ensureModelRoutingSchema 为未经过全量 schema.sql 的旧数据库补齐模型路由表。
+// 所有语句均幂等，和 schema.sql 保持同一结构。
+func (s *SQLiteAdapter) ensureModelRoutingSchema(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS model_routing_settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			claude_enabled INTEGER NOT NULL DEFAULT 0 CHECK (claude_enabled IN (0, 1)),
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+		)`,
+		`INSERT OR IGNORE INTO model_routing_settings (id) VALUES (1)`,
+		`CREATE TABLE IF NOT EXISTS model_upstream_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			family TEXT NOT NULL DEFAULT 'claude' CHECK (family IN ('claude', 'codex')),
+			name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+			members_json TEXT NOT NULL CHECK (json_valid(members_json) AND json_type(members_json) = 'array'),
+			route_mode TEXT NOT NULL DEFAULT 'auto' CHECK (route_mode IN ('auto', 'manual_preferred', 'manual_fixed')),
+			route_target TEXT NOT NULL DEFAULT '',
+			route_revision INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_upstream_groups_family_name
+			ON model_upstream_groups(family, lower(name))`,
+		`CREATE TABLE IF NOT EXISTS model_routing_assignments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			family TEXT NOT NULL DEFAULT 'claude' CHECK (family IN ('claude', 'codex')),
+			match_type TEXT NOT NULL DEFAULT 'exact' CHECK (match_type IN ('exact', 'prefix')),
+			model_name TEXT NOT NULL CHECK (length(trim(model_name)) > 0),
+			group_id INTEGER NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+			note TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_routing_assignments_family_model
+			ON model_routing_assignments(family, match_type, lower(model_name))`,
+		`CREATE INDEX IF NOT EXISTS idx_model_routing_assignments_group
+			ON model_routing_assignments(group_id)`,
+		`CREATE TRIGGER IF NOT EXISTS update_model_routing_settings_timestamp
+			AFTER UPDATE ON model_routing_settings
+			FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+		BEGIN
+			UPDATE model_routing_settings SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS update_model_upstream_groups_timestamp
+			AFTER UPDATE ON model_upstream_groups
+			FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+		BEGIN
+			UPDATE model_upstream_groups SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS update_model_routing_assignments_timestamp
+			AFTER UPDATE ON model_routing_assignments
+			FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+		BEGIN
+			UPDATE model_routing_assignments SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
+		END`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("failed to ensure model routing schema: %w", err)
+		}
+	}
 	return nil
 }
 

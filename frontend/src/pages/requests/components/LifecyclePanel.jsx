@@ -60,6 +60,15 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
   const snapshot = lifecycle?.scheduleSnapshot || null;
   const isAccountRequest = request.upstreamType === 'account' || request.requestFamily === 'codex';
   const candidates = Array.isArray(snapshot?.candidates) ? snapshot.candidates : EMPTY_CANDIDATES;
+  const endpointDecisions = Array.isArray(snapshot?.decisions) ? snapshot.decisions : EMPTY_CANDIDATES;
+  // upstream_group 出现即说明这条请求走了模型路由。组名是后端自动维护的实现细节
+  // （历史数据里还可能是旧版手工建的组名），不给用户看，只标明路由方式；
+  // 具体模型由紧随其后的 request_model 呈现。
+  const routedByModelRouting = Boolean(
+    snapshot?.upstream_group || snapshot?.upstreamGroup ||
+    snapshot?.route_scope_group_name || snapshot?.routeScopeGroupName
+  );
+  const endpointSelected = snapshot?.selected_endpoint || snapshot?.selectedEndpoint || request.effectiveEndpoint || '';
   const selectedReason = snapshot ? snapshot.selected_tier_label || snapshot.selectedTierLabel || '' : '';
   const selectedName = snapshot ? snapshot.selected_account_name || snapshot.selectedAccountName || '' : '';
 
@@ -180,6 +189,43 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </LifecycleCell>
+        ) : !isAccountRequest && snapshot ? (
+          <LifecycleCell icon={Zap} iconClass="text-accent" title="调度快照" loading={false}>
+            <div className="text-sm">
+              <div className="font-medium text-fg truncate">
+                {routedByModelRouting ? '模型路由' : '全局端点'}
+                {snapshot.request_model || snapshot.requestModel ? (
+                  <span className="text-fg-muted ml-1">· {snapshot.request_model || snapshot.requestModel}</span>
+                ) : null}
+              </div>
+              <div className="text-xs text-fg-muted mt-0.5">
+                {endpointSelected || '—'}
+                {snapshot.final_outcome || snapshot.finalOutcome ? ` · ${snapshot.final_outcome || snapshot.finalOutcome}` : null}
+              </div>
+              {endpointDecisions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setScheduleExpanded((value) => !value)}
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-accent hover:text-accent-fg"
+                >
+                  {scheduleExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  候选决策（{endpointDecisions.length}）
+                </button>
+              )}
+            </div>
+            {scheduleExpanded && endpointDecisions.length > 0 && (
+              <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-line-soft divide-y divide-line-soft">
+                {endpointDecisions.map((decision, index) => (
+                  <div key={`${decision.name || index}-${index}`} className="px-2 py-1.5 flex items-center justify-between gap-2">
+                    <span className="text-xs text-fg-body truncate">{decision.name || '—'}</span>
+                    <span className="text-[11px] text-fg-subtle shrink-0">
+                      {decision.runtime_outcome || decision.runtimeOutcome || decision.decision || decision.reason || ''}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </LifecycleCell>

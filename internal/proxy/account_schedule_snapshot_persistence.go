@@ -1,5 +1,6 @@
 // account_schedule_snapshot_persistence.go
-// 账号池调度快照的持久化白名单 DTO 与序列化。
+// 账号池调度快照的持久化白名单 DTO 与序列化；其中长度保险丝与截断 helper
+// 供端点调度快照持久化共用。
 // 运行态内存快照（LatestAccountScheduleSnapshot）继续保留 FinalError / RuntimeError
 // 供账号池页实时展示；持久化 DTO 明确不收录任何上游自由错误文本
 //（readAndCloseResponseBody / err.Error() 截断不等于脱敏，前 256 字符同样可能含 Token 回显）。

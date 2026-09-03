@@ -51,6 +51,7 @@ const Toolbar = ({
   autoRefresh = null,
   endpoints = [],
   claudeRoutingState = null,
+  modelRoutingEnabled = false,
   onClaudeEndpointSwitch,
   onRestoreClaudeAuto,
   onClearRouteCache,
@@ -68,6 +69,7 @@ const Toolbar = ({
       <ClaudeEndpointSwitcher
         endpoints={endpoints}
         routingState={claudeRoutingState}
+        modelRoutingEnabled={modelRoutingEnabled}
         onSwitch={onClaudeEndpointSwitch}
         onRestoreAuto={onRestoreClaudeAuto}
         onClearRouteCache={onClearRouteCache}

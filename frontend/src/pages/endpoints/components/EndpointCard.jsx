@@ -16,7 +16,7 @@ const statusDotClass = (endpoint) => {
   return endpoint.healthy ? 'bg-success-solid' : 'bg-danger-solid';
 };
 
-const EndpointCard = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown }) => {
+const EndpointCard = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, onAvailabilityChange, onAutoScheduleChange, onSetRouting, onClearCooldown, modelRoutingEnabled = false }) => {
   const { formatTimestamp } = useTimezone();
   const rewrite = summarizeEndpointModelRewriteRules(endpoint.modelRewriteRules || '');
   const lastCheckRaw = getEndpointLastCheckDisplayValue(endpoint);
@@ -43,7 +43,7 @@ const EndpointCard = ({ endpoint, routingState, busy, onEdit, onDelete, onTest, 
           <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotClass(endpoint)}`} />
           <span className="truncate font-semibold text-fg" title={endpoint.name}>{endpoint.name}</span>
         </div>
-        <ActionButtons endpointName={endpoint.name} routingState={routingState} onSetRouting={onSetRouting} disabled={busy || disabled} />
+        <ActionButtons endpointName={endpoint.name} routingState={routingState} onSetRouting={onSetRouting} disabled={busy || disabled || modelRoutingEnabled} disabledReason="模型路由开启中，请在模型路由面板按模型设置" />
       </div>
       <div className="mt-1 truncate font-mono text-[11px] text-fg-subtle" title={endpoint.url}>{endpoint.url}</div>
 

@@ -106,6 +106,81 @@ func requireLatestEndpointScheduleSnapshot(t *testing.T, manager *endpoint.Manag
 	return snapshot
 }
 
+type pipelineRouteScopePolicy struct {
+	scope endpoint.RouteScope
+}
+
+func (p pipelineRouteScopePolicy) ResolveScope(string) (endpoint.RouteScope, bool) {
+	return p.scope, true
+}
+
+func (pipelineRouteScopePolicy) NoteDecision(int64, string)               {}
+func (pipelineRouteScopePolicy) SettleDecision(int64, string, string)     {}
+func (pipelineRouteScopePolicy) ScopeStillValid(endpoint.RouteScope) bool { return true }
+
+func TestEndpointPipeline_ModelRoutingUnassignedReturns422AndScopedSnapshot(t *testing.T) {
+	handler, manager := newEndpointPipelineTestHandler(t, endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
+	manager.SetRouteScopePolicy(pipelineRouteScopePolicy{scope: endpoint.RouteScope{
+		Kind:             endpoint.RouteScopeUnassigned,
+		Model:            "claude-test",
+		UnassignedReason: "model_routing_unassigned",
+	}})
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected unassigned model to return 422, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model_routing_unassigned") || !strings.Contains(recorder.Body.String(), "claude-test") {
+		t.Fatalf("expected model and routing error code in response, got %s", recorder.Body.String())
+	}
+	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeModelRoutingUnassigned, "")
+	if snapshot.RouteScope != endpoint.RouteScopeUnassigned || snapshot.RequestModel != "claude-test" {
+		t.Fatalf("expected unassigned scope and request model in snapshot, got %+v", snapshot)
+	}
+}
+
+func TestEndpointPipeline_ModelRoutingGroupUsesOnlyGroupMembers(t *testing.T) {
+	var primaryHits, memberHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(primary.Close)
+	member := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&memberHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(member.Close)
+
+	handler, manager := newEndpointPipelineTestHandler(t,
+		endpointPipelineConfig("primary", primary.URL, 1),
+		endpointPipelineConfig("member", member.URL, 2),
+	)
+	manager.SetRouteScopePolicy(pipelineRouteScopePolicy{scope: endpoint.RouteScope{
+		Kind:            endpoint.RouteScopeUpstreamGroup,
+		GroupID:         7,
+		GroupName:       "claude-group",
+		Members:         []string{"member"},
+		Mode:            endpoint.RouteModeAuto,
+		FallbackEnabled: true,
+		Revision:        1,
+		SnapshotVersion: 1,
+		Model:           "claude-test",
+	}})
+
+	recorder := performEndpointPipelineRequest(t, handler, false)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected group member success, got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if atomic.LoadInt32(&primaryHits) != 0 || atomic.LoadInt32(&memberHits) != 1 {
+		t.Fatalf("expected only group member to be attempted, primary=%d member=%d", primaryHits, memberHits)
+	}
+	snapshot := requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeSuccess, "member")
+	if snapshot.RouteScope != endpoint.RouteScopeUpstreamGroup || snapshot.RouteScopeGroupID != 7 || snapshot.UpstreamGroup == nil {
+		t.Fatalf("expected group scope in snapshot, got %+v", snapshot)
+	}
+}
+
 // [Phase3 §11.2 D9] fallback 成功只更新运行时 retained，active/legacy 状态不变
 func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingActive(t *testing.T) {
 	var backupHits int32

@@ -1,0 +1,277 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/service"
+	"cc-forwarder/internal/store"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const EventModelRoutingUpdate = "model-routing:update"
+
+type ModelRoutingSettingsInfo struct {
+	ClaudeEnabled bool   `json:"claude_enabled"`
+	Status        string `json:"status"`
+	Version       int64  `json:"version"`
+	UpdatedAt     string `json:"updated_at"`
+	BindingCount  int    `json:"binding_count"`
+}
+
+type UpdateModelRoutingSettingsInput struct {
+	ClaudeEnabled bool `json:"claude_enabled"`
+}
+
+type ModelRoutingMemberInfo struct {
+	Name                string `json:"name"`
+	Exists              bool   `json:"exists"`
+	Priority            int    `json:"priority"`
+	AvailabilityEnabled bool   `json:"availability_enabled"`
+	AutoScheduleEnabled bool   `json:"auto_schedule_enabled"`
+	Healthy             bool   `json:"healthy"`
+	CooldownUntil       string `json:"cooldown_until,omitempty"`
+	CooldownReason      string `json:"cooldown_reason,omitempty"`
+	Detail              string `json:"detail,omitempty"`
+	Status              string `json:"status"`
+}
+
+// ModelRouteBindingInfo 是一条「模型 → 端点集合」映射的前端视图。
+// 底层的上游组是该模型的专属实现细节，不作为独立概念暴露给 UI。
+type ModelRouteBindingInfo struct {
+	AssignmentID   int64                    `json:"assignment_id"`
+	Model          string                   `json:"model"`
+	Endpoints      []ModelRoutingMemberInfo `json:"endpoints"`
+	RouteMode      string                   `json:"route_mode"`
+	RouteTarget    string                   `json:"route_target"`
+	Enabled        bool                     `json:"enabled"`
+	Note           string                   `json:"note"`
+	SharedModels   []string                 `json:"shared_models"`
+	LastEffective  string                   `json:"last_effective_endpoint,omitempty"`
+	LastDecisionAt string                   `json:"last_decision_at,omitempty"`
+	LastOutcome    string                   `json:"last_outcome,omitempty"`
+	UpdatedAt      string                   `json:"updated_at"`
+}
+
+type ModelRouteBindingInput struct {
+	Model       string   `json:"model"`
+	Endpoints   []string `json:"endpoints"`
+	RouteMode   string   `json:"route_mode"`
+	RouteTarget string   `json:"route_target"`
+	Enabled     bool     `json:"enabled"`
+	Note        string   `json:"note"`
+}
+
+type ModelRoutingTestInput struct {
+	Model string `json:"model"`
+}
+
+type ModelRoutingTestResult struct {
+	Model            string                   `json:"model"`
+	Assigned         bool                     `json:"assigned"`
+	ScopeKind        string                   `json:"scope_kind"`
+	GroupID          int64                    `json:"group_id,omitempty"`
+	GroupName        string                   `json:"group_name,omitempty"`
+	RouteMode        string                   `json:"route_mode,omitempty"`
+	RouteTarget      string                   `json:"route_target,omitempty"`
+	UnassignedReason string                   `json:"unassigned_reason,omitempty"`
+	Members          []ModelRoutingMemberInfo `json:"members"`
+}
+
+func (a *App) modelRoutingServiceSnapshot() (*service.ModelRoutingService, error) {
+	a.mu.RLock()
+	svc := a.modelRoutingService
+	a.mu.RUnlock()
+	if svc == nil {
+		return nil, fmt.Errorf("模型路由服务未初始化")
+	}
+	return svc, nil
+}
+
+func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	record, err := svc.GetSettings(ctx)
+	if err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	bindings, err := svc.ListBindings(ctx)
+	if err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	info := ModelRoutingSettingsInfo{Status: svc.Status(), Version: svc.SnapshotVersion(), BindingCount: len(bindings)}
+	if record != nil {
+		info.ClaudeEnabled = record.ClaudeEnabled
+		info.UpdatedAt = formatTime(record.UpdatedAt)
+	}
+	return info, nil
+}
+
+func (a *App) UpdateModelRoutingSettings(input UpdateModelRoutingSettingsInput) (ModelRoutingSettingsInfo, error) {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := svc.UpdateSettings(ctx, &store.ModelRoutingSettingsRecord{ID: 1, ClaudeEnabled: input.ClaudeEnabled}); err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	a.emitModelRoutingUpdate()
+	return a.GetModelRoutingSettings()
+}
+
+func (a *App) ListModelRouteBindings() ([]ModelRouteBindingInfo, error) {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	bindings, err := svc.ListBindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ModelRouteBindingInfo, 0, len(bindings))
+	for _, binding := range bindings {
+		endpoints := make([]ModelRoutingMemberInfo, 0, len(binding.Endpoints))
+		for _, name := range binding.Endpoints {
+			endpoints = append(endpoints, modelRoutingMemberInfo(svc.EndpointMember(name)))
+		}
+		result = append(result, ModelRouteBindingInfo{
+			AssignmentID: binding.AssignmentID, Model: binding.Model, Endpoints: endpoints,
+			RouteMode: binding.RouteMode, RouteTarget: binding.RouteTarget,
+			Enabled: binding.Enabled, Note: binding.Note, SharedModels: binding.SharedModels,
+			LastEffective: binding.Runtime.LastEffectiveEndpoint, LastDecisionAt: formatTime(binding.Runtime.LastDecisionAt),
+			LastOutcome: binding.Runtime.LastOutcome, UpdatedAt: formatTime(binding.UpdatedAt),
+		})
+	}
+	return result, nil
+}
+
+func (a *App) CreateModelRouteBinding(input ModelRouteBindingInput) (ModelRouteBindingInfo, error) {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return ModelRouteBindingInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assignmentID, err := svc.CreateBinding(ctx, modelRouteBindingInput(input))
+	if err != nil {
+		return ModelRouteBindingInfo{}, err
+	}
+	a.emitModelRoutingUpdate()
+	bindings, err := a.ListModelRouteBindings()
+	if err != nil {
+		return ModelRouteBindingInfo{}, err
+	}
+	for _, binding := range bindings {
+		if binding.AssignmentID == assignmentID {
+			return binding, nil
+		}
+	}
+	return ModelRouteBindingInfo{}, fmt.Errorf("创建模型映射后无法读取记录 %d", assignmentID)
+}
+
+func (a *App) UpdateModelRouteBinding(assignmentID int64, input ModelRouteBindingInput) error {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := svc.UpdateBinding(ctx, assignmentID, modelRouteBindingInput(input)); err != nil {
+		return err
+	}
+	a.emitModelRoutingUpdate()
+	return nil
+}
+
+func (a *App) DeleteModelRouteBinding(assignmentID int64) error {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := svc.DeleteBinding(ctx, assignmentID); err != nil {
+		return err
+	}
+	a.emitModelRoutingUpdate()
+	return nil
+}
+
+func modelRouteBindingInput(input ModelRouteBindingInput) service.ModelRouteBindingInput {
+	return service.ModelRouteBindingInput{
+		Model:       input.Model,
+		Endpoints:   append([]string(nil), input.Endpoints...),
+		RouteMode:   input.RouteMode,
+		RouteTarget: input.RouteTarget,
+		Enabled:     input.Enabled,
+		Note:        input.Note,
+	}
+}
+
+func modelRoutingMemberInfo(view endpoint.EndpointMemberView) ModelRoutingMemberInfo {
+	status := "missing"
+	detail := "端点不存在"
+	if view.Exists {
+		status = "ok"
+		detail = "可参与组内调度"
+		if !view.AvailabilityEnabled {
+			status = "availability_disabled"
+			detail = "端点已硬关闭"
+		} else if !view.AutoScheduleEnabled {
+			status = "auto_schedule_disabled"
+			detail = "端点未参与自动调度"
+		} else if !view.CooldownUntil.IsZero() && time.Now().Before(view.CooldownUntil) {
+			status = "cooldown"
+			detail = view.CooldownReason
+		} else if !view.Healthy {
+			status = "unhealthy"
+			detail = "最近一次检测不可达"
+		}
+	}
+	return ModelRoutingMemberInfo{
+		Name: view.Name, Exists: view.Exists, Priority: view.Priority,
+		AvailabilityEnabled: view.AvailabilityEnabled, AutoScheduleEnabled: view.AutoScheduleEnabled,
+		Healthy: view.Healthy, CooldownUntil: formatTime(view.CooldownUntil), CooldownReason: view.CooldownReason, Detail: detail, Status: status,
+	}
+}
+
+func (a *App) TestModelRouting(input ModelRoutingTestInput) (ModelRoutingTestResult, error) {
+	svc, err := a.modelRoutingServiceSnapshot()
+	if err != nil {
+		return ModelRoutingTestResult{}, err
+	}
+	model := strings.TrimSpace(input.Model)
+	scope, ok := svc.ResolveScope(model)
+	if !ok {
+		// 模型路由未启用：请求会按全局端点策略走，试算面板如实反映这一点。
+		scope = endpoint.RouteScope{Kind: endpoint.RouteScopeGlobal}
+	}
+	result := ModelRoutingTestResult{Model: model, Assigned: scope.Kind == endpoint.RouteScopeUpstreamGroup, ScopeKind: scope.Kind, GroupID: scope.GroupID, GroupName: scope.GroupName, RouteMode: scope.Mode, RouteTarget: scope.Target, UnassignedReason: scope.UnassignedReason, Members: []ModelRoutingMemberInfo{}}
+	for _, member := range scope.Members {
+		result.Members = append(result.Members, modelRoutingMemberInfo(svc.EndpointMember(member)))
+	}
+	return result, nil
+}
+
+func (a *App) emitModelRoutingUpdate() {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	settings, err := a.GetModelRoutingSettings()
+	if err != nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, EventModelRoutingUpdate, settings)
+}

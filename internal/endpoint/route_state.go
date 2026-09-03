@@ -2,8 +2,10 @@ package endpoint
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,19 +180,53 @@ func (m *Manager) ClearNegativeHitCache(endpointName string) {
 	m.routeState.ClearNegativeHits(endpointName)
 }
 
+// GetManualFixedRouteBlock 保留旧调用名，实际按请求模型解析完整作用域。
 func (m *Manager) GetManualFixedRouteBlock(profile RouteRequestProfile) *RouteBlock {
-	override := m.routeOverride.Snapshot()
-	if override.Mode != RouteModeManualFixed || override.EndpointName == "" {
+	return m.GetRouteBlock(profile)
+}
+
+// GetRouteBlock 返回固定作用域不可路由时的明确错误。
+// Claude 路由尚未完成启动加载时保持 nil，由上层统一返回 routing_not_ready。
+func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
+	if m == nil || !m.IsClaudeRoutingReady() {
 		return nil
 	}
+	scope := m.ResolveRouteScope(profile)
+	if scope.Kind == RouteScopeUnassigned {
+		code := "model_routing_unassigned"
+		message := fmt.Sprintf("请求模型 %q 未分配上游组，请在模型路由面板分配上游组。", scope.Model)
+		switch scope.UnassignedReason {
+		case "model_routing_missing_model":
+			code = "model_routing_missing_model"
+			message = "The request model is required when Claude model routing is enabled."
+		case "model_routing_load_failed":
+			// fail-closed：配置坏了不代表可以放行到全局端点，
+			// 但要让用户看到是配置问题而不是漏了分配。
+			code = "model_routing_load_failed"
+			message = "模型路由配置加载失败，已停止转发以避免绕过模型隔离。请在模型路由面板检查配置。"
+		}
+		return &RouteBlock{StatusCode: http.StatusUnprocessableEntity, Code: code, Message: message, Reason: scope.UnassignedReason}
+	}
+	if scope.Mode != RouteModeManualFixed || scope.Target == "" {
+		return nil
+	}
+	if scope.Kind == RouteScopeUpstreamGroup && !slices.Contains(scope.Members, scope.Target) {
+		return &RouteBlock{
+			StatusCode: http.StatusUnprocessableEntity,
+			Code:       "endpoint_not_in_model_group",
+			Message:    "Manual fixed endpoint is not a member of the model upstream group.",
+			Endpoint:   scope.Target,
+			Reason:     "manual_fixed_target_not_member",
+		}
+	}
 
-	ep := m.GetEndpointByNameAny(override.EndpointName)
+	ep := m.GetEndpointByNameAny(scope.Target)
 	if ep == nil {
 		return &RouteBlock{
 			StatusCode: http.StatusNotFound,
 			Code:       "endpoint_not_found",
 			Message:    "Manual fixed endpoint is not available.",
-			Endpoint:   override.EndpointName,
+			Endpoint:   scope.Target,
 			Reason:     "manual_fixed_endpoint_missing",
 		}
 	}
@@ -202,16 +238,16 @@ func (m *Manager) GetManualFixedRouteBlock(profile RouteRequestProfile) *RouteBl
 			StatusCode: http.StatusNotFound,
 			Code:       "endpoint_not_found",
 			Message:    "Manual fixed endpoint is disabled.",
-			Endpoint:   override.EndpointName,
+			Endpoint:   scope.Target,
 			Reason:     "manual_fixed_endpoint_disabled",
 		}
 	}
-	if hit, reason := m.routeState.HasNegativeHit(override.EndpointName, profile); hit {
+	if hit, reason := m.routeState.HasNegativeHit(scope.Target, profile); hit {
 		return &RouteBlock{
 			StatusCode: http.StatusUnprocessableEntity,
 			Code:       "endpoint_capability_mismatch",
 			Message:    "Manual fixed endpoint is known to be incompatible with this request.",
-			Endpoint:   override.EndpointName,
+			Endpoint:   scope.Target,
 			Reason:     reason,
 		}
 	}
@@ -222,7 +258,7 @@ func (m *Manager) GetManualFixedRouteBlock(profile RouteRequestProfile) *RouteBl
 			StatusCode: http.StatusServiceUnavailable,
 			Code:       "route_blocked_manual_fixed",
 			Message:    "Manual fixed endpoint is temporarily unavailable and fallback is disabled.",
-			Endpoint:   override.EndpointName,
+			Endpoint:   scope.Target,
 			Reason:     reason,
 			RetryAfter: retryAfterFromDuration(time.Until(availableAt)),
 		}

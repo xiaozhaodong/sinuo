@@ -60,6 +60,10 @@ type App struct {
 	endpointService *service.EndpointService // 端点业务服务
 	routingMu       sync.Mutex               // v8 §6.4: Claude 路由串行协调器
 
+	// v9: 按模型选择 Claude 上游组
+	modelRoutingStore   store.ModelRoutingStore
+	modelRoutingService *service.ModelRoutingService
+
 	// v8:端点运行态存储(冷却持久化 + 手动解除冷却 tombstone)
 	endpointRuntimeStateStore store.EndpointRuntimeStateStore
 
@@ -191,11 +195,14 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	// 7.75 初始化隐私保护服务 (v6.1+ SQLite)
 	a.setupPrivacyService()
 
+	// 7.8 初始化按模型选择 Claude 上游组（加载失败保留服务并按开关状态 fail-closed）
+	a.setupModelRoutingService(ctx)
+
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
 	a.syncEndpointMultipliersToTracker(ctx)
 	a.syncAccountMultipliersToTracker(ctx)
 
-	// 7.8 恢复 Claude 手动路由状态
+	// 7.9 恢复 Claude 手动路由状态
 	a.loadClaudeRoutingOverride(ctx)
 
 	// 8. 启动端点管理器（此时端点已从数据库加载完成）
@@ -226,6 +233,32 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	a.logger.Info("✅ AI Switchboard 启动完成",
 		"proxy_port", a.config.Server.Port)
 	a.scheduleStartupConnectivityChecks()
+}
+
+// setupModelRoutingService 初始化模型路由服务并把其接入端点调度器。
+// 加载失败按 fail-closed 处理：开关处于打开状态时所有 Claude 请求返回 422，
+// 不静默回落到全局端点路由——那会让用户以为模型隔离仍然生效。
+func (a *App) setupModelRoutingService(ctx context.Context) {
+	db := a.coreDB()
+	if db == nil || a.endpointManager == nil {
+		a.logger.Error("❌ 无法获取数据库连接或端点管理器 (模型路由)")
+		return
+	}
+
+	a.modelRoutingStore = store.NewSQLiteModelRoutingStore(db)
+	a.modelRoutingService = service.NewModelRoutingService(a.modelRoutingStore)
+	a.modelRoutingService.SetWriteMutex(&a.routingMu)
+	a.modelRoutingService.SetEndpointMemberViewer(a.endpointManager.EndpointMemberView)
+	a.modelRoutingService.SetScopePruner(a.endpointManager.PruneAutoRetentionScopes)
+	a.endpointManager.SetRouteScopePolicy(a.modelRoutingService)
+
+	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := a.modelRoutingService.Initialize(initCtx); err != nil {
+		a.logger.Error("❌ 模型路由配置加载失败，已进入 fail-closed（开关打开时 Claude 请求将返回 422）", "error", err)
+		return
+	}
+	a.logger.Info("✅ 模型路由服务已启用 (SQLite)", "status", a.modelRoutingService.Status())
 }
 
 // shutdown 在 Wails 应用关闭时调用

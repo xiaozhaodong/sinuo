@@ -102,6 +102,8 @@ type Manager struct {
 	cooldownPersistHook func(name string, until time.Time, reason string, revision int64) // §14.4 冷却持久化钩子
 	routeDecisionMu     sync.RWMutex
 	routeDecisionNotify func(RouteOverrideState) // last_effective_endpoint 变更通知（UI 事件桥接）
+	routeScopeMu        sync.RWMutex
+	routeScopePolicy    RouteScopePolicy
 	routeOverride       *RouteOverride
 	routeState          *RouteState
 	scheduleSnapshots   *endpointScheduleSnapshotStore
@@ -382,13 +384,17 @@ func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Durat
 // action=reject 时，检查"第一逻辑候选"是否处于软失败阈值型 cooldown；
 // tripped 即拒绝，不尝试备用端点。第一逻辑候选优先取 manual fixed/preferred
 // 目标，否则按 hard 资格 + 自动调度资格取 priority 最小值端点。
-func (m *Manager) ShouldRejectRequest() (bool, string) {
+func (m *Manager) ShouldRejectRequest(profiles ...RouteRequestProfile) (bool, string) {
 	cfg := m.getConfigSnapshot()
 	if !cfg.FailureTracker.Enabled || cfg.FailureTracker.Action != "reject" {
 		return false, ""
 	}
 
-	name := m.firstLogicalCandidateName()
+	var profile RouteRequestProfile
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
+	name := m.firstLogicalCandidateName(profile)
 	if name == "" {
 		return false, ""
 	}
@@ -411,12 +417,24 @@ func (m *Manager) ShouldRejectRequest() (bool, string) {
 // firstLogicalCandidateName 计算第一逻辑候选（忽略健康/冷却状态）：
 // manual fixed/preferred 目标优先（硬启用时）；否则按 hard 资格 + 自动调度资格
 // 取 priority 最小值端点（v8：legacy active 已退役，不再参与判定）。
-func (m *Manager) firstLogicalCandidateName() string {
-	override := m.routeOverride.Snapshot()
-	if override.Mode != RouteModeAuto && override.EndpointName != "" {
-		if ep := m.GetEndpointByNameAny(override.EndpointName); ep != nil && m.EndpointHardEnabled(ep) {
-			return override.EndpointName
+
+func (m *Manager) firstLogicalCandidateName(profiles ...RouteRequestProfile) string {
+	var profile RouteRequestProfile
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
+	scope := m.ResolveRouteScope(profile)
+	if scope.Kind == RouteScopeUnassigned {
+		return ""
+	}
+	if scope.Mode != RouteModeAuto && scope.Target != "" {
+		if ep := m.GetEndpointByNameAny(scope.Target); ep != nil && m.EndpointHardEnabled(ep) {
+			return scope.Target
 		}
+	}
+	memberSet := make(map[string]struct{}, len(scope.Members))
+	for _, member := range scope.Members {
+		memberSet[member] = struct{}{}
 	}
 
 	m.endpointsMu.RLock()
@@ -435,6 +453,11 @@ func (m *Manager) firstLogicalCandidateName() string {
 		ep.mutex.RUnlock()
 		if !hardEnabled || !autoScheduleEnabled {
 			continue
+		}
+		if scope.Kind == RouteScopeUpstreamGroup {
+			if _, ok := memberSet[name]; !ok {
+				continue
+			}
 		}
 		if bestName == "" || priority < bestPriority {
 			bestName = name

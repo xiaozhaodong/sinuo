@@ -38,6 +38,10 @@ export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
 }
 
+export function CreateModelRouteBinding(arg1) {
+  return window['go']['main']['App']['CreateModelRouteBinding'](arg1);
+}
+
 export function CreatePrivacyExactSecret(arg1) {
   return window['go']['main']['App']['CreatePrivacyExactSecret'](arg1);
 }
@@ -56,6 +60,10 @@ export function DeleteEndpointRecord(arg1) {
 
 export function DeleteModelPricing(arg1) {
   return window['go']['main']['App']['DeleteModelPricing'](arg1);
+}
+
+export function DeleteModelRouteBinding(arg1) {
+  return window['go']['main']['App']['DeleteModelRouteBinding'](arg1);
 }
 
 export function DeletePrivacyExactSecret(arg1) {
@@ -158,6 +166,10 @@ export function GetModelPricings() {
   return window['go']['main']['App']['GetModelPricings']();
 }
 
+export function GetModelRoutingSettings() {
+  return window['go']['main']['App']['GetModelRoutingSettings']();
+}
+
 export function GetPortInfo() {
   return window['go']['main']['App']['GetPortInfo']();
 }
@@ -244,6 +256,10 @@ export function ImportPrivacySecretCandidate(arg1) {
 
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
+}
+
+export function ListModelRouteBindings() {
+  return window['go']['main']['App']['ListModelRouteBindings']();
 }
 
 export function ListPrivacyExactSecrets() {
@@ -334,6 +350,10 @@ export function SwapUpstreamAccountGroups(arg1, arg2) {
   return window['go']['main']['App']['SwapUpstreamAccountGroups'](arg1, arg2);
 }
 
+export function TestModelRouting(arg1) {
+  return window['go']['main']['App']['TestModelRouting'](arg1);
+}
+
 export function TestPrivacyRules(arg1) {
   return window['go']['main']['App']['TestPrivacyRules'](arg1);
 }
@@ -356,6 +376,14 @@ export function UpdateEndpointRecord(arg1, arg2) {
 
 export function UpdateModelPricing(arg1, arg2) {
   return window['go']['main']['App']['UpdateModelPricing'](arg1, arg2);
+}
+
+export function UpdateModelRouteBinding(arg1, arg2) {
+  return window['go']['main']['App']['UpdateModelRouteBinding'](arg1, arg2);
+}
+
+export function UpdateModelRoutingSettings(arg1) {
+  return window['go']['main']['App']['UpdateModelRoutingSettings'](arg1);
 }
 
 export function UpdatePreferredPort(arg1) {

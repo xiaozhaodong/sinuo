@@ -22,6 +22,8 @@ export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
 
+export function CreateModelRouteBinding(arg1:main.ModelRouteBindingInput):Promise<main.ModelRouteBindingInfo>;
+
 export function CreatePrivacyExactSecret(arg1:main.PrivacyExactSecretInput):Promise<main.PrivacyExactSecretInfo>;
 
 export function CreatePrivacyRule(arg1:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
@@ -31,6 +33,8 @@ export function CreateUpstreamAccount(arg1:main.CreateUpstreamAccountInput):Prom
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
 export function DeleteModelPricing(arg1:string):Promise<void>;
+
+export function DeleteModelRouteBinding(arg1:number):Promise<void>;
 
 export function DeletePrivacyExactSecret(arg1:number):Promise<void>;
 
@@ -82,6 +86,8 @@ export function GetModelPricingStorageStatus():Promise<main.ModelPricingStorageS
 
 export function GetModelPricings():Promise<Array<main.ModelPricingInfo>>;
 
+export function GetModelRoutingSettings():Promise<main.ModelRoutingSettingsInfo>;
+
 export function GetPortInfo():Promise<main.PortInfo>;
 
 export function GetPrivacyRuntimeStats():Promise<main.PrivacyRuntimeStatsInfo>;
@@ -125,6 +131,8 @@ export function ImportPrivacyPreset(arg1:string):Promise<Array<main.PrivacyRuleI
 export function ImportPrivacySecretCandidate(arg1:main.ImportPrivacySecretCandidateInput):Promise<main.PrivacyExactSecretInfo>;
 
 export function IsProxyRunning():Promise<boolean>;
+
+export function ListModelRouteBindings():Promise<Array<main.ModelRouteBindingInfo>>;
 
 export function ListPrivacyExactSecrets():Promise<Array<main.PrivacyExactSecretInfo>>;
 
@@ -170,6 +178,8 @@ export function StopLogStream():Promise<void>;
 
 export function SwapUpstreamAccountGroups(arg1:string,arg2:string):Promise<main.SwapUpstreamAccountGroupsResult>;
 
+export function TestModelRouting(arg1:main.ModelRoutingTestInput):Promise<main.ModelRoutingTestResult>;
+
 export function TestPrivacyRules(arg1:main.PrivacyRuleTestInput):Promise<main.PrivacyRuleTestResult>;
 
 export function TestUpstreamAccount(arg1:number):Promise<main.TestUpstreamAccountResult>;
@@ -181,6 +191,10 @@ export function TriggerHealthCheck(arg1:string):Promise<void>;
 export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):Promise<void>;
 
 export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput):Promise<void>;
+
+export function UpdateModelRouteBinding(arg1:number,arg2:main.ModelRouteBindingInput):Promise<void>;
+
+export function UpdateModelRoutingSettings(arg1:main.UpdateModelRoutingSettingsInput):Promise<main.ModelRoutingSettingsInfo>;
 
 export function UpdatePreferredPort(arg1:number):Promise<void>;
 
