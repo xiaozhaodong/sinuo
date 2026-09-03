@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -117,5 +118,25 @@ func TestResolveRouteScope_OnlyAppliesToClaudeMessagesPaths(t *testing.T) {
 		if block := manager.GetRouteBlock(RouteRequestProfile{Path: path, Model: "claude-x"}); block != nil {
 			t.Fatalf("%q must not be blocked by model routing, got %+v", path, block)
 		}
+	}
+}
+
+// TestGetRouteBlock_CountTokensUnassignedHintsTokenCounting 锁定 Token 计数关闭时
+// count_tokens 透传路径的 fail-closed 契约：仍返回 422，但提示开启 Token 计数可降级估算。
+func TestGetRouteBlock_CountTokensUnassignedHintsTokenCounting(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a"))
+	manager.SetRouteScopePolicy(testRouteScopePolicy{scope: RouteScope{
+		Kind: RouteScopeUnassigned, UnassignedReason: "model_routing_unassigned", Model: "claude-x",
+	}})
+	block := manager.GetRouteBlock(RouteRequestProfile{Path: "/v1/messages/count_tokens", IsCountTokens: true, Model: "claude-x"})
+	if block == nil || block.StatusCode != 422 || block.Code != "model_routing_unassigned" {
+		t.Fatalf("count_tokens passthrough must stay fail-closed, got %+v", block)
+	}
+	if !strings.Contains(block.Message, "Token 计数") {
+		t.Fatalf("count_tokens block should hint enabling token counting, got %q", block.Message)
+	}
+	messages := manager.GetRouteBlock(RouteRequestProfile{Path: "/v1/messages", Model: "claude-x"})
+	if messages == nil || strings.Contains(messages.Message, "Token 计数") {
+		t.Fatalf("/v1/messages block must not carry the count_tokens hint, got %+v", messages)
 	}
 }

@@ -205,6 +205,11 @@ func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
 			code = "model_routing_load_failed"
 			message = "模型路由配置加载失败，已停止转发以避免绕过模型隔离。请在模型路由面板检查配置。"
 		}
+		// Token 计数关闭时 count_tokens 走普通透传管线，没有本地估算出口；
+		// 未分配模型同样 fail-closed 返回 422，提示用户开启 Token 计数即可降级为估算。
+		if profile.IsCountTokens {
+			message += " 开启「Token 计数」后，count_tokens 会对未分配模型降级为本地估算。"
+		}
 		return &RouteBlock{StatusCode: http.StatusUnprocessableEntity, Code: code, Message: message, Reason: scope.UnassignedReason}
 	}
 	if scope.Mode != RouteModeManualFixed || scope.Target == "" {
