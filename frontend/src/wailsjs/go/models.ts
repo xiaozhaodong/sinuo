@@ -1,14 +1,14 @@
 export namespace endpoint {
-	
+
 	export class UpstreamGroupSnapshot {
 	    id: number;
 	    name: string;
 	    members: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpstreamGroupSnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -20,17 +20,17 @@ export namespace endpoint {
 }
 
 export namespace logging {
-	
+
 	export class LogEntry {
 	    timestamp: string;
 	    level: string;
 	    message: string;
 	    attrs: Record<string, string>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.timestamp = source["timestamp"];
@@ -43,7 +43,7 @@ export namespace logging {
 }
 
 export namespace main {
-	
+
 	export class AccountScheduleCandidateDecisionInfo {
 	    account_id: number;
 	    account_name: string;
@@ -60,11 +60,11 @@ export namespace main {
 	    reason_detail: string;
 	    runtime_outcome?: string;
 	    runtime_error?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AccountScheduleCandidateDecisionInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.account_id = source["account_id"];
@@ -90,11 +90,11 @@ export namespace main {
 	    total: number;
 	    healthy_count: number;
 	    unhealthy_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BatchHealthCheckResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -108,11 +108,11 @@ export namespace main {
 	    category: string;
 	    key: string;
 	    value: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpdateSettingInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.category = source["category"];
@@ -122,16 +122,16 @@ export namespace main {
 	}
 	export class BatchUpdateSettingsInput {
 	    settings: UpdateSettingInput[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BatchUpdateSettingsInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.settings = this.convertValues(source["settings"], UpdateSettingInput);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -156,11 +156,11 @@ export namespace main {
 	    description: string;
 	    icon: string;
 	    order: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CategoryInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -180,11 +180,11 @@ export namespace main {
 	    max: number;
 	    value: number;
 	    timestamp: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ChartDataPoint(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.time = source["time"];
@@ -209,11 +209,11 @@ export namespace main {
 	    last_effective_endpoint: string;
 	    last_decision_at: string;
 	    available_endpoints: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ClaudeRoutingState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -237,11 +237,11 @@ export namespace main {
 	    deprecated: boolean;
 	    display_name: string;
 	    description: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CodexModelEntryInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -259,11 +259,11 @@ export namespace main {
 	    mode: string;
 	    models: CodexModelEntryInfo[];
 	    effective_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CodexModelCatalogInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -271,7 +271,7 @@ export namespace main {
 	        this.models = this.convertValues(source["models"], CodexModelEntryInfo);
 	        this.effective_count = source["effective_count"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -290,7 +290,7 @@ export namespace main {
 		    return a;
 		}
 	}
-	
+
 	export class ConfigInfo {
 	    timezone: string;
 	    server_host: string;
@@ -299,11 +299,11 @@ export namespace main {
 	    proxy_enabled: boolean;
 	    tracking_enabled: boolean;
 	    failover_enabled: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ConfigInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.timezone = source["timezone"];
@@ -336,11 +336,11 @@ export namespace main {
 	    cache_creation_cost_multiplier: number;
 	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CreateEndpointInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -375,11 +375,11 @@ export namespace main {
 	    cache_creation_price_1h: number;
 	    cache_read_price: number;
 	    is_default: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CreateModelPricingInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.model_name = source["model_name"];
@@ -409,11 +409,11 @@ export namespace main {
 	    group_key: string;
 	    priority: number;
 	    enabled: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CreateUpstreamAccountInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider_type = source["provider_type"];
@@ -437,11 +437,11 @@ export namespace main {
 	    success: boolean;
 	    changed: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EnableAutomaticAccountSelectionResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -454,11 +454,11 @@ export namespace main {
 	    request_family: string;
 	    tokens: number;
 	    cost: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointCostItem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -471,11 +471,11 @@ export namespace main {
 	    healthy: number;
 	    unhealthy: number;
 	    total: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointHealthData(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.healthy = source["healthy"];
@@ -491,11 +491,11 @@ export namespace main {
 	    last_check: string;
 	    response_time_ms: number;
 	    consecutive_fail: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -537,11 +537,11 @@ export namespace main {
 	    cooldown_until: string;
 	    cooldown_reason: string;
 	    cooldown_persist_pending: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointRecordInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -582,11 +582,11 @@ export namespace main {
 	    available_at: string;
 	    runtime_outcome?: string;
 	    runtime_error?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointScheduleDecisionInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -602,11 +602,11 @@ export namespace main {
 	    storage_type: string;
 	    total_count: number;
 	    available_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EndpointStorageStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -618,11 +618,11 @@ export namespace main {
 	export class ExchangeChatGPTOAuthCallbackInput {
 	    session_id: string;
 	    callback_url: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ExchangeChatGPTOAuthCallbackInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.session_id = source["session_id"];
@@ -641,11 +641,11 @@ export namespace main {
 	    organization_id?: string;
 	    credential_raw?: string;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ExchangeChatGPTOAuthCallbackResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -666,11 +666,11 @@ export namespace main {
 	    auth_url: string;
 	    redirect_uri: string;
 	    expires_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GenerateChatGPTOAuthLinkResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.session_id = source["session_id"];
@@ -687,11 +687,11 @@ export namespace main {
 	    placeholder: string;
 	    description: string;
 	    secret_value: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ImportPrivacySecretCandidateInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.source_type = source["source_type"];
@@ -719,11 +719,11 @@ export namespace main {
 	    final_error: string;
 	    summary: string;
 	    candidates: AccountScheduleCandidateDecisionInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LatestAccountScheduleSnapshotInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.has_snapshot = source["has_snapshot"];
@@ -742,7 +742,7 @@ export namespace main {
 	        this.summary = source["summary"];
 	        this.candidates = this.convertValues(source["candidates"], AccountScheduleCandidateDecisionInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -783,11 +783,11 @@ export namespace main {
 	    final_error: string;
 	    summary: string;
 	    decisions: EndpointScheduleDecisionInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LatestEndpointScheduleSnapshotInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.has_snapshot = source["has_snapshot"];
@@ -812,7 +812,7 @@ export namespace main {
 	        this.summary = source["summary"];
 	        this.decisions = this.convertValues(source["decisions"], EndpointScheduleDecisionInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -844,11 +844,11 @@ export namespace main {
 	    is_default: boolean;
 	    created_at: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelPricingInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -869,11 +869,11 @@ export namespace main {
 	    enabled: boolean;
 	    total_count: number;
 	    has_default: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelPricingStorageStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -892,11 +892,11 @@ export namespace main {
 	    cooldown_reason?: string;
 	    detail?: string;
 	    status: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRoutingMemberInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -924,11 +924,11 @@ export namespace main {
 	    last_decision_at?: string;
 	    last_outcome?: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRouteBindingInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.assignment_id = source["assignment_id"];
@@ -944,7 +944,7 @@ export namespace main {
 	        this.last_outcome = source["last_outcome"];
 	        this.updated_at = source["updated_at"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -970,11 +970,11 @@ export namespace main {
 	    route_target: string;
 	    enabled: boolean;
 	    note: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRouteBindingInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.model = source["model"];
@@ -985,18 +985,18 @@ export namespace main {
 	        this.note = source["note"];
 	    }
 	}
-	
+
 	export class ModelRoutingSettingsInfo {
 	    claude_enabled: boolean;
 	    status: string;
 	    version: number;
 	    updated_at: string;
 	    binding_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRoutingSettingsInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.claude_enabled = source["claude_enabled"];
@@ -1008,11 +1008,11 @@ export namespace main {
 	}
 	export class ModelRoutingTestInput {
 	    model: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRoutingTestInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.model = source["model"];
@@ -1028,11 +1028,11 @@ export namespace main {
 	    route_target?: string;
 	    unassigned_reason?: string;
 	    members: ModelRoutingMemberInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ModelRoutingTestResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.model = source["model"];
@@ -1045,7 +1045,7 @@ export namespace main {
 	        this.unassigned_reason = source["unassigned_reason"];
 	        this.members = this.convertValues(source["members"], ModelRoutingMemberInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1068,11 +1068,11 @@ export namespace main {
 	    success: boolean;
 	    changed: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new MoveUpstreamAccountToTierResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1084,11 +1084,11 @@ export namespace main {
 	    success: boolean;
 	    changed: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PinUpstreamAccountSelectionResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1101,11 +1101,11 @@ export namespace main {
 	    actual_port: number;
 	    is_default: boolean;
 	    was_occupied: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PortInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.preferred_port = source["preferred_port"];
@@ -1128,11 +1128,11 @@ export namespace main {
 	    value_hash_short: string;
 	    created_at: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyExactSecretInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1159,11 +1159,11 @@ export namespace main {
 	    source_type: string;
 	    source_ref: string;
 	    description: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyExactSecretInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -1181,11 +1181,11 @@ export namespace main {
 	    name: string;
 	    description: string;
 	    rule_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyPresetInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1209,11 +1209,11 @@ export namespace main {
 	    compile_error: string;
 	    created_at: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1242,11 +1242,11 @@ export namespace main {
 	    compile_error: string;
 	    enabled_rules: number;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacySettingsInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -1264,18 +1264,18 @@ export namespace main {
 	    exported_at: string;
 	    settings: PrivacySettingsInfo;
 	    rules: PrivacyRuleInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleExportInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.exported_at = source["exported_at"];
 	        this.settings = this.convertValues(source["settings"], PrivacySettingsInfo);
 	        this.rules = this.convertValues(source["rules"], PrivacyRuleInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1300,11 +1300,11 @@ export namespace main {
 	    source: string;
 	    action: string;
 	    count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleHitInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.rule_id = source["rule_id"];
@@ -1314,7 +1314,7 @@ export namespace main {
 	        this.count = source["count"];
 	    }
 	}
-	
+
 	export class PrivacyRuleInput {
 	    enabled: boolean;
 	    name: string;
@@ -1325,11 +1325,11 @@ export namespace main {
 	    placeholder: string;
 	    action: string;
 	    scope_json: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -1346,11 +1346,11 @@ export namespace main {
 	export class PrivacyRuleOrderInput {
 	    id: number;
 	    priority: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleOrderInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1364,11 +1364,11 @@ export namespace main {
 	    endpoint_name: string;
 	    account_id: number;
 	    provider_type: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleTestInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.text = source["text"];
@@ -1386,11 +1386,11 @@ export namespace main {
 	    replaced_text: string;
 	    rule_hits: PrivacyRuleHitInfo[];
 	    scan_duration_ms: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuleTestResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.original_length = source["original_length"];
@@ -1400,7 +1400,7 @@ export namespace main {
 	        this.rule_hits = this.convertValues(source["rule_hits"], PrivacyRuleHitInfo);
 	        this.scan_duration_ms = source["scan_duration_ms"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1425,11 +1425,11 @@ export namespace main {
 	    blocked_count: number;
 	    truncated_count: number;
 	    rule_stats: PrivacyRuleHitInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacyRuntimeStatsInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scan_count = source["scan_count"];
@@ -1438,7 +1438,7 @@ export namespace main {
 	        this.truncated_count = source["truncated_count"];
 	        this.rule_stats = this.convertValues(source["rule_stats"], PrivacyRuleHitInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1466,11 +1466,11 @@ export namespace main {
 	    value_length: number;
 	    value_hash_short: string;
 	    already_exists: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacySecretImportCandidateInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.source_type = source["source_type"];
@@ -1483,17 +1483,17 @@ export namespace main {
 	        this.already_exists = source["already_exists"];
 	    }
 	}
-	
+
 	export class PrivacySettingsInput {
 	    mode: string;
 	    scan_max_bytes: number;
 	    over_limit_action: string;
 	    on_error: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PrivacySettingsInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -1506,11 +1506,11 @@ export namespace main {
 	    success: boolean;
 	    message: string;
 	    quota_status?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RefreshUpstreamAccountProfileResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1550,11 +1550,11 @@ export namespace main {
 	    completion_ms?: number;
 	    is_streaming: boolean;
 	    cost: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RequestRecord(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1597,11 +1597,11 @@ export namespace main {
 	    upstream_write_ms?: number;
 	    schedule_snapshot_json?: string;
 	    privacy_scan_json?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RequestLifecycleDetail(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.found = source["found"];
@@ -1611,7 +1611,7 @@ export namespace main {
 	        this.schedule_snapshot_json = source["schedule_snapshot_json"];
 	        this.privacy_scan_json = source["privacy_scan_json"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1635,11 +1635,11 @@ export namespace main {
 	    total: number;
 	    page: number;
 	    page_size: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RequestListResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.requests = this.convertValues(source["requests"], RequestRecord);
@@ -1647,7 +1647,7 @@ export namespace main {
 	        this.page = source["page"];
 	        this.page_size = source["page_size"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1676,11 +1676,11 @@ export namespace main {
 	    request_family: string;
 	    upstream_name: string;
 	    source_view: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RequestQueryParams(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.page = source["page"];
@@ -1694,23 +1694,23 @@ export namespace main {
 	        this.source_view = source["source_view"];
 	    }
 	}
-	
+
 	export class SaveCodexModelCatalogInput {
 	    enabled: boolean;
 	    mode: string;
 	    models: CodexModelEntryInfo[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SaveCodexModelCatalogInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
 	        this.mode = source["mode"];
 	        this.models = this.convertValues(source["models"], CodexModelEntryInfo);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1733,11 +1733,11 @@ export namespace main {
 	    mode: string;
 	    endpoint_name: string;
 	    fallback_enabled: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SetClaudeRoutingOverrideInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -1749,11 +1749,11 @@ export namespace main {
 	    success: boolean;
 	    changed: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SetGroupActiveAccountResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1774,11 +1774,11 @@ export namespace main {
 	    secret_configured: boolean;
 	    created_at: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SettingInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1800,11 +1800,11 @@ export namespace main {
 	    total_count: number;
 	    category_count: number;
 	    is_initialized: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SettingsStorageStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -1817,11 +1817,11 @@ export namespace main {
 	    success: boolean;
 	    changed: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SwapUpstreamAccountGroupsResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1839,11 +1839,11 @@ export namespace main {
 	    proxy_running: boolean;
 	    config_path: string;
 	    auth_enabled: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SystemStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -1860,11 +1860,11 @@ export namespace main {
 	export class TestUpstreamAccountResult {
 	    success: boolean;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TestUpstreamAccountResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -1877,11 +1877,11 @@ export namespace main {
 	    cache_creation_tokens: number;
 	    cache_read_tokens: number;
 	    total_tokens: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TokenUsageData(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.input_tokens = source["input_tokens"];
@@ -1893,27 +1893,27 @@ export namespace main {
 	}
 	export class UpdateModelRoutingSettingsInput {
 	    claude_enabled: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpdateModelRoutingSettingsInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.claude_enabled = source["claude_enabled"];
 	    }
 	}
-	
+
 	export class UpstreamAccountCredentialInfo {
 	    id: number;
 	    credential_raw: string;
 	    credential_raw_masked: string;
 	    has_credential: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpstreamAccountCredentialInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1961,11 +1961,11 @@ export namespace main {
 	    fingerprint: string;
 	    created_at: string;
 	    updated_at: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UpstreamAccountInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2016,11 +2016,11 @@ export namespace main {
 	    total_cost_usd: number;
 	    total_tokens: number;
 	    failed_requests: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UsageStatsData(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.period = source["period"];
@@ -2041,11 +2041,11 @@ export namespace main {
 	    request_family: string;
 	    upstream_name: string;
 	    source_view: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UsageStatsQueryParams(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.period = source["period"];
@@ -2071,11 +2071,11 @@ export namespace main {
 	    all_time_total_cost: number;
 	    today_tokens: number;
 	    all_time_total_tokens: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UsageSummary(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.total_requests = source["total_requests"];
@@ -2096,7 +2096,7 @@ export namespace main {
 }
 
 export namespace migration {
-	
+
 	export class Status {
 	    state: string;
 	    migration_id: string;
@@ -2116,11 +2116,11 @@ export namespace migration {
 	    derived_record_count: number;
 	    request_log_count: number;
 	    backup_manifest_sha256: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.state = source["state"];

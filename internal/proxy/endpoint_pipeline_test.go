@@ -114,9 +114,9 @@ func (p pipelineRouteScopePolicy) ResolveScope(string) (endpoint.RouteScope, boo
 	return p.scope, true
 }
 
-func (pipelineRouteScopePolicy) NoteDecision(int64, string)               {}
-func (pipelineRouteScopePolicy) SettleDecision(int64, string, string)     {}
-func (pipelineRouteScopePolicy) ScopeStillValid(endpoint.RouteScope) bool { return true }
+func (pipelineRouteScopePolicy) NoteDecision(endpoint.RouteScope, string)           {}
+func (pipelineRouteScopePolicy) SettleDecision(endpoint.RouteScope, string, string) {}
+func (pipelineRouteScopePolicy) ScopeStillValid(endpoint.RouteScope) bool           { return true }
 
 func TestEndpointPipeline_ModelRoutingUnassignedReturns422AndScopedSnapshot(t *testing.T) {
 	handler, manager := newEndpointPipelineTestHandler(t, endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))

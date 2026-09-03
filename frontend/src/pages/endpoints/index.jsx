@@ -56,9 +56,13 @@ const EndpointsPage = () => {
 
   const loadRouting = useCallback(async () => {
     if (!isWailsEnvironment()) return;
-    const [nextRouting, nextModelRouting] = await Promise.all([getClaudeRoutingState(), getModelRoutingSettings()]);
-    setRoutingState(nextRouting);
-    setModelRoutingSettings(nextModelRouting);
+    // 两套路由状态分别容错：模型路由读取失败不能连带丢掉全局路由状态，
+    // 否则页面会错误地显示初始的 Auto。任一失败在这里汇总后抛给调用方。
+    const [routingResult, modelRoutingResult] = await Promise.allSettled([getClaudeRoutingState(), getModelRoutingSettings()]);
+    if (routingResult.status === 'fulfilled') setRoutingState(routingResult.value);
+    if (modelRoutingResult.status === 'fulfilled') setModelRoutingSettings(modelRoutingResult.value);
+    const failure = [routingResult, modelRoutingResult].find((result) => result.status === 'rejected');
+    if (failure) throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
   }, []);
 
   const loadSnapshot = useCallback(async () => {

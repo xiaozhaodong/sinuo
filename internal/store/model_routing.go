@@ -126,7 +126,8 @@ func (s *SQLiteModelRoutingStore) RunInTx(ctx context.Context, fn func(ModelRout
 	return nil
 }
 
-type modelRoutingQuerier interface {	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+type modelRoutingQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }

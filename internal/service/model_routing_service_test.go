@@ -202,3 +202,86 @@ func TestModelRoutingService_LoadFailureIsFailClosed(t *testing.T) {
 		t.Fatalf("expected load-failure reason, got %q", scope.UnassignedReason)
 	}
 }
+
+// TestModelRoutingService_StaleScopeCannotWriteRuntime 锁定组运行态的 fencing 语义：
+// 在途请求拿到的作用域，在模型被改派到别的组、组策略被修改或路由被关闭之后，
+// 结束时不得再写入旧组的「最近命中端点 / 最近结局」。
+func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
+	service, _ := newModelRoutingServiceForTest(t, func(name string) bool { return name == "endpoint-a" || name == "endpoint-b" })
+	ctx := context.Background()
+	if err := service.Initialize(ctx); err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	groupA, err := service.CreateGroup(ctx, &store.ModelUpstreamGroupRecord{Name: "group-a", MembersJSON: `["endpoint-a"]`, RouteMode: "auto"})
+	if err != nil {
+		t.Fatalf("create group a failed: %v", err)
+	}
+	groupB, err := service.CreateGroup(ctx, &store.ModelUpstreamGroupRecord{Name: "group-b", MembersJSON: `["endpoint-b"]`, RouteMode: "auto"})
+	if err != nil {
+		t.Fatalf("create group b failed: %v", err)
+	}
+	assignment, err := service.CreateAssignment(ctx, &store.ModelRoutingAssignmentRecord{ModelName: "claude-sonnet", GroupID: groupA.ID, Enabled: true})
+	if err != nil {
+		t.Fatalf("create assignment failed: %v", err)
+	}
+	settings, err := service.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("get settings failed: %v", err)
+	}
+	settings.ClaudeEnabled = true
+	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("enable model routing failed: %v", err)
+	}
+
+	// 请求 1：在改派前解析出的作用域，正常写入组 A 运行态。
+	inFlight, ok := service.ResolveScope("claude-sonnet")
+	if !ok || inFlight.GroupID != groupA.ID {
+		t.Fatalf("expected scope on group a, got %#v", inFlight)
+	}
+	service.NoteDecision(inFlight, "endpoint-a")
+	service.SettleDecision(inFlight, "endpoint-a", "success")
+	if runtime := service.GroupRuntime(groupA.ID); runtime.LastEffectiveEndpoint != "endpoint-a" || runtime.LastOutcome != "success" {
+		t.Fatalf("fresh scope should update runtime, got %#v", runtime)
+	}
+
+	// 用户把模型改派到组 B：快照版本变化，旧作用域失效。
+	if err := service.UpdateAssignment(ctx, assignment.ID, ModelRoutingAssignmentPatch{GroupID: &groupB.ID}); err != nil {
+		t.Fatalf("reassign failed: %v", err)
+	}
+	if service.ScopeStillValid(inFlight) {
+		t.Fatal("scope resolved before reassignment must be invalid afterwards")
+	}
+	service.NoteDecision(inFlight, "endpoint-stale")
+	service.SettleDecision(inFlight, "endpoint-stale", "failed_after_commit")
+	if runtime := service.GroupRuntime(groupA.ID); runtime.LastEffectiveEndpoint != "endpoint-a" || runtime.LastOutcome != "success" {
+		t.Fatalf("stale scope must not overwrite group a runtime, got %#v", runtime)
+	}
+
+	// 组内策略变更 bump RouteRevision：同组、同快照之前拿到的作用域同样失效。
+	current, ok := service.ResolveScope("claude-sonnet")
+	if !ok || current.GroupID != groupB.ID {
+		t.Fatalf("expected scope on group b, got %#v", current)
+	}
+	mode, target := "manual_preferred", "endpoint-b"
+	if err := service.UpdateGroup(ctx, groupB.ID, ModelUpstreamGroupPatch{RouteMode: &mode, RouteTarget: &target}); err != nil {
+		t.Fatalf("update group b failed: %v", err)
+	}
+	service.SettleDecision(current, "endpoint-b", "success")
+	if runtime := service.GroupRuntime(groupB.ID); runtime.LastOutcome != "" {
+		t.Fatalf("scope from previous revision must not write runtime, got %#v", runtime)
+	}
+
+	// 关闭路由后，任何组作用域都不再有效。
+	fresh, ok := service.ResolveScope("claude-sonnet")
+	if !ok || fresh.Kind != endpoint.RouteScopeUpstreamGroup {
+		t.Fatalf("expected group scope before disabling, got %#v", fresh)
+	}
+	settings.ClaudeEnabled = false
+	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+		t.Fatalf("disable model routing failed: %v", err)
+	}
+	service.SettleDecision(fresh, "endpoint-b", "success")
+	if runtime := service.GroupRuntime(groupB.ID); runtime.LastOutcome != "" {
+		t.Fatalf("scope must be fenced after routing is disabled, got %#v", runtime)
+	}
+}

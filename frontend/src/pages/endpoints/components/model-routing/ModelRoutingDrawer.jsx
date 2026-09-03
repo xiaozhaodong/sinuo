@@ -97,8 +97,13 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
   };
 
   const toggleRouting = (nextEnabled) => {
-    if (nextEnabled && bindings.length === 0 && !window.confirm('还没有任何模型映射，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？')) {
-      return;
+    // 后端只把启用中的映射放进匹配表，全部停用等价于没有映射，同样要提醒。
+    const enabledCount = bindings.filter((binding) => binding.enabled).length;
+    if (nextEnabled && enabledCount === 0) {
+      const hint = bindings.length > 0
+        ? `当前 ${bindings.length} 条映射全部处于停用状态，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？`
+        : '还没有任何模型映射，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？';
+      if (!window.confirm(hint)) return;
     }
     run(() => updateModelRoutingSettings({ claude_enabled: nextEnabled }));
   };

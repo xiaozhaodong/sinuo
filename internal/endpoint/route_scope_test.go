@@ -9,9 +9,9 @@ type testRouteScopePolicy struct {
 	scope RouteScope
 }
 
-func (p testRouteScopePolicy) ResolveScope(string) (RouteScope, bool) { return p.scope, true }
-func (testRouteScopePolicy) NoteDecision(int64, string)               {}
-func (testRouteScopePolicy) SettleDecision(int64, string, string)     {}
+func (p testRouteScopePolicy) ResolveScope(string) (RouteScope, bool)  { return p.scope, true }
+func (testRouteScopePolicy) NoteDecision(RouteScope, string)           {}
+func (testRouteScopePolicy) SettleDecision(RouteScope, string, string) {}
 func (p testRouteScopePolicy) ScopeStillValid(scope RouteScope) bool {
 	return scope.Key() == p.scope.Key()
 }
@@ -23,7 +23,7 @@ func TestPrepareRouteCandidates_ModelGroupScopesMembers(t *testing.T) {
 		Members: []string{"b", "missing"}, Mode: RouteModeAuto, FallbackEnabled: true,
 		Revision: 3, SnapshotVersion: 1, Model: "claude-sonnet",
 	}})
-	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Model: "claude-sonnet"})
+	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Path: "/v1/messages", Model: "claude-sonnet"})
 	if got := candidateNames(result); len(got) != 1 || got[0] != "b" {
 		t.Fatalf("expected only group member b, got %v", got)
 	}
@@ -53,7 +53,7 @@ func TestPrepareRouteCandidates_GroupFixedTargetMustBeMember(t *testing.T) {
 		Mode: RouteModeManualFixed, Target: "b", FallbackEnabled: false,
 		Revision: 1, SnapshotVersion: 1,
 	}})
-	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Model: "m"})
+	result := manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Path: "/v1/messages", Model: "m"})
 	if len(result.Candidates) != 0 {
 		t.Fatalf("fixed target outside group must not be selected: %v", candidateNames(result))
 	}
@@ -91,5 +91,31 @@ func TestAutoRetention_RevisionBumpInvalidatesRetained(t *testing.T) {
 	manager.PruneAutoRetentionScopes(map[string]struct{}{bumped.Key(): {}})
 	if got := manager.RetainedInTierForScope(scope.Key(), 1); got != "" {
 		t.Fatalf("stale revision scope should have been pruned, got %q", got)
+	}
+}
+
+// TestResolveRouteScope_OnlyAppliesToClaudeMessagesPaths 锁定模型路由的路径边界：
+// 只有 /v1/messages 与 /v1/messages/count_tokens 参与模型分组，其他进入端点管线的
+// 路径即便 body 带 model 也保持全局路由，不会被误判为未分配。
+func TestResolveRouteScope_OnlyAppliesToClaudeMessagesPaths(t *testing.T) {
+	manager := newSchedulerTestManager(t, schedulerTestConfig(true, "a"))
+	manager.SetRouteScopePolicy(testRouteScopePolicy{scope: RouteScope{
+		Kind: RouteScopeUnassigned, UnassignedReason: "model_routing_unassigned",
+	}})
+
+	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
+		scope := manager.ResolveRouteScope(RouteRequestProfile{Path: path, Model: "claude-x"})
+		if scope.Kind != RouteScopeUnassigned {
+			t.Fatalf("%s should participate in model routing, got %+v", path, scope)
+		}
+	}
+	for _, path := range []string{"/v1/chat/completions", "/v1/messages/foo", "/v1/messages/", ""} {
+		scope := manager.ResolveRouteScope(RouteRequestProfile{Path: path, Model: "claude-x"})
+		if scope.Kind != RouteScopeGlobal {
+			t.Fatalf("%q must stay on global routing, got %+v", path, scope)
+		}
+		if block := manager.GetRouteBlock(RouteRequestProfile{Path: path, Model: "claude-x"}); block != nil {
+			t.Fatalf("%q must not be blocked by model routing, got %+v", path, block)
+		}
 	}
 }

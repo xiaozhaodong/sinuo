@@ -152,35 +152,40 @@ func (s *ModelRoutingService) ResolveScope(model string) (endpoint.RouteScope, b
 	return scope, true
 }
 
-func (s *ModelRoutingService) NoteDecision(groupID int64, effectiveEndpoint string) {
-	if s == nil || groupID == 0 {
+// NoteDecision 记录组内本次选中的端点。带 fencing：在途请求期间模型被改派、组策略变更
+// 或路由被关闭后，旧作用域不再允许写入组运行态，否则面板会显示已失效组的「最近命中」。
+func (s *ModelRoutingService) NoteDecision(scope endpoint.RouteScope, effectiveEndpoint string) {
+	if !s.ScopeStillValid(scope) {
 		return
 	}
 	s.runtimeMu.Lock()
-	runtime := s.runtime[groupID]
+	runtime := s.runtime[scope.GroupID]
 	runtime.LastEffectiveEndpoint = effectiveEndpoint
 	runtime.LastDecisionAt = time.Now()
-	s.runtime[groupID] = runtime
+	s.runtime[scope.GroupID] = runtime
 	s.runtimeMu.Unlock()
 }
 
-func (s *ModelRoutingService) SettleDecision(groupID int64, effectiveEndpoint, outcome string) {
-	if s == nil || groupID == 0 {
+// SettleDecision 记录组内本次请求的终态。fencing 语义同 NoteDecision。
+func (s *ModelRoutingService) SettleDecision(scope endpoint.RouteScope, effectiveEndpoint, outcome string) {
+	if !s.ScopeStillValid(scope) {
 		return
 	}
 	s.runtimeMu.Lock()
-	runtime := s.runtime[groupID]
+	runtime := s.runtime[scope.GroupID]
 	if effectiveEndpoint != "" {
 		runtime.LastEffectiveEndpoint = effectiveEndpoint
 	}
 	runtime.LastOutcome = outcome
 	runtime.LastDecisionAt = time.Now()
-	s.runtime[groupID] = runtime
+	s.runtime[scope.GroupID] = runtime
 	s.runtimeMu.Unlock()
 }
 
+// ScopeStillValid 判断作用域是否仍是当前快照中的有效组作用域：
+// 快照版本与组 RouteRevision 都必须一致，任一变化都视为作用域失效。
 func (s *ModelRoutingService) ScopeStillValid(scope endpoint.RouteScope) bool {
-	if s == nil || scope.Kind != endpoint.RouteScopeUpstreamGroup {
+	if s == nil || scope.Kind != endpoint.RouteScopeUpstreamGroup || scope.GroupID == 0 {
 		return false
 	}
 	snapshot := s.CurrentSnapshot()

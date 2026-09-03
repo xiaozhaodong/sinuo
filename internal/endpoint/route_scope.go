@@ -64,11 +64,25 @@ func (s RouteScope) Clone() RouteScope {
 }
 
 // RouteScopePolicy 是模型路由服务与端点调度器之间的最小运行时契约。
+// NoteDecision / SettleDecision 接收完整作用域：实现方必须先做 fencing（快照版本 + 组 revision），
+// 在途请求期间被改派或关闭路由的旧作用域不得再写入组运行态。
 type RouteScopePolicy interface {
 	ResolveScope(model string) (RouteScope, bool)
-	NoteDecision(groupID int64, effectiveEndpoint string)
-	SettleDecision(groupID int64, effectiveEndpoint, outcome string)
+	NoteDecision(scope RouteScope, effectiveEndpoint string)
+	SettleDecision(scope RouteScope, effectiveEndpoint, outcome string)
 	ScopeStillValid(scope RouteScope) bool
+}
+
+const (
+	claudeMessagesPath    = "/v1/messages"
+	claudeCountTokensPath = "/v1/messages/count_tokens"
+)
+
+// modelRoutingAppliesTo 限定模型路由只作用于 Claude messages 契约路径。
+// 其他进入端点管线的路径（如 OpenAI 兼容路径）即便 body 带 model 也保持全局路由，
+// 否则会被模型分组误过滤，甚至对非 Claude 请求返回 model_routing_unassigned。
+func modelRoutingAppliesTo(path string) bool {
+	return path == claudeMessagesPath || path == claudeCountTokensPath
 }
 
 func formatInt64(value int64) string {
@@ -113,7 +127,8 @@ func (m *Manager) routeScopePolicySnapshot() RouteScopePolicy {
 	return policy
 }
 
-// ResolveRouteScope 将请求模型解析为模型组作用域；未启用模型路由时保持 global。
+// ResolveRouteScope 将请求模型解析为模型组作用域；未启用模型路由或路径不在
+// Claude messages 契约内时保持 global。
 func (m *Manager) ResolveRouteScope(profile RouteRequestProfile) RouteScope {
 	override := m.routeOverride.Snapshot()
 	global := RouteScope{
@@ -125,7 +140,7 @@ func (m *Manager) ResolveRouteScope(profile RouteRequestProfile) RouteScope {
 		Model:           strings.TrimSpace(profile.Model),
 	}
 	policy := m.routeScopePolicySnapshot()
-	if policy == nil || !m.IsClaudeRoutingReady() {
+	if policy == nil || !m.IsClaudeRoutingReady() || !modelRoutingAppliesTo(profile.Path) {
 		return global
 	}
 	if scope, ok := policy.ResolveScope(profile.Model); ok {
@@ -166,14 +181,14 @@ func (m *Manager) NoteRouteDecisionForScope(scope RouteScope, effectiveEndpoint,
 	state.FallbackReason = fallbackReason
 	state.LastDecisionAt = time.Now()
 	if policy := m.routeScopePolicySnapshot(); policy != nil && scope.Kind == RouteScopeUpstreamGroup {
-		policy.NoteDecision(scope.GroupID, effectiveEndpoint)
+		policy.NoteDecision(scope, effectiveEndpoint)
 	}
 	return state
 }
 
 func (m *Manager) SettleRouteDecision(scope RouteScope, effectiveEndpoint, outcome string) {
 	if policy := m.routeScopePolicySnapshot(); policy != nil && scope.Kind == RouteScopeUpstreamGroup {
-		policy.SettleDecision(scope.GroupID, effectiveEndpoint, outcome)
+		policy.SettleDecision(scope, effectiveEndpoint, outcome)
 	}
 }
 
