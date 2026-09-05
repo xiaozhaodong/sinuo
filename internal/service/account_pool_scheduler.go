@@ -32,6 +32,7 @@ const (
 	AccountScheduleOutcomePassthroughOther4xx            = "passthrough_other_4xx"
 	AccountScheduleOutcomeNoSchedulableAccounts          = "no_schedulable_accounts"
 	AccountScheduleOutcomePrivacyBlocked                 = "privacy_blocked"
+	AccountScheduleOutcomeInvalidRequest                 = "invalid_request"
 	latestAccountScheduleSnapshotPendingTTL              = 5 * time.Minute
 
 	accountScheduleOutcomeSuccess                        = AccountScheduleOutcomeSuccess
@@ -219,7 +220,8 @@ func isTerminalAccountScheduleSnapshotUpdate(outcome string, accountID int64) bo
 		accountScheduleOutcomePassthroughNoAvailableProvider,
 		accountScheduleOutcomePassthroughOther4xx,
 		accountScheduleOutcomeNoSchedulableAccounts,
-		AccountScheduleOutcomePrivacyBlocked:
+		AccountScheduleOutcomePrivacyBlocked,
+		AccountScheduleOutcomeInvalidRequest:
 		return true
 	case accountScheduleOutcomeTransientFailure:
 		return accountID <= 0

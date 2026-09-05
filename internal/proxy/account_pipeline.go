@@ -257,6 +257,18 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 		if forwardErr != nil {
 			releaseUpstream()
+			var bodyErr *requestBodyError
+			if errors.As(forwardErr, &bodyErr) {
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeInvalidRequest)
+				}
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeInvalidRequest, bodyErr.Code)
+				slog.Warn("[账号请求] 本地报文检查未通过", "request_id", requestID, "account_id", acc.ID,
+					"path", r.URL.Path, "enabled", acc.StripCodexInternalMetadata, "removed_items", 0, "code", bodyErr.Code)
+				lifecycleManager.FailRequest(bodyErr.Code, bodyErr.Message, bodyErr.StatusCode)
+				writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
+				return
+			}
 			// 🛡️ 隐私策略短路：本地策略拒绝不是上游失败，
 			// 不冷却账号、不记软失败、不继续换号
 			if policyErr := handlers.AsPrivacyPolicyError(forwardErr); policyErr != nil {
@@ -670,6 +682,23 @@ func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
 }
 
 func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, *handlers.UpstreamTraceState, error) {
+	requestID := ""
+	if lifecycleManager != nil {
+		requestID = lifecycleManager.GetRequestID()
+	}
+	if acc != nil && acc.StripCodexInternalMetadata && r.Method == http.MethodPost && isCodexResponsesAPIPath(r.URL.Path) {
+		filtered, removed, err := stripCodexInternalMetadata(bodyBytes)
+		if err != nil {
+			return nil, nil, nil, &requestBodyError{
+				StatusCode: http.StatusBadRequest, Code: requestBodyCodeCodexMetadataInvalid,
+				Message: "Codex 内部元数据过滤失败：请求 JSON 或 input 结构无效", Cause: err,
+			}
+		}
+		bodyBytes = filtered
+		slog.Info("🧹 [Codex 内部元数据] 出站兼容处理完成",
+			"request_id", requestID, "account_id", acc.ID, "path", r.URL.Path,
+			"enabled", true, "removed_items", removed)
+	}
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
 		return nil, nil, nil, err
@@ -680,10 +709,6 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	bodyBytes, err = h.applyAccountPrivacyFilter(r, bodyBytes, acc)
 	if err != nil {
 		return nil, nil, nil, err
-	}
-	requestID := ""
-	if lifecycleManager != nil {
-		requestID = lifecycleManager.GetRequestID()
 	}
 	wireBody, sendZstd, compressionMode, err := prepareAccountOutboundBody(r, bodyBytes, acc)
 	if err != nil {

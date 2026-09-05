@@ -24,6 +24,7 @@ type UpstreamAccountInfo struct {
 	BaseURL                       string   `json:"base_url"`
 	ModelRewriteRules             string   `json:"model_rewrite_rules"`
 	EnableRequestCompression      bool     `json:"enable_request_compression"`
+	StripCodexInternalMetadata    bool     `json:"strip_codex_internal_metadata"`
 	CostMultiplier                float64  `json:"cost_multiplier"`
 	InputCostMultiplier           float64  `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64  `json:"output_cost_multiplier"`
@@ -61,6 +62,7 @@ type CreateUpstreamAccountInput struct {
 	BaseURL                       string  `json:"base_url"`
 	ModelRewriteRules             string  `json:"model_rewrite_rules"`
 	EnableRequestCompression      bool    `json:"enable_request_compression"`
+	StripCodexInternalMetadata    *bool   `json:"strip_codex_internal_metadata,omitempty"`
 	CostMultiplier                float64 `json:"cost_multiplier"`
 	InputCostMultiplier           float64 `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64 `json:"output_cost_multiplier"`
@@ -218,6 +220,7 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			BaseURL:                       rec.BaseURL,
 			ModelRewriteRules:             rec.ModelRewriteRules,
 			EnableRequestCompression:      rec.EnableRequestCompression,
+			StripCodexInternalMetadata:    rec.StripCodexInternalMetadata,
 			CostMultiplier:                rec.CostMultiplier,
 			InputCostMultiplier:           rec.InputCostMultiplier,
 			OutputCostMultiplier:          rec.OutputCostMultiplier,
@@ -562,6 +565,7 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 		BaseURL:                       strings.TrimSpace(input.BaseURL),
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
 		EnableRequestCompression:      input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType),
+		StripCodexInternalMetadata:    input.StripCodexInternalMetadata != nil && *input.StripCodexInternalMetadata,
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -606,6 +610,9 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.BaseURL = strings.TrimSpace(input.BaseURL)
 	existing.ModelRewriteRules = strings.TrimSpace(input.ModelRewriteRules)
 	existing.EnableRequestCompression = input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType)
+	if input.StripCodexInternalMetadata != nil {
+		existing.StripCodexInternalMetadata = *input.StripCodexInternalMetadata
+	}
 	existing.CostMultiplier = input.CostMultiplier
 	existing.InputCostMultiplier = input.InputCostMultiplier
 	existing.OutputCostMultiplier = input.OutputCostMultiplier

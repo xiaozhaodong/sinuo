@@ -14,6 +14,38 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
 
+test('Codex metadata payload preserves optional booleans across aliases and repeated normalization', () => {
+  const aliases = ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata'];
+  for (const alias of aliases) {
+    for (const value of [true, false]) {
+      const payload = buildUpstreamAccountPayload({ provider_type: 'chatgpt_refresh_token', [alias]: value });
+      assert.equal(payload.strip_codex_internal_metadata, value);
+      assert.equal(buildUpstreamAccountPayload(payload).strip_codex_internal_metadata, value);
+      assert.equal('stripCodexInternalMetadata' in payload, false);
+      assert.equal('StripCodexInternalMetadata' in payload, false);
+    }
+    for (const value of [undefined, null]) {
+      const payload = buildUpstreamAccountPayload({ [alias]: value });
+      assert.equal('strip_codex_internal_metadata' in payload, false);
+      assert.equal('strip_codex_internal_metadata' in buildUpstreamAccountPayload(payload), false);
+    }
+    assert.throws(() => buildUpstreamAccountPayload({ [alias]: 'false' }), TypeError);
+  }
+  assert.equal('strip_codex_internal_metadata' in buildUpstreamAccountPayload({}), false);
+});
+
+test('Codex metadata account normalization mirrors aliases and defaults to false', () => {
+  for (const alias of ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata']) {
+    for (const value of [true, false]) {
+      const account = normalizeUpstreamAccount({ [alias]: value });
+      assert.equal(account.strip_codex_internal_metadata, value);
+      assert.equal(account.stripCodexInternalMetadata, value);
+    }
+  }
+  assert.equal(normalizeUpstreamAccount({}).stripCodexInternalMetadata, false);
+  assert.equal(normalizeUpstreamAccount({ strip_codex_internal_metadata: 'false' }).stripCodexInternalMetadata, false);
+});
+
 test('mapEndpointRecord preserves cacheCreationCostMultiplier1h from detail payload', () => {
   const result = mapEndpointRecord({
     id: 1,

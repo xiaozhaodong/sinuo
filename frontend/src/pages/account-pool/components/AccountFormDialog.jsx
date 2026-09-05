@@ -284,7 +284,22 @@ const AccountFormDialog = ({
             </section>
 
             <section className="space-y-4">
-              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">模型兼容</h4>
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">上游兼容</h4>
+
+              <label className="flex items-start gap-2 text-sm text-fg-body">
+                <input
+                  type="checkbox"
+                  checked={accountForm.stripCodexInternalMetadata === true}
+                  disabled={accountSubmitting}
+                  onChange={(event) => setAccountForm(prev => ({ ...prev, stripCodexInternalMetadata: event.target.checked }))}
+                  className="mt-0.5 app-checkbox"
+                  aria-describedby="codex-metadata-help"
+                />
+                <span>移除 Codex 内部元数据</span>
+              </label>
+              <div id="codex-metadata-help" className="rounded-lg bg-surface-sub px-3 py-2 text-xs leading-5 text-fg-muted">
+                用于不接受 Codex 内部工具追踪或内容分类元数据的上游。开启后仅清理内部元数据，不改变工具参数、返回值或压缩内容。不提供远程压缩兼容。
+              </div>
 
               <label className={`flex items-start gap-2 text-sm ${isAPIKeyAccount ? 'text-fg-body' : 'text-fg-subtle'}`}>
                 <input

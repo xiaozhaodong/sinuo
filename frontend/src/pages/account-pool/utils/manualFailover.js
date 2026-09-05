@@ -123,6 +123,7 @@ const buildAccountUpdatePayload = (account, priority) => ({
   credential_raw: String(account?.credential_raw ?? account?.credentialRaw ?? '').trim(),
   base_url: String(account?.base_url ?? account?.baseURL ?? DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL,
   model_rewrite_rules: String(account?.model_rewrite_rules ?? account?.modelRewriteRules ?? '').trim(),
+  strip_codex_internal_metadata: account?.strip_codex_internal_metadata ?? account?.stripCodexInternalMetadata ?? account?.StripCodexInternalMetadata,
   costMultiplier: String(account?.cost_multiplier ?? account?.costMultiplier ?? 1.0),
   inputCostMultiplier: String(account?.input_cost_multiplier ?? account?.inputCostMultiplier ?? 1.0),
   outputCostMultiplier: String(account?.output_cost_multiplier ?? account?.outputCostMultiplier ?? 1.0),

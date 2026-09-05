@@ -536,6 +536,7 @@ export namespace main {
 	    base_url: string;
 	    model_rewrite_rules: string;
 	    enable_request_compression: boolean;
+	    strip_codex_internal_metadata?: boolean;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -558,6 +559,7 @@ export namespace main {
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.enable_request_compression = source["enable_request_compression"];
+	        this.strip_codex_internal_metadata = source["strip_codex_internal_metadata"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -2102,6 +2104,7 @@ export namespace main {
 	    base_url: string;
 	    model_rewrite_rules: string;
 	    enable_request_compression: boolean;
+	    strip_codex_internal_metadata: boolean;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -2147,6 +2150,7 @@ export namespace main {
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
 	        this.enable_request_compression = source["enable_request_compression"];
+	        this.strip_codex_internal_metadata = source["strip_codex_internal_metadata"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];

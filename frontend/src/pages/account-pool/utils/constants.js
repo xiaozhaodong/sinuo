@@ -57,6 +57,7 @@ const SCHEDULE_OUTCOME_STYLE = {
   success: 'tone-emerald',
   auth_failed: 'tone-rose',
   transient_failure: 'tone-amber',
+  invalid_request: 'tone-amber',
   passthrough_no_available_providers: 'tone-sky',
   passthrough_other_4xx: 'tone-slate',
   no_schedulable_accounts: 'tone-slate'
@@ -89,6 +90,7 @@ const EMPTY_ACCOUNT_FORM = {
   cacheCreationCostMultiplier1h: '1.0',
   cacheReadCostMultiplier: '1.0',
   enableRequestCompression: false,
+  stripCodexInternalMetadata: false,
   modelRewriteEnabled: false,
   modelRewriteRules: [
     { source: 'gpt-5.4', target: 'gpt-5.5' },

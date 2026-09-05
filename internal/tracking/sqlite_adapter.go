@@ -301,6 +301,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "upstream_accounts",
+			checkColumn: "strip_codex_internal_metadata",
+			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN strip_codex_internal_metadata INTEGER NOT NULL DEFAULT 0",
+			description: "账号 Codex 内部元数据兼容开关字段",
+		},
+		{
+			table:       "upstream_accounts",
 			checkColumn: "enable_request_compression",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN enable_request_compression INTEGER DEFAULT 0",
 			description: "账号 zstd 请求压缩开关字段",
@@ -770,6 +776,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				base_url TEXT NOT NULL DEFAULT 'https://api.openai.com',
 				model_rewrite_rules TEXT DEFAULT '',
 				enable_request_compression INTEGER DEFAULT 0,
+				strip_codex_internal_metadata INTEGER NOT NULL DEFAULT 0,
 				cost_multiplier REAL DEFAULT 1.0,
 				input_cost_multiplier REAL DEFAULT 1.0,
 				output_cost_multiplier REAL DEFAULT 1.0,
@@ -799,7 +806,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 			)`,
 			`INSERT INTO upstream_accounts_new (
-				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression,
+				id, provider_type, account_name, credential_raw, base_url, model_rewrite_rules, enable_request_compression, strip_codex_internal_metadata,
 				cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 				cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 				group_key, priority, enabled, state, cooldown_until, fail_count,
@@ -811,6 +818,7 @@ func (s *SQLiteAdapter) migrateDeprecatedAccountPoolSchema(ctx context.Context) 
 				id, provider_type, account_name, credential_raw, base_url,
 				'' AS model_rewrite_rules,
 				enable_request_compression,
+				strip_codex_internal_metadata,
 				1.0 AS cost_multiplier,
 				1.0 AS input_cost_multiplier,
 				1.0 AS output_cost_multiplier,

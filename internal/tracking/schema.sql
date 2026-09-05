@@ -323,6 +323,7 @@ CREATE TABLE IF NOT EXISTS upstream_accounts (
     base_url TEXT NOT NULL DEFAULT 'https://api.openai.com', -- 上游基础URL
     model_rewrite_rules TEXT DEFAULT '',            -- Codex 模型兼容改写规则 JSON
     enable_request_compression INTEGER DEFAULT 0,   -- API Key 上游是否发送 zstd 请求体
+    strip_codex_internal_metadata INTEGER NOT NULL DEFAULT 0, -- 账号级移除 Codex 内部元数据
 
     -- ========== 成本倍率 ==========
     cost_multiplier REAL DEFAULT 1.0,               -- 总成本倍率

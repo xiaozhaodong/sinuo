@@ -2,10 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildAccountUpdatePayload, buildManualFailoverPriorityPlan } from './manualFailover.js';
+import { buildUpstreamAccountPayload } from '../../../utils/wailsApi.js';
 
 const summarizePlan = (plan = []) => plan
   .map(({ account, priority }) => [account.id, priority])
   .sort((left, right) => left[0] - right[0]);
+
+test('manual priority updates preserve the optional Codex metadata setting', () => {
+  for (const alias of ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata']) {
+    for (const value of [true, false]) {
+      const update = buildAccountUpdatePayload({ provider_type: 'api_key', [alias]: value }, 20);
+      const payload = buildUpstreamAccountPayload(update);
+      assert.equal(payload.strip_codex_internal_metadata, value);
+      assert.equal(payload.priority, 20);
+      assert.equal(buildUpstreamAccountPayload(payload).strip_codex_internal_metadata, value);
+    }
+  }
+  const omitted = buildUpstreamAccountPayload(buildAccountUpdatePayload({ provider_type: 'api_key' }, 20));
+  assert.equal('strip_codex_internal_metadata' in omitted, false);
+});
 
 test('buildManualFailoverPriorityPlan promotes the whole tier to primary', () => {
   const accounts = [

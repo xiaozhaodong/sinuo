@@ -207,6 +207,7 @@ const toScheduleOutcomeLabel = (outcome = '') => {
     success: '成功',
     auth_failed: '鉴权失败',
     transient_failure: '瞬时失败',
+    invalid_request: '请求无效',
     passthrough_no_available_providers: '透传 503',
     passthrough_other_4xx: '透传 4xx',
     no_schedulable_accounts: '无可调度账号'

@@ -529,6 +529,7 @@ export const normalizeUpstreamAccount = (account = {}) => {
     ['base_url', 'baseURL', pickAccountValue(account, ['base_url', 'baseURL', 'BaseURL'], '')],
     ['model_rewrite_rules', 'modelRewriteRules', pickAccountValue(account, ['model_rewrite_rules', 'modelRewriteRules', 'ModelRewriteRules'], '')],
     ['enable_request_compression', 'enableRequestCompression', pickAccountValue(account, ['enable_request_compression', 'enableRequestCompression', 'EnableRequestCompression'], false) === true],
+    ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', pickAccountValue(account, ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata'], false) === true],
     ['cost_multiplier', 'costMultiplier', Number.parseFloat(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0)) || 1.0],
     ['input_cost_multiplier', 'inputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['input_cost_multiplier', 'inputCostMultiplier', 'InputCostMultiplier'], 1.0)) || 1.0],
     ['output_cost_multiplier', 'outputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['output_cost_multiplier', 'outputCostMultiplier', 'OutputCostMultiplier'], 1.0)) || 1.0],
@@ -586,6 +587,16 @@ const serializeModelRewriteRules = (value) => {
 };
 
 export const buildUpstreamAccountPayload = (input = {}) => {
+  const {
+    strip_codex_internal_metadata: stripSnake,
+    stripCodexInternalMetadata: stripCamel,
+    StripCodexInternalMetadata: stripGo,
+    ...payloadInput
+  } = input;
+  const stripMetadata = stripSnake ?? stripCamel ?? stripGo;
+  if (stripMetadata != null && typeof stripMetadata !== 'boolean') {
+    throw new TypeError('移除 Codex 内部元数据开关必须为布尔值');
+  }
   const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = providerType === 'api_key';
   const isChatGPTOAuthAccount = ['chatgpt_refresh_token', 'chatgpt_rt', 'refresh_token', 'rt', 'oauth', 'openai_oauth'].includes(providerType);
@@ -596,7 +607,8 @@ export const buildUpstreamAccountPayload = (input = {}) => {
   };
 
   return {
-    ...input,
+    ...payloadInput,
+    ...(stripMetadata == null ? {} : { strip_codex_internal_metadata: stripMetadata }),
     account_name: input.account_name || input.accountName || '',
     provider_type: input.provider_type || input.providerType || '',
     credential_raw: input.credential_raw || input.credentialRaw || '',
