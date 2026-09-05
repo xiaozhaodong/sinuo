@@ -9,6 +9,7 @@ import ViewConfigPanel from './ViewConfigPanel.jsx';
 import AutoRefreshControl from './AutoRefreshControl.jsx';
 import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
 import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
+import CodexModelRoutingSwitcher from './CodexModelRoutingSwitcher.jsx';
 
 /**
  * Toolbar - 请求追踪页面工具栏
@@ -52,9 +53,13 @@ const Toolbar = ({
   endpoints = [],
   claudeRoutingState = null,
   modelRoutingEnabled = false,
+  codexModelRoutingEnabled = false,
   modelRouteBindings = [],
   onModelRoutePatch,
   modelRoutePatching = false,
+  codexModelRouteBindings = [],
+  onCodexModelRoutePatch,
+  codexModelRoutePatching = false,
   onClaudeEndpointSwitch,
   onRestoreClaudeAuto,
   onClearRouteCache,
@@ -82,14 +87,24 @@ const Toolbar = ({
         loading={routeSwitching}
       />
 
-      <AccountPoolSwitcher
-        accounts={accounts}
-        activeAccount={activeAccount}
-        recentSelectedAccountId={recentSelectedAccountId}
-        onSwitch={onAccountSwitch}
-        onSwitchAuto={onEnableAutoSelection}
-        loading={accountSwitching}
-      />
+      {codexModelRoutingEnabled ? (
+        <CodexModelRoutingSwitcher
+          bindings={codexModelRouteBindings}
+          accounts={accounts}
+          onPatch={onCodexModelRoutePatch}
+          loading={codexModelRoutePatching}
+        />
+      ) : (
+        <AccountPoolSwitcher
+          accounts={accounts}
+          activeAccount={activeAccount}
+          recentSelectedAccountId={recentSelectedAccountId}
+          onSwitch={onAccountSwitch}
+          onSwitchAuto={onEnableAutoSelection}
+          loading={accountSwitching}
+          modelRoutingEnabled={false}
+        />
+      )}
 
       <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
 

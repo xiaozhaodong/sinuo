@@ -290,6 +290,7 @@ export namespace main {
 		    return a;
 		}
 	}
+
 	export class CodexModelRouteBindingInfo {
 	    assignment_id: number;
 	    model: string;
@@ -344,7 +345,88 @@ export namespace main {
 	        this.note = source["note"];
 	    }
 	}
+	export class CodexModelRoutingTestAccountInfo {
+	    account_id: number;
+	    account_name: string;
+	    provider_type: string;
+	    status: string;
+	    detail: string;
+	    decision: string;
+	    reason: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CodexModelRoutingTestAccountInfo(source);
+	    }
 	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.account_id = source["account_id"];
+	        this.account_name = source["account_name"];
+	        this.provider_type = source["provider_type"];
+	        this.status = source["status"];
+	        this.detail = source["detail"];
+	        this.decision = source["decision"];
+	        this.reason = source["reason"];
+	    }
+	}
+	export class CodexModelRoutingTestInput {
+	    model: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CodexModelRoutingTestInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	    }
+	}
+	export class CodexModelRoutingTestResult {
+	    model: string;
+	    assigned: boolean;
+	    scope_kind: string;
+	    group_id?: number;
+	    group_name?: string;
+	    route_mode?: string;
+	    route_target_account_id?: number;
+	    unassigned_reason?: string;
+	    accounts: CodexModelRoutingTestAccountInfo[];
+
+	    static createFrom(source: any = {}) {
+	        return new CodexModelRoutingTestResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.assigned = source["assigned"];
+	        this.scope_kind = source["scope_kind"];
+	        this.group_id = source["group_id"];
+	        this.group_name = source["group_name"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target_account_id = source["route_target_account_id"];
+	        this.unassigned_reason = source["unassigned_reason"];
+	        this.accounts = this.convertValues(source["accounts"], CodexModelRoutingTestAccountInfo);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ConfigInfo {
 	    timezone: string;
 	    server_host: string;
@@ -772,6 +854,14 @@ export namespace main {
 	    final_outcome: string;
 	    final_error: string;
 	    summary: string;
+	    request_model?: string;
+	    model_routing_family?: string;
+	    model_routing_version?: number;
+	    route_scope_kind?: string;
+	    route_scope_group_id?: number;
+	    route_scope_group_name?: string;
+	    route_mode?: string;
+	    route_target_account_id?: number;
 	    candidates: AccountScheduleCandidateDecisionInfo[];
 	
 	    static createFrom(source: any = {}) {
@@ -794,6 +884,14 @@ export namespace main {
 	        this.final_outcome = source["final_outcome"];
 	        this.final_error = source["final_error"];
 	        this.summary = source["summary"];
+	        this.request_model = source["request_model"];
+	        this.model_routing_family = source["model_routing_family"];
+	        this.model_routing_version = source["model_routing_version"];
+	        this.route_scope_kind = source["route_scope_kind"];
+	        this.route_scope_group_id = source["route_scope_group_id"];
+	        this.route_scope_group_name = source["route_scope_group_name"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target_account_id = source["route_target_account_id"];
 	        this.candidates = this.convertValues(source["candidates"], AccountScheduleCandidateDecisionInfo);
 	    }
 	
@@ -1047,6 +1145,12 @@ export namespace main {
 	    version: number;
 	    updated_at: string;
 	    binding_count: number;
+	    claude_status: string;
+	    codex_status: string;
+	    claude_version: number;
+	    codex_version: number;
+	    claude_binding_count: number;
+	    codex_binding_count: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ModelRoutingSettingsInfo(source);
@@ -1060,6 +1164,12 @@ export namespace main {
 	        this.version = source["version"];
 	        this.updated_at = source["updated_at"];
 	        this.binding_count = source["binding_count"];
+	        this.claude_status = source["claude_status"];
+	        this.codex_status = source["codex_status"];
+	        this.claude_version = source["claude_version"];
+	        this.codex_version = source["codex_version"];
+	        this.claude_binding_count = source["claude_binding_count"];
+	        this.codex_binding_count = source["codex_binding_count"];
 	    }
 	}
 	export class ModelRoutingTestInput {
@@ -1948,7 +2058,7 @@ export namespace main {
 	    }
 	}
 	export class UpdateModelRoutingSettingsInput {
-	    claude_enabled: boolean;
+	    claude_enabled?: boolean;
 	    codex_enabled?: boolean;
 	
 	    static createFrom(source: any = {}) {

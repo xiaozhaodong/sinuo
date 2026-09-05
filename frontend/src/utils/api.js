@@ -208,7 +208,20 @@ export const clearNegativeHitCache = async (endpointName = '') => {
 
 export const fetchModelRoutingSettings = async () => {
   if (isWailsEnvironment()) return await WailsApi.getModelRoutingSettings();
-  return { unsupported: true, claude_enabled: false, codex_enabled: false, status: 'unsupported', version: 0, binding_count: 0 };
+  return {
+    unsupported: true,
+    claude_enabled: false,
+    codex_enabled: false,
+    status: 'unsupported',
+    version: 0,
+    binding_count: 0,
+    claude_status: 'unsupported',
+    codex_status: 'unsupported',
+    claude_version: 0,
+    codex_version: 0,
+    claude_binding_count: 0,
+    codex_binding_count: 0
+  };
 };
 
 export const updateModelRoutingSettings = async (input) => {
@@ -241,6 +254,11 @@ export const testModelRouting = async (model) => {
   return { unsupported: true, model, assigned: false, scope_kind: 'global', members: [] };
 };
 
+export const testCodexModelRouting = async (model) => {
+  if (isWailsEnvironment()) return await WailsApi.testCodexModelRouting(model);
+  return { unsupported: true, model, assigned: false, scope_kind: 'global', accounts: [] };
+};
+
 export const fetchCodexModelRouteBindings = async () => {
   if (isWailsEnvironment()) return await WailsApi.listCodexModelRouteBindings();
   return [];
@@ -253,6 +271,11 @@ export const createCodexModelRouteBinding = async (input) => {
 
 export const deleteCodexModelRouteBinding = async (id) => {
   if (isWailsEnvironment()) return await WailsApi.deleteCodexModelRouteBinding(id);
+  throw new Error('当前运行环境暂不支持 Codex 模型路由配置');
+};
+
+export const updateCodexModelRouteBinding = async (id, input) => {
+  if (isWailsEnvironment()) return await WailsApi.updateCodexModelRouteBinding(id, input);
   throw new Error('当前运行环境暂不支持 Codex 模型路由配置');
 };
 

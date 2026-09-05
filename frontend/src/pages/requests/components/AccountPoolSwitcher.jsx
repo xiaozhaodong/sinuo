@@ -114,7 +114,8 @@ const AccountPoolSwitcher = ({
   recentSelectedAccountId = null,
   onSwitch,
   onSwitchAuto,
-  loading = false
+  loading = false,
+  modelRoutingEnabled = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -174,7 +175,7 @@ const AccountPoolSwitcher = ({
 
   const handleAccountSelect = async (account) => {
     const accountId = resolveAccountId(account);
-    if (loading || accountId === null || accountId === undefined) {
+    if (loading || modelRoutingEnabled || accountId === null || accountId === undefined) {
       return;
     }
 
@@ -196,7 +197,7 @@ const AccountPoolSwitcher = ({
   };
 
   const handleAutoSelect = async () => {
-    if (loading || isAutoMode) {
+    if (loading || modelRoutingEnabled || isAutoMode) {
       closePanel();
       return;
     }
@@ -222,8 +223,8 @@ const AccountPoolSwitcher = ({
   const activeIndicatorPingClass = isAutoMode ? 'bg-sky-400' : getIndicatorClass(currentAccount);
   const activeIndicatorDotClass = isAutoMode ? 'bg-sky-500' : getIndicatorClass(currentAccount);
   const activeGroupMeta = isAutoMode ? null : getGroupMeta(currentAccount);
-  const currentTitle = isAutoMode ? '当前按编排自动调度' : '切换即固定该账号，直到其严格不可用';
-  const currentLabel = isAutoMode ? 'Auto' : getAccountName(currentAccount);
+  const currentTitle = modelRoutingEnabled ? '当前由 Codex 模型路由选择账号，请在账号池模型路由面板修改' : isAutoMode ? '当前按编排自动调度' : '切换即固定该账号，直到其严格不可用';
+  const currentLabel = modelRoutingEnabled ? '按模型路由' : isAutoMode ? 'Auto' : getAccountName(currentAccount);
 
   return (
     <div className="relative" ref={containerRef}>
@@ -284,10 +285,11 @@ const AccountPoolSwitcher = ({
           </div>
 
           <div className="p-2 max-h-[360px] overflow-y-auto">
+            {modelRoutingEnabled && <div className="mb-2 flex items-start gap-2 rounded-lg border border-accent-line bg-accent-soft/50 px-3 py-2 text-[11px] text-accent-fg"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>当前请求按模型路由选择账号，全局固定和 Auto 操作已暂停。</span></div>}
             <button
               type="button"
               onClick={handleAutoSelect}
-              disabled={loading}
+              disabled={loading || modelRoutingEnabled}
               className={`mb-2 w-full flex items-start justify-between gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                 isAutoMode
                   ? 'bg-accent-soft text-accent-fg'
@@ -321,7 +323,7 @@ const AccountPoolSwitcher = ({
                 const isActive = isSameAccountId(accountId, activeAccountId);
                 const isRecentSelected = recentSelectedAccountId !== null && recentSelectedAccountId !== undefined
                   && isSameAccountId(accountId, recentSelectedAccountId);
-                const switchable = isSwitchableAccount(account);
+                const switchable = !modelRoutingEnabled && isSwitchableAccount(account);
                 const priority = normalizePriorityValue(account.priority ?? account.Priority);
                 const groupMeta = getGroupMeta(account);
                 const accountName = getAccountName(account);

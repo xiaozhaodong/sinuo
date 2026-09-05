@@ -41,6 +41,32 @@ func TestCompleteSnapshot_PendingHit(t *testing.T) {
 	}
 }
 
+func TestCompleteSnapshot_CodexRoutingErrorsAreTerminal(t *testing.T) {
+	outcomes := []string{
+		CodexModelRoutingMissingModel,
+		CodexModelRoutingUnassigned,
+		CodexModelRoutingLoadFailed,
+		CodexModelRoutingNoAvailable,
+		CodexModelRoutingFixedUnavailable,
+	}
+	for _, outcome := range outcomes {
+		t.Run(outcome, func(t *testing.T) {
+			store := newLatestAccountScheduleSnapshotStore()
+			snapshot := newTestSnapshot(1, "")
+			snapshot.RequestID = "req-" + outcome
+			store.saveDraft(snapshot)
+
+			completed, matched := store.complete(snapshot.RequestID, 0, "", outcome, "routing failure")
+			if !matched || completed == nil {
+				t.Fatalf("expected terminal snapshot update, matched=%v snapshot=%+v", matched, completed)
+			}
+			if _, exists := store.pending[snapshot.RequestID]; exists {
+				t.Fatalf("Codex routing outcome must remove pending snapshot: %q", outcome)
+			}
+		})
+	}
+}
+
 // TestCompleteSnapshot_LatestFallbackSameRequestID 无 pending、latest 是同一请求 → matched=true。
 func TestCompleteSnapshot_LatestFallbackSameRequestID(t *testing.T) {
 	store := newLatestAccountScheduleSnapshotStore()

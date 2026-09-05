@@ -23,7 +23,7 @@ type AccountPoolService interface {
 
 type CodexModelRouter interface {
 	Enabled() bool
-	Prepare(ctx context.Context, model string) (svc.CodexModelRouteResult, error)
+	Prepare(ctx context.Context, model, path string) (svc.CodexModelRouteResult, error)
 	Settle(scope svc.CodexModelRouteScope, accountID int64, outcome string)
-	RecordNegativeHit(accountID int64, model string)
+	RecordNegativeHit(accountID int64, path, model string, generation uint64)
 }

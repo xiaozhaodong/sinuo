@@ -16,12 +16,18 @@ import (
 const EventModelRoutingUpdate = "model-routing:update"
 
 type ModelRoutingSettingsInfo struct {
-	ClaudeEnabled bool   `json:"claude_enabled"`
-	CodexEnabled  bool   `json:"codex_enabled"`
-	Status        string `json:"status"`
-	Version       int64  `json:"version"`
-	UpdatedAt     string `json:"updated_at"`
-	BindingCount  int    `json:"binding_count"`
+	ClaudeEnabled      bool   `json:"claude_enabled"`
+	CodexEnabled       bool   `json:"codex_enabled"`
+	Status             string `json:"status"`  // 兼容旧前端，等同 ClaudeStatus
+	Version            int64  `json:"version"` // 兼容旧前端，等同 ClaudeVersion
+	UpdatedAt          string `json:"updated_at"`
+	BindingCount       int    `json:"binding_count"` // 兼容旧前端，等同 ClaudeBindingCount
+	ClaudeStatus       string `json:"claude_status"`
+	CodexStatus        string `json:"codex_status"`
+	ClaudeVersion      int64  `json:"claude_version"`
+	CodexVersion       int64  `json:"codex_version"`
+	ClaudeBindingCount int    `json:"claude_binding_count"`
+	CodexBindingCount  int    `json:"codex_binding_count"`
 }
 
 type CodexModelRouteBindingInfo struct {
@@ -48,7 +54,7 @@ type CodexModelRouteBindingInput struct {
 }
 
 type UpdateModelRoutingSettingsInput struct {
-	ClaudeEnabled bool  `json:"claude_enabled"`
+	ClaudeEnabled *bool `json:"claude_enabled,omitempty"`
 	CodexEnabled  *bool `json:"codex_enabled,omitempty"`
 }
 
@@ -107,6 +113,32 @@ type ModelRoutingTestResult struct {
 	Members          []ModelRoutingMemberInfo `json:"members"`
 }
 
+type CodexModelRoutingTestInput struct {
+	Model string `json:"model"`
+}
+
+type CodexModelRoutingTestAccountInfo struct {
+	AccountID    int64  `json:"account_id"`
+	AccountName  string `json:"account_name"`
+	ProviderType string `json:"provider_type"`
+	Status       string `json:"status"`
+	Detail       string `json:"detail"`
+	Decision     string `json:"decision"`
+	Reason       string `json:"reason"`
+}
+
+type CodexModelRoutingTestResult struct {
+	Model                string                             `json:"model"`
+	Assigned             bool                               `json:"assigned"`
+	ScopeKind            string                             `json:"scope_kind"`
+	GroupID              int64                              `json:"group_id,omitempty"`
+	GroupName            string                             `json:"group_name,omitempty"`
+	RouteMode            string                             `json:"route_mode,omitempty"`
+	RouteTargetAccountID int64                              `json:"route_target_account_id,omitempty"`
+	UnassignedReason     string                             `json:"unassigned_reason,omitempty"`
+	Accounts             []CodexModelRoutingTestAccountInfo `json:"accounts"`
+}
+
 func (a *App) modelRoutingServiceSnapshot() (*service.ModelRoutingService, error) {
 	a.mu.RLock()
 	svc := a.modelRoutingService
@@ -132,7 +164,30 @@ func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
 	if err != nil {
 		return ModelRoutingSettingsInfo{}, err
 	}
-	info := ModelRoutingSettingsInfo{Status: svc.Status(), Version: svc.SnapshotVersion(), BindingCount: len(bindings)}
+	claudeStatus := svc.Status()
+	claudeVersion := svc.SnapshotVersion()
+	claudeBindingCount := len(bindings)
+	info := ModelRoutingSettingsInfo{
+		Status:             claudeStatus,
+		Version:            claudeVersion,
+		BindingCount:       claudeBindingCount,
+		ClaudeStatus:       claudeStatus,
+		ClaudeVersion:      claudeVersion,
+		ClaudeBindingCount: claudeBindingCount,
+		CodexStatus:        "unavailable",
+	}
+	a.mu.RLock()
+	codexSvc := a.codexModelRoutingService
+	a.mu.RUnlock()
+	if codexSvc != nil {
+		codexBindings, codexErr := codexSvc.ListBindings(ctx)
+		if codexErr != nil {
+			return ModelRoutingSettingsInfo{}, codexErr
+		}
+		info.CodexStatus = codexSvc.Status()
+		info.CodexVersion = codexSvc.SnapshotVersion()
+		info.CodexBindingCount = len(codexBindings)
+	}
 	if record != nil {
 		info.ClaudeEnabled = record.ClaudeEnabled
 		info.CodexEnabled = record.CodexEnabled
@@ -155,7 +210,9 @@ func (a *App) UpdateModelRoutingSettings(input UpdateModelRoutingSettingsInput) 
 	if current == nil {
 		current = &store.ModelRoutingSettingsRecord{ID: 1}
 	}
-	current.ClaudeEnabled = input.ClaudeEnabled
+	if input.ClaudeEnabled != nil {
+		current.ClaudeEnabled = *input.ClaudeEnabled
+	}
 	if input.CodexEnabled != nil {
 		current.CodexEnabled = *input.CodexEnabled
 	}
@@ -383,6 +440,44 @@ func (a *App) TestModelRouting(input ModelRoutingTestInput) (ModelRoutingTestRes
 	result := ModelRoutingTestResult{Model: model, Assigned: scope.Kind == endpoint.RouteScopeUpstreamGroup, ScopeKind: scope.Kind, GroupID: scope.GroupID, GroupName: scope.GroupName, RouteMode: scope.Mode, RouteTarget: scope.Target, UnassignedReason: scope.UnassignedReason, Members: []ModelRoutingMemberInfo{}}
 	for _, member := range scope.Members {
 		result.Members = append(result.Members, modelRoutingMemberInfo(svc.EndpointMember(member)))
+	}
+	return result, nil
+}
+
+func (a *App) TestCodexModelRouting(input CodexModelRoutingTestInput) (CodexModelRoutingTestResult, error) {
+	svc, err := a.codexModelRoutingSnapshot()
+	if err != nil {
+		return CodexModelRoutingTestResult{}, err
+	}
+	model := strings.TrimSpace(input.Model)
+	scope, applies := svc.ResolveScope(model)
+	result := CodexModelRoutingTestResult{
+		Model: model, Assigned: applies && scope.Kind == "upstream_group", ScopeKind: scope.Kind,
+		GroupID: scope.GroupID, GroupName: scope.GroupName, RouteMode: scope.Mode,
+		RouteTargetAccountID: scope.TargetAccountID, UnassignedReason: scope.UnassignedReason,
+		Accounts: []CodexModelRoutingTestAccountInfo{},
+	}
+	if !applies || scope.Kind != "upstream_group" {
+		if !applies {
+			result.ScopeKind = "global"
+		}
+		return result, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	prepared, err := svc.Prepare(ctx, model, "/v1/responses")
+	if err != nil {
+		return CodexModelRoutingTestResult{}, err
+	}
+	for _, candidate := range prepared.Candidates {
+		status := "skipped"
+		if candidate.Decision == "selected" || candidate.Decision == "eligible" {
+			status = "eligible"
+		}
+		result.Accounts = append(result.Accounts, CodexModelRoutingTestAccountInfo{
+			AccountID: candidate.AccountID, AccountName: candidate.AccountName, ProviderType: candidate.ProviderType,
+			Status: status, Detail: candidate.ReasonDetail, Decision: candidate.Decision, Reason: candidate.Reason,
+		})
 	}
 	return result, nil
 }

@@ -139,4 +139,16 @@ func TestMarshalScheduleSnapshot_DropsCandidatesOver32KB(t *testing.T) {
 	}
 }
 
+func TestMarshalScheduleSnapshot_PreservesCodexModelRoutingScope(t *testing.T) {
+	payload := marshalScheduleSnapshot(&svc.LatestAccountScheduleSnapshot{
+		RequestID: "codex-routing", RequestPath: "/v1/responses", RequestModel: "gpt-5",
+		ModelRoutingFamily: "codex", ModelRoutingVersion: 7, RouteScopeKind: "upstream_group",
+		RouteScopeGroupID: 12, RouteScopeGroupName: "gpt-5", RouteMode: "manual_fixed", RouteTargetAccountID: 42,
+	})
+	parsed := parseSnapshotPayload(t, payload)
+	if parsed["request_model"] != "gpt-5" || parsed["model_routing_family"] != "codex" || parsed["route_target_account_id"] != float64(42) {
+		t.Fatalf("Codex model-routing scope was not persisted: %#v", parsed)
+	}
+}
+
 func runeLen(s string) int { return len([]rune(s)) }

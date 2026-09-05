@@ -473,9 +473,41 @@ func (s *SQLiteAdapter) ensureModelRoutingSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS model_routing_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			claude_enabled INTEGER NOT NULL DEFAULT 0 CHECK (claude_enabled IN (0, 1)),
+			codex_enabled INTEGER NOT NULL DEFAULT 0 CHECK (codex_enabled IN (0, 1)),
 			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 		)`,
 		`INSERT OR IGNORE INTO model_routing_settings (id) VALUES (1)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("failed to ensure model routing schema: %w", err)
+		}
+	}
+	// 旧库的 settings 表可能已经存在但还没有 Codex 开关。
+	var hasCodex bool
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(model_routing_settings)`)
+	if err != nil {
+		return fmt.Errorf("inspect model routing settings schema failed: %w", err)
+	}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, colType string
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "codex_enabled" {
+			hasCodex = true
+		}
+	}
+	_ = rows.Close()
+	if !hasCodex {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE model_routing_settings ADD COLUMN codex_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add codex_enabled setting failed: %w", err)
+		}
+	}
+	statements = []string{
 		`CREATE TABLE IF NOT EXISTS model_upstream_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			family TEXT NOT NULL DEFAULT 'claude' CHECK (family IN ('claude', 'codex')),

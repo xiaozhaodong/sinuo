@@ -22,6 +22,8 @@ import {
   fetchModelRoutingSettings,
   fetchModelRouteBindings,
   updateModelRouteBinding,
+  fetchCodexModelRouteBindings,
+  updateCodexModelRouteBinding,
   setClaudeRoutingOverride,
   clearClaudeRoutingOverride,
   clearNegativeHitCache,
@@ -62,6 +64,8 @@ const RequestsPage = () => {
   const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false });
   const [modelRouteBindings, setModelRouteBindings] = useState([]);
   const [modelRoutePatching, setModelRoutePatching] = useState(false);
+  const [codexModelRouteBindings, setCodexModelRouteBindings] = useState([]);
+  const [codexModelRoutePatching, setCodexModelRoutePatching] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
   const [routeSwitching, setRouteSwitching] = useState(false);
@@ -217,7 +221,7 @@ const RequestsPage = () => {
       setError(null);
 
       // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
+      const [, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, codexModelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
         refreshRequestData(),
         fetchModels(),
         fetchEndpoints(),
@@ -231,6 +235,10 @@ const RequestsPage = () => {
         }),
         fetchModelRouteBindings().catch((err) => {
           console.error('❌ 加载模型路由映射失败:', err);
+          return [];
+        }),
+        fetchCodexModelRouteBindings().catch((err) => {
+          console.error('❌ 加载 Codex 模型路由绑定失败:', err);
           return [];
         }),
         fetchUpstreamAccounts().catch((err) => {
@@ -263,6 +271,7 @@ const RequestsPage = () => {
         : { mode: 'auto', endpointName: '', fallbackEnabled: true });
       setModelRoutingSettings(modelRoutingData && typeof modelRoutingData === 'object' ? modelRoutingData : { claude_enabled: false });
       setModelRouteBindings(Array.isArray(modelBindingsData) ? modelBindingsData : []);
+      setCodexModelRouteBindings(Array.isArray(codexModelBindingsData) ? codexModelBindingsData : []);
 
       setAccounts(Array.isArray(accountsData) ? accountsData : []);
       setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
@@ -392,6 +401,32 @@ const RequestsPage = () => {
     }
   }, [showNotice]);
 
+  const handleCodexModelRoutePatch = useCallback(async (binding, patch) => {
+    setCodexModelRoutePatching(true);
+    try {
+      const next = { ...binding, ...patch };
+      const routeMode = next.route_mode || 'auto';
+      const accountIDs = (next.account_ids || []).map(Number);
+      const targetID = routeMode === 'auto' ? 0 : (Number(next.route_target_account_id) || accountIDs[0] || 0);
+      await updateCodexModelRouteBinding(binding.assignment_id, {
+        model: next.model,
+        account_ids: accountIDs,
+        route_mode: routeMode,
+        route_target_account_id: targetID,
+        enabled: next.enabled !== false,
+        note: next.note || ''
+      });
+      const list = await fetchCodexModelRouteBindings();
+      setCodexModelRouteBindings(Array.isArray(list) ? list : []);
+      const mode = routeMode === 'auto' ? '自动调度' : `${routeMode === 'manual_fixed' ? '固定' : '优选'} #${targetID}`;
+      showNotice('success', `Codex 模型「${binding.model}」已切换为${mode}`);
+    } catch (err) {
+      showNotice('error', err?.message || '切换 Codex 模型路由策略失败');
+    } finally {
+      setCodexModelRoutePatching(false);
+    }
+  }, [showNotice]);
+
   const handleRestoreClaudeAuto = useCallback(async () => {
     setRouteSwitching(true);
     try {
@@ -514,6 +549,9 @@ const RequestsPage = () => {
       fetchModelRouteBindings().then((list) => setModelRouteBindings(Array.isArray(list) ? list : [])).catch((err) => {
         console.error('❌ 刷新模型路由映射失败:', err);
       });
+      fetchCodexModelRouteBindings().then((list) => setCodexModelRouteBindings(Array.isArray(list) ? list : [])).catch((err) => {
+        console.error('❌ 刷新 Codex 模型路由绑定失败:', err);
+      });
     });
     return () => {
       if (typeof unsubscribe === 'function') {
@@ -568,9 +606,13 @@ const RequestsPage = () => {
             endpoints={endpoints}
             claudeRoutingState={claudeRoutingState}
             modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
+            codexModelRoutingEnabled={modelRoutingSettings?.codex_enabled === true}
             modelRouteBindings={modelRouteBindings}
             onModelRoutePatch={handleModelRoutePatch}
             modelRoutePatching={modelRoutePatching}
+            codexModelRouteBindings={codexModelRouteBindings}
+            onCodexModelRoutePatch={handleCodexModelRoutePatch}
+            codexModelRoutePatching={codexModelRoutePatching}
             onClaudeEndpointSwitch={handleClaudeEndpointSwitch}
             onRestoreClaudeAuto={handleRestoreClaudeAuto}
             onClearRouteCache={handleClearRouteCache}

@@ -362,6 +362,10 @@ export function SwapUpstreamAccountGroups(arg1, arg2) {
   return window['go']['main']['App']['SwapUpstreamAccountGroups'](arg1, arg2);
 }
 
+export function TestCodexModelRouting(arg1) {
+  return window['go']['main']['App']['TestCodexModelRouting'](arg1);
+}
+
 export function TestModelRouting(arg1) {
   return window['go']['main']['App']['TestModelRouting'](arg1);
 }

@@ -326,7 +326,13 @@ const normalizeModelRoutingSettings = (settings = {}) => ({
   status: settings.status || 'ready',
   version: settings.version ?? 0,
   updated_at: settings.updated_at || settings.updatedAt || '',
-  binding_count: settings.binding_count ?? settings.bindingCount ?? 0
+  binding_count: settings.binding_count ?? settings.bindingCount ?? 0,
+  claude_status: settings.claude_status || settings.claudeStatus || settings.status || 'ready',
+  codex_status: settings.codex_status || settings.codexStatus || (settings.codex_enabled ? 'load_failed' : 'unavailable'),
+  claude_version: settings.claude_version ?? settings.claudeVersion ?? settings.version ?? 0,
+  codex_version: settings.codex_version ?? settings.codexVersion ?? 0,
+  claude_binding_count: settings.claude_binding_count ?? settings.claudeBindingCount ?? settings.binding_count ?? settings.bindingCount ?? 0,
+  codex_binding_count: settings.codex_binding_count ?? settings.codexBindingCount ?? 0
 });
 
 const normalizeRoutingEndpoint = (member = {}) => ({
@@ -376,7 +382,8 @@ export const getModelRoutingSettings = async () => {
 export const updateModelRoutingSettings = async ({ claude_enabled, claudeEnabled, codex_enabled, codexEnabled } = {}) => {
   await initWails();
   if (!WailsApp) return { unsupported: true, ...normalizeModelRoutingSettings() };
-  const payload = { claude_enabled: claude_enabled ?? claudeEnabled ?? false };
+  const payload = {};
+  if (claude_enabled !== undefined || claudeEnabled !== undefined) payload.claude_enabled = claude_enabled ?? claudeEnabled;
   if (codex_enabled !== undefined || codexEnabled !== undefined) payload.codex_enabled = codex_enabled ?? codexEnabled;
   return normalizeModelRoutingSettings(await getWailsMethod('UpdateModelRoutingSettings')(payload));
 };
@@ -384,7 +391,20 @@ export const updateModelRoutingSettings = async ({ claude_enabled, claudeEnabled
 export const listCodexModelRouteBindings = async () => {
   await initWails();
   if (!WailsApp) return [];
-  return await getWailsMethod('ListCodexModelRouteBindings')();
+  const rows = await getWailsMethod('ListCodexModelRouteBindings')();
+  return (rows || []).map((binding = {}) => ({
+    assignment_id: parseEntityId(binding.assignment_id ?? binding.assignmentId),
+    model: binding.model || binding.Model || '',
+    account_ids: (binding.account_ids || binding.accountIds || []).map((id) => Number(id)).filter(Number.isFinite),
+    route_mode: binding.route_mode || binding.routeMode || 'auto',
+    route_target_account_id: Number(binding.route_target_account_id ?? binding.routeTargetID ?? binding.routeTargetId ?? 0) || 0,
+    enabled: binding.enabled ?? true,
+    note: binding.note || '',
+    last_account_id: Number(binding.last_account_id ?? binding.lastAccountID ?? 0) || 0,
+    last_outcome: binding.last_outcome || binding.lastOutcome || '',
+    last_decision_at: binding.last_decision_at || binding.lastDecisionAt || '',
+    updated_at: binding.updated_at || binding.updatedAt || ''
+  }));
 };
 
 export const createCodexModelRouteBinding = async (input = {}) => {
@@ -436,6 +456,12 @@ export const testModelRouting = async (model) => {
   if (!WailsApp) return { unsupported: true, model, assigned: false, scope_kind: 'global', members: [] };
   const result = await getWailsMethod('TestModelRouting')({ model: model || '' });
   return { ...result, members: (result?.members || []).map(normalizeRoutingEndpoint) };
+};
+
+export const testCodexModelRouting = async (model) => {
+  await initWails();
+  if (!WailsApp) return { unsupported: true, model, assigned: false, scope_kind: 'global', accounts: [] };
+  return await getWailsMethod('TestCodexModelRouting')({ model: model || '' });
 };
 
 export const clearNegativeHitCache = async (endpointName = '') => {
@@ -638,6 +664,22 @@ export const normalizeLatestAccountScheduleSnapshot = (snapshot = {}) => {
     updatedAt: snapshot.updated_at || snapshot.updatedAt || snapshot.UpdatedAt || '',
     request_path: snapshot.request_path || snapshot.requestPath || snapshot.RequestPath || '',
     requestPath: snapshot.request_path || snapshot.requestPath || snapshot.RequestPath || '',
+    request_model: snapshot.request_model || snapshot.requestModel || snapshot.RequestModel || '',
+    requestModel: snapshot.request_model || snapshot.requestModel || snapshot.RequestModel || '',
+    model_routing_family: snapshot.model_routing_family || snapshot.modelRoutingFamily || snapshot.ModelRoutingFamily || '',
+    modelRoutingFamily: snapshot.model_routing_family || snapshot.modelRoutingFamily || snapshot.ModelRoutingFamily || '',
+    model_routing_version: snapshot.model_routing_version ?? snapshot.modelRoutingVersion ?? snapshot.ModelRoutingVersion ?? 0,
+    modelRoutingVersion: snapshot.model_routing_version ?? snapshot.modelRoutingVersion ?? snapshot.ModelRoutingVersion ?? 0,
+    route_scope_kind: snapshot.route_scope_kind || snapshot.routeScopeKind || snapshot.RouteScopeKind || 'global',
+    routeScopeKind: snapshot.route_scope_kind || snapshot.routeScopeKind || snapshot.RouteScopeKind || 'global',
+    route_scope_group_id: snapshot.route_scope_group_id ?? snapshot.routeScopeGroupID ?? snapshot.RouteScopeGroupID ?? 0,
+    routeScopeGroupId: snapshot.route_scope_group_id ?? snapshot.routeScopeGroupID ?? snapshot.RouteScopeGroupID ?? 0,
+    route_scope_group_name: snapshot.route_scope_group_name || snapshot.routeScopeGroupName || snapshot.RouteScopeGroupName || '',
+    routeScopeGroupName: snapshot.route_scope_group_name || snapshot.routeScopeGroupName || snapshot.RouteScopeGroupName || '',
+    route_mode: snapshot.route_mode || snapshot.routeMode || snapshot.RouteMode || 'auto',
+    routeMode: snapshot.route_mode || snapshot.routeMode || snapshot.RouteMode || 'auto',
+    route_target_account_id: parseEntityId(snapshot.route_target_account_id ?? snapshot.routeTargetAccountID ?? snapshot.RouteTargetAccountID ?? null),
+    routeTargetAccountId: parseEntityId(snapshot.route_target_account_id ?? snapshot.routeTargetAccountID ?? snapshot.RouteTargetAccountID ?? null),
     selected_priority: Number.parseInt(snapshot.selected_priority ?? snapshot.selectedPriority ?? snapshot.SelectedPriority, 10) || 0,
     selectedPriority: Number.parseInt(snapshot.selected_priority ?? snapshot.selectedPriority ?? snapshot.SelectedPriority, 10) || 0,
     selected_tier_index: Number.parseInt(snapshot.selected_tier_index ?? snapshot.selectedTierIndex ?? snapshot.SelectedTierIndex, 10) || 0,

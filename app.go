@@ -257,18 +257,28 @@ func (a *App) setupModelRoutingService(ctx context.Context) {
 		a.codexModelRoutingService.SetWriteMutex(&a.routingMu)
 	}
 
-	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := a.modelRoutingService.Initialize(initCtx); err != nil {
-		a.logger.Error("❌ 模型路由配置加载失败，已进入 fail-closed（开关打开时 Claude 请求将返回 422）", "error", err)
-		return
+	claudeInitCtx, claudeCancel := context.WithTimeout(ctx, 30*time.Second)
+	claudeErr := a.modelRoutingService.Initialize(claudeInitCtx)
+	claudeCancel()
+	if claudeErr != nil {
+		a.logger.Error("❌ 模型路由配置加载失败，已进入 fail-closed（开关打开时 Claude 请求将返回 422）", "error", claudeErr)
 	}
 	if a.codexModelRoutingService != nil {
-		if err := a.codexModelRoutingService.Initialize(initCtx); err != nil {
-			a.logger.Error("❌ Codex 模型路由配置加载失败", "error", err)
+		codexInitCtx, codexCancel := context.WithTimeout(ctx, 30*time.Second)
+		codexErr := a.codexModelRoutingService.Initialize(codexInitCtx)
+		codexCancel()
+		if codexErr != nil {
+			a.logger.Error("❌ Codex 模型路由配置加载失败", "error", codexErr)
 		}
 	}
-	a.logger.Info("✅ 模型路由服务已启用 (SQLite)", "status", a.modelRoutingService.Status())
+	a.logger.Info("✅ 模型路由服务已加载 (SQLite)",
+		"claude_status", a.modelRoutingService.Status(),
+		"codex_status", func() string {
+			if a.codexModelRoutingService == nil {
+				return "unavailable"
+			}
+			return a.codexModelRoutingService.Status()
+		}())
 }
 
 // shutdown 在 Wails 应用关闭时调用

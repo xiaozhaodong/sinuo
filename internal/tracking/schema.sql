@@ -481,6 +481,7 @@ END;
 CREATE TABLE IF NOT EXISTS model_routing_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     claude_enabled INTEGER NOT NULL DEFAULT 0 CHECK (claude_enabled IN (0, 1)),
+    codex_enabled INTEGER NOT NULL DEFAULT 0 CHECK (codex_enabled IN (0, 1)),
     updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 

@@ -113,47 +113,49 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	}
 	var schedule svc.AccountScheduleResult
 	var codexScope svc.CodexModelRouteScope
+	var cacheGenerations map[int64]uint64
+	var modelRoutingFailureReason string
+	var modelRoutingFailureMessage string
 	var err error
 	modelRouted := h.codexModelRouter != nil && h.codexModelRouter.Enabled() && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact")
 	if modelRouted {
 		model := h.extractModelFromRequestBody(bodyBytes, r.URL.Path)
 		var routeResult svc.CodexModelRouteResult
-		routeResult, err = h.codexModelRouter.Prepare(ctx, model)
+		routeResult, err = h.codexModelRouter.Prepare(ctx, model, r.URL.Path)
 		codexScope = routeResult.Scope
-		if err == nil && routeResult.Scope.Kind == "unassigned" {
-			status := http.StatusUnprocessableEntity
-			errType := routeResult.Scope.UnassignedReason
-			if errType == "" {
-				errType = svc.CodexModelRoutingUnassigned
-			}
-			message := "Codex 模型未配置账号组"
-			if errType == svc.CodexModelRoutingMissingModel {
-				message = "Codex 请求未携带 model"
-			} else if errType == svc.CodexModelRoutingLoadFailed {
-				message = "Codex 模型路由配置加载失败"
-			}
-			lifecycleManager.SetUpstream("account", "model-routing", "", 0)
-			lifecycleManager.FailRequest(errType, message, status)
-			writeAccountPipelineError(w, status, errType, message)
-			return
+		cacheGenerations = routeResult.CacheGenerations
+		schedule.Accounts = routeResult.Accounts
+		now := time.Now()
+		schedule.Snapshot = &svc.LatestAccountScheduleSnapshot{
+			RequestID: requestID, CapturedAt: now, UpdatedAt: now, RequestPath: r.URL.Path,
+			RequestModel: model, ModelRoutingFamily: "codex", ModelRoutingVersion: codexScope.SnapshotVersion,
+			RouteScopeKind: codexScope.Kind, RouteScopeGroupID: codexScope.GroupID, RouteScopeGroupName: codexScope.GroupName,
+			RouteMode: codexScope.Mode, RouteTargetAccountID: codexScope.TargetAccountID,
+			Candidates: routeResult.Candidates,
 		}
-		if err == nil {
-			schedule.Accounts = routeResult.Accounts
-			schedule.Snapshot = &svc.LatestAccountScheduleSnapshot{
-				RequestID: requestID, CapturedAt: time.Now(), UpdatedAt: time.Now(), RequestPath: r.URL.Path,
-				RequestModel: model, ModelRoutingFamily: "codex", ModelRoutingVersion: codexScope.SnapshotVersion,
-				RouteScopeKind: codexScope.Kind, RouteScopeGroupID: codexScope.GroupID, RouteScopeGroupName: codexScope.GroupName,
-				RouteMode: codexScope.Mode, RouteTargetAccountID: codexScope.TargetAccountID,
+		if len(routeResult.Accounts) > 0 {
+			schedule.Snapshot.SelectedAccountID = routeResult.Accounts[0].ID
+			schedule.Snapshot.SelectedAccountName = accountFailoverDisplayName(routeResult.Accounts[0])
+		}
+		if recorder, ok := h.accountPoolService.(interface {
+			SaveLatestScheduleSnapshot(*svc.LatestAccountScheduleSnapshot)
+		}); ok {
+			recorder.SaveLatestScheduleSnapshot(schedule.Snapshot)
+		}
+		if err == nil && routeResult.Scope.Kind == "unassigned" {
+			modelRoutingFailureReason = routeResult.Scope.UnassignedReason
+			if modelRoutingFailureReason == "" {
+				modelRoutingFailureReason = svc.CodexModelRoutingUnassigned
+			}
+			modelRoutingFailureMessage = "Codex 模型未配置账号组"
+			if modelRoutingFailureReason == svc.CodexModelRoutingMissingModel {
+				modelRoutingFailureMessage = "Codex 请求未携带 model"
+			} else if modelRoutingFailureReason == svc.CodexModelRoutingLoadFailed {
+				modelRoutingFailureMessage = "Codex 模型路由配置加载失败"
 			}
 		}
 	} else {
 		schedule, err = h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
-	}
-	if err != nil {
-		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
-		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
-		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable accounts")
-		return
 	}
 	// B3：调度草稿持久化（白名单 DTO）。decisionAt 同笔补写 route_decision_at。
 	if snap := schedule.Snapshot; snap != nil && h.usageTracker != nil && requestID != "" {
@@ -164,6 +166,24 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				RouteDecisionAt:      &decisionAt,
 			})
 		}
+	}
+	if modelRoutingFailureReason != "" {
+		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", modelRoutingFailureReason, modelRoutingFailureMessage)
+		lifecycleManager.SetUpstream("account", "model-routing", "", 0)
+		lifecycleManager.FailRequest(modelRoutingFailureReason, modelRoutingFailureMessage, http.StatusUnprocessableEntity)
+		writeAccountPipelineError(w, http.StatusUnprocessableEntity, modelRoutingFailureReason, modelRoutingFailureMessage)
+		return
+	}
+	if err != nil {
+		if modelRouted {
+			_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeTransientFailure, "failed to load model routing accounts")
+			lifecycleManager.SetUpstream("account", "model-routing", "", 0)
+		} else {
+			lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+		}
+		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
+		writeAccountPipelineError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable accounts")
+		return
 	}
 	accounts := schedule.Accounts
 	if len(accounts) == 0 {
@@ -185,8 +205,17 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			errorType = "codex_search_oauth_unavailable"
 			message = "Codex /v1/alpha/search requires an enabled and available ChatGPT OAuth account"
 		}
-		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeNoSchedulableAccounts, message)
-		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+		outcome := svc.AccountScheduleOutcomeNoSchedulableAccounts
+		if modelRouted {
+			outcome = errorType
+			h.codexModelRouter.Settle(codexScope, 0, outcome)
+		}
+		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", outcome, message)
+		if modelRouted {
+			lifecycleManager.SetUpstream("account", "model-routing", "model-routing", 0)
+		} else {
+			lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
+		}
 		lifecycleManager.FailRequest(failureReason, message, http.StatusServiceUnavailable)
 		writeAccountPipelineError(w, http.StatusServiceUnavailable, errorType, message)
 		return
@@ -195,15 +224,24 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	isSSE := h.detectSSERequest(r, bodyBytes)
 	var lastErr error
 	attemptedAccount := false
+	lastCodexAccountID := int64(0)
+	lastCodexOutcome := ""
 
 	for idx, acc := range accounts {
 		if acc == nil {
 			continue
 		}
 		attemptedAccount = true
+		if modelRouted {
+			lastCodexAccountID = acc.ID
+		}
 		accountName := accountFailoverDisplayName(acc)
 
-		lifecycleManager.SetUpstream("account", "account-pool", accountName, acc.ID)
+		upstreamSource := "account-pool"
+		if modelRouted {
+			upstreamSource = "model-routing"
+		}
+		lifecycleManager.SetUpstream("account", upstreamSource, accountName, acc.ID)
 		lifecycleManager.SetEndpoint(accountName)
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
@@ -237,11 +275,17 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			// 「固定直到严格不可用」：达阈值冷却后由后续请求降级，pin 保留。
 			if !traceState.WroteHeaders() && !schedule.Pinned {
 				logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonConnectionFailedBeforeHeaders, forwardErr.Error(), hasNextAccount)
+				if modelRouted {
+					lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+				}
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 				h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonConnectionFailedBeforeHeaders, 0, forwardErr.Error(), requestID, r.URL.Path)
 				continue
 			}
 			logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonForwardError, forwardErr.Error(), shouldFailover && hasNextAccount)
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, forwardErr.Error())
 			if !shouldFailover {
 				break
@@ -255,6 +299,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			releaseUpstream()
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, lastErr.Error(), accountSoftFailureCategoryServerError, 0)
 			logAccountPipelineAttemptFailure(requestID, acc, 0, FailoverReasonEmptyResponse, lastErr.Error(), shouldFailover && hasNextAccount)
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, lastErr.Error())
 			if !shouldFailover {
 				break
@@ -271,8 +318,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				if handlers.IsModelUnsupportedError(string(body)) {
 					_ = resp.Body.Close()
 					releaseUpstream()
-					h.codexModelRouter.RecordNegativeHit(acc.ID, codexScope.Model)
+					h.codexModelRouter.RecordNegativeHit(acc.ID, r.URL.Path, codexScope.Model, cacheGenerations[acc.ID])
 					lastErr = fmt.Errorf("model unsupported by account %d", acc.ID)
+					lastCodexOutcome = "model_unsupported"
 					_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, "model_unsupported", "模型不受支持")
 					continue
 				}
@@ -286,6 +334,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				detail = fmt.Sprintf("upstream returned %d", resp.StatusCode)
 			}
 			lastErr = fmt.Errorf("auth failed: %s", detail)
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeAuthFailed
+			}
 			_ = h.accountPoolService.MarkAccountAuthFailed(ctx, acc.ID, detail)
 			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonAuthFailed, detail, hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeAuthFailed, detail)
@@ -299,11 +350,17 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				releaseUpstream()
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeTransientFailure)
+				}
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, writeErr.Error())
 				return
 			}
 			releaseUpstream()
+			if modelRouted {
+				h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomePassthroughNoAvailableProvider)
+			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughNoAvailableProvider, detail)
 			lifecycleManager.FailRequest("upstream_no_available_providers", detail, resp.StatusCode)
 			return
@@ -318,6 +375,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			if usageLimit, ok := parseAccountUsageLimitWindow(detail, time.Now()); ok {
+				if modelRouted {
+					lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+				}
 				_ = h.accountPoolService.MarkAccountUsageLimitExceeded(ctx, acc.ID, detail, usageLimit.planType, usageLimit.resetAt)
 				logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonUsageLimit, detail, hasNextAccount)
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
@@ -325,6 +385,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				continue
 			}
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryRateLimit, retryAfter)
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+			}
 			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonRateLimited, detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
@@ -342,6 +405,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			lastErr = fmt.Errorf("upstream retryable error: %s", detail)
 			shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, detail, accountSoftFailureCategoryServerError, 0)
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+			}
 			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, FailoverReasonServerError, detail, shouldFailover && hasNextAccount)
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, detail)
 			if !shouldFailover {
@@ -357,6 +423,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			logAccountPipelineAttemptFailure(requestID, acc, resp.StatusCode, "client_error_passthrough", detail, false)
 			if writeErr := h.writeRawResponse(w, resp); writeErr != nil {
 				releaseUpstream()
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeTransientFailure)
+				}
 				lifecycleManager.FailRequest("account_pipeline_response_write_error", writeErr.Error(), resp.StatusCode)
 				_ = h.accountPoolService.MarkAccountTransientFailure(ctx, acc.ID, writeErr.Error(), h.accountProcessingFailureCooldown())
 				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, writeErr.Error())
@@ -405,6 +474,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				}
 			} else {
 				shouldFailover := h.shouldFailOverAfterSoftFailure(ctx, acc.ID, processErr.Error(), accountSoftFailureCategoryServerError, 0)
+				if modelRouted {
+					lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+				}
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 				if !shouldFailover {
 					break
@@ -414,8 +486,18 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			// 流式响应一旦开始输出，无法切换到下一个账号，直接终止
 			if isSSE {
+				codexOutcome := accountScheduleOutcomeForCodexStreamError(processErr)
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, codexOutcome)
+				}
+				if modelRouted {
+					lastCodexOutcome = codexOutcome
+				}
 				_ = h.failAndFinalizeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, processErr.Error())
 				return
+			}
+			if modelRouted {
+				lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
 			}
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeTransientFailure, processErr.Error())
 			continue
@@ -437,6 +519,12 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	reason := "all accounts failed"
 	if lastErr != nil {
 		reason = lastErr.Error()
+	}
+	if modelRouted {
+		if lastCodexOutcome == "" {
+			lastCodexOutcome = svc.AccountScheduleOutcomeTransientFailure
+		}
+		h.codexModelRouter.Settle(codexScope, lastCodexAccountID, lastCodexOutcome)
 	}
 	_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", svc.AccountScheduleOutcomeTransientFailure, reason)
 	if !attemptedAccount {
@@ -1101,6 +1189,13 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 	}
 	lifecycleManager.CompleteRequest(tokenUsage)
 	return nil
+}
+
+func accountScheduleOutcomeForCodexStreamError(err error) string {
+	if status, _ := parseAccountStreamStatusError(err); status == "auth_error" {
+		return svc.AccountScheduleOutcomeAuthFailed
+	}
+	return svc.AccountScheduleOutcomeTransientFailure
 }
 
 func (h *Handler) writeRawResponse(w http.ResponseWriter, resp *http.Response) error {

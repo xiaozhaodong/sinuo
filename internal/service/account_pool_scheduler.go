@@ -223,6 +223,12 @@ func isTerminalAccountScheduleSnapshotUpdate(outcome string, accountID int64) bo
 		return true
 	case accountScheduleOutcomeTransientFailure:
 		return accountID <= 0
+	case CodexModelRoutingMissingModel,
+		CodexModelRoutingUnassigned,
+		CodexModelRoutingLoadFailed,
+		CodexModelRoutingNoAvailable,
+		CodexModelRoutingFixedUnavailable:
+		return true
 	default:
 		return false
 	}
@@ -302,6 +308,15 @@ func (s *AccountPoolService) GetLatestAccountScheduleSnapshot(ctx context.Contex
 		return nil, nil
 	}
 	return s.scheduleSnapshots.getLatest(), nil
+}
+
+// SaveLatestScheduleSnapshot 保存路由分支的调度草稿，使后续终态回填仍作用于同一请求。
+// 常规账号池路径在 prepareSchedulableAccounts 内保存；按模型路由绕过该排序器时由代理显式调用。
+func (s *AccountPoolService) SaveLatestScheduleSnapshot(snapshot *LatestAccountScheduleSnapshot) {
+	if s == nil || s.scheduleSnapshots == nil || snapshot == nil {
+		return
+	}
+	s.scheduleSnapshots.saveDraft(snapshot)
 }
 
 func (s *AccountPoolService) CompleteLatestScheduleSnapshot(ctx context.Context, requestID string, accountID int64, accountName, outcome, finalError string) (*LatestAccountScheduleSnapshot, error) {

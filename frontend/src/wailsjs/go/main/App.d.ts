@@ -184,6 +184,8 @@ export function StopLogStream():Promise<void>;
 
 export function SwapUpstreamAccountGroups(arg1:string,arg2:string):Promise<main.SwapUpstreamAccountGroupsResult>;
 
+export function TestCodexModelRouting(arg1:main.CodexModelRoutingTestInput):Promise<main.CodexModelRoutingTestResult>;
+
 export function TestModelRouting(arg1:main.ModelRoutingTestInput):Promise<main.ModelRoutingTestResult>;
 
 export function TestPrivacyRules(arg1:main.PrivacyRuleTestInput):Promise<main.PrivacyRuleTestResult>;

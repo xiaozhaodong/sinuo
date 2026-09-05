@@ -163,6 +163,14 @@ type LatestAccountScheduleSnapshotInfo struct {
 	FinalOutcome            string                                 `json:"final_outcome"`
 	FinalError              string                                 `json:"final_error"`
 	Summary                 string                                 `json:"summary"`
+	RequestModel            string                                 `json:"request_model,omitempty"`
+	ModelRoutingFamily      string                                 `json:"model_routing_family,omitempty"`
+	ModelRoutingVersion     int64                                  `json:"model_routing_version,omitempty"`
+	RouteScopeKind          string                                 `json:"route_scope_kind,omitempty"`
+	RouteScopeGroupID       int64                                  `json:"route_scope_group_id,omitempty"`
+	RouteScopeGroupName     string                                 `json:"route_scope_group_name,omitempty"`
+	RouteMode               string                                 `json:"route_mode,omitempty"`
+	RouteTargetAccountID    int64                                  `json:"route_target_account_id,omitempty"`
 	Candidates              []AccountScheduleCandidateDecisionInfo `json:"candidates"`
 }
 
@@ -305,6 +313,14 @@ func (a *App) GetLatestAccountScheduleSnapshot() (LatestAccountScheduleSnapshotI
 		FinalOutcome:            snapshot.FinalOutcome,
 		FinalError:              snapshot.FinalError,
 		Summary:                 snapshot.Summary,
+		RequestModel:            snapshot.RequestModel,
+		ModelRoutingFamily:      snapshot.ModelRoutingFamily,
+		ModelRoutingVersion:     snapshot.ModelRoutingVersion,
+		RouteScopeKind:          snapshot.RouteScopeKind,
+		RouteScopeGroupID:       snapshot.RouteScopeGroupID,
+		RouteScopeGroupName:     snapshot.RouteScopeGroupName,
+		RouteMode:               snapshot.RouteMode,
+		RouteTargetAccountID:    snapshot.RouteTargetAccountID,
 		Candidates:              make([]AccountScheduleCandidateDecisionInfo, 0, len(snapshot.Candidates)),
 	}
 	for _, candidate := range snapshot.Candidates {

@@ -70,6 +70,46 @@ type accountScheduleCompleteCall struct {
 	finalError  string
 }
 
+type codexRouteSettleCall struct {
+	scope     servicepkg.CodexModelRouteScope
+	accountID int64
+	outcome   string
+}
+
+type mockCodexModelRouter struct {
+	enabled bool
+	result  servicepkg.CodexModelRouteResult
+	err     error
+
+	mu           sync.Mutex
+	prepareCalls []string
+	settleCalls  []codexRouteSettleCall
+	negativeHits []int64
+}
+
+func (m *mockCodexModelRouter) Enabled() bool {
+	return m != nil && m.enabled
+}
+
+func (m *mockCodexModelRouter) Prepare(_ context.Context, model, path string) (servicepkg.CodexModelRouteResult, error) {
+	m.mu.Lock()
+	m.prepareCalls = append(m.prepareCalls, model+" "+path)
+	m.mu.Unlock()
+	return m.result, m.err
+}
+
+func (m *mockCodexModelRouter) Settle(scope servicepkg.CodexModelRouteScope, accountID int64, outcome string) {
+	m.mu.Lock()
+	m.settleCalls = append(m.settleCalls, codexRouteSettleCall{scope: scope, accountID: accountID, outcome: outcome})
+	m.mu.Unlock()
+}
+
+func (m *mockCodexModelRouter) RecordNegativeHit(accountID int64, _, _ string, _ uint64) {
+	m.mu.Lock()
+	m.negativeHits = append(m.negativeHits, accountID)
+	m.mu.Unlock()
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -86,6 +126,7 @@ type mockAccountPoolService struct {
 	prepareCalls      []accountSchedulePrepareCall
 	completeCalls     []accountScheduleCompleteCall
 	completeSnapshots []*servicepkg.LatestAccountScheduleSnapshot
+	savedDrafts       []*servicepkg.LatestAccountScheduleSnapshot
 	completeErrors    []error
 	completeCtxErrs   []error
 	quotaRefreshCalls []int64
@@ -98,6 +139,12 @@ type mockAccountPoolService struct {
 	usageLimitCalls   []accountUsageLimitCall
 
 	softFailureShouldFailover *bool
+}
+
+func (m *mockAccountPoolService) SaveLatestScheduleSnapshot(snapshot *servicepkg.LatestAccountScheduleSnapshot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.savedDrafts = append(m.savedDrafts, snapshot)
 }
 
 func (m *mockAccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (servicepkg.AccountScheduleResult, error) {
@@ -770,6 +817,97 @@ func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T
 	}
 	if len(service.quotaRefreshCalls) != 0 {
 		t.Fatalf("expected api_key success not to enqueue quota refresh, got %+v", service.quotaRefreshCalls)
+	}
+}
+
+func TestAccountPipeline_CodexUnassignedCompletesRoutingSnapshot(t *testing.T) {
+	service := &mockAccountPoolService{}
+	router := &mockCodexModelRouter{
+		enabled: true,
+		result: servicepkg.CodexModelRouteResult{
+			Scope: servicepkg.CodexModelRouteScope{
+				Kind:             "unassigned",
+				Model:            "gpt-5-codex",
+				SnapshotVersion:  7,
+				UnassignedReason: servicepkg.CodexModelRoutingUnassigned,
+			},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.SetCodexModelRouter(router)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.savedDrafts) != 1 {
+		t.Fatalf("expected one routing snapshot draft, got %d", len(service.savedDrafts))
+	}
+	draft := service.savedDrafts[0]
+	if draft.RequestModel != "gpt-4.1" || draft.ModelRoutingFamily != "codex" || draft.ModelRoutingVersion != 7 || draft.RouteScopeKind != "unassigned" {
+		t.Fatalf("unexpected routing snapshot draft: %#v", draft)
+	}
+	if len(service.completeCalls) != 1 || service.completeCalls[0].outcome != servicepkg.CodexModelRoutingUnassigned {
+		t.Fatalf("expected unassigned terminal snapshot, got %+v", service.completeCalls)
+	}
+}
+
+func TestAccountPipeline_CodexNoAvailableUsesRoutingOutcome(t *testing.T) {
+	service := &mockAccountPoolService{}
+	router := &mockCodexModelRouter{
+		enabled: true,
+		result: servicepkg.CodexModelRouteResult{
+			Scope: servicepkg.CodexModelRouteScope{
+				Kind:            "upstream_group",
+				GroupID:         11,
+				Revision:        2,
+				SnapshotVersion: 8,
+				Mode:            "auto",
+				Model:           "gpt-4.1",
+			},
+			Candidates: []servicepkg.AccountScheduleCandidateDecision{{AccountID: 9, Decision: "skipped", Reason: "cooldown"}},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.SetCodexModelRouter(router)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(service.completeCalls) != 1 || service.completeCalls[0].outcome != servicepkg.CodexModelRoutingNoAvailable {
+		t.Fatalf("expected model-routing no-available outcome, got %+v", service.completeCalls)
+	}
+	if len(router.settleCalls) != 1 || router.settleCalls[0].outcome != servicepkg.CodexModelRoutingNoAvailable {
+		t.Fatalf("expected model-routing settle outcome, got %+v", router.settleCalls)
+	}
+}
+
+func TestAccountPipeline_CodexFailureSettlesLastOutcome(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"temporary"}`))
+	}))
+	defer upstream.Close()
+
+	account := &store.UpstreamAccountRecord{ID: 12, AccountName: "codex-failing", ProviderType: "api_key", CredentialRaw: "sk-test", BaseURL: upstream.URL, Enabled: true}
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{account}}
+	router := &mockCodexModelRouter{
+		enabled: true,
+		result: servicepkg.CodexModelRouteResult{
+			Accounts: []*store.UpstreamAccountRecord{account},
+			Scope:    servicepkg.CodexModelRouteScope{Kind: "upstream_group", GroupID: 13, Revision: 1, SnapshotVersion: 9, Mode: "auto", Model: "gpt-4.1"},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.SetCodexModelRouter(router)
+
+	rec := performResponsesRequest(t, handler)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(router.settleCalls) != 1 || router.settleCalls[0].outcome != servicepkg.AccountScheduleOutcomeTransientFailure || router.settleCalls[0].accountID != account.ID {
+		t.Fatalf("expected last Codex failure to settle runtime, got %+v", router.settleCalls)
 	}
 }
 
@@ -2316,6 +2454,15 @@ func TestParseAccountStreamStatusError_Cancelled(t *testing.T) {
 	}
 	if !isCancelledAccountStreamError(errors.New("stream_status:cancelled:model:gpt-5.4: context canceled")) {
 		t.Fatal("expected structured cancelled stream error to be recognized")
+	}
+}
+
+func TestAccountScheduleOutcomeForCodexStreamError(t *testing.T) {
+	if got := accountScheduleOutcomeForCodexStreamError(errors.New("stream_status:auth_error:model:gpt-5.4: unauthorized")); got != servicepkg.AccountScheduleOutcomeAuthFailed {
+		t.Fatalf("expected auth stream failure outcome, got %q", got)
+	}
+	if got := accountScheduleOutcomeForCodexStreamError(errors.New("stream_status:rate_limited:model:gpt-5.4: retry later")); got != servicepkg.AccountScheduleOutcomeTransientFailure {
+		t.Fatalf("expected retryable stream failure outcome, got %q", got)
 	}
 }
 
