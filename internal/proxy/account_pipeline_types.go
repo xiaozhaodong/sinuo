@@ -20,3 +20,10 @@ type AccountPoolService interface {
 	MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error
 	RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) (bool, error)
 }
+
+type CodexModelRouter interface {
+	Enabled() bool
+	Prepare(ctx context.Context, model string) (svc.CodexModelRouteResult, error)
+	Settle(scope svc.CodexModelRouteScope, accountID int64, outcome string)
+	RecordNegativeHit(accountID int64, model string)
+}

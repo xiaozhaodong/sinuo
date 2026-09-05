@@ -18,6 +18,8 @@ export function ClearNegativeHitCache(arg1:string):Promise<void>;
 
 export function ClearPrivacyExactSecrets(arg1:string):Promise<void>;
 
+export function CreateCodexModelRouteBinding(arg1:main.CodexModelRouteBindingInput):Promise<main.CodexModelRouteBindingInfo>;
+
 export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void>;
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
@@ -29,6 +31,8 @@ export function CreatePrivacyExactSecret(arg1:main.PrivacyExactSecretInput):Prom
 export function CreatePrivacyRule(arg1:main.PrivacyRuleInput):Promise<main.PrivacyRuleInfo>;
 
 export function CreateUpstreamAccount(arg1:main.CreateUpstreamAccountInput):Promise<void>;
+
+export function DeleteCodexModelRouteBinding(arg1:number):Promise<void>;
 
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
@@ -132,6 +136,8 @@ export function ImportPrivacySecretCandidate(arg1:main.ImportPrivacySecretCandid
 
 export function IsProxyRunning():Promise<boolean>;
 
+export function ListCodexModelRouteBindings():Promise<Array<main.CodexModelRouteBindingInfo>>;
+
 export function ListModelRouteBindings():Promise<Array<main.ModelRouteBindingInfo>>;
 
 export function ListPrivacyExactSecrets():Promise<Array<main.PrivacyExactSecretInfo>>;
@@ -187,6 +193,8 @@ export function TestUpstreamAccount(arg1:number):Promise<main.TestUpstreamAccoun
 export function ToggleUpstreamAccount(arg1:number,arg2:boolean):Promise<void>;
 
 export function TriggerHealthCheck(arg1:string):Promise<void>;
+
+export function UpdateCodexModelRouteBinding(arg1:number,arg2:main.CodexModelRouteBindingInput):Promise<void>;
 
 export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):Promise<void>;
 

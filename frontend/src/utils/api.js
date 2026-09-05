@@ -208,7 +208,7 @@ export const clearNegativeHitCache = async (endpointName = '') => {
 
 export const fetchModelRoutingSettings = async () => {
   if (isWailsEnvironment()) return await WailsApi.getModelRoutingSettings();
-  return { unsupported: true, claude_enabled: false, status: 'unsupported', version: 0, binding_count: 0 };
+  return { unsupported: true, claude_enabled: false, codex_enabled: false, status: 'unsupported', version: 0, binding_count: 0 };
 };
 
 export const updateModelRoutingSettings = async (input) => {
@@ -239,6 +239,21 @@ export const deleteModelRouteBinding = async (assignmentId) => {
 export const testModelRouting = async (model) => {
   if (isWailsEnvironment()) return await WailsApi.testModelRouting(model);
   return { unsupported: true, model, assigned: false, scope_kind: 'global', members: [] };
+};
+
+export const fetchCodexModelRouteBindings = async () => {
+  if (isWailsEnvironment()) return await WailsApi.listCodexModelRouteBindings();
+  return [];
+};
+
+export const createCodexModelRouteBinding = async (input) => {
+  if (isWailsEnvironment()) return await WailsApi.createCodexModelRouteBinding(input);
+  throw new Error('当前运行环境暂不支持 Codex 模型路由配置');
+};
+
+export const deleteCodexModelRouteBinding = async (id) => {
+  if (isWailsEnvironment()) return await WailsApi.deleteCodexModelRouteBinding(id);
+  throw new Error('当前运行环境暂不支持 Codex 模型路由配置');
 };
 
 // ============================================

@@ -26,6 +26,7 @@ import {
   SchedulerDrawer
 } from './components';
 import CodexModelsPanel from './components/CodexModelsPanel.jsx';
+import CodexModelRoutingDrawer from './components/CodexModelRoutingDrawer.jsx';
 import {
   buildAccountPoolDashboardModel,
   isValidAccountId,
@@ -130,6 +131,7 @@ const AccountPoolPage = () => {
   const [sharedDrawerRowId, setSharedDrawerRowId] = useState(null);
   const [schedulerDrawerOpen, setSchedulerDrawerOpen] = useState(false);
   const [codexModelsOpen, setCodexModelsOpen] = useState(false);
+  const [codexModelRoutingOpen, setCodexModelRoutingOpen] = useState(false);
   const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
 
@@ -419,6 +421,7 @@ const AccountPoolPage = () => {
         onRefresh={handleRefreshAll}
         onOpenScheduler={() => setSchedulerDrawerOpen(true)}
         onOpenCodexModels={() => setCodexModelsOpen(true)}
+        onOpenCodexModelRouting={() => setCodexModelRoutingOpen(true)}
       />
 
       <NoticeToast notice={notice} onClose={closeNotice} />
@@ -467,6 +470,13 @@ const AccountPoolPage = () => {
       <CodexModelsPanel
         open={codexModelsOpen}
         onClose={() => setCodexModelsOpen(false)}
+        showNotice={showNotice}
+      />
+
+      <CodexModelRoutingDrawer
+        open={codexModelRoutingOpen}
+        onClose={() => setCodexModelRoutingOpen(false)}
+        accounts={accounts}
         showNotice={showNotice}
       />
 

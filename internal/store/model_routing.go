@@ -12,6 +12,7 @@ import (
 type ModelRoutingSettingsRecord struct {
 	ID            int64     `json:"id"`
 	ClaudeEnabled bool      `json:"claude_enabled"`
+	CodexEnabled  bool      `json:"codex_enabled"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
@@ -157,10 +158,16 @@ func (s *SQLiteModelRoutingStore) ensureSchema(ctx context.Context) error {
 		s.schemaError = &err
 	}
 	s.schemaOnce.Do(func() {
-		for _, statement := range modelRoutingSchemaStatements() {
+		for idx, statement := range modelRoutingSchemaStatements() {
 			if _, err := s.db.ExecContext(ctx, statement); err != nil {
 				*s.schemaError = fmt.Errorf("ensure model routing schema failed: %w", err)
 				return
+			}
+			if idx == 1 {
+				if err := ensureCodexEnabledColumn(ctx, s.db); err != nil {
+					*s.schemaError = err
+					return
+				}
 			}
 		}
 	})
@@ -172,6 +179,7 @@ func modelRoutingSchemaStatements() []string {
 		`CREATE TABLE IF NOT EXISTS model_routing_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			claude_enabled INTEGER NOT NULL DEFAULT 0 CHECK (claude_enabled IN (0, 1)),
+			codex_enabled INTEGER NOT NULL DEFAULT 0 CHECK (codex_enabled IN (0, 1)),
 			updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 		)`,
 		`INSERT OR IGNORE INTO model_routing_settings (id) VALUES (1)`,
@@ -224,12 +232,39 @@ func modelRoutingSchemaStatements() []string {
 	}
 }
 
+func ensureCodexEnabledColumn(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(model_routing_settings)`)
+	if err != nil {
+		return fmt.Errorf("inspect model routing settings schema failed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan model routing settings schema failed: %w", err)
+		}
+		if name == "codex_enabled" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate model routing settings schema failed: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE model_routing_settings ADD COLUMN codex_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add codex_enabled setting failed: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteModelRoutingStore) GetSettings(ctx context.Context) (*ModelRoutingSettingsRecord, error) {
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
 	return scanModelRoutingSettings(s.getQuerier().QueryRowContext(ctx, `
-		SELECT id, claude_enabled, CAST(updated_at AS TEXT)
+		SELECT id, claude_enabled, codex_enabled, CAST(updated_at AS TEXT)
 		FROM model_routing_settings WHERE id = 1`))
 }
 
@@ -242,8 +277,8 @@ func (s *SQLiteModelRoutingStore) UpdateSettings(ctx context.Context, record *Mo
 	}
 	_, err := s.getQuerier().ExecContext(ctx, `
 		UPDATE model_routing_settings
-		SET claude_enabled = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
-		WHERE id = 1`, boolToInt(record.ClaudeEnabled))
+		SET claude_enabled = ?, codex_enabled = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
+		WHERE id = 1`, boolToInt(record.ClaudeEnabled), boolToInt(record.CodexEnabled))
 	if err != nil {
 		return fmt.Errorf("update model routing settings failed: %w", err)
 	}
@@ -450,15 +485,16 @@ type modelRoutingRowScanner interface {
 
 func scanModelRoutingSettings(row modelRoutingRowScanner) (*ModelRoutingSettingsRecord, error) {
 	record := &ModelRoutingSettingsRecord{}
-	var enabled int
+	var claudeEnabled, codexEnabled int
 	var updatedAt string
-	if err := row.Scan(&record.ID, &enabled, &updatedAt); err != nil {
+	if err := row.Scan(&record.ID, &claudeEnabled, &codexEnabled, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scan model routing settings failed: %w", err)
 	}
-	record.ClaudeEnabled = enabled != 0
+	record.ClaudeEnabled = claudeEnabled != 0
+	record.CodexEnabled = codexEnabled != 0
 	var err error
 	record.UpdatedAt, err = parseDBTime(updatedAt)
 	if err != nil {

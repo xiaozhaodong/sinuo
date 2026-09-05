@@ -61,8 +61,9 @@ type App struct {
 	routingMu       sync.Mutex               // v8 §6.4: Claude 路由串行协调器
 
 	// v9: 按模型选择 Claude 上游组
-	modelRoutingStore   store.ModelRoutingStore
-	modelRoutingService *service.ModelRoutingService
+	modelRoutingStore        store.ModelRoutingStore
+	modelRoutingService      *service.ModelRoutingService
+	codexModelRoutingService *service.CodexModelRoutingService
 
 	// v8:端点运行态存储(冷却持久化 + 手动解除冷却 tombstone)
 	endpointRuntimeStateStore store.EndpointRuntimeStateStore
@@ -251,12 +252,21 @@ func (a *App) setupModelRoutingService(ctx context.Context) {
 	a.modelRoutingService.SetEndpointMemberViewer(a.endpointManager.EndpointMemberView)
 	a.modelRoutingService.SetScopePruner(a.endpointManager.PruneAutoRetentionScopes)
 	a.endpointManager.SetRouteScopePolicy(a.modelRoutingService)
+	if a.accountPoolService != nil {
+		a.codexModelRoutingService = service.NewCodexModelRoutingService(a.modelRoutingStore, a.accountPoolService.ListAccounts)
+		a.codexModelRoutingService.SetWriteMutex(&a.routingMu)
+	}
 
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := a.modelRoutingService.Initialize(initCtx); err != nil {
 		a.logger.Error("❌ 模型路由配置加载失败，已进入 fail-closed（开关打开时 Claude 请求将返回 422）", "error", err)
 		return
+	}
+	if a.codexModelRoutingService != nil {
+		if err := a.codexModelRoutingService.Initialize(initCtx); err != nil {
+			a.logger.Error("❌ Codex 模型路由配置加载失败", "error", err)
+		}
 	}
 	a.logger.Info("✅ 模型路由服务已启用 (SQLite)", "status", a.modelRoutingService.Status())
 }
@@ -847,6 +857,9 @@ func (a *App) setupProxyHandler() {
 
 	if a.accountPoolService != nil {
 		a.proxyHandler.SetAccountPoolService(a.accountPoolService)
+	}
+	if a.codexModelRoutingService != nil {
+		a.proxyHandler.SetCodexModelRouter(a.codexModelRoutingService)
 	}
 	// 请求级故障转移只推送到应用窗口内的全局 Toast，不触发系统通知中心。
 	a.proxyHandler.SetOnFailoverTriggered(func(event proxy.FailoverEvent) {

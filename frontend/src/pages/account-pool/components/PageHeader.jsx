@@ -6,7 +6,7 @@
 import { Database, GitBranch, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@components/ui';
 
-const PageHeader = ({ loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModels }) => (
+const PageHeader = ({ loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModels, onOpenCodexModelRouting }) => (
   <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
     <div className="flex items-center gap-3">
       <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
@@ -26,6 +26,9 @@ const PageHeader = ({ loading = false, onCreate, onRefresh, onOpenScheduler, onO
       </Button>
       <Button icon={Database} variant="secondary" onClick={onOpenCodexModels}>
         Codex 模型
+      </Button>
+      <Button icon={GitBranch} variant="secondary" onClick={onOpenCodexModelRouting}>
+        模型路由
       </Button>
       <Button icon={GitBranch} variant="secondary" onClick={onOpenScheduler}
         className="tone-indigo hover:bg-accent-soft hover:border-accent-line"

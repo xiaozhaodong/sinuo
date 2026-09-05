@@ -111,7 +111,44 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	if strings.TrimSpace(requestID) == "" {
 		requestID = newFallbackAccountScheduleRequestID()
 	}
-	schedule, err := h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
+	var schedule svc.AccountScheduleResult
+	var codexScope svc.CodexModelRouteScope
+	var err error
+	modelRouted := h.codexModelRouter != nil && h.codexModelRouter.Enabled() && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact")
+	if modelRouted {
+		model := h.extractModelFromRequestBody(bodyBytes, r.URL.Path)
+		var routeResult svc.CodexModelRouteResult
+		routeResult, err = h.codexModelRouter.Prepare(ctx, model)
+		codexScope = routeResult.Scope
+		if err == nil && routeResult.Scope.Kind == "unassigned" {
+			status := http.StatusUnprocessableEntity
+			errType := routeResult.Scope.UnassignedReason
+			if errType == "" {
+				errType = svc.CodexModelRoutingUnassigned
+			}
+			message := "Codex 模型未配置账号组"
+			if errType == svc.CodexModelRoutingMissingModel {
+				message = "Codex 请求未携带 model"
+			} else if errType == svc.CodexModelRoutingLoadFailed {
+				message = "Codex 模型路由配置加载失败"
+			}
+			lifecycleManager.SetUpstream("account", "model-routing", "", 0)
+			lifecycleManager.FailRequest(errType, message, status)
+			writeAccountPipelineError(w, status, errType, message)
+			return
+		}
+		if err == nil {
+			schedule.Accounts = routeResult.Accounts
+			schedule.Snapshot = &svc.LatestAccountScheduleSnapshot{
+				RequestID: requestID, CapturedAt: time.Now(), UpdatedAt: time.Now(), RequestPath: r.URL.Path,
+				RequestModel: model, ModelRoutingFamily: "codex", ModelRoutingVersion: codexScope.SnapshotVersion,
+				RouteScopeKind: codexScope.Kind, RouteScopeGroupID: codexScope.GroupID, RouteScopeGroupName: codexScope.GroupName,
+				RouteMode: codexScope.Mode, RouteTargetAccountID: codexScope.TargetAccountID,
+			}
+		}
+	} else {
+		schedule, err = h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
+	}
 	if err != nil {
 		lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 		lifecycleManager.FailRequest("account_pool_load_failed", err.Error(), http.StatusServiceUnavailable)
@@ -133,6 +170,16 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		failureReason := "account_pool_empty"
 		errorType := "account_pool_unavailable"
 		message := "no schedulable account"
+		if modelRouted {
+			failureReason = svc.CodexModelRoutingNoAvailable
+			errorType = svc.CodexModelRoutingNoAvailable
+			message = "模型路由账号组中没有可用账号"
+			if codexScope.Mode == "manual_fixed" {
+				failureReason = svc.CodexModelRoutingFixedUnavailable
+				errorType = svc.CodexModelRoutingFixedUnavailable
+				message = "模型路由固定账号不可用"
+			}
+		}
 		if r.URL.Path == codexStandaloneSearchPath {
 			failureReason = "codex_search_oauth_unavailable"
 			errorType = "codex_search_oauth_unavailable"
@@ -175,6 +222,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			// 🛡️ 隐私策略短路：本地策略拒绝不是上游失败，
 			// 不冷却账号、不记软失败、不继续换号
 			if policyErr := handlers.AsPrivacyPolicyError(forwardErr); policyErr != nil {
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomePrivacyBlocked)
+				}
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePrivacyBlocked, policyErr.Code)
 				lifecycleManager.FailRequest(handlers.PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
 				writeAccountPipelineError(w, policyErr.StatusCode, policyErr.Code, policyErr.Message)
@@ -211,6 +261,22 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			}
 			h.notifyAccountFailover(ctx, accounts, idx, accountName, FailoverReasonEmptyResponse, 0, lastErr.Error(), requestID, r.URL.Path)
 			continue
+		}
+
+		if modelRouted && resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			body, readErr := io.ReadAll(resp.Body)
+			if readErr == nil {
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(body))
+				if handlers.IsModelUnsupportedError(string(body)) {
+					_ = resp.Body.Close()
+					releaseUpstream()
+					h.codexModelRouter.RecordNegativeHit(acc.ID, codexScope.Model)
+					lastErr = fmt.Errorf("model unsupported by account %d", acc.ID)
+					_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, "model_unsupported", "模型不受支持")
+					continue
+				}
+			}
 		}
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -299,6 +365,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			releaseUpstream()
 			_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePassthroughOther4xx, detail)
 			lifecycleManager.FailRequest("upstream_client_error", detail, resp.StatusCode)
+			if modelRouted {
+				h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomePassthroughOther4xx)
+			}
 			return
 		}
 
@@ -312,6 +381,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		releaseUpstream()
 		if processErr != nil {
 			if isCancelledAccountStreamError(processErr) {
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, "cancelled")
+				}
 				return
 			}
 			lastErr = processErr
@@ -355,6 +427,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			h.accountPoolService.TryEnqueueQuotaRefresh(acc.ID)
 		}
 		_ = h.completeAccountScheduleSnapshot(finalizeCtx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeSuccess, "")
+		if modelRouted {
+			h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeSuccess)
+		}
 		finalizeCancel()
 		return
 	}

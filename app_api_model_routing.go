@@ -17,14 +17,39 @@ const EventModelRoutingUpdate = "model-routing:update"
 
 type ModelRoutingSettingsInfo struct {
 	ClaudeEnabled bool   `json:"claude_enabled"`
+	CodexEnabled  bool   `json:"codex_enabled"`
 	Status        string `json:"status"`
 	Version       int64  `json:"version"`
 	UpdatedAt     string `json:"updated_at"`
 	BindingCount  int    `json:"binding_count"`
 }
 
+type CodexModelRouteBindingInfo struct {
+	AssignmentID   int64   `json:"assignment_id"`
+	Model          string  `json:"model"`
+	AccountIDs     []int64 `json:"account_ids"`
+	RouteMode      string  `json:"route_mode"`
+	RouteTargetID  int64   `json:"route_target_account_id,omitempty"`
+	Enabled        bool    `json:"enabled"`
+	Note           string  `json:"note"`
+	LastAccountID  int64   `json:"last_account_id,omitempty"`
+	LastOutcome    string  `json:"last_outcome,omitempty"`
+	LastDecisionAt string  `json:"last_decision_at,omitempty"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
+type CodexModelRouteBindingInput struct {
+	Model         string  `json:"model"`
+	AccountIDs    []int64 `json:"account_ids"`
+	RouteMode     string  `json:"route_mode"`
+	RouteTargetID int64   `json:"route_target_account_id"`
+	Enabled       bool    `json:"enabled"`
+	Note          string  `json:"note"`
+}
+
 type UpdateModelRoutingSettingsInput struct {
-	ClaudeEnabled bool `json:"claude_enabled"`
+	ClaudeEnabled bool  `json:"claude_enabled"`
+	CodexEnabled  *bool `json:"codex_enabled,omitempty"`
 }
 
 type ModelRoutingMemberInfo struct {
@@ -110,6 +135,7 @@ func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
 	info := ModelRoutingSettingsInfo{Status: svc.Status(), Version: svc.SnapshotVersion(), BindingCount: len(bindings)}
 	if record != nil {
 		info.ClaudeEnabled = record.ClaudeEnabled
+		info.CodexEnabled = record.CodexEnabled
 		info.UpdatedAt = formatTime(record.UpdatedAt)
 	}
 	return info, nil
@@ -122,8 +148,24 @@ func (a *App) UpdateModelRoutingSettings(input UpdateModelRoutingSettingsInput) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := svc.UpdateSettings(ctx, &store.ModelRoutingSettingsRecord{ID: 1, ClaudeEnabled: input.ClaudeEnabled}); err != nil {
+	current, err := svc.GetSettings(ctx)
+	if err != nil {
 		return ModelRoutingSettingsInfo{}, err
+	}
+	if current == nil {
+		current = &store.ModelRoutingSettingsRecord{ID: 1}
+	}
+	current.ClaudeEnabled = input.ClaudeEnabled
+	if input.CodexEnabled != nil {
+		current.CodexEnabled = *input.CodexEnabled
+	}
+	if _, err := svc.UpdateSettings(ctx, current); err != nil {
+		return ModelRoutingSettingsInfo{}, err
+	}
+	if a.codexModelRoutingService != nil {
+		if err := a.codexModelRoutingService.Initialize(ctx); err != nil {
+			return ModelRoutingSettingsInfo{}, err
+		}
 	}
 	a.emitModelRoutingUpdate()
 	return a.GetModelRoutingSettings()
@@ -203,6 +245,86 @@ func (a *App) DeleteModelRouteBinding(assignmentID int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := svc.DeleteBinding(ctx, assignmentID); err != nil {
+		return err
+	}
+	a.emitModelRoutingUpdate()
+	return nil
+}
+
+func (a *App) codexModelRoutingSnapshot() (*service.CodexModelRoutingService, error) {
+	a.mu.RLock()
+	svc := a.codexModelRoutingService
+	a.mu.RUnlock()
+	if svc == nil {
+		return nil, fmt.Errorf("Codex 模型路由服务未初始化")
+	}
+	return svc, nil
+}
+
+func (a *App) ListCodexModelRouteBindings() ([]CodexModelRouteBindingInfo, error) {
+	svc, err := a.codexModelRoutingSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	bindings, err := svc.ListBindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]CodexModelRouteBindingInfo, 0, len(bindings))
+	for _, b := range bindings {
+		result = append(result, CodexModelRouteBindingInfo{AssignmentID: b.AssignmentID, Model: b.Model, AccountIDs: b.AccountIDs, RouteMode: b.RouteMode, RouteTargetID: b.RouteTargetID, Enabled: b.Enabled, Note: b.Note, LastAccountID: b.LastAccountID, LastOutcome: b.LastOutcome, LastDecisionAt: formatTime(b.LastDecisionAt), UpdatedAt: formatTime(b.UpdatedAt)})
+	}
+	return result, nil
+}
+
+func (a *App) CreateCodexModelRouteBinding(input CodexModelRouteBindingInput) (CodexModelRouteBindingInfo, error) {
+	svc, err := a.codexModelRoutingSnapshot()
+	if err != nil {
+		return CodexModelRouteBindingInfo{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	id, err := svc.CreateBinding(ctx, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note})
+	if err != nil {
+		return CodexModelRouteBindingInfo{}, err
+	}
+	a.emitModelRoutingUpdate()
+	bindings, err := a.ListCodexModelRouteBindings()
+	if err != nil {
+		return CodexModelRouteBindingInfo{}, err
+	}
+	for _, binding := range bindings {
+		if binding.AssignmentID == id {
+			return binding, nil
+		}
+	}
+	return CodexModelRouteBindingInfo{}, fmt.Errorf("创建 Codex 模型绑定后无法读取记录 %d", id)
+}
+
+func (a *App) DeleteCodexModelRouteBinding(assignmentID int64) error {
+	svc, err := a.codexModelRoutingSnapshot()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := svc.DeleteBinding(ctx, assignmentID); err != nil {
+		return err
+	}
+	a.emitModelRoutingUpdate()
+	return nil
+}
+
+func (a *App) UpdateCodexModelRouteBinding(assignmentID int64, input CodexModelRouteBindingInput) error {
+	svc, err := a.codexModelRoutingSnapshot()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := svc.UpdateBinding(ctx, assignmentID, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note}); err != nil {
 		return err
 	}
 	a.emitModelRoutingUpdate()

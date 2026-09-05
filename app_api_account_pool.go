@@ -605,6 +605,9 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	if err := a.accountPoolService.UpdateAccount(ctx, existing); err != nil {
 		return fmt.Errorf("更新账号失败: %w", err)
 	}
+	if a.codexModelRoutingService != nil {
+		a.codexModelRoutingService.ClearNegativeHits(id)
+	}
 	a.syncAccountMultipliersToTrackerAsync()
 	return nil
 }
@@ -620,8 +623,17 @@ func (a *App) DeleteUpstreamAccount(id int64) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := a.accountPoolService.DeleteAccount(ctx, id); err != nil {
+	a.routingMu.Lock()
+	defer a.routingMu.Unlock()
+	var modelsUsing func(context.Context, int64) ([]string, error)
+	if a.codexModelRoutingService != nil {
+		modelsUsing = a.codexModelRoutingService.ModelsUsingAccount
+	}
+	if err := a.accountPoolService.DeleteAccountWithModelGuard(ctx, id, modelsUsing); err != nil {
 		return err
+	}
+	if a.codexModelRoutingService != nil {
+		a.codexModelRoutingService.ClearNegativeHits(id)
 	}
 	a.syncAccountMultipliersToTrackerAsync()
 	return nil

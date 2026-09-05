@@ -30,6 +30,10 @@ export function ClearPrivacyExactSecrets(arg1) {
   return window['go']['main']['App']['ClearPrivacyExactSecrets'](arg1);
 }
 
+export function CreateCodexModelRouteBinding(arg1) {
+  return window['go']['main']['App']['CreateCodexModelRouteBinding'](arg1);
+}
+
 export function CreateEndpointRecord(arg1) {
   return window['go']['main']['App']['CreateEndpointRecord'](arg1);
 }
@@ -52,6 +56,10 @@ export function CreatePrivacyRule(arg1) {
 
 export function CreateUpstreamAccount(arg1) {
   return window['go']['main']['App']['CreateUpstreamAccount'](arg1);
+}
+
+export function DeleteCodexModelRouteBinding(arg1) {
+  return window['go']['main']['App']['DeleteCodexModelRouteBinding'](arg1);
 }
 
 export function DeleteEndpointRecord(arg1) {
@@ -258,6 +266,10 @@ export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
 }
 
+export function ListCodexModelRouteBindings() {
+  return window['go']['main']['App']['ListCodexModelRouteBindings']();
+}
+
 export function ListModelRouteBindings() {
   return window['go']['main']['App']['ListModelRouteBindings']();
 }
@@ -368,6 +380,10 @@ export function ToggleUpstreamAccount(arg1, arg2) {
 
 export function TriggerHealthCheck(arg1) {
   return window['go']['main']['App']['TriggerHealthCheck'](arg1);
+}
+
+export function UpdateCodexModelRouteBinding(arg1, arg2) {
+  return window['go']['main']['App']['UpdateCodexModelRouteBinding'](arg1, arg2);
 }
 
 export function UpdateEndpointRecord(arg1, arg2) {

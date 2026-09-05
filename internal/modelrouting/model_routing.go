@@ -14,8 +14,9 @@ import (
 // MatchExact 本期唯一放行的匹配方式。match_type 列保留是为了后续扩展不重建表。
 const MatchExact = "exact"
 
-// FamilyClaude 本期唯一写入的 family。
+// FamilyClaude 与 FamilyCodex 是模型路由支持的协议族。
 const FamilyClaude = "claude"
+const FamilyCodex = "codex"
 
 // 组内路由模式，与全局 claude_routing 三模式一一对应，只是作用域缩到组成员。
 const (

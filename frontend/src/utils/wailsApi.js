@@ -322,6 +322,7 @@ export const clearClaudeRoutingOverride = async () => {
 
 const normalizeModelRoutingSettings = (settings = {}) => ({
   claude_enabled: settings.claude_enabled ?? settings.claudeEnabled ?? false,
+  codex_enabled: settings.codex_enabled ?? settings.codexEnabled ?? false,
   status: settings.status || 'ready',
   version: settings.version ?? 0,
   updated_at: settings.updated_at || settings.updatedAt || '',
@@ -372,10 +373,36 @@ export const getModelRoutingSettings = async () => {
   return normalizeModelRoutingSettings(await getWailsMethod('GetModelRoutingSettings')());
 };
 
-export const updateModelRoutingSettings = async ({ claude_enabled, claudeEnabled } = {}) => {
+export const updateModelRoutingSettings = async ({ claude_enabled, claudeEnabled, codex_enabled, codexEnabled } = {}) => {
   await initWails();
   if (!WailsApp) return { unsupported: true, ...normalizeModelRoutingSettings() };
-  return normalizeModelRoutingSettings(await getWailsMethod('UpdateModelRoutingSettings')({ claude_enabled: claude_enabled ?? claudeEnabled ?? false }));
+  const payload = { claude_enabled: claude_enabled ?? claudeEnabled ?? false };
+  if (codex_enabled !== undefined || codexEnabled !== undefined) payload.codex_enabled = codex_enabled ?? codexEnabled;
+  return normalizeModelRoutingSettings(await getWailsMethod('UpdateModelRoutingSettings')(payload));
+};
+
+export const listCodexModelRouteBindings = async () => {
+  await initWails();
+  if (!WailsApp) return [];
+  return await getWailsMethod('ListCodexModelRouteBindings')();
+};
+
+export const createCodexModelRouteBinding = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return await getWailsMethod('CreateCodexModelRouteBinding')(input);
+};
+
+export const deleteCodexModelRouteBinding = async (assignmentId) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return await getWailsMethod('DeleteCodexModelRouteBinding')(assignmentId);
+};
+
+export const updateCodexModelRouteBinding = async (assignmentId, input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return await getWailsMethod('UpdateCodexModelRouteBinding')(assignmentId, input);
 };
 
 export const listModelRouteBindings = async () => {

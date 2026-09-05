@@ -290,6 +290,60 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class CodexModelRouteBindingInfo {
+	    assignment_id: number;
+	    model: string;
+	    account_ids: number[];
+	    route_mode: string;
+	    route_target_account_id?: number;
+	    enabled: boolean;
+	    note: string;
+	    last_account_id?: number;
+	    last_outcome?: string;
+	    last_decision_at?: string;
+	    updated_at: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CodexModelRouteBindingInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.assignment_id = source["assignment_id"];
+	        this.model = source["model"];
+	        this.account_ids = source["account_ids"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target_account_id = source["route_target_account_id"];
+	        this.enabled = source["enabled"];
+	        this.note = source["note"];
+	        this.last_account_id = source["last_account_id"];
+	        this.last_outcome = source["last_outcome"];
+	        this.last_decision_at = source["last_decision_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class CodexModelRouteBindingInput {
+	    model: string;
+	    account_ids: number[];
+	    route_mode: string;
+	    route_target_account_id: number;
+	    enabled: boolean;
+	    note: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CodexModelRouteBindingInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.account_ids = source["account_ids"];
+	        this.route_mode = source["route_mode"];
+	        this.route_target_account_id = source["route_target_account_id"];
+	        this.enabled = source["enabled"];
+	        this.note = source["note"];
+	    }
+	}
 	
 	export class ConfigInfo {
 	    timezone: string;
@@ -988,6 +1042,7 @@ export namespace main {
 	
 	export class ModelRoutingSettingsInfo {
 	    claude_enabled: boolean;
+	    codex_enabled: boolean;
 	    status: string;
 	    version: number;
 	    updated_at: string;
@@ -1000,6 +1055,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.claude_enabled = source["claude_enabled"];
+	        this.codex_enabled = source["codex_enabled"];
 	        this.status = source["status"];
 	        this.version = source["version"];
 	        this.updated_at = source["updated_at"];
@@ -1893,6 +1949,7 @@ export namespace main {
 	}
 	export class UpdateModelRoutingSettingsInput {
 	    claude_enabled: boolean;
+	    codex_enabled?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdateModelRoutingSettingsInput(source);
@@ -1901,6 +1958,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.claude_enabled = source["claude_enabled"];
+	        this.codex_enabled = source["codex_enabled"];
 	    }
 	}
 	
@@ -2145,4 +2203,3 @@ export namespace migration {
 	}
 
 }
-

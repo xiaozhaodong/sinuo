@@ -31,6 +31,7 @@ type Handler struct {
 	config                        *config.Config
 	usageTracker                  *tracking.UsageTracker
 	accountPoolService            AccountPoolService
+	codexModelRouter              CodexModelRouter
 	codexModelsProvider           CodexModelListProvider
 	claudeModelsProvider          ClaudeModelListProvider
 	imageGenerationConfigProvider ImageGenerationConfigProvider
@@ -141,6 +142,11 @@ func (h *Handler) SetEventBus(eventBus events.EventBus) {
 // SetAccountPoolService 设置账号池服务
 func (h *Handler) SetAccountPoolService(service AccountPoolService) {
 	h.accountPoolService = service
+}
+
+// SetCodexModelRouter 注入独立的 Codex 模型路由适配器。
+func (h *Handler) SetCodexModelRouter(router CodexModelRouter) {
+	h.codexModelRouter = router
 }
 
 // SetPrivacyFilter 注入出站隐私过滤依赖，并传递给 endpoint 常规/流式与账号池链路。

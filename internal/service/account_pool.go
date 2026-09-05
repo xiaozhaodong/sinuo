@@ -300,6 +300,20 @@ func (s *AccountPoolService) DeleteAccount(ctx context.Context, id int64) error 
 	return nil
 }
 
+// DeleteAccountWithModelGuard 在删除前检查 Codex 模型绑定引用。
+func (s *AccountPoolService) DeleteAccountWithModelGuard(ctx context.Context, id int64, modelsUsing func(context.Context, int64) ([]string, error)) error {
+	if modelsUsing != nil {
+		models, err := modelsUsing(ctx, id)
+		if err != nil {
+			return fmt.Errorf("检查 Codex 模型路由账号引用失败: %w", err)
+		}
+		if len(models) > 0 {
+			return fmt.Errorf("账号 %d 仍被 Codex 模型 %s 使用，请先取消绑定", id, strings.Join(models, "、"))
+		}
+	}
+	return s.DeleteAccount(ctx, id)
+}
+
 func (s *AccountPoolService) ToggleAccount(ctx context.Context, id int64, enabled bool) error {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err

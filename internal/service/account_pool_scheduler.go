@@ -74,6 +74,14 @@ type LatestAccountScheduleSnapshot struct {
 	FinalOutcome            string                             `json:"final_outcome"`
 	FinalError              string                             `json:"final_error"`
 	Summary                 string                             `json:"summary"`
+	RequestModel            string                             `json:"request_model,omitempty"`
+	ModelRoutingFamily      string                             `json:"model_routing_family,omitempty"`
+	ModelRoutingVersion     int64                              `json:"model_routing_version,omitempty"`
+	RouteScopeKind          string                             `json:"route_scope_kind,omitempty"`
+	RouteScopeGroupID       int64                              `json:"route_scope_group_id,omitempty"`
+	RouteScopeGroupName     string                             `json:"route_scope_group_name,omitempty"`
+	RouteMode               string                             `json:"route_mode,omitempty"`
+	RouteTargetAccountID    int64                              `json:"route_target_account_id,omitempty"`
 	Candidates              []AccountScheduleCandidateDecision `json:"candidates"`
 }
 
@@ -262,6 +270,16 @@ type AccountScheduleResult struct {
 	Accounts []*store.UpstreamAccountRecord
 	Pinned   bool
 	Snapshot *LatestAccountScheduleSnapshot
+}
+
+// SaveLatestAccountScheduleSnapshot 保存由模型路由适配器生成的请求调度草稿。
+func (s *AccountPoolService) SaveLatestAccountScheduleSnapshot(ctx context.Context, snapshot *LatestAccountScheduleSnapshot) error {
+	_ = ctx
+	if s == nil || s.scheduleSnapshots == nil || snapshot == nil {
+		return nil
+	}
+	s.scheduleSnapshots.saveDraft(snapshot)
+	return nil
 }
 
 func (s *AccountPoolService) PrepareSchedulableAccounts(ctx context.Context, requestID, requestPath string) (AccountScheduleResult, error) {
