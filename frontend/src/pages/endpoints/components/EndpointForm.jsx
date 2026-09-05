@@ -133,6 +133,30 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
     }));
   };
 
+  const clearRuleError = () => {
+    if (errors.modelRewriteRules) setErrors((current) => ({ ...current, modelRewriteRules: undefined }));
+  };
+
+  // 删空最后一条规则等价于停用模型改写，保存时写入空规则
+  const removeRule = (index) => {
+    setState((current) => {
+      const rules = current.modelRewriteRules.filter((_, ruleIndex) => ruleIndex !== index);
+      return { ...current, modelRewriteEnabled: rules.length > 0, modelRewriteRules: rules };
+    });
+    clearRuleError();
+  };
+
+  const toggleModelRewrite = (enabled) => {
+    setState((current) => ({
+      ...current,
+      modelRewriteEnabled: enabled,
+      modelRewriteRules: enabled && current.modelRewriteRules.length === 0
+        ? [createEmptyEndpointModelRewriteRule()]
+        : current.modelRewriteRules
+    }));
+    clearRuleError();
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     const nextErrors = validateEndpointFormState(state);
@@ -234,7 +258,7 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
                   <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-fg-subtle">模型改写</h3>
                   <p className="mt-1 text-xs text-fg-subtle">仅作用于 Claude Messages 与 count_tokens，按精确匹配执行。</p>
                 </div>
-                <input type="checkbox" checked={state.modelRewriteEnabled} onChange={(event) => setState((current) => ({ ...current, modelRewriteEnabled: event.target.checked }))} className="app-checkbox" aria-label="启用模型改写" />
+                <input type="checkbox" checked={state.modelRewriteEnabled} onChange={(event) => toggleModelRewrite(event.target.checked)} className="app-checkbox" aria-label="启用模型改写" />
               </div>
               {state.modelRewriteEnabled && (
                 <div className="space-y-2 rounded-xl border border-line bg-surface-sub p-3">
@@ -242,7 +266,7 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
                     <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                       <input aria-label={`来源模型 ${index + 1}`} value={rule.source || ''} onChange={(event) => updateRule(index, 'source', event.target.value)} placeholder="claude-sonnet-4-5" className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-accent-ring" />
                       <input aria-label={`目标模型 ${index + 1}`} value={rule.target || ''} onChange={(event) => updateRule(index, 'target', event.target.value)} placeholder="provider-sonnet" className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-accent-ring" />
-                      <button type="button" onClick={() => setState((current) => ({ ...current, modelRewriteRules: current.modelRewriteRules.filter((_, ruleIndex) => ruleIndex !== index) }))} className="rounded-lg border border-line p-2 text-fg-subtle hover:border-danger-line hover:bg-danger-soft hover:text-danger" aria-label={`删除模型规则 ${index + 1}`}><Trash2 size={15} /></button>
+                      <button type="button" onClick={() => removeRule(index)} className="rounded-lg border border-line p-2 text-fg-subtle hover:border-danger-line hover:bg-danger-soft hover:text-danger" aria-label={`删除模型规则 ${index + 1}`}><Trash2 size={15} /></button>
                     </div>
                   ))}
                   <button type="button" onClick={() => setState((current) => ({ ...current, modelRewriteRules: [...current.modelRewriteRules, createEmptyEndpointModelRewriteRule()] }))} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-fg-body hover:border-accent-line hover:text-accent-fg"><Plus size={13} />添加规则</button>

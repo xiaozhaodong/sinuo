@@ -52,6 +52,9 @@ const Toolbar = ({
   endpoints = [],
   claudeRoutingState = null,
   modelRoutingEnabled = false,
+  modelRouteBindings = [],
+  onModelRoutePatch,
+  modelRoutePatching = false,
   onClaudeEndpointSwitch,
   onRestoreClaudeAuto,
   onClearRouteCache,
@@ -70,6 +73,9 @@ const Toolbar = ({
         endpoints={endpoints}
         routingState={claudeRoutingState}
         modelRoutingEnabled={modelRoutingEnabled}
+        modelRouteBindings={modelRouteBindings}
+        onModelRoutePatch={onModelRoutePatch}
+        modelRoutePatching={modelRoutePatching}
         onSwitch={onClaudeEndpointSwitch}
         onRestoreAuto={onRestoreClaudeAuto}
         onClearRouteCache={onClearRouteCache}

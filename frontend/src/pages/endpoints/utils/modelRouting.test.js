@@ -7,6 +7,7 @@ import {
   endpointStatusTone,
   filterEndpoints,
   normalizeDraftTarget,
+  patchBindingPayload,
   routeModeLabel,
   setDraftRouteMode,
   toggleDraftEndpoint,
@@ -111,4 +112,23 @@ test('endpoint search matches name and url', () => {
   assert.deepEqual(filterEndpoints(endpoints, 'beta').map((item) => item.name), ['relay-b']);
   assert.deepEqual(filterEndpoints(endpoints, ' RELAY-A ').map((item) => item.name), ['relay-a']);
   assert.equal(filterEndpoints(endpoints, '  ').length, 2);
+});
+
+test('patchBindingPayload keeps the endpoint set and normalizes the target', () => {
+  const binding = {
+    assignment_id: 3,
+    model: 'claude-opus-4-5',
+    endpoints: [{ name: 'relay-a' }, { name: 'relay-b' }],
+    route_mode: 'manual_fixed',
+    route_target: 'relay-b',
+    enabled: true,
+    note: '主力'
+  };
+  assert.deepEqual(patchBindingPayload(binding, { route_mode: 'auto' }), {
+    model: 'claude-opus-4-5', endpoints: ['relay-a', 'relay-b'], route_mode: 'auto', route_target: '', enabled: true, note: '主力'
+  });
+  assert.equal(patchBindingPayload(binding, { route_mode: 'manual_preferred', route_target: 'relay-a' }).route_target, 'relay-a');
+  assert.equal(patchBindingPayload(binding, { route_mode: 'manual_preferred' }).route_target, '');
+  assert.equal(patchBindingPayload({ ...binding, endpoints: [{ name: 'relay-a' }], route_mode: 'auto', route_target: '' }, { route_mode: 'manual_fixed' }).route_target, 'relay-a');
+  assert.equal(patchBindingPayload(binding, { enabled: false }).enabled, false);
 });

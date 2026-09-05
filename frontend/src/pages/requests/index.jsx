@@ -20,6 +20,8 @@ import {
   fetchEndpoints,
   fetchClaudeRoutingState,
   fetchModelRoutingSettings,
+  fetchModelRouteBindings,
+  updateModelRouteBinding,
   setClaudeRoutingOverride,
   clearClaudeRoutingOverride,
   clearNegativeHitCache,
@@ -36,6 +38,7 @@ import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
+import { patchBindingPayload } from '../endpoints/utils/modelRouting.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
@@ -57,6 +60,8 @@ const RequestsPage = () => {
   const [endpoints, setEndpoints] = useState([]);
   const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
   const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false });
+  const [modelRouteBindings, setModelRouteBindings] = useState([]);
+  const [modelRoutePatching, setModelRoutePatching] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, has_snapshot: false, candidates: [] });
   const [routeSwitching, setRouteSwitching] = useState(false);
@@ -212,7 +217,7 @@ const RequestsPage = () => {
       setError(null);
 
       // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, modelsData, endpointsData, routeStateData, modelRoutingData, accountsData, latestSnapshotData] = await Promise.all([
+      const [, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
         refreshRequestData(),
         fetchModels(),
         fetchEndpoints(),
@@ -223,6 +228,10 @@ const RequestsPage = () => {
         fetchModelRoutingSettings().catch((err) => {
           console.error('❌ 加载模型路由状态失败:', err);
           return { claude_enabled: false };
+        }),
+        fetchModelRouteBindings().catch((err) => {
+          console.error('❌ 加载模型路由映射失败:', err);
+          return [];
         }),
         fetchUpstreamAccounts().catch((err) => {
           console.error('❌ 加载账号池账号失败:', err);
@@ -253,6 +262,7 @@ const RequestsPage = () => {
         ? routeStateData
         : { mode: 'auto', endpointName: '', fallbackEnabled: true });
       setModelRoutingSettings(modelRoutingData && typeof modelRoutingData === 'object' ? modelRoutingData : { claude_enabled: false });
+      setModelRouteBindings(Array.isArray(modelBindingsData) ? modelBindingsData : []);
 
       setAccounts(Array.isArray(accountsData) ? accountsData : []);
       setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
@@ -366,6 +376,21 @@ const RequestsPage = () => {
       setRouteSwitching(false);
     }
   };
+
+  const handleModelRoutePatch = useCallback(async (binding, patch) => {
+    setModelRoutePatching(true);
+    try {
+      await updateModelRouteBinding(binding.assignment_id, patchBindingPayload(binding, patch));
+      const list = await fetchModelRouteBindings();
+      setModelRouteBindings(Array.isArray(list) ? list : []);
+      const mode = patch.route_mode === 'auto' ? '自动调度' : `${patch.route_mode === 'manual_fixed' ? '固定' : '优选'} ${patch.route_target}`;
+      showNotice('success', `模型「${binding.model}」已切换为${mode}`);
+    } catch (err) {
+      showNotice('error', err?.message || '切换模型路由策略失败');
+    } finally {
+      setModelRoutePatching(false);
+    }
+  }, [showNotice]);
 
   const handleRestoreClaudeAuto = useCallback(async () => {
     setRouteSwitching(true);
@@ -485,6 +510,10 @@ const RequestsPage = () => {
     });
     const unsubscribeModelRouting = subscribeToEvent('model-routing:update', (state) => {
       if (state && typeof state === 'object') setModelRoutingSettings(state);
+      // 端点页改了映射或本页切换策略后，同步刷新切换器里的映射列表。
+      fetchModelRouteBindings().then((list) => setModelRouteBindings(Array.isArray(list) ? list : [])).catch((err) => {
+        console.error('❌ 刷新模型路由映射失败:', err);
+      });
     });
     return () => {
       if (typeof unsubscribe === 'function') {
@@ -539,6 +568,9 @@ const RequestsPage = () => {
             endpoints={endpoints}
             claudeRoutingState={claudeRoutingState}
             modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
+            modelRouteBindings={modelRouteBindings}
+            onModelRoutePatch={handleModelRoutePatch}
+            modelRoutePatching={modelRoutePatching}
             onClaudeEndpointSwitch={handleClaudeEndpointSwitch}
             onRestoreClaudeAuto={handleRestoreClaudeAuto}
             onClearRouteCache={handleClearRouteCache}

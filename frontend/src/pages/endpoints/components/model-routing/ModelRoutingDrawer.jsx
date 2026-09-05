@@ -18,7 +18,7 @@ import {
 } from '@utils/api.js';
 import { subscribeToEvent } from '@utils/wailsApi.js';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
-import { bindingPayload, createBindingDraft } from '../../utils/modelRouting.js';
+import { patchBindingPayload } from '../../utils/modelRouting.js';
 import ModelBindingDialog from './ModelBindingDialog.jsx';
 import ModelBindingRow from './ModelBindingRow.jsx';
 import RouteTestBox from './RouteTestBox.jsx';
@@ -80,16 +80,8 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
     if (ok) setDialogTarget(null);
   };
 
-  // 行内改策略或启用状态：后端是整条覆盖写，必须带上当前端点集合，否则会被清空。
   const patchBinding = (binding, patch) =>
-    run(() =>
-      updateModelRouteBinding(binding.assignment_id, bindingPayload({
-        ...createBindingDraft(binding),
-        routeMode: patch.route_mode ?? binding.route_mode,
-        routeTarget: patch.route_target ?? binding.route_target,
-        enabled: patch.enabled ?? binding.enabled
-      }))
-    );
+    run(() => updateModelRouteBinding(binding.assignment_id, patchBindingPayload(binding, patch)));
 
   const removeBinding = (binding) => {
     if (!window.confirm(`确定删除模型「${binding.model}」的映射吗？删除后该模型的请求会返回未分配错误。`)) return;

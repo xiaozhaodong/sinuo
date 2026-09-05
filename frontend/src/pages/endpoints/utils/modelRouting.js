@@ -95,6 +95,20 @@ export const bindingPayload = (draft) => ({
   note: (draft.note || '').trim()
 });
 
+// 行内改策略/启用状态：后端是整条覆盖写，必须带上当前端点集合，否则会被清空。
+// 切到优选/固定时目标必须是成员，只有一个端点就直接替用户定下来。
+export const patchBindingPayload = (binding, patch = {}) => {
+  const draft = createBindingDraft(binding);
+  const routeMode = patch.route_mode ?? draft.routeMode;
+  const routeTarget = patch.route_target ?? (routeMode === draft.routeMode ? draft.routeTarget : '');
+  return bindingPayload(normalizeDraftTarget({
+    ...draft,
+    routeMode,
+    routeTarget,
+    enabled: patch.enabled ?? draft.enabled
+  }));
+};
+
 // 端点选择器的过滤：按名称与 URL 匹配，空关键词返回全量。
 export const filterEndpoints = (endpoints, keyword) => {
   const needle = (keyword || '').trim().toLowerCase();
