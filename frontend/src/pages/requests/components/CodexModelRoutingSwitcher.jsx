@@ -20,6 +20,13 @@ const accountState = (account) => {
   return { label: '可参与', tone: 'text-success' };
 };
 
+const memberState = (binding, id, account) => {
+  if (binding?.member_enabled?.[id] === false) {
+    return { label: '未参与自动调度', tone: 'text-warn', detail: '该账号不会参与自动或优选调度，但仍可被手动固定使用' };
+  }
+  return accountState(account);
+};
+
 const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, loading = false }) => {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
@@ -109,17 +116,18 @@ const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, load
                   {(selected.account_ids || []).length === 0 && <div className="px-3 py-3 text-xs text-fg-subtle">未选择任何账号</div>}
                   {(selected.account_ids || []).map((id) => {
                     const account = accountById.get(Number(id));
-                    const state = accountState(account);
+                    const state = memberState(selected, Number(id), account);
+                    const memberPaused = selected.member_enabled?.[Number(id)] === false;
                     const preferred = selected.route_mode === 'manual_preferred' && Number(selected.route_target_account_id) === Number(id);
                     const fixed = selected.route_mode === 'manual_fixed' && Number(selected.route_target_account_id) === Number(id);
                     return (
                       <div key={id} className={`mx-1 flex items-center gap-2 rounded-lg px-2 py-1.5 ${preferred || fixed ? 'bg-surface-sub' : 'hover:bg-surface-sub'}`}>
                         <span className={`h-2 w-2 shrink-0 rounded-full ${state.tone === 'text-success' ? 'bg-success-solid' : state.tone === 'text-warn' ? 'bg-warn-solid' : 'bg-danger-solid'}`} />
-                        <span className="min-w-0 flex-1 truncate text-xs text-fg-body" title={state.label}>{accountName(account)} <span className="font-mono text-[10px] text-fg-subtle">#{id}</span></span>
-                        <span className={`shrink-0 text-[10px] ${state.tone}`}>{state.label}</span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-fg-body" title={state.detail || state.label}>{accountName(account)} <span className="font-mono text-[10px] text-fg-subtle">#{id}</span></span>
+                        <span className={`shrink-0 text-[10px] ${state.tone}`} title={state.detail}>{state.label}</span>
                         <div className="flex shrink-0 gap-1">
-                          <button type="button" disabled={loading} title="优先使用此账号，不可用时回落" onClick={() => patch(selected, { route_mode: 'manual_preferred', route_target_account_id: Number(id) })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${preferred ? 'tone-indigo' : 'border-line text-fg-muted hover:border-accent-line hover:text-accent'}`}><Route size={11} />优选</button>
-                          <button type="button" disabled={loading} title="只使用此账号，不可用时直接失败" onClick={() => patch(selected, { route_mode: 'manual_fixed', route_target_account_id: Number(id) })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${fixed ? 'tone-rose' : 'border-line text-fg-muted hover:border-rose-300 hover:text-rose-500'}`}><LockKeyhole size={11} />固定</button>
+                          <button type="button" disabled={loading || memberPaused} title={memberPaused ? '该账号已暂停本模型组调度，请先在账号池模型路由中恢复' : '优先使用此账号，不可用时回落'} onClick={() => patch(selected, { route_mode: 'manual_preferred', route_target_account_id: Number(id) })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${preferred ? 'tone-indigo' : 'border-line text-fg-muted hover:border-accent-line hover:text-accent'}`}><Route size={11} />优选</button>
+                          <button type="button" disabled={loading} title="只使用此账号，不可用时直接失败；即使账号暂停自动调度也可以固定" onClick={() => patch(selected, { route_mode: 'manual_fixed', route_target_account_id: Number(id) })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${fixed ? 'tone-rose' : 'border-line text-fg-muted hover:border-rose-300 hover:text-rose-500'}`}><LockKeyhole size={11} />固定</button>
                         </div>
                       </div>
                     );

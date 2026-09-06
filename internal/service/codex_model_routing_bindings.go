@@ -14,6 +14,23 @@ import (
 
 // parseCodexMembers 严格解析正整数 ID，不接受尾随文本、浮点数或超过上限的成员。
 func parseCodexMembers(raw string) ([]int64, error) {
+	states, err := parseCodexMemberStates(raw)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(states))
+	for _, member := range states {
+		ids = append(ids, member.ID)
+	}
+	return ids, nil
+}
+
+type codexMemberState struct {
+	ID      int64
+	Enabled bool
+}
+
+func parseCodexMemberStates(raw string) ([]codexMemberState, error) {
 	var values []json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &values); err != nil {
 		return nil, fmt.Errorf("解析 Codex 账号组成员失败: %w", err)
@@ -21,10 +38,24 @@ func parseCodexMembers(raw string) ([]int64, error) {
 	if len(values) == 0 || len(values) > modelrouting.MaxGroupMembers {
 		return nil, fmt.Errorf("账号组成员数量必须为 1–%d", modelrouting.MaxGroupMembers)
 	}
-	ids := make([]int64, 0, len(values))
+	members := make([]codexMemberState, 0, len(values))
 	seen := map[int64]bool{}
 	for _, v := range values {
 		text := string(v)
+		enabled := true
+		if len(v) > 0 && v[0] == '{' {
+			var obj struct {
+				ID      json.RawMessage `json:"id"`
+				Enabled *bool           `json:"enabled"`
+			}
+			if err := json.Unmarshal(v, &obj); err != nil || len(obj.ID) == 0 {
+				return nil, fmt.Errorf("账号组成员格式无效")
+			}
+			text = string(obj.ID)
+			if obj.Enabled != nil {
+				enabled = *obj.Enabled
+			}
+		}
 		if len(v) > 0 && v[0] == '"' {
 			if err := json.Unmarshal(v, &text); err != nil {
 				return nil, err
@@ -38,9 +69,9 @@ func parseCodexMembers(raw string) ([]int64, error) {
 			return nil, fmt.Errorf("账号 ID %d 重复", id)
 		}
 		seen[id] = true
-		ids = append(ids, id)
+		members = append(members, codexMemberState{ID: id, Enabled: enabled})
 	}
-	return ids, nil
+	return members, nil
 }
 func formatAccountTarget(id int64) string {
 	if id == 0 {
@@ -74,6 +105,7 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 		return nil, err
 	}
 	groups := []modelrouting.Group{}
+	memberStates := map[int64]map[int64]bool{}
 	for _, r := range records {
 		if r != nil && r.Family == modelrouting.FamilyCodex {
 			g, e := codexGroupFromRecord(r)
@@ -81,6 +113,14 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 				return nil, e
 			}
 			groups = append(groups, g)
+			states, e := parseCodexMemberStates(r.MembersJSON)
+			if e != nil {
+				return nil, e
+			}
+			memberStates[r.ID] = map[int64]bool{}
+			for _, member := range states {
+				memberStates[r.ID][member.ID] = member.Enabled
+			}
 		}
 	}
 	recordsA, err := st.ListAssignments(ctx)
@@ -107,7 +147,7 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 	}
 	snap := &codexModelRoutingSnapshot{Enabled: settings.CodexEnabled, Groups: map[int64]*codexModelRoutingGroup{}, ByModel: map[string]*codexModelRoutingAssignment{}}
 	for _, g := range compiled.Groups() {
-		cg := &codexModelRoutingGroup{ID: g.ID, Name: g.Name, RouteMode: g.RouteMode, Revision: g.RouteRevision}
+		cg := &codexModelRoutingGroup{ID: g.ID, Name: g.Name, RouteMode: g.RouteMode, Revision: g.RouteRevision, MemberEnabled: memberStates[g.ID]}
 		for _, m := range g.Members {
 			id, _ := strconv.ParseInt(m, 10, 64)
 			cg.Members = append(cg.Members, id)
@@ -123,7 +163,15 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 	return snap, nil
 }
 func validateCodexBindingInput(in CodexModelRouteBindingInput) error {
-	raw, err := json.Marshal(in.AccountIDs)
+	ids := in.AccountIDs
+	if len(in.MemberEnabled) > 0 {
+		ids = make([]int64, 0, len(in.MemberEnabled))
+		for id := range in.MemberEnabled {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	raw, err := json.Marshal(ids)
 	if err != nil {
 		return err
 	}
@@ -198,7 +246,15 @@ func (s *CodexModelRoutingService) ListBindings(ctx context.Context) ([]CodexMod
 			}
 		}
 		rt := s.Runtime(g.ID)
-		out = append(out, CodexModelRouteBinding{AssignmentID: a.ID, GroupID: g.ID, Model: a.ModelName, AccountIDs: members, RouteMode: g.RouteMode, RouteTargetID: target, Enabled: a.Enabled, Note: a.Note, LastAccountID: rt.LastAccountID, LastOutcome: rt.LastOutcome, LastDecisionAt: rt.LastDecisionAt, UpdatedAt: a.UpdatedAt})
+		states, e := parseCodexMemberStates(g.MembersJSON)
+		if e != nil {
+			return nil, e
+		}
+		memberEnabled := map[int64]bool{}
+		for _, member := range states {
+			memberEnabled[member.ID] = member.Enabled
+		}
+		out = append(out, CodexModelRouteBinding{AssignmentID: a.ID, GroupID: g.ID, Model: a.ModelName, AccountIDs: members, MemberEnabled: memberEnabled, RouteMode: g.RouteMode, RouteTargetID: target, Enabled: a.Enabled, Note: a.Note, LastAccountID: rt.LastAccountID, LastOutcome: rt.LastOutcome, LastDecisionAt: rt.LastDecisionAt, UpdatedAt: a.UpdatedAt})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return modelrouting.NormalizeModelName(out[i].Model) < modelrouting.NormalizeModelName(out[j].Model)
@@ -267,7 +323,23 @@ func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in
 			g = &store.ModelUpstreamGroupRecord{Family: modelrouting.FamilyCodex}
 		}
 		g.Name = dedicatedGroupName(in.Model, groups, g.ID)
-		members, err := json.Marshal(in.AccountIDs)
+		ids := in.AccountIDs
+		if len(ids) == 0 && len(in.MemberEnabled) > 0 {
+			ids = make([]int64, 0, len(in.MemberEnabled))
+			for memberID := range in.MemberEnabled {
+				ids = append(ids, memberID)
+			}
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		}
+		memberObjects := make([]map[string]interface{}, 0, len(ids))
+		for _, memberID := range ids {
+			enabled := true
+			if value, ok := in.MemberEnabled[memberID]; ok {
+				enabled = value
+			}
+			memberObjects = append(memberObjects, map[string]interface{}{"id": memberID, "enabled": enabled})
+		}
+		members, err := json.Marshal(memberObjects)
 		if err != nil {
 			return err
 		}

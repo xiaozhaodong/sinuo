@@ -411,6 +411,7 @@ const RequestsPage = () => {
       await updateCodexModelRouteBinding(binding.assignment_id, {
         model: next.model,
         account_ids: accountIDs,
+        member_enabled: next.member_enabled || {},
         route_mode: routeMode,
         route_target_account_id: targetID,
         enabled: next.enabled !== false,

@@ -28,6 +28,7 @@ type CodexModelRouteScope struct {
 	GroupID          int64
 	GroupName        string
 	Members          []int64
+	MemberEnabled    map[int64]bool
 	Mode             string
 	TargetAccountID  int64
 	Revision         int64
@@ -50,6 +51,7 @@ type CodexModelRouteBinding struct {
 	AccountIDs     []int64
 	RouteMode      string
 	RouteTargetID  int64
+	MemberEnabled  map[int64]bool
 	Enabled        bool
 	Note           string
 	LastAccountID  int64
@@ -61,6 +63,7 @@ type CodexModelRouteBinding struct {
 type CodexModelRouteBindingInput struct {
 	Model         string
 	AccountIDs    []int64
+	MemberEnabled map[int64]bool
 	RouteMode     string
 	RouteTargetID int64
 	Enabled       bool
@@ -76,12 +79,13 @@ type codexModelRoutingSnapshot struct {
 }
 
 type codexModelRoutingGroup struct {
-	ID          int64
-	Name        string
-	Members     []int64
-	RouteMode   string
-	RouteTarget int64
-	Revision    int64
+	ID            int64
+	Name          string
+	Members       []int64
+	RouteMode     string
+	RouteTarget   int64
+	Revision      int64
+	MemberEnabled map[int64]bool
 }
 
 type codexModelRoutingAssignment struct {
@@ -194,6 +198,7 @@ func (s *CodexModelRoutingService) ResolveScope(model string) (CodexModelRouteSc
 	scope.GroupID = g.ID
 	scope.GroupName = g.Name
 	scope.Members = append([]int64(nil), g.Members...)
+	scope.MemberEnabled = cloneMemberEnabled(g.MemberEnabled, scope.Members)
 	scope.Mode = g.RouteMode
 	scope.TargetAccountID = g.RouteTarget
 	scope.Revision = g.Revision
@@ -249,6 +254,14 @@ func (s *CodexModelRoutingService) Prepare(ctx context.Context, model, path stri
 			candidates = append(candidates, candidate)
 			continue
 		}
+		// 组内暂停只排除自动/优选调度；固定模式是用户显式指定账号，
+		// 仍允许固定到已暂停成员。账号自身停用、缺少凭据、冷却等硬约束仍继续生效。
+		if !scope.MemberEnabled[id] && scope.Mode != modelrouting.RouteModeManualFixed {
+			candidate.Reason = "member_disabled"
+			candidate.ReasonDetail = "该账号已暂停参与此模型组调度"
+			candidates = append(candidates, candidate)
+			continue
+		}
 		if a == nil || !a.Enabled || strings.TrimSpace(a.CredentialRaw) == "" || a.State == "disabled_auth" {
 			candidate.Reason = "account_unavailable"
 			candidate.ReasonDetail = "账号不存在、停用、缺少凭据或授权失效"
@@ -288,6 +301,18 @@ func (s *CodexModelRoutingService) Prepare(ctx context.Context, model, path stri
 		result = result[:1]
 	}
 	return CodexModelRouteResult{Accounts: result, Scope: scope, Candidates: candidates, CacheGenerations: generations}, nil
+}
+
+func cloneMemberEnabled(src map[int64]bool, members []int64) map[int64]bool {
+	out := make(map[int64]bool, len(members))
+	for _, id := range members {
+		if enabled, ok := src[id]; ok {
+			out[id] = enabled
+		} else {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 func filterID(ids []int64, target int64) []int64 {

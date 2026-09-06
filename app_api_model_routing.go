@@ -31,26 +31,28 @@ type ModelRoutingSettingsInfo struct {
 }
 
 type CodexModelRouteBindingInfo struct {
-	AssignmentID   int64   `json:"assignment_id"`
-	Model          string  `json:"model"`
-	AccountIDs     []int64 `json:"account_ids"`
-	RouteMode      string  `json:"route_mode"`
-	RouteTargetID  int64   `json:"route_target_account_id,omitempty"`
-	Enabled        bool    `json:"enabled"`
-	Note           string  `json:"note"`
-	LastAccountID  int64   `json:"last_account_id,omitempty"`
-	LastOutcome    string  `json:"last_outcome,omitempty"`
-	LastDecisionAt string  `json:"last_decision_at,omitempty"`
-	UpdatedAt      string  `json:"updated_at"`
+	AssignmentID   int64          `json:"assignment_id"`
+	Model          string         `json:"model"`
+	AccountIDs     []int64        `json:"account_ids"`
+	MemberEnabled  map[int64]bool `json:"member_enabled"`
+	RouteMode      string         `json:"route_mode"`
+	RouteTargetID  int64          `json:"route_target_account_id,omitempty"`
+	Enabled        bool           `json:"enabled"`
+	Note           string         `json:"note"`
+	LastAccountID  int64          `json:"last_account_id,omitempty"`
+	LastOutcome    string         `json:"last_outcome,omitempty"`
+	LastDecisionAt string         `json:"last_decision_at,omitempty"`
+	UpdatedAt      string         `json:"updated_at"`
 }
 
 type CodexModelRouteBindingInput struct {
-	Model         string  `json:"model"`
-	AccountIDs    []int64 `json:"account_ids"`
-	RouteMode     string  `json:"route_mode"`
-	RouteTargetID int64   `json:"route_target_account_id"`
-	Enabled       bool    `json:"enabled"`
-	Note          string  `json:"note"`
+	Model         string         `json:"model"`
+	AccountIDs    []int64        `json:"account_ids"`
+	MemberEnabled map[int64]bool `json:"member_enabled"`
+	RouteMode     string         `json:"route_mode"`
+	RouteTargetID int64          `json:"route_target_account_id"`
+	Enabled       bool           `json:"enabled"`
+	Note          string         `json:"note"`
 }
 
 type UpdateModelRoutingSettingsInput struct {
@@ -331,7 +333,7 @@ func (a *App) ListCodexModelRouteBindings() ([]CodexModelRouteBindingInfo, error
 	}
 	result := make([]CodexModelRouteBindingInfo, 0, len(bindings))
 	for _, b := range bindings {
-		result = append(result, CodexModelRouteBindingInfo{AssignmentID: b.AssignmentID, Model: b.Model, AccountIDs: b.AccountIDs, RouteMode: b.RouteMode, RouteTargetID: b.RouteTargetID, Enabled: b.Enabled, Note: b.Note, LastAccountID: b.LastAccountID, LastOutcome: b.LastOutcome, LastDecisionAt: formatTime(b.LastDecisionAt), UpdatedAt: formatTime(b.UpdatedAt)})
+		result = append(result, CodexModelRouteBindingInfo{AssignmentID: b.AssignmentID, Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, RouteMode: b.RouteMode, RouteTargetID: b.RouteTargetID, Enabled: b.Enabled, Note: b.Note, LastAccountID: b.LastAccountID, LastOutcome: b.LastOutcome, LastDecisionAt: formatTime(b.LastDecisionAt), UpdatedAt: formatTime(b.UpdatedAt)})
 	}
 	return result, nil
 }
@@ -343,7 +345,7 @@ func (a *App) CreateCodexModelRouteBinding(input CodexModelRouteBindingInput) (C
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	id, err := svc.CreateBinding(ctx, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note})
+	id, err := svc.CreateBinding(ctx, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note})
 	if err != nil {
 		return CodexModelRouteBindingInfo{}, err
 	}
@@ -381,7 +383,7 @@ func (a *App) UpdateCodexModelRouteBinding(assignmentID int64, input CodexModelR
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := svc.UpdateBinding(ctx, assignmentID, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note}); err != nil {
+	if err := svc.UpdateBinding(ctx, assignmentID, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note}); err != nil {
 		return err
 	}
 	a.emitModelRoutingUpdate()

@@ -396,6 +396,7 @@ export const listCodexModelRouteBindings = async () => {
     assignment_id: parseEntityId(binding.assignment_id ?? binding.assignmentId),
     model: binding.model || binding.Model || '',
     account_ids: (binding.account_ids || binding.accountIds || []).map((id) => Number(id)).filter(Number.isFinite),
+    member_enabled: Object.fromEntries(Object.entries(binding.member_enabled || binding.memberEnabled || {}).map(([id, enabled]) => [Number(id), enabled !== false])),
     route_mode: binding.route_mode || binding.routeMode || 'auto',
     route_target_account_id: Number(binding.route_target_account_id ?? binding.routeTargetID ?? binding.routeTargetId ?? 0) || 0,
     enabled: binding.enabled ?? true,

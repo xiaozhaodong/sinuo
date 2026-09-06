@@ -125,3 +125,49 @@ func TestCodexModelRouting_AccountReferenceGuardIncludesDisabledBindings(t *test
 		t.Fatalf("disabled binding must still protect a referenced account from deletion: %v", models)
 	}
 }
+
+func TestCodexModelRouting_MemberParticipationCanBePaused(t *testing.T) {
+	svc := newCodexModelRoutingServiceForTest(t)
+	ctx := context.Background()
+	if _, err := svc.CreateBinding(ctx, CodexModelRouteBindingInput{
+		Model: "gpt-5", AccountIDs: []int64{1, 2}, MemberEnabled: map[int64]bool{1: false, 2: true}, RouteMode: modelrouting.RouteModeAuto, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+	if err := svc.UpdateEnabled(ctx, true); err != nil {
+		t.Fatalf("enable routing failed: %v", err)
+	}
+	prepared, err := svc.Prepare(ctx, "gpt-5", "/v1/responses")
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if len(prepared.Accounts) != 1 || prepared.Accounts[0].ID != 2 {
+		t.Fatalf("paused member should be excluded: %#v", prepared.Accounts)
+	}
+	if prepared.Candidates[0].Reason != "member_disabled" {
+		t.Fatalf("paused member reason mismatch: %#v", prepared.Candidates)
+	}
+}
+
+func TestCodexModelRouting_PausedMemberCanBeFixed(t *testing.T) {
+	svc := newCodexModelRoutingServiceForTest(t)
+	ctx := context.Background()
+	if _, err := svc.CreateBinding(ctx, CodexModelRouteBindingInput{
+		Model: "gpt-5-fixed", AccountIDs: []int64{1, 2}, MemberEnabled: map[int64]bool{1: false, 2: true}, RouteMode: modelrouting.RouteModeManualFixed, RouteTargetID: 1, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+	if err := svc.UpdateEnabled(ctx, true); err != nil {
+		t.Fatalf("enable routing failed: %v", err)
+	}
+	prepared, err := svc.Prepare(ctx, "gpt-5-fixed", "/v1/responses")
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if len(prepared.Accounts) != 1 || prepared.Accounts[0].ID != 1 {
+		t.Fatalf("fixed route should allow paused target account: %#v", prepared.Accounts)
+	}
+	if prepared.Candidates[0].Decision != "selected" || prepared.Candidates[0].Reason == "member_disabled" {
+		t.Fatalf("paused fixed target should be selected: %#v", prepared.Candidates)
+	}
+}
