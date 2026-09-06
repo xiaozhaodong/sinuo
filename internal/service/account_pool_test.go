@@ -82,6 +82,24 @@ func TestTestUpstreamAccount_ReturnsPermissionErrorOn403(t *testing.T) {
 	}
 }
 
+func TestClearAccountCooldown_ClearsRuntimeAndPersistence(t *testing.T) {
+	svc, accountID := newTestAccountPoolServiceForConnectivity(t, "https://example.invalid", "api_key", "sk-clear")
+	ctx := context.Background()
+	if err := svc.MarkAccountTransientFailure(ctx, accountID, "temporary", time.Minute); err != nil {
+		t.Fatalf("MarkAccountTransientFailure failed: %v", err)
+	}
+	if err := svc.ClearAccountCooldown(ctx, accountID); err != nil {
+		t.Fatalf("ClearAccountCooldown failed: %v", err)
+	}
+	account, err := svc.GetAccount(ctx, accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if account.State != "active" || account.FailCount != 0 || account.CooldownUntil != nil || account.LastError != "" {
+		t.Fatalf("expected runtime cooldown cleared, got %+v", account)
+	}
+}
+
 func TestTestUpstreamAccount_MissingResponsesWriteScopeHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"Missing scopes: api.responses.write"}}`, http.StatusUnauthorized)

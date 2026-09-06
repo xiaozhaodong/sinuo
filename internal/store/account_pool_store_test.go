@@ -498,6 +498,26 @@ func TestMarkAccountSuccessIfNoNewerFailure_PreservesNewerCooldownState(t *testi
 	}
 }
 
+func TestClearAccountCooldown_ClearsTransientStateOnly(t *testing.T) {
+	st := newTestSQLiteAccountPoolStore(t)
+	ctx := context.Background()
+	record := mustCreateTestAccount(t, st, "clear-cooldown", 10)
+	until := time.Now().Add(time.Minute)
+	if err := st.MarkAccountTransientFailure(ctx, record.ID, "temporary", until); err != nil {
+		t.Fatalf("MarkAccountTransientFailure failed: %v", err)
+	}
+	if err := st.ClearAccountCooldown(ctx, record.ID, time.Now()); err != nil {
+		t.Fatalf("ClearAccountCooldown failed: %v", err)
+	}
+	current, err := st.GetAccount(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if current.State != "active" || current.FailCount != 0 || current.CooldownUntil != nil || current.LastError != "" {
+		t.Fatalf("expected transient state cleared, got %+v", current)
+	}
+}
+
 func TestMarkAccountSuccessIfNoNewerFailure_PreservesSameMillisecondNewerCooldownState(t *testing.T) {
 	st := newTestSQLiteAccountPoolStore(t)
 	ctx := context.Background()

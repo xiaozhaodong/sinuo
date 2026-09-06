@@ -433,8 +433,8 @@ const AccountPoolPage = () => {
         externalViewRequest={inventoryViewRequest}
         onBatchAction={executeBatchAction}
         onOpenDetails={openSharedDrawer}
-          onToggleAccount={handleToggleAccount}
-          onClearAccountCooldown={handleClearAccountCooldown}
+        onToggleAccount={handleToggleAccount}
+        onClearAccountCooldown={handleClearAccountCooldown}
         onTestAccount={handleTestAccount}
         onRefreshAccountProfile={handleRefreshAccountProfile}
         onMoveAccountToTier={handleMoveAccountToTier}
