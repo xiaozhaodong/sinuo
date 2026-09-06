@@ -116,6 +116,7 @@ const AccountPoolPage = () => {
     deleteTarget,
     closeDeleteDialog,
     handleConfirmDeleteAccount,
+    handleClearAccountCooldown,
     handleDeleteAccount,
     handleMoveAccountToTier,
     handleRefreshAccountProfile,
@@ -432,7 +433,8 @@ const AccountPoolPage = () => {
         externalViewRequest={inventoryViewRequest}
         onBatchAction={executeBatchAction}
         onOpenDetails={openSharedDrawer}
-        onToggleAccount={handleToggleAccount}
+          onToggleAccount={handleToggleAccount}
+          onClearAccountCooldown={handleClearAccountCooldown}
         onTestAccount={handleTestAccount}
         onRefreshAccountProfile={handleRefreshAccountProfile}
         onMoveAccountToTier={handleMoveAccountToTier}
@@ -446,6 +448,7 @@ const AccountPoolPage = () => {
         busyKey={busyKey}
         onClose={closeSharedDrawer}
         onToggleAccount={handleToggleAccount}
+        onClearAccountCooldown={handleClearAccountCooldown}
         onTestAccount={handleTestAccount}
         onRefreshAccountProfile={handleRefreshAccountProfile}
         onMoveAccountToTier={handleMoveAccountToTier}

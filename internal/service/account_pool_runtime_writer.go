@@ -21,6 +21,7 @@ const (
 	accountRuntimeMutationSuccess          accountRuntimeMutationKind = "success"
 	accountRuntimeMutationAuthFailed       accountRuntimeMutationKind = "auth_failed"
 	accountRuntimeMutationTransientFailure accountRuntimeMutationKind = "transient_failure"
+	accountRuntimeMutationClearCooldown    accountRuntimeMutationKind = "clear_cooldown"
 )
 
 type accountRuntimeMutation struct {
@@ -69,6 +70,29 @@ func newAccountPoolRuntimeWriter(parent context.Context, st store.AccountPoolSto
 	writer.wg.Add(1)
 	go writer.run()
 	return writer
+}
+
+func (w *accountPoolRuntimeWriter) EnqueueClearCooldown(accountID int64, stateVersion uint64, clearedAt time.Time) {
+	if w == nil || accountID <= 0 {
+		return
+	}
+	w.enqueue(accountRuntimeMutation{accountID: accountID, kind: accountRuntimeMutationClearCooldown, stateVersion: stateVersion, eventAt: clearedAt})
+}
+
+func (w *accountPoolRuntimeWriter) FlushAccount(ctx context.Context, accountID int64) error {
+	if w == nil || accountID <= 0 {
+		return nil
+	}
+	w.mu.Lock()
+	mutation, ok := w.pending[accountID]
+	if ok {
+		delete(w.pending, accountID)
+	}
+	w.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return w.applyMutation(ctx, &mutation)
 }
 
 func (w *accountPoolRuntimeWriter) Close() error {
@@ -277,6 +301,14 @@ func (w *accountPoolRuntimeWriter) applyMutation(ctx context.Context, mutation *
 		}
 		mutation.failureDelta = 0
 		return nil
+	case accountRuntimeMutationClearCooldown:
+		clearer, ok := w.store.(interface {
+			ClearAccountCooldown(context.Context, int64, time.Time) error
+		})
+		if !ok {
+			return fmt.Errorf("账号存储不支持清除冷却")
+		}
+		return clearer.ClearAccountCooldown(ctx, mutation.accountID, mutation.eventAt)
 	default:
 		return fmt.Errorf("unknown account runtime mutation kind: %s", mutation.kind)
 	}

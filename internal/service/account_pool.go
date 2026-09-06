@@ -445,6 +445,37 @@ func (s *AccountPoolService) MarkAccountTransientFailure(ctx context.Context, id
 	return nil
 }
 
+// ClearAccountCooldown 手动清除账号临时故障冷却；不改变额度耗尽或 disabled_auth 状态。
+func (s *AccountPoolService) ClearAccountCooldown(ctx context.Context, id int64) error {
+	if err := s.ensureRuntimeCache(ctx); err != nil {
+		return err
+	}
+	clearedAt := time.Now()
+	ok, stateVersion := s.runtimeCache.clearCooldown(id, clearedAt)
+	if !ok {
+		return fmt.Errorf("账号不存在: %d", id)
+	}
+	if s.softFailureTracker != nil {
+		s.softFailureTracker.Clear(id)
+	}
+	if s.runtimeWriter == nil {
+		clearer, ok := s.store.(interface {
+			ClearAccountCooldown(context.Context, int64, time.Time) error
+		})
+		if !ok {
+			return fmt.Errorf("账号存储不支持清除冷却")
+		}
+		return clearer.ClearAccountCooldown(ctx, id, clearedAt)
+	}
+	s.runtimeWriter.Drop(id)
+	s.runtimeWriter.EnqueueClearCooldown(id, stateVersion, clearedAt)
+	if err := s.runtimeWriter.FlushAccount(ctx, id); err != nil {
+		_ = s.reloadAccountIntoCache(ctx, id)
+		return err
+	}
+	return nil
+}
+
 func (s *AccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err

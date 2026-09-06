@@ -107,6 +107,7 @@ const AccountInventoryTable = ({
   onToggleRow,
   onRowClick,
   onToggleAccount,
+  onClearAccountCooldown,
   onTestAccount,
   onRefreshAccountProfile,
   onEditAccount,
@@ -201,6 +202,7 @@ const AccountInventoryTable = ({
                   <td className={`${TD} text-sm font-medium text-success`}>{row.refreshedAtText || '-'}</td>
                   <td className={`${TD} text-right`}>
                     <div className="flex items-center justify-end gap-0.5" onClick={stopEvent}>
+                      {row.state === 'cooldown' && <button type="button" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(row.raw || row.detail?.rawAccount || row)} className="rounded-md px-1.5 py-1 text-[11px] text-warn hover:bg-warn-soft">解除冷却</button>}
                       <button
                         type="button"
                         role="switch"

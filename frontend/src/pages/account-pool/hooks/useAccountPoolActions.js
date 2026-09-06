@@ -6,6 +6,7 @@
 import { useCallback, useState } from 'react';
 import {
   deleteUpstreamAccount,
+  clearUpstreamAccountCooldown,
   moveUpstreamAccountToTier,
   refreshUpstreamAccountProfile,
   testUpstreamAccount,
@@ -96,6 +97,19 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
       `account-toggle-${accountId}`,
       () => toggleUpstreamAccount(accountId, nextEnabled),
       nextEnabled ? `已启用「${account.account_name || account.accountName}」` : `已停用「${account.account_name || account.accountName}」`
+    );
+  }, [runRowAction, showNotice]);
+
+  const handleClearAccountCooldown = useCallback(async (account) => {
+    const accountId = resolveAccountId(account);
+    if (!isValidAccountId(accountId)) {
+      showNotice('error', '账号缺少 ID，无法解除冷却');
+      return;
+    }
+    await runRowAction(
+      `account-cooldown-${accountId}`,
+      () => clearUpstreamAccountCooldown(accountId),
+      `已解除账号「${account.account_name || account.accountName || accountId}」的冷却`
     );
   }, [runRowAction, showNotice]);
 
@@ -192,6 +206,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
     deleteTarget,
     closeDeleteDialog,
     handleConfirmDeleteAccount,
+    handleClearAccountCooldown,
     handleDeleteAccount,
     handleMoveAccountToTier,
     handleRefreshAccountProfile,

@@ -938,6 +938,13 @@ export const toggleUpstreamAccount = async (id, enabled) => {
   });
 };
 
+export const clearUpstreamAccountCooldown = async (id) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.clearUpstreamAccountCooldown(id);
+  }
+  return await fetchWithTimeout(`/api/v1/upstream-accounts/${normalizeEntityIdForUrl(id)}/cooldown/clear`, { method: 'POST' });
+};
+
 export const testUpstreamAccount = async (id) => {
   if (isWailsEnvironment()) {
     return await WailsApi.testUpstreamAccount(id);

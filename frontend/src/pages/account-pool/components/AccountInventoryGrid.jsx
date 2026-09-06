@@ -16,6 +16,7 @@ const AccountInventoryGrid = ({
   onToggleRow,
   onRowClick,
   onToggleAccount,
+  onClearAccountCooldown,
   onTestAccount,
   onRefreshAccountProfile,
   onEditAccount,
@@ -47,6 +48,7 @@ const AccountInventoryGrid = ({
             onToggleRow={onToggleRow}
             onRowClick={onRowClick}
             onToggleAccount={onToggleAccount}
+            onClearAccountCooldown={onClearAccountCooldown}
             onTestAccount={onTestAccount}
             onRefreshAccountProfile={onRefreshAccountProfile}
             onEditAccount={onEditAccount}

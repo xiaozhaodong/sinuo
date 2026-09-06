@@ -150,6 +150,7 @@ const AccountDetailsDrawer = ({
   busyKey = '',
   onClose,
   onToggleAccount,
+  onClearAccountCooldown,
   onTestAccount,
   onRefreshAccountProfile,
   onMoveAccountToTier,
@@ -259,6 +260,7 @@ const AccountDetailsDrawer = ({
 
           <SectionCard icon={Settings} title="动作">
             <div className="grid grid-cols-3 gap-2">
+              {account.state === 'cooldown' && <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(account)}>解除冷却</Button>}
               <Button
                 variant={enabled ? 'secondary' : 'primary'}
                 size="sm"

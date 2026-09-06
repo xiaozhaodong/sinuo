@@ -27,6 +27,7 @@ const AccountInventorySection = ({
   onBatchAction,
   onOpenDetails,
   onToggleAccount,
+  onClearAccountCooldown,
   onTestAccount,
   onRefreshAccountProfile,
   onMoveAccountToTier,
@@ -87,6 +88,7 @@ const AccountInventorySection = ({
           onToggleRow={state.selection.toggleRowSelection}
           onRowClick={handleOpenDetails}
           onToggleAccount={onToggleAccount}
+          onClearAccountCooldown={onClearAccountCooldown}
           onTestAccount={onTestAccount}
           onRefreshAccountProfile={onRefreshAccountProfile}
           onEditAccount={onEditAccount}
@@ -103,6 +105,7 @@ const AccountInventorySection = ({
           onToggleRow={state.selection.toggleRowSelection}
           onRowClick={handleOpenDetails}
           onToggleAccount={onToggleAccount}
+          onClearAccountCooldown={onClearAccountCooldown}
           onTestAccount={onTestAccount}
           onRefreshAccountProfile={onRefreshAccountProfile}
           onEditAccount={onEditAccount}
@@ -156,6 +159,7 @@ const AccountInventorySection = ({
           busyKey={busyKey}
           onClose={handleCloseDrawer}
           onToggleAccount={onToggleAccount}
+          onClearAccountCooldown={onClearAccountCooldown}
           onTestAccount={onTestAccount}
           onRefreshAccountProfile={onRefreshAccountProfile}
           onMoveAccountToTier={onMoveAccountToTier}

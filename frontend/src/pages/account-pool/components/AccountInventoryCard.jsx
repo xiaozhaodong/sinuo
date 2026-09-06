@@ -62,6 +62,7 @@ const AccountInventoryCard = ({
   onToggleRow,
   onRowClick,
   onToggleAccount,
+  onClearAccountCooldown,
   onTestAccount,
   onRefreshAccountProfile,
   onEditAccount,
@@ -154,6 +155,7 @@ const AccountInventoryCard = ({
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
+          {row.state === 'cooldown' && <button type="button" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(account)} className="rounded-md px-1.5 py-1 text-[11px] text-warn hover:bg-warn-soft">解除冷却</button>}
           <button
             type="button"
             disabled={actionBusy}

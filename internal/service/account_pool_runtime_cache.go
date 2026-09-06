@@ -698,6 +698,26 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	return true, c.bumpStateVersionLocked(id)
 }
 
+func (c *accountRuntimeCache) clearCooldown(id int64, clearedAt time.Time) (bool, uint64) {
+	if c == nil || id <= 0 {
+		return false, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	record := c.byID[id]
+	if record == nil {
+		return false, 0
+	}
+	if record.State == "cooldown" {
+		record.State = "active"
+	}
+	record.FailCount = 0
+	record.CooldownUntil = nil
+	record.LastError = ""
+	record.UpdatedAt = clearedAt
+	return true, c.bumpStateVersionLocked(id)
+}
+
 func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time.Time) (bool, uint64, accountRuntimeStateSnapshot) {
 	if c == nil || id <= 0 {
 		return false, 0, accountRuntimeStateSnapshot{}

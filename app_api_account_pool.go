@@ -676,6 +676,18 @@ func (a *App) ToggleUpstreamAccount(id int64, enabled bool) error {
 	return a.accountPoolService.ToggleAccount(ctx, id, enabled)
 }
 
+// ClearUpstreamAccountCooldown 手动解除账号临时故障冷却。
+func (a *App) ClearUpstreamAccountCooldown(id int64) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.accountPoolService == nil {
+		return fmt.Errorf("账号池服务未启用")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return a.accountPoolService.ClearAccountCooldown(ctx, id)
+}
+
 // TestUpstreamAccount 测试账号连通性
 func (a *App) TestUpstreamAccount(id int64) (TestUpstreamAccountResult, error) {
 	a.mu.RLock()

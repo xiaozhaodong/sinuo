@@ -382,6 +382,10 @@ export function ToggleUpstreamAccount(arg1, arg2) {
   return window['go']['main']['App']['ToggleUpstreamAccount'](arg1, arg2);
 }
 
+export function ClearUpstreamAccountCooldown(arg1) {
+  return window['go']['main']['App']['ClearUpstreamAccountCooldown'](arg1);
+}
+
 export function TriggerHealthCheck(arg1) {
   return window['go']['main']['App']['TriggerHealthCheck'](arg1);
 }

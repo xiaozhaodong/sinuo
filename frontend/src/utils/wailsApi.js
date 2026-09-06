@@ -880,6 +880,17 @@ export const toggleUpstreamAccount = async (id, enabled) => {
   return result ?? { success: true };
 };
 
+export const clearUpstreamAccountCooldown = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  const method = getWailsMethod('ClearUpstreamAccountCooldown', { optional: true });
+  if (!method) {
+    return { success: false, unsupported: true, message: '当前后端版本暂未提供 ClearUpstreamAccountCooldown' };
+  }
+  await method(normalizeEntityId(id));
+  return { success: true };
+};
+
 export const testUpstreamAccount = async (id) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');

@@ -783,6 +783,35 @@ func (s *SQLiteAccountPoolStore) MarkAccountTransientFailure(ctx context.Context
 	return nil
 }
 
+// ClearAccountCooldown 清除账号临时故障冷却，但保留额度与鉴权资格状态。
+func (s *SQLiteAccountPoolStore) ClearAccountCooldown(ctx context.Context, id int64, clearedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res, err := s.getQuerier().ExecContext(ctx,
+		`UPDATE upstream_accounts
+		 SET state = 'active', fail_count = 0, cooldown_until = NULL, last_error = '', updated_at = ?
+		 WHERE id = ? AND state = 'cooldown'`,
+		formatDBTime(clearedAt), id)
+	if err != nil {
+		return fmt.Errorf("清除账号冷却失败: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取清除账号冷却影响行数失败: %w", err)
+	}
+	if affected == 0 {
+		var exists int
+		if err := s.getQuerier().QueryRowContext(ctx, `SELECT 1 FROM upstream_accounts WHERE id = ?`, id).Scan(&exists); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("账号不存在: %d", id)
+			}
+			return fmt.Errorf("确认账号状态失败: %w", err)
+		}
+	}
+	return nil
+}
+
 // UpdateAccountProfile 更新账号画像与 quota 字段。
 func (s *SQLiteAccountPoolStore) UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error {
 	s.mu.Lock()

@@ -193,6 +193,7 @@ export function TestPrivacyRules(arg1:main.PrivacyRuleTestInput):Promise<main.Pr
 export function TestUpstreamAccount(arg1:number):Promise<main.TestUpstreamAccountResult>;
 
 export function ToggleUpstreamAccount(arg1:number,arg2:boolean):Promise<void>;
+export function ClearUpstreamAccountCooldown(arg1:number):Promise<void>;
 
 export function TriggerHealthCheck(arg1:string):Promise<void>;
 
