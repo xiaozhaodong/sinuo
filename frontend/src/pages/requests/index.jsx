@@ -419,14 +419,16 @@ const RequestsPage = () => {
       });
       const list = await fetchCodexModelRouteBindings();
       setCodexModelRouteBindings(Array.isArray(list) ? list : []);
-      const mode = routeMode === 'auto' ? '自动调度' : `${routeMode === 'manual_fixed' ? '固定' : '优选'} #${targetID}`;
+      const targetAccount = accounts.find((account) => resolveAccountId(account) === targetID);
+      const targetName = targetAccount?.account_name || targetAccount?.accountName || `#${targetID}`;
+      const mode = routeMode === 'auto' ? '自动调度' : `${routeMode === 'manual_fixed' ? '固定' : '优选'}「${targetName}」`;
       showNotice('success', `Codex 模型「${binding.model}」已切换为${mode}`);
     } catch (err) {
       showNotice('error', err?.message || '切换 Codex 模型路由策略失败');
     } finally {
       setCodexModelRoutePatching(false);
     }
-  }, [showNotice]);
+  }, [accounts, showNotice]);
 
   const handleRestoreClaudeAuto = useCallback(async () => {
     setRouteSwitching(true);

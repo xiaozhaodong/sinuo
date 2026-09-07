@@ -2270,6 +2270,7 @@ export namespace main {
 	}
 
 }
+
 export namespace migration {
 
 	export class Status {
