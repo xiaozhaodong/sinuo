@@ -68,7 +68,7 @@
 
 ### 后端
 
-- `main.go`：程序入口与版本号
+- `main.go`：程序入口与版本号；`ErrorFormatter` 让后端 error 统一以 `{message}` 回传前端（Wails 默认只回传字符串，前端 `err.message` 会是 undefined）
 - `app.go`：Wails App 初始化与服务装配
 - `app_startup_connectivity.go`：启动完成后的端点/账号池异步批量连通性检查
 - `app_api_account_pool.go`：账号池 Wails API
@@ -115,6 +115,7 @@
 - `frontend/src/pages/requests/components/AccountPoolSwitcher.jsx`：请求页 Codex 账号切换器
 - `frontend/src/utils/api.js`：HTTP/Wails 统一 API 封装
 - `frontend/src/utils/wailsApi.js`：Wails 绑定适配层
+- `frontend/src/utils/errors.js`：错误归一化（Error / `{message}` / 字符串三态），错误提示取文案统一走 `resolveErrorMessage`，勿直接写 `err.message ||`
 - `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
@@ -234,6 +235,7 @@ cd frontend && npm run build
 - `frontend/src/pages/privacy-protection/*`：`node --test frontend/src/pages/privacy-protection/utils/privacyRules.test.js`
 - `internal/service/model_routing_bindings.go` / `internal/store/model_routing.go` / `app_api_model_routing.go`：`go test ./internal/service ./internal/store .`
 - `frontend/src/pages/endpoints/components/model-routing/*`：`node --test frontend/src/pages/endpoints/utils/modelRouting.test.js`
+- `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
 
 ## 调试提示
 

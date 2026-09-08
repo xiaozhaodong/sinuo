@@ -343,10 +343,20 @@ func (s *AccountPoolService) DeleteAccountWithModelGuard(ctx context.Context, id
 			return fmt.Errorf("检查 Codex 模型路由账号引用失败: %w", err)
 		}
 		if len(models) > 0 {
-			return fmt.Errorf("账号 %d 仍被 Codex 模型 %s 使用，请先取消绑定", id, strings.Join(models, "、"))
+			return fmt.Errorf("%s 仍被 Codex 模型 %s 使用，请先在「模型路由」中取消绑定",
+				s.accountDisplayLabel(ctx, id), strings.Join(models, "、"))
 		}
 	}
 	return s.DeleteAccount(ctx, id)
+}
+
+// accountDisplayLabel 取账号展示名，读不到就退回 ID，保证删除守卫的提示始终可读。
+func (s *AccountPoolService) accountDisplayLabel(ctx context.Context, id int64) string {
+	record, err := s.store.GetAccount(ctx, id)
+	if err != nil || record == nil || strings.TrimSpace(record.AccountName) == "" {
+		return fmt.Sprintf("账号 %d", id)
+	}
+	return fmt.Sprintf("账号「%s」", record.AccountName)
 }
 
 func (s *AccountPoolService) ToggleAccount(ctx context.Context, id int64, enabled bool) error {

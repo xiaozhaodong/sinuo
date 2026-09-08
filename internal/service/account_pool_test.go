@@ -1863,6 +1863,49 @@ func newTestAccountPoolServiceWithStore(t *testing.T) (*AccountPoolService, *sto
 	return svc, st
 }
 
+func TestDeleteAccountWithModelGuard_ReportsAccountNameAndRoutingHint(t *testing.T) {
+	ctx := context.Background()
+	svc, st := newTestAccountPoolServiceWithStore(t)
+
+	rec, err := st.CreateAccount(ctx, &store.UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "venlacy",
+		CredentialRaw: "sk-test",
+		Priority:      1,
+		Enabled:       true,
+		State:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create account failed: %v", err)
+	}
+
+	modelsUsing := func(context.Context, int64) ([]string, error) { return []string{"gpt-6-astra"}, nil }
+
+	guardErr := svc.DeleteAccountWithModelGuard(ctx, rec.ID, modelsUsing)
+	if guardErr == nil {
+		t.Fatal("expected delete to be blocked while the account is still bound to a Codex model")
+	}
+	for _, want := range []string{"账号「venlacy」", "gpt-6-astra", "「模型路由」"} {
+		if !strings.Contains(guardErr.Error(), want) {
+			t.Fatalf("guard message %q missing %q", guardErr.Error(), want)
+		}
+	}
+	if acc, err := svc.GetAccount(ctx, rec.ID); err != nil || acc == nil {
+		t.Fatalf("blocked delete must keep the account: acc=%+v err=%v", acc, err)
+	}
+
+	noRefs := func(context.Context, int64) ([]string, error) { return nil, nil }
+	if err := svc.DeleteAccountWithModelGuard(ctx, rec.ID, noRefs); err != nil {
+		t.Fatalf("expected delete to succeed after unbinding, got %v", err)
+	}
+
+	// 账号已不存在时退回 ID 文案，保证守卫提示不会变空
+	ghostErr := svc.DeleteAccountWithModelGuard(ctx, rec.ID, modelsUsing)
+	if ghostErr == nil || !strings.Contains(ghostErr.Error(), "账号 ") {
+		t.Fatalf("expected id fallback in guard message, got %v", ghostErr)
+	}
+}
+
 func newTestAccountPoolServiceWithSettings(t *testing.T) (*AccountPoolService, *store.SQLiteAccountPoolStore, *SettingsService) {
 	t.Helper()
 

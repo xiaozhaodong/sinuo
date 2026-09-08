@@ -12,6 +12,7 @@ import {
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
+import { resolveErrorMessage } from '@utils/errors.js';
 import { buildManualSwitchSuccessMessage, isValidAccountId, resolveAccountId } from '../utils.js';
 
 const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotice }) => {
@@ -39,7 +40,7 @@ const useAccountPoolActions = ({ loadData, loadLatestScheduleSnapshot, showNotic
       }
       return result;
     } catch (err) {
-      showNotice('error', err.message || '操作失败');
+      showNotice('error', resolveErrorMessage(err, '操作失败'));
       return null;
     } finally {
       setBusyKey('');

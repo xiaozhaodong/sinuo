@@ -118,6 +118,9 @@ func main() {
 			app,
 		},
 
+		// 后端 error 回传前端的格式
+		ErrorFormatter: formatWailsError,
+
 		// macOS 配置
 		Mac: &mac.Options{
 			TitleBar: &mac.TitleBar{
@@ -148,6 +151,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// formatWailsError 让前端 catch 到的错误带上可读文案。
+// Wails 默认只回传 err.Error() 字符串，前端拿到的不是 Error 实例，
+// err.message 恒为 undefined，所有 `err.message || '操作失败'` 都会丢掉真实原因。
+func formatWailsError(err error) any {
+	if err == nil {
+		return nil
+	}
+	return map[string]any{"message": err.Error()}
 }
 
 // ============================================================

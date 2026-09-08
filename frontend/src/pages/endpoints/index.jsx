@@ -4,6 +4,7 @@ import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import { DeleteConfirmDialog, EndpointCard, EndpointForm, EndpointRow, EndpointScheduleDrawer, ViewModeSwitcher, resolveSnapshotOutcome } from './components';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
+import { resolveErrorMessage, toError } from '@utils/errors.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import ClaudeModelsPanel from './components/ClaudeModelsPanel.jsx';
 import ModelRoutingDrawer from './components/model-routing/ModelRoutingDrawer.jsx';
@@ -62,7 +63,7 @@ const EndpointsPage = () => {
     if (routingResult.status === 'fulfilled') setRoutingState(routingResult.value);
     if (modelRoutingResult.status === 'fulfilled') setModelRoutingSettings(modelRoutingResult.value);
     const failure = [routingResult, modelRoutingResult].find((result) => result.status === 'rejected');
-    if (failure) throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
+    if (failure) throw toError(failure.reason);
   }, []);
 
   const loadSnapshot = useCallback(async () => {
@@ -72,7 +73,7 @@ const EndpointsPage = () => {
   }, []);
 
   useEffect(() => {
-    loadRouting().catch((loadError) => setActionError(loadError.message));
+    loadRouting().catch((loadError) => setActionError(resolveErrorMessage(loadError)));
     loadSnapshot().catch(() => {});
   }, [loadRouting, loadSnapshot]);
 
@@ -104,7 +105,7 @@ const EndpointsPage = () => {
       await Promise.all([refresh(), loadRouting(), loadSnapshot()]);
       return result;
     } catch (runError) {
-      setActionError(runError?.message || '操作失败');
+      setActionError(resolveErrorMessage(runError, '操作失败'));
       throw runError;
     } finally {
       setBusyKey('');
