@@ -90,6 +90,7 @@ type AccountPoolStore interface {
 	MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error
 	MarkAccountAuthFailedWithProfile(ctx context.Context, record *UpstreamAccountRecord, reason string) error
 	MarkAccountTransientFailure(ctx context.Context, id int64, reason string, cooldownUntil time.Time) error
+	SaveAccountRuntimeState(ctx context.Context, id int64, state AccountRuntimeState) error
 	UpdateAccountProfile(ctx context.Context, record *UpstreamAccountRecord) error
 }
 

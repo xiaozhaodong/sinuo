@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -21,32 +22,30 @@ const (
 	accountRuntimeMutationSuccess          accountRuntimeMutationKind = "success"
 	accountRuntimeMutationAuthFailed       accountRuntimeMutationKind = "auth_failed"
 	accountRuntimeMutationTransientFailure accountRuntimeMutationKind = "transient_failure"
-	accountRuntimeMutationClearCooldown    accountRuntimeMutationKind = "clear_cooldown"
 )
 
 type accountRuntimeMutation struct {
-	accountID        int64
-	kind             accountRuntimeMutationKind
-	stateVersion     uint64
-	reason           string
-	cooldownUntil    time.Time
-	successAt        time.Time
-	attemptStartedAt time.Time
-	eventAt          time.Time
-	failureDelta     int
+	accountID    int64
+	kind         accountRuntimeMutationKind
+	stateVersion uint64
+	state        store.AccountRuntimeState
 }
+
+var errAccountRuntimeWriterClosed = errors.New("账号运行态写回已关闭")
 
 type accountPoolRuntimeWriter struct {
 	store  store.AccountPoolStore
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	pending  map[int64]accountRuntimeMutation
-	closing  bool
-	closed   bool
-	closeErr error
+	mu        sync.Mutex
+	pending   map[int64]accountRuntimeMutation
+	closing   bool
+	closed    bool
+	closeErr  error
+	closeDone chan struct{}
 
+	flushMu          sync.Mutex // 串行队列摘取、后台落库和同步账号写入
 	isCurrentVersion func(id int64, version uint64) bool
 	wg               sync.WaitGroup
 }
@@ -72,27 +71,92 @@ func newAccountPoolRuntimeWriter(parent context.Context, st store.AccountPoolSto
 	return writer
 }
 
-func (w *accountPoolRuntimeWriter) EnqueueClearCooldown(accountID int64, stateVersion uint64, clearedAt time.Time) {
-	if w == nil || accountID <= 0 {
-		return
-	}
-	w.enqueue(accountRuntimeMutation{accountID: accountID, kind: accountRuntimeMutationClearCooldown, stateVersion: stateVersion, eventAt: clearedAt})
+func (w *accountPoolRuntimeWriter) FlushAccount(ctx context.Context, accountID int64) error {
+	return w.flushAccountAndRun(ctx, accountID, nil)
 }
 
-func (w *accountPoolRuntimeWriter) FlushAccount(ctx context.Context, accountID int64) error {
+// runAccountStateWrite 将同步落库和运行态发布放在同一状态变更临界区。
+// 所有请求结算与手动操作都先取得 accountStateMu，后台写回只取得 flushMu，锁序无环。
+func (s *AccountPoolService) runAccountStateWrite(ctx context.Context, accountID int64, apply func() error) error {
+	if accountID <= 0 {
+		return fmt.Errorf("账号不存在: %d", accountID)
+	}
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.runtimeWriter != nil {
+		return s.runtimeWriter.flushAccountAndRun(ctx, accountID, apply)
+	}
+	return apply()
+}
+
+// publishAccountRuntime 在队列停止接收前，原子完成缓存变更与快照入队。
+// 调用者持有 accountStateMu；被拒绝的更新不会先改变缓存再静默丢失。
+func (s *AccountPoolService) publishAccountRuntime(accountID int64, kind accountRuntimeMutationKind, mutate func() (uint64, error)) (bool, error) {
+	if s.runtimeWriter == nil {
+		return false, fmt.Errorf("账号运行态写回未就绪")
+	}
+	return s.runtimeWriter.publish(func() (accountRuntimeMutation, error) {
+		version, err := mutate()
+		if err != nil || version == 0 {
+			return accountRuntimeMutation{}, err
+		}
+		state, ok := s.runtimeCache.snapshotState(accountID, version)
+		if !ok {
+			return accountRuntimeMutation{}, fmt.Errorf("账号 %d 运行态快照版本发生变化", accountID)
+		}
+		return accountRuntimeMutation{accountID: accountID, kind: kind, stateVersion: version, state: state}, nil
+	})
+}
+
+func (w *accountPoolRuntimeWriter) checkOpen() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closing || w.closed {
+		return errAccountRuntimeWriterClosed
+	}
+	return nil
+}
+
+// flushAccountAndRun 先写回该账号已有的变化，再执行同步操作。
+// 与后台刷新共用临界区，避免摘取后的旧写入越过同步操作；失败的事件保留重试。
+func (w *accountPoolRuntimeWriter) flushAccountAndRun(ctx context.Context, accountID int64, apply func() error) error {
 	if w == nil || accountID <= 0 {
 		return nil
 	}
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+	if err := w.checkOpen(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := w.flushAccountLocked(ctx, accountID); err != nil {
+		return err
+	}
+	if apply != nil {
+		return apply()
+	}
+	return nil
+}
+
+// flushAccountLocked 供已持有 flushMu 的状态写入复用，避免启停推进版本后遗漏待写回计数。
+func (w *accountPoolRuntimeWriter) flushAccountLocked(ctx context.Context, accountID int64) error {
 	w.mu.Lock()
 	mutation, ok := w.pending[accountID]
 	if ok {
 		delete(w.pending, accountID)
 	}
 	w.mu.Unlock()
-	if !ok {
-		return nil
+	if ok {
+		if err := w.applyMutation(ctx, &mutation); err != nil {
+			return errors.Join(err, w.enqueue(mutation))
+		}
 	}
-	return w.applyMutation(ctx, &mutation)
+	return nil
 }
 
 func (w *accountPoolRuntimeWriter) Close() error {
@@ -101,19 +165,29 @@ func (w *accountPoolRuntimeWriter) Close() error {
 	}
 
 	w.mu.Lock()
-	if w.closed || w.closing {
+	if w.closeDone != nil {
+		done := w.closeDone
 		w.mu.Unlock()
-		return nil
+		<-done
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.closeErr
 	}
 	w.closing = true
+	w.closeDone = make(chan struct{})
 	w.mu.Unlock()
 
-	w.cancel()
+	if w.cancel != nil {
+		w.cancel()
+	}
 	w.wg.Wait()
+	err := w.flushPending(false)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closeErr = err
 	w.closed = true
+	close(w.closeDone)
 	return w.closeErr
 }
 
@@ -142,55 +216,32 @@ func (w *accountPoolRuntimeWriter) DropMany(accountIDs []int64) {
 	}
 }
 
-func (w *accountPoolRuntimeWriter) EnqueueSuccess(accountID int64, stateVersion uint64, successAt, attemptStartedAt time.Time) {
-	if w == nil || accountID <= 0 {
-		return
-	}
-	w.enqueue(accountRuntimeMutation{
-		accountID:        accountID,
-		kind:             accountRuntimeMutationSuccess,
-		stateVersion:     stateVersion,
-		successAt:        successAt,
-		attemptStartedAt: attemptStartedAt,
-		eventAt:          successAt,
-	})
-}
-
-func (w *accountPoolRuntimeWriter) EnqueueAuthFailed(accountID int64, stateVersion uint64, reason string, failedAt time.Time) {
-	if w == nil || accountID <= 0 {
-		return
-	}
-	w.enqueue(accountRuntimeMutation{
-		accountID:    accountID,
-		kind:         accountRuntimeMutationAuthFailed,
-		stateVersion: stateVersion,
-		reason:       reason,
-		eventAt:      failedAt,
-	})
-}
-
-func (w *accountPoolRuntimeWriter) EnqueueTransientFailure(accountID int64, stateVersion uint64, reason string, cooldownUntil, failedAt time.Time) {
-	if w == nil || accountID <= 0 {
-		return
-	}
-	w.enqueue(accountRuntimeMutation{
-		accountID:     accountID,
-		kind:          accountRuntimeMutationTransientFailure,
-		stateVersion:  stateVersion,
-		reason:        reason,
-		cooldownUntil: cooldownUntil,
-		eventAt:       failedAt,
-		failureDelta:  1,
-	})
-}
-
-func (w *accountPoolRuntimeWriter) enqueue(next accountRuntimeMutation) {
+func (w *accountPoolRuntimeWriter) publish(build func() (accountRuntimeMutation, error)) (bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || w.closing {
-		return
+		return false, errAccountRuntimeWriterClosed
 	}
+	next, err := build()
+	if err != nil || next.stateVersion == 0 {
+		return false, err
+	}
+	w.enqueueLocked(next)
+	return true, nil
+}
 
+// enqueue 只重排已经受理过的快照。关闭期间的重试由 Close 的最终刷新处理。
+func (w *accountPoolRuntimeWriter) enqueue(next accountRuntimeMutation) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return errAccountRuntimeWriterClosed
+	}
+	w.enqueueLocked(next)
+	return nil
+}
+
+func (w *accountPoolRuntimeWriter) enqueueLocked(next accountRuntimeMutation) {
 	current, ok := w.pending[next.accountID]
 	if !ok {
 		w.pending[next.accountID] = next
@@ -210,7 +261,6 @@ func (w *accountPoolRuntimeWriter) run() {
 		case <-ticker.C:
 			_ = w.flushPending(true)
 		case <-w.ctx.Done():
-			_ = w.flushPending(false)
 			return
 		}
 	}
@@ -220,6 +270,8 @@ func (w *accountPoolRuntimeWriter) flushPending(requeueOnFailure bool) error {
 	if w == nil {
 		return nil
 	}
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
 
 	pending := w.detachPending()
 	if len(pending) == 0 {
@@ -241,16 +293,11 @@ func (w *accountPoolRuntimeWriter) flushPending(requeueOnFailure bool) error {
 				firstErr = err
 			}
 			if requeueOnFailure {
-				w.enqueue(mutation)
+				if enqueueErr := w.enqueue(mutation); enqueueErr != nil {
+					firstErr = errors.Join(firstErr, enqueueErr)
+				}
 			}
 		}
-	}
-	if !requeueOnFailure && firstErr != nil {
-		w.mu.Lock()
-		if w.closeErr == nil {
-			w.closeErr = firstErr
-		}
-		w.mu.Unlock()
 	}
 	return firstErr
 }
@@ -282,74 +329,16 @@ func (w *accountPoolRuntimeWriter) applyMutation(ctx context.Context, mutation *
 		return nil
 	}
 
-	switch mutation.kind {
-	case accountRuntimeMutationSuccess:
-		_, err := w.store.MarkAccountSuccessIfNoNewerFailure(ctx, mutation.accountID, mutation.successAt, mutation.attemptStartedAt)
-		return err
-	case accountRuntimeMutationAuthFailed:
-		return w.store.MarkAccountAuthFailed(ctx, mutation.accountID, mutation.reason)
-	case accountRuntimeMutationTransientFailure:
-		repeats := mutation.failureDelta
-		if repeats <= 0 {
-			repeats = 1
-		}
-		for i := 0; i < repeats; i++ {
-			if err := w.store.MarkAccountTransientFailure(ctx, mutation.accountID, mutation.reason, mutation.cooldownUntil); err != nil {
-				mutation.failureDelta = repeats - i
-				return err
-			}
-		}
-		mutation.failureDelta = 0
-		return nil
-	case accountRuntimeMutationClearCooldown:
-		clearer, ok := w.store.(interface {
-			ClearAccountCooldown(context.Context, int64, time.Time) error
-		})
-		if !ok {
-			return fmt.Errorf("账号存储不支持清除冷却")
-		}
-		return clearer.ClearAccountCooldown(ctx, mutation.accountID, mutation.eventAt)
-	default:
-		return fmt.Errorf("unknown account runtime mutation kind: %s", mutation.kind)
-	}
+	return w.store.SaveAccountRuntimeState(ctx, mutation.accountID, mutation.state)
 }
 
 func mergeAccountRuntimeMutation(current, next accountRuntimeMutation) accountRuntimeMutation {
 	if current.accountID == 0 {
 		return next
 	}
-	if next.kind == accountRuntimeMutationAuthFailed {
-		return next
-	}
-	if current.kind == accountRuntimeMutationAuthFailed {
+	// 最新快照已经包含成功、清零及再次失败的全部效果，不能再次累加旧事件。
+	if next.stateVersion <= current.stateVersion {
 		return current
 	}
-
-	switch next.kind {
-	case accountRuntimeMutationTransientFailure:
-		if current.kind == accountRuntimeMutationTransientFailure {
-			next.failureDelta += current.failureDelta
-		}
-		return next
-	case accountRuntimeMutationSuccess:
-		switch current.kind {
-		case accountRuntimeMutationTransientFailure:
-			if !next.attemptStartedAt.After(current.eventAt) {
-				return current
-			}
-			return next
-		case accountRuntimeMutationSuccess:
-			if next.attemptStartedAt.After(current.attemptStartedAt) {
-				return next
-			}
-			if next.attemptStartedAt.Equal(current.attemptStartedAt) && next.successAt.After(current.successAt) {
-				return next
-			}
-			return current
-		default:
-			return next
-		}
-	default:
-		return next
-	}
+	return next
 }

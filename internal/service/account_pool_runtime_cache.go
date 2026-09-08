@@ -498,6 +498,21 @@ func (c *accountRuntimeCache) matchesStateVersion(id int64, version uint64) bool
 	return ok && current == version
 }
 
+// snapshotState 捕获指定版本的完整运行态，避免事件合并丢掉中间成功或重置的效果。
+func (c *accountRuntimeCache) snapshotState(id int64, version uint64) (store.AccountRuntimeState, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	record := c.byID[id]
+	if record == nil || version == 0 || c.stateVersions[id] != version {
+		return store.AccountRuntimeState{}, false
+	}
+	return store.AccountRuntimeState{
+		Enabled: record.Enabled, State: record.State,
+		CooldownUntil: cloneTimePtr(record.CooldownUntil), FailCount: record.FailCount,
+		LastSuccessAt: cloneTimePtr(record.LastSuccessAt), LastError: record.LastError, UpdatedAt: record.UpdatedAt,
+	}, true
+}
+
 func (c *accountRuntimeCache) get(id int64) (*store.UpstreamAccountRecord, bool) {
 	if c == nil || id <= 0 {
 		return nil, false
@@ -587,6 +602,9 @@ func (c *accountRuntimeCache) markSuccessIfNoNewerFailure(id int64, successAt, a
 
 	record := c.byID[id]
 	if record == nil {
+		return false, 0
+	}
+	if record.State == "disabled_auth" {
 		return false, 0
 	}
 	if record.UpdatedAt.After(attemptStartedAt) && (record.State == "cooldown" || record.State == "disabled_auth") {
@@ -679,6 +697,11 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	if record == nil {
 		return false, 0
 	}
+	// 鉴权禁用由显式恢复操作解除，普通失败不能降级它或使待落库鉴权事件失效。
+	// ok=true、version=0 表示账号存在，但该结算没有发布新状态。
+	if record.State == "disabled_auth" {
+		return true, 0
+	}
 
 	record.FailCount++
 	record.State = "cooldown"
@@ -699,24 +722,41 @@ func (c *accountRuntimeCache) markTransientFailure(id int64, reason string, cool
 	return true, c.bumpStateVersionLocked(id)
 }
 
-func (c *accountRuntimeCache) clearCooldown(id int64, clearedAt time.Time) (bool, uint64) {
+// cooldownVersion 只为临时冷却返回版本，其他状态不得被清除操作推进版本或覆盖。
+func (c *accountRuntimeCache) cooldownVersion(id int64) (uint64, bool) {
 	if c == nil || id <= 0 {
-		return false, 0
+		return 0, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	record := c.byID[id]
+	if record == nil {
+		return 0, false
+	}
+	if record.State != "cooldown" {
+		return 0, true
+	}
+	return c.stateVersions[id], true
+}
+
+// clearCooldownIfVersion 在持久化成功后发布，保留落库期间新到达的失败和鉴权禁用。
+func (c *accountRuntimeCache) clearCooldownIfVersion(id int64, version uint64, clearedAt time.Time) bool {
+	if c == nil || id <= 0 || version == 0 {
+		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	record := c.byID[id]
-	if record == nil {
-		return false, 0
+	if record == nil || record.State != "cooldown" || c.stateVersions[id] != version {
+		return false
 	}
-	if record.State == "cooldown" {
-		record.State = "active"
-	}
+	record.State = "active"
 	record.FailCount = 0
 	record.CooldownUntil = nil
 	record.LastError = ""
 	record.UpdatedAt = clearedAt
-	return true, c.bumpStateVersionLocked(id)
+	c.bumpStateVersionLocked(id)
+	return true
 }
 
 func (c *accountRuntimeCache) applyToggle(id int64, enabled bool, changedAt time.Time) (bool, uint64, accountRuntimeStateSnapshot) {

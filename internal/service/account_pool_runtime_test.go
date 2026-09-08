@@ -24,6 +24,7 @@ type flakyTransientFailureStore struct {
 	mu                sync.Mutex
 	transientCalls    int
 	failOnTransientAt int
+	failAfterWrite    bool
 }
 
 type failingUpdateStore struct {
@@ -104,6 +105,10 @@ func (s *countingAccountPoolStore) UpdateAccountProfile(ctx context.Context, rec
 	return s.inner.UpdateAccountProfile(ctx, record)
 }
 
+func (s *countingAccountPoolStore) SaveAccountRuntimeState(ctx context.Context, id int64, state store.AccountRuntimeState) error {
+	return s.inner.SaveAccountRuntimeState(ctx, id, state)
+}
+
 func (s *flakyTransientFailureStore) CreateAccount(ctx context.Context, record *store.UpstreamAccountRecord) (*store.UpstreamAccountRecord, error) {
 	return s.inner.CreateAccount(ctx, record)
 }
@@ -172,6 +177,23 @@ func (s *flakyTransientFailureStore) MarkAccountTransientFailure(ctx context.Con
 
 func (s *flakyTransientFailureStore) UpdateAccountProfile(ctx context.Context, record *store.UpstreamAccountRecord) error {
 	return s.inner.UpdateAccountProfile(ctx, record)
+}
+
+func (s *flakyTransientFailureStore) SaveAccountRuntimeState(ctx context.Context, id int64, state store.AccountRuntimeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transientCalls++
+	fail := s.failOnTransientAt > 0 && s.transientCalls == s.failOnTransientAt
+	if fail && !s.failAfterWrite {
+		return context.DeadlineExceeded
+	}
+	if err := s.inner.SaveAccountRuntimeState(ctx, id, state); err != nil {
+		return err
+	}
+	if fail {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func (s *failingUpdateStore) CreateAccount(ctx context.Context, record *store.UpstreamAccountRecord) (*store.UpstreamAccountRecord, error) {
@@ -248,6 +270,10 @@ func (s *failingUpdateStore) UpdateAccountProfile(ctx context.Context, record *s
 		return context.DeadlineExceeded
 	}
 	return s.inner.UpdateAccountProfile(ctx, record)
+}
+
+func (s *failingUpdateStore) SaveAccountRuntimeState(ctx context.Context, id int64, state store.AccountRuntimeState) error {
+	return s.inner.SaveAccountRuntimeState(ctx, id, state)
 }
 
 func TestPrepareSchedulableAccounts_UsesRuntimeCacheAfterInitialLoad(t *testing.T) {
@@ -434,7 +460,13 @@ func TestAccountPoolRuntimeWriter_SkipsStaleDetachedMutation(t *testing.T) {
 
 	failedAt := time.Now()
 	_, failureVersion := cache.markTransientFailure(record.ID, "stream failed", failedAt.Add(time.Minute), failedAt)
-	writer.EnqueueTransientFailure(record.ID, failureVersion, "stream failed", failedAt.Add(time.Minute), failedAt)
+	state, ok := cache.snapshotState(record.ID, failureVersion)
+	if !ok {
+		t.Fatal("无法捕获失败快照")
+	}
+	if err := writer.enqueue(accountRuntimeMutation{accountID: record.ID, kind: accountRuntimeMutationTransientFailure, stateVersion: failureVersion, state: state}); err != nil {
+		t.Fatal(err)
+	}
 	detached := writer.detachPending()
 	if len(detached) != 1 {
 		t.Fatalf("expected one detached mutation, got %d", len(detached))
@@ -784,7 +816,7 @@ func TestUpdateAccount_ReenableRollbackPreservesPendingAuthFailedMutation(t *tes
 	}
 }
 
-func TestAccountPoolRuntimeWriter_RetriesRemainingFailureDeltaOnly(t *testing.T) {
+func TestAccountPoolRuntimeWriter_RetriesRuntimeSnapshotIdempotently(t *testing.T) {
 	svc, st := newTestAccountPoolServiceWithStore(t)
 	ctx := context.Background()
 
@@ -811,7 +843,8 @@ func TestAccountPoolRuntimeWriter_RetriesRemainingFailureDeltaOnly(t *testing.T)
 
 	flakyStore := &flakyTransientFailureStore{
 		inner:             st,
-		failOnTransientAt: 2,
+		failOnTransientAt: 1,
+		failAfterWrite:    true,
 	}
 	writer := &accountPoolRuntimeWriter{
 		store:            flakyStore,
@@ -819,26 +852,28 @@ func TestAccountPoolRuntimeWriter_RetriesRemainingFailureDeltaOnly(t *testing.T)
 		isCurrentVersion: cache.matchesStateVersion,
 	}
 
+	state, ok := cache.snapshotState(record.ID, stateVersion)
+	if !ok {
+		t.Fatal("无法捕获失败快照")
+	}
 	mutation := accountRuntimeMutation{
-		accountID:     record.ID,
-		kind:          accountRuntimeMutationTransientFailure,
-		stateVersion:  stateVersion,
-		reason:        "stream failed",
-		cooldownUntil: failedAt.Add(time.Minute),
-		eventAt:       failedAt,
-		failureDelta:  3,
+		accountID: record.ID, kind: accountRuntimeMutationTransientFailure,
+		stateVersion: stateVersion, state: state,
 	}
 
 	if err := writer.applyMutation(ctx, &mutation); err == nil {
-		t.Fatal("expected partial transient failure error")
+		t.Fatal("expected error after the snapshot was committed")
 	}
-	if mutation.failureDelta != 2 {
-		t.Fatalf("expected remaining failureDelta=2 after partial success, got %d", mutation.failureDelta)
+	committed, err := st.GetAccount(ctx, record.ID)
+	if err != nil || committed.FailCount != 3 {
+		t.Fatalf("expected the first attempt to commit count=3, err=%v", err)
 	}
 
 	flakyStore.failOnTransientAt = 0
-	if err := writer.applyMutation(ctx, &mutation); err != nil {
-		t.Fatalf("retry applyMutation failed: %v", err)
+	for i := 0; i < 2; i++ {
+		if err := writer.applyMutation(ctx, &mutation); err != nil {
+			t.Fatalf("retry applyMutation failed: %v", err)
+		}
 	}
 
 	current, err := st.GetAccount(ctx, record.ID)
@@ -846,7 +881,7 @@ func TestAccountPoolRuntimeWriter_RetriesRemainingFailureDeltaOnly(t *testing.T)
 		t.Fatalf("GetAccount failed: %v", err)
 	}
 	if current.FailCount != 3 {
-		t.Fatalf("expected fail_count=3 after partial retry recovery, got %d", current.FailCount)
+		t.Fatalf("expected repeated snapshots to keep fail_count=3, got %d", current.FailCount)
 	}
 }
 

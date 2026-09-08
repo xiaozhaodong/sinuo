@@ -26,8 +26,8 @@ func parseCodexMembers(raw string) ([]int64, error) {
 }
 
 type codexMemberState struct {
-	ID      int64
-	Enabled bool
+	ID      int64 `json:"id"`
+	Enabled bool  `json:"enabled"`
 }
 
 func parseCodexMemberStates(raw string) ([]codexMemberState, error) {
@@ -162,9 +162,12 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 	}
 	return snap, nil
 }
-func validateCodexBindingInput(in CodexModelRouteBindingInput) error {
-	ids := in.AccountIDs
-	if len(in.MemberEnabled) > 0 {
+
+// normalizeCodexBindingInput 统一校验、账号存在性检查和存储使用的成员集合。
+// 显式账号列表保留顺序；仅提供状态映射时按 ID 排序；未填写的参与状态默认启用。
+func normalizeCodexBindingInput(in CodexModelRouteBindingInput) (CodexModelRouteBindingInput, error) {
+	ids := append([]int64(nil), in.AccountIDs...)
+	if len(ids) == 0 && len(in.MemberEnabled) > 0 {
 		ids = make([]int64, 0, len(in.MemberEnabled))
 		for id := range in.MemberEnabled {
 			ids = append(ids, id)
@@ -173,19 +176,30 @@ func validateCodexBindingInput(in CodexModelRouteBindingInput) error {
 	}
 	raw, err := json.Marshal(ids)
 	if err != nil {
-		return err
-	}
-	if _, err = parseCodexMembers(string(raw)); err != nil {
-		return err
+		return CodexModelRouteBindingInput{}, err
 	}
 	g, err := codexGroupFromRecord(&store.ModelUpstreamGroupRecord{ID: 1, Name: "binding", MembersJSON: string(raw), RouteMode: in.RouteMode, RouteTarget: formatAccountTarget(in.RouteTargetID)})
 	if err != nil {
-		return err
+		return CodexModelRouteBindingInput{}, err
 	}
 	if err = modelrouting.ValidateGroup(g, nil, nil); err != nil {
-		return err
+		return CodexModelRouteBindingInput{}, err
 	}
-	return modelrouting.ValidateAssignment(modelrouting.Assignment{ModelName: in.Model, GroupID: 1, Note: in.Note}, modelrouting.MatchExact, nil, []modelrouting.Group{g})
+	if err = modelrouting.ValidateAssignment(modelrouting.Assignment{ModelName: in.Model, GroupID: 1, Note: in.Note}, modelrouting.MatchExact, nil, []modelrouting.Group{g}); err != nil {
+		return CodexModelRouteBindingInput{}, err
+	}
+	members := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		members[id] = true
+	}
+	for id := range in.MemberEnabled {
+		if !members[id] {
+			return CodexModelRouteBindingInput{}, fmt.Errorf("账号 %d 的参与状态不属于本模型组成员", id)
+		}
+	}
+	in.AccountIDs = ids
+	in.MemberEnabled = cloneMemberEnabled(in.MemberEnabled, ids)
+	return in, nil
 }
 func (s *CodexModelRoutingService) validateAccountIDs(ctx context.Context, ids []int64) error {
 	if s.listAccounts == nil {
@@ -272,7 +286,9 @@ func (s *CodexModelRoutingService) UpdateBinding(ctx context.Context, id int64, 
 	return err
 }
 func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in CodexModelRouteBindingInput) (int64, error) {
-	if err := validateCodexBindingInput(in); err != nil {
+	var err error
+	in, err = normalizeCodexBindingInput(in)
+	if err != nil {
 		return 0, err
 	}
 	s.mu.Lock()
@@ -282,7 +298,7 @@ func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in
 		return 0, err
 	}
 	var snap *codexModelRoutingSnapshot
-	err := s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
+	err = s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
 		a := &store.ModelRoutingAssignmentRecord{Family: modelrouting.FamilyCodex, MatchType: modelrouting.MatchExact}
 		var g *store.ModelUpstreamGroupRecord
 		var err error
@@ -323,21 +339,9 @@ func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in
 			g = &store.ModelUpstreamGroupRecord{Family: modelrouting.FamilyCodex}
 		}
 		g.Name = dedicatedGroupName(in.Model, groups, g.ID)
-		ids := in.AccountIDs
-		if len(ids) == 0 && len(in.MemberEnabled) > 0 {
-			ids = make([]int64, 0, len(in.MemberEnabled))
-			for memberID := range in.MemberEnabled {
-				ids = append(ids, memberID)
-			}
-			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		}
-		memberObjects := make([]map[string]interface{}, 0, len(ids))
-		for _, memberID := range ids {
-			enabled := true
-			if value, ok := in.MemberEnabled[memberID]; ok {
-				enabled = value
-			}
-			memberObjects = append(memberObjects, map[string]interface{}{"id": memberID, "enabled": enabled})
+		memberObjects := make([]codexMemberState, 0, len(in.AccountIDs))
+		for _, memberID := range in.AccountIDs {
+			memberObjects = append(memberObjects, codexMemberState{ID: memberID, Enabled: in.MemberEnabled[memberID]})
 		}
 		members, err := json.Marshal(memberObjects)
 		if err != nil {

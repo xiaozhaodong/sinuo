@@ -51,7 +51,7 @@ type AccountPoolService struct {
 	runtimeCache                  *accountRuntimeCache
 	runtimeWriter                 *accountPoolRuntimeWriter
 	startupConnectivityTestRunner func(context.Context, int64) error
-	failurePolicyMu               sync.Mutex // 串行策略发布、账号删除与失败结算
+	accountStateMu                sync.Mutex // 串行状态变更；锁序为本锁 → runtimeWriter.flushMu → cache/store 内部锁
 	runtimeInitMu                 sync.Mutex
 	runtimeInitialized            atomic.Bool
 }
@@ -226,8 +226,15 @@ func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.Upstr
 }
 
 func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.UpstreamAccountRecord) error {
-	s.failurePolicyMu.Lock()
-	defer s.failurePolicyMu.Unlock()
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
+	if s.runtimeWriter != nil {
+		s.runtimeWriter.flushMu.Lock()
+		defer s.runtimeWriter.flushMu.Unlock()
+		if err := s.runtimeWriter.checkOpen(); err != nil {
+			return err
+		}
+	}
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
@@ -256,6 +263,12 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 	if current == nil {
 		return fmt.Errorf("账号不存在: %d", rec.ID)
 	}
+	shouldToggle := rec.Enabled != current.Enabled
+	if shouldToggle && s.runtimeWriter != nil {
+		if err := s.runtimeWriter.flushAccountLocked(ctx, rec.ID); err != nil {
+			return err
+		}
+	}
 	persistedCurrent, err := s.store.GetAccount(ctx, rec.ID)
 	if err != nil {
 		return err
@@ -264,7 +277,6 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 		return fmt.Errorf("账号不存在: %d", rec.ID)
 	}
 	policyChanged := !config.SameSoftFailureOverrides(current.SoftFailureWindowMinutes, current.SoftFailureThreshold, rec.SoftFailureWindowMinutes, rec.SoftFailureThreshold)
-	shouldToggle := rec.Enabled != current.Enabled
 	var toggledBeforePersist bool
 	var toggledVersion uint64
 	var previousRuntimeState accountRuntimeStateSnapshot
@@ -299,8 +311,15 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 }
 
 func (s *AccountPoolService) DeleteAccount(ctx context.Context, id int64) error {
-	s.failurePolicyMu.Lock()
-	defer s.failurePolicyMu.Unlock()
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
+	if s.runtimeWriter != nil {
+		s.runtimeWriter.flushMu.Lock()
+		defer s.runtimeWriter.flushMu.Unlock()
+		if err := s.runtimeWriter.checkOpen(); err != nil {
+			return err
+		}
+	}
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
@@ -334,18 +353,20 @@ func (s *AccountPoolService) ToggleAccount(ctx context.Context, id int64, enable
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
-	changedAt := time.Now()
-	ok, toggledVersion, previousRuntimeState := s.runtimeCache.applyToggle(id, enabled, changedAt)
-	if !ok {
-		return fmt.Errorf("账号不存在: %d", id)
-	}
-	if err := s.store.ToggleAccount(ctx, id, enabled); err != nil {
-		if restored := s.runtimeCache.restoreRuntimeStateIfVersion(id, toggledVersion, previousRuntimeState); !restored {
-			_ = s.reloadAccountIntoCache(ctx, id)
+	return s.runAccountStateWrite(ctx, id, func() error {
+		changedAt := time.Now()
+		ok, toggledVersion, previousRuntimeState := s.runtimeCache.applyToggle(id, enabled, changedAt)
+		if !ok {
+			return fmt.Errorf("账号不存在: %d", id)
 		}
-		return err
-	}
-	return nil
+		if err := s.store.ToggleAccount(ctx, id, enabled); err != nil {
+			if restored := s.runtimeCache.restoreRuntimeStateIfVersion(id, toggledVersion, previousRuntimeState); !restored {
+				_ = s.reloadAccountIntoCache(ctx, id)
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *AccountPoolService) Close() error {
@@ -389,49 +410,55 @@ func (s *AccountPoolService) MarkAccountSuccess(ctx context.Context, id int64) e
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
-	successAt := time.Now()
-	if ok, _ := s.runtimeCache.markSuccess(id, successAt); !ok {
-		return fmt.Errorf("账号不存在: %d", id)
-	}
-	if err := s.store.MarkAccountSuccess(ctx, id, successAt); err != nil {
-		_ = s.reloadAccountIntoCache(ctx, id)
-		return err
-	}
-	if s.softFailureTracker != nil {
-		s.softFailureTracker.Clear(id)
-	}
-	return nil
+	return s.runAccountStateWrite(ctx, id, func() error {
+		successAt := time.Now()
+		if ok, _ := s.runtimeCache.markSuccess(id, successAt); !ok {
+			return fmt.Errorf("账号不存在: %d", id)
+		}
+		if err := s.store.MarkAccountSuccess(ctx, id, successAt); err != nil {
+			_ = s.reloadAccountIntoCache(ctx, id)
+			return err
+		}
+		if s.softFailureTracker != nil {
+			s.softFailureTracker.Clear(id)
+		}
+		return nil
+	})
 }
 
 func (s *AccountPoolService) MarkAccountSuccessIfNoNewerFailure(ctx context.Context, id int64, attemptStartedAt time.Time) (bool, error) {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return false, err
 	}
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
 	successAt := time.Now()
-	updated, stateVersion := s.runtimeCache.markSuccessIfNoNewerFailure(id, successAt, attemptStartedAt)
-	if !updated {
-		return false, nil
-	}
-	if s.runtimeWriter != nil {
-		s.runtimeWriter.EnqueueSuccess(id, stateVersion, successAt, attemptStartedAt)
-	}
+	updated, err := s.publishAccountRuntime(id, accountRuntimeMutationSuccess, func() (uint64, error) {
+		_, version := s.runtimeCache.markSuccessIfNoNewerFailure(id, successAt, attemptStartedAt)
+		return version, nil
+	})
 	if updated && s.softFailureTracker != nil {
 		s.softFailureTracker.Clear(id)
 	}
-	return updated, nil
+	return updated, err
 }
 
 func (s *AccountPoolService) MarkAccountAuthFailed(ctx context.Context, id int64, reason string) error {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
 	failedAt := time.Now()
-	ok, stateVersion := s.runtimeCache.markAuthFailed(id, reason, failedAt)
-	if !ok {
-		return fmt.Errorf("账号不存在: %d", id)
-	}
-	if s.runtimeWriter != nil {
-		s.runtimeWriter.EnqueueAuthFailed(id, stateVersion, reason, failedAt)
+	_, err := s.publishAccountRuntime(id, accountRuntimeMutationAuthFailed, func() (uint64, error) {
+		ok, version := s.runtimeCache.markAuthFailed(id, reason, failedAt)
+		if !ok {
+			return 0, fmt.Errorf("账号不存在: %d", id)
+		}
+		return version, nil
+	})
+	if err != nil {
+		return err
 	}
 	if s.softFailureTracker != nil {
 		s.softFailureTracker.Clear(id)
@@ -443,17 +470,22 @@ func (s *AccountPoolService) MarkAccountTransientFailure(ctx context.Context, id
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
 	if cooldown <= 0 {
 		cooldown = 30 * time.Second
 	}
 	failedAt := time.Now()
 	cooldownUntil := failedAt.Add(cooldown)
-	ok, stateVersion := s.runtimeCache.markTransientFailure(id, reason, cooldownUntil, failedAt)
-	if !ok {
-		return fmt.Errorf("账号不存在: %d", id)
-	}
-	if s.runtimeWriter != nil {
-		s.runtimeWriter.EnqueueTransientFailure(id, stateVersion, reason, cooldownUntil, failedAt)
+	updated, err := s.publishAccountRuntime(id, accountRuntimeMutationTransientFailure, func() (uint64, error) {
+		ok, version := s.runtimeCache.markTransientFailure(id, reason, cooldownUntil, failedAt)
+		if !ok {
+			return 0, fmt.Errorf("账号不存在: %d", id)
+		}
+		return version, nil
+	})
+	if err != nil || !updated {
+		return err
 	}
 	if s.softFailureTracker != nil {
 		s.softFailureTracker.Clear(id)
@@ -466,30 +498,38 @@ func (s *AccountPoolService) ClearAccountCooldown(ctx context.Context, id int64)
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
-	clearedAt := time.Now()
-	ok, stateVersion := s.runtimeCache.clearCooldown(id, clearedAt)
-	if !ok {
+	if id <= 0 {
 		return fmt.Errorf("账号不存在: %d", id)
 	}
-	if s.softFailureTracker != nil {
-		s.softFailureTracker.Clear(id)
-	}
-	if s.runtimeWriter == nil {
+	return s.runAccountStateWrite(ctx, id, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		version, exists := s.runtimeCache.cooldownVersion(id)
+		if !exists {
+			return fmt.Errorf("账号不存在: %d", id)
+		}
+		if version == 0 {
+			return nil
+		}
 		clearer, ok := s.store.(interface {
 			ClearAccountCooldown(context.Context, int64, time.Time) error
 		})
 		if !ok {
 			return fmt.Errorf("账号存储不支持清除冷却")
 		}
-		return clearer.ClearAccountCooldown(ctx, id, clearedAt)
-	}
-	s.runtimeWriter.Drop(id)
-	s.runtimeWriter.EnqueueClearCooldown(id, stateVersion, clearedAt)
-	if err := s.runtimeWriter.FlushAccount(ctx, id); err != nil {
-		_ = s.reloadAccountIntoCache(ctx, id)
-		return err
-	}
-	return nil
+		clearedAt := time.Now()
+		if err := clearer.ClearAccountCooldown(ctx, id, clearedAt); err != nil {
+			return err
+		}
+		if !s.runtimeCache.clearCooldownIfVersion(id, version, clearedAt) {
+			return fmt.Errorf("账号 %d 冷却已落库，但运行态版本发生变化", id)
+		}
+		if s.softFailureTracker != nil {
+			s.softFailureTracker.Clear(id)
+		}
+		return nil
+	})
 }
 
 func (s *AccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, id int64, reason, planType string, resetAt time.Time) error {
@@ -499,6 +539,8 @@ func (s *AccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, 
 	if id <= 0 {
 		return fmt.Errorf("invalid account id: %d", id)
 	}
+	s.accountStateMu.Lock()
+	defer s.accountStateMu.Unlock()
 
 	now := time.Now()
 	if resetAt.IsZero() || !resetAt.After(now) {
@@ -541,12 +583,15 @@ func (s *AccountPoolService) MarkAccountUsageLimitExceeded(ctx context.Context, 
 	}
 	profileUpdateTime(acc, now, profileStatus)
 
-	ok, stateVersion := s.runtimeCache.markTransientFailure(id, reason, resetAt, now)
-	if !ok {
-		return fmt.Errorf("账号不存在: %d", id)
-	}
-	if s.runtimeWriter != nil {
-		s.runtimeWriter.EnqueueTransientFailure(id, stateVersion, reason, resetAt, now)
+	updated, err := s.publishAccountRuntime(id, accountRuntimeMutationTransientFailure, func() (uint64, error) {
+		ok, version := s.runtimeCache.markTransientFailure(id, reason, resetAt, now)
+		if !ok {
+			return 0, fmt.Errorf("账号不存在: %d", id)
+		}
+		return version, nil
+	})
+	if err != nil || !updated {
+		return err
 	}
 	if s.softFailureTracker != nil {
 		s.softFailureTracker.Clear(id)

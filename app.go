@@ -90,7 +90,9 @@ type App struct {
 	privacyService *service.PrivacyService // 隐私保护业务服务
 
 	// HTTP 代理服务器 (保留，监听配置的端口)
-	proxyServer *http.Server
+	proxyServer   *http.Server
+	proxyRequests *proxyRequestLifecycle
+	shutdownDone  chan struct{}
 
 	// 应用状态
 	startTime          time.Time
@@ -284,18 +286,37 @@ func (a *App) setupModelRoutingService(ctx context.Context) {
 // shutdown 在 Wails 应用关闭时调用
 func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	if a.shutdownDone != nil {
+		done := a.shutdownDone
+		a.mu.Unlock()
+		<-done
+		return
+	}
+	done := make(chan struct{})
+	a.shutdownDone = done
+	server, requests := a.proxyServer, a.proxyRequests
+	a.mu.Unlock()
+	defer close(done)
 
 	a.logger.Info("🛑 正在关闭 AI Switchboard...")
 
 	// 1. 停止接收新请求
-	if a.proxyServer != nil {
+	if server != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if err := a.proxyServer.Shutdown(shutdownCtx); err != nil {
+		var err error
+		if requests != nil {
+			err = requests.shutdown(shutdownCtx, server)
+		} else {
+			err = server.Shutdown(shutdownCtx)
+		}
+		if err != nil {
 			a.logger.Error("代理服务器关闭失败", "error", err)
 		}
 	}
+	// 请求回调可能读取 App，等待其退出时不能持有 App 写锁。
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	// 2. 关闭账号池服务后台任务
 	if a.accountPoolService != nil {
@@ -940,8 +961,9 @@ func (a *App) startProxyServer() {
 	// 更新配置中的实际端口
 	a.config.Server.Port = actualPort
 
+	a.proxyRequests = newProxyRequestLifecycle(mux)
 	a.proxyServer = &http.Server{
-		Handler:      mux,
+		Handler:      a.proxyRequests,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 0, // 流式请求禁用写入超时
 		IdleTimeout:  120 * time.Second,

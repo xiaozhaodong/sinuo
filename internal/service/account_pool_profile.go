@@ -68,6 +68,23 @@ func (s *AccountPoolService) RefreshAccountProfile(ctx context.Context, id int64
 	return s.refreshChatGPTOAuthProfile(ctx, acc)
 }
 
+// persistAccountAuthFailureProfile 仅串行本地状态发布，不在账号状态锁内请求 OAuth 或 quota 接口。
+func (s *AccountPoolService) persistAccountAuthFailureProfile(ctx context.Context, acc *store.UpstreamAccountRecord, reason string, failedAt time.Time) error {
+	return s.runAccountStateWrite(ctx, acc.ID, func() error {
+		if err := s.store.MarkAccountAuthFailedWithProfile(ctx, acc, reason); err != nil {
+			return err
+		}
+		if ok, _ := s.runtimeCache.markAuthFailed(acc.ID, reason, failedAt); !ok {
+			return fmt.Errorf("账号 %d 鉴权状态已落库，但运行态不存在", acc.ID)
+		}
+		if s.softFailureTracker != nil {
+			s.softFailureTracker.Clear(acc.ID)
+		}
+		s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
+		return nil
+	})
+}
+
 func (s *AccountPoolService) populateAccountProfile(record *store.UpstreamAccountRecord) {
 	if record == nil {
 		return
@@ -97,17 +114,15 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 		profileUpdateTime(acc, now, status)
 		applyOpenAIProfileToRecord(acc, profile)
 		if status == quotaStatusAuthInvalid {
-			if storeErr := s.store.MarkAccountAuthFailedWithProfile(ctx, acc, authResolveErr.Error()); storeErr != nil {
+			if storeErr := s.persistAccountAuthFailureProfile(ctx, acc, authResolveErr.Error(), now); storeErr != nil {
 				return AccountProfileRefreshResult{}, fmt.Errorf("写回账号鉴权失效画像失败: %w", storeErr)
 			}
-			if s.softFailureTracker != nil {
-				s.softFailureTracker.Clear(acc.ID)
+		} else {
+			if updateErr := s.store.UpdateAccountProfile(ctx, acc); updateErr != nil {
+				return AccountProfileRefreshResult{}, fmt.Errorf("写回账号画像失败: %w", updateErr)
 			}
-			_, _ = s.runtimeCache.markAuthFailed(acc.ID, authResolveErr.Error(), now)
-		} else if updateErr := s.store.UpdateAccountProfile(ctx, acc); updateErr != nil {
-			return AccountProfileRefreshResult{}, fmt.Errorf("写回账号画像失败: %w", updateErr)
+			s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
 		}
-		s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
 		return AccountProfileRefreshResult{
 			Success:     false,
 			Message:     message,
@@ -235,14 +250,9 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 	case http.StatusUnauthorized:
 		profileUpdateTime(acc, now, quotaStatusAuthInvalid)
 		authReason := firstNonEmptyString(upstreamMessage, "OAuth 已失效")
-		if s.softFailureTracker != nil {
-			s.softFailureTracker.Clear(acc.ID)
-		}
-		if err := s.store.MarkAccountAuthFailedWithProfile(ctx, acc, authReason); err != nil {
+		if err := s.persistAccountAuthFailureProfile(ctx, acc, authReason, now); err != nil {
 			return AccountProfileRefreshResult{}, fmt.Errorf("写回账号鉴权失效画像失败: %w", err)
 		}
-		_, _ = s.runtimeCache.markAuthFailed(acc.ID, authReason, now)
-		s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
 		return AccountProfileRefreshResult{
 			Success:     false,
 			Message:     fmt.Sprintf("刷新失败：OAuth 已失效%s", formatUpstreamMessage(upstreamMessage)),
@@ -254,14 +264,9 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 		if looksLikeWorkspaceDeactivated(upstreamMessage) || looksLikeAccountDeactivated(upstreamMessage) {
 			profileUpdateTime(acc, now, quotaStatusWorkspaceDeactivated)
 			authReason := firstNonEmptyString(upstreamMessage, "工作区已停用")
-			if s.softFailureTracker != nil {
-				s.softFailureTracker.Clear(acc.ID)
-			}
-			if err := s.store.MarkAccountAuthFailedWithProfile(ctx, acc, authReason); err != nil {
+			if err := s.persistAccountAuthFailureProfile(ctx, acc, authReason, now); err != nil {
 				return AccountProfileRefreshResult{}, fmt.Errorf("写回工作区停用画像失败: %w", err)
 			}
-			_, _ = s.runtimeCache.markAuthFailed(acc.ID, authReason, now)
-			s.runtimeCache.mergeRecordPreservingRuntimeState(acc)
 			return AccountProfileRefreshResult{
 				Success:     false,
 				Message:     fmt.Sprintf("刷新失败：工作区已停用%s", formatUpstreamMessage(upstreamMessage)),
