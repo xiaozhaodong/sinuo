@@ -7,6 +7,8 @@ package endpoint
 import (
 	"sync"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 // SoftFailureScope 软失败 path scope（§9.3：messages | count_tokens）
@@ -49,24 +51,33 @@ type softFailureKey struct {
 	category SoftFailureCategory
 }
 
+// softFailureWindow 保存事件及其生效窗口；策略变更时由发布方清除。
+type softFailureWindow struct {
+	events []time.Time
+	policy config.SoftFailurePolicy
+	custom bool
+}
+
 // SoftFailureTracker 分类软失败追踪器（纯内存态，D13）
 type SoftFailureTracker struct {
 	mu     sync.Mutex
 	config FailureTrackerConfig
-	events map[softFailureKey][]time.Time
+	events map[softFailureKey]softFailureWindow
+	now    func() time.Time
 }
 
 // NewSoftFailureTracker 创建分类软失败追踪器
 func NewSoftFailureTracker(enabled bool, timeWindow time.Duration, threshold int) *SoftFailureTracker {
 	return &SoftFailureTracker{
 		config: FailureTrackerConfig{Enabled: enabled, TimeWindow: timeWindow, Threshold: threshold},
-		events: make(map[softFailureKey][]time.Time),
+		events: make(map[softFailureKey]softFailureWindow),
+		now:    time.Now,
 	}
 }
 
 // Record 记录一次软失败，返回窗口内计数与是否达到阈值。
 // 达到阈值时清除该类别窗口（§9.3 规则 4：避免 cooldown 到期立即再次触发）。
-func (t *SoftFailureTracker) Record(endpointName string, scope SoftFailureScope, category SoftFailureCategory) (count int, tripped bool) {
+func (t *SoftFailureTracker) Record(endpointName string, scope SoftFailureScope, category SoftFailureCategory, windowMinutes, threshold *int) (count int, tripped bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -75,22 +86,28 @@ func (t *SoftFailureTracker) Record(endpointName string, scope SoftFailureScope,
 	}
 
 	key := softFailureKey{endpoint: endpointName, scope: scope, category: category}
-	now := time.Now()
-	windowStart := now.Add(-t.config.TimeWindow)
+	policy := config.ResolveSoftFailurePolicy(windowMinutes, threshold, t.config.TimeWindow, t.config.Threshold)
+	entry := t.events[key]
+	custom := windowMinutes != nil
+	if entry.policy != policy || entry.custom != custom {
+		entry.events = nil
+	}
+	now := t.now()
+	windowStart := now.Add(-policy.Window)
 
-	valid := make([]time.Time, 0, len(t.events[key])+1)
-	for _, item := range t.events[key] {
+	valid := make([]time.Time, 0, len(entry.events)+1)
+	for _, item := range entry.events {
 		if item.After(windowStart) {
 			valid = append(valid, item)
 		}
 	}
 	valid = append(valid, now)
 
-	if len(valid) >= t.config.Threshold {
+	if len(valid) >= policy.Threshold {
 		delete(t.events, key)
 		return len(valid), true
 	}
-	t.events[key] = valid
+	t.events[key] = softFailureWindow{events: valid, policy: policy, custom: custom}
 	return len(valid), false
 }
 
@@ -105,7 +122,8 @@ func (t *SoftFailureTracker) ClearScope(endpointName string, scope SoftFailureSc
 func (t *SoftFailureTracker) ClearScopeBefore(endpointName string, scope SoftFailureScope, cutoff time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for key, events := range t.events {
+	for key, entry := range t.events {
+		events := entry.events
 		if key.endpoint != endpointName || key.scope != scope {
 			continue
 		}
@@ -122,7 +140,8 @@ func (t *SoftFailureTracker) ClearScopeBefore(endpointName string, scope SoftFai
 		if len(remaining) == 0 {
 			delete(t.events, key)
 		} else {
-			t.events[key] = remaining
+			entry.events = remaining
+			t.events[key] = entry
 		}
 	}
 }
@@ -147,11 +166,13 @@ func (t *SoftFailureTracker) CountsFor(endpointName string, scope SoftFailureSco
 	if !t.config.Enabled {
 		return result
 	}
-	windowStart := time.Now().Add(-t.config.TimeWindow)
-	for key, events := range t.events {
+	now := t.now()
+	for key, entry := range t.events {
+		events := entry.events
 		if key.endpoint != endpointName || key.scope != scope {
 			continue
 		}
+		windowStart := now.Add(-entry.policy.Window)
 		count := 0
 		for _, item := range events {
 			if item.After(windowStart) {
@@ -174,8 +195,10 @@ func (t *SoftFailureTracker) Stats() map[string]int {
 	if !t.config.Enabled {
 		return stats
 	}
-	windowStart := time.Now().Add(-t.config.TimeWindow)
-	for key, events := range t.events {
+	now := t.now()
+	for key, entry := range t.events {
+		events := entry.events
+		windowStart := now.Add(-entry.policy.Window)
 		count := 0
 		for _, item := range events {
 			if item.After(windowStart) {
@@ -190,21 +213,28 @@ func (t *SoftFailureTracker) Stats() map[string]int {
 }
 
 // Threshold 返回当前阈值（快照解释用）
-func (t *SoftFailureTracker) Threshold() int {
+func (t *SoftFailureTracker) Threshold(windowMinutes, threshold *int) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.config.Threshold
+	return config.ResolveSoftFailurePolicy(windowMinutes, threshold, t.config.TimeWindow, t.config.Threshold).Threshold
 }
 
-// UpdateConfig 热更新配置；禁用时清空历史
-func (t *SoftFailureTracker) UpdateConfig(enabled bool, timeWindow time.Duration, threshold int) {
+// UpdateConfig 热更新配置，返回默认策略及启用状态是否变化，供发布方隔离旧结算。
+// 默认策略变化只清理继承计数；禁用时清空全部历史。
+func (t *SoftFailureTracker) UpdateConfig(enabled bool, timeWindow time.Duration, threshold int) (policyChanged, enabledChanged bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	wasEnabled := t.config.Enabled
+	oldPolicy := config.ResolveSoftFailurePolicy(nil, nil, t.config.TimeWindow, t.config.Threshold)
+	newPolicy := config.ResolveSoftFailurePolicy(nil, nil, timeWindow, threshold)
+	policyChanged = oldPolicy != newPolicy
+	enabledChanged = t.config.Enabled != enabled
 	t.config = FailureTrackerConfig{Enabled: enabled, TimeWindow: timeWindow, Threshold: threshold}
-	if wasEnabled && !enabled {
-		t.events = make(map[softFailureKey][]time.Time)
+	for key, entry := range t.events {
+		if !enabled || policyChanged && !entry.custom {
+			delete(t.events, key)
+		}
 	}
+	return policyChanged, enabledChanged
 }
 
 // CleanupExpiredEvents 惰性清理过窗事件（由健康检查循环定期调用）
@@ -214,8 +244,10 @@ func (t *SoftFailureTracker) CleanupExpiredEvents() {
 	if !t.config.Enabled {
 		return
 	}
-	windowStart := time.Now().Add(-t.config.TimeWindow)
-	for key, events := range t.events {
+	now := t.now()
+	for key, entry := range t.events {
+		events := entry.events
+		windowStart := now.Add(-entry.policy.Window)
 		valid := events[:0]
 		for _, item := range events {
 			if item.After(windowStart) {
@@ -225,7 +257,8 @@ func (t *SoftFailureTracker) CleanupExpiredEvents() {
 		if len(valid) == 0 {
 			delete(t.events, key)
 		} else {
-			t.events[key] = valid
+			entry.events = valid
+			t.events[key] = entry
 		}
 	}
 }

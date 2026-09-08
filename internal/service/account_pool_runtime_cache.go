@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"cc-forwarder/config"
 	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/store"
 )
@@ -970,6 +971,8 @@ func cloneUpstreamAccountRecord(record *store.UpstreamAccountRecord) *store.Upst
 	}
 
 	cloned := *record
+	cloned.SoftFailureWindowMinutes = config.CloneSoftFailureValue(record.SoftFailureWindowMinutes)
+	cloned.SoftFailureThreshold = config.CloneSoftFailureValue(record.SoftFailureThreshold)
 	cloned.CooldownUntil = cloneTimePtr(record.CooldownUntil)
 	cloned.LastSuccessAt = cloneTimePtr(record.LastSuccessAt)
 	cloned.Quota5HUsedPercent = cloneFloat64Ptr(record.Quota5HUsedPercent)

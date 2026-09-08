@@ -23,7 +23,7 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 	endpoints := make([]*Endpoint, len(configs))
 	for i, cfg := range configs {
 		endpoints[i] = &Endpoint{
-			Config: cfg,
+			Config: cloneEndpointConfig(cfg),
 			Status: EndpointStatus{
 				Healthy:      false,
 				NeverChecked: true,
@@ -43,6 +43,9 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 // AddEndpoint 动态添加端点（v5.0+ 新增）
 // 线程安全地将新端点添加到管理器中
 func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
+	if err := config.ValidateSoftFailureOverrides(cfg.SoftFailureWindowMinutes, cfg.SoftFailureThreshold); err != nil {
+		return err
+	}
 	m.endpointConfigMu.Lock()
 
 	// 验证端点名称唯一性
@@ -58,7 +61,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 
 	// 创建新端点
 	endpoint := &Endpoint{
-		Config: cfg,
+		Config: cloneEndpointConfig(cfg),
 		Status: EndpointStatus{
 			Healthy:      false,
 			NeverChecked: true,
@@ -156,6 +159,9 @@ func (m *Manager) RemoveEndpoint(name string) error {
 // UpdateEndpointConfig 更新端点配置（v5.0+ 新增）
 // 更新现有端点的配置（不包括名称）
 func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) error {
+	if err := config.ValidateSoftFailureOverrides(cfg.SoftFailureWindowMinutes, cfg.SoftFailureThreshold); err != nil {
+		return err
+	}
 	m.endpointConfigMu.Lock()
 	m.endpointsMu.RLock()
 	var targetEndpoint *Endpoint
@@ -177,7 +183,11 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 
 	// 更新配置（v8：递增 config revision，使已快照的 AttemptPlan 在 admission 重校验时失效）
 	targetEndpoint.mutex.Lock()
-	targetEndpoint.Config = cfg
+	if !config.SameSoftFailureOverrides(targetEndpoint.Config.SoftFailureWindowMinutes, targetEndpoint.Config.SoftFailureThreshold, cfg.SoftFailureWindowMinutes, cfg.SoftFailureThreshold) {
+		m.softFailures.ClearEndpoint(name)
+		targetEndpoint.failureEpoch++
+	}
+	targetEndpoint.Config = cloneEndpointConfig(cfg)
 	targetEndpoint.configRevision = NextEndpointConfigRevision()
 	targetEndpoint.mutex.Unlock()
 

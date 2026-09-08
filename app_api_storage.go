@@ -34,6 +34,8 @@ type EndpointRecordInfo struct {
 	TimeoutSeconds                int               `json:"timeout_seconds"`
 	SupportsCountTokens           bool              `json:"supports_count_tokens"`
 	ModelRewriteRules             string            `json:"model_rewrite_rules"`
+	SoftFailureWindowMinutes      *int              `json:"soft_failure_window_minutes"`
+	SoftFailureThreshold          *int              `json:"soft_failure_threshold"`
 	CostMultiplier                float64           `json:"cost_multiplier"`
 	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
@@ -72,6 +74,8 @@ type CreateEndpointInput struct {
 	TimeoutSeconds                int               `json:"timeout_seconds"`
 	SupportsCountTokens           bool              `json:"supports_count_tokens"`
 	ModelRewriteRules             string            `json:"model_rewrite_rules"`
+	SoftFailureWindowMinutes      *int              `json:"soft_failure_window_minutes"`
+	SoftFailureThreshold          *int              `json:"soft_failure_threshold"`
 	CostMultiplier                float64           `json:"cost_multiplier"`
 	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
@@ -239,6 +243,8 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 		TimeoutSeconds:                input.TimeoutSeconds,
 		SupportsCountTokens:           input.SupportsCountTokens,
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
+		SoftFailureWindowMinutes:      input.SoftFailureWindowMinutes,
+		SoftFailureThreshold:          input.SoftFailureThreshold,
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -312,6 +318,8 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		TimeoutSeconds:                input.TimeoutSeconds,
 		SupportsCountTokens:           input.SupportsCountTokens,
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
+		SoftFailureWindowMinutes:      input.SoftFailureWindowMinutes,
+		SoftFailureThreshold:          input.SoftFailureThreshold,
 		CostMultiplier:                input.CostMultiplier,
 		InputCostMultiplier:           input.InputCostMultiplier,
 		OutputCostMultiplier:          input.OutputCostMultiplier,
@@ -436,6 +444,8 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 		TimeoutSeconds:                r.TimeoutSeconds,
 		SupportsCountTokens:           r.SupportsCountTokens,
 		ModelRewriteRules:             r.ModelRewriteRules,
+		SoftFailureWindowMinutes:      r.SoftFailureWindowMinutes,
+		SoftFailureThreshold:          r.SoftFailureThreshold,
 		CostMultiplier:                r.CostMultiplier,
 		InputCostMultiplier:           r.InputCostMultiplier,
 		OutputCostMultiplier:          r.OutputCostMultiplier,

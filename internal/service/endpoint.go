@@ -300,6 +300,8 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 		"failover_enabled":                  record.FailoverEnabled,
 		"timeout_seconds":                   record.TimeoutSeconds,
 		"model_rewrite_rules":               record.ModelRewriteRules,
+		"soft_failure_window_minutes":       record.SoftFailureWindowMinutes,
+		"soft_failure_threshold":            record.SoftFailureThreshold,
 		"cost_multiplier":                   record.CostMultiplier,
 		"cache_creation_cost_multiplier_1h": record.CacheCreationCostMultiplier1h,
 		"availability_enabled":              record.IsAvailabilityEnabled(),
@@ -350,6 +352,9 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 			return fmt.Errorf("端点 Header 名称不能为空")
 		}
 	}
+	if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+		return err
+	}
 	record.ModelRewriteRules = strings.TrimSpace(record.ModelRewriteRules)
 	if err := modelrewrite.ValidateExact(record.ModelRewriteRules, "/v1/messages", "/v1/messages/count_tokens"); err != nil {
 		return fmt.Errorf("模型兼容改写规则无效: %w", err)
@@ -360,15 +365,17 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 // recordToConfig 将数据库记录转换为配置对象
 func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.EndpointConfig {
 	cfg := config.EndpointConfig{
-		Name:                record.Name,
-		URL:                 record.URL,
-		Priority:            record.Priority,
-		Token:               record.Token,
-		ApiKey:              record.ApiKey,
-		Headers:             record.Headers,
-		Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
-		SupportsCountTokens: record.SupportsCountTokens,
-		ModelRewriteRules:   record.ModelRewriteRules,
+		Name:                     record.Name,
+		URL:                      record.URL,
+		Priority:                 record.Priority,
+		Token:                    record.Token,
+		ApiKey:                   record.ApiKey,
+		Headers:                  record.Headers,
+		Timeout:                  time.Duration(record.TimeoutSeconds) * time.Second,
+		SupportsCountTokens:      record.SupportsCountTokens,
+		ModelRewriteRules:        record.ModelRewriteRules,
+		SoftFailureWindowMinutes: config.CloneSoftFailureValue(record.SoftFailureWindowMinutes),
+		SoftFailureThreshold:     config.CloneSoftFailureValue(record.SoftFailureThreshold),
 	}
 
 	// 设置 FailoverEnabled（v8 语义：参与自动调度）

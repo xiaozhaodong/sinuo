@@ -12,26 +12,22 @@ const (
 	accountSoftFailureCategoryRateLimit   = "rate_limit"
 	accountSoftFailureCategoryServerError = "server_error"
 
-	defaultAccountSoftFailureWindow    = 5 * time.Minute
-	defaultAccountSoftFailureThreshold = 3
+	defaultAccountSoftFailureWindow    = config.DefaultSoftFailureWindow
+	defaultAccountSoftFailureThreshold = config.DefaultSoftFailureThreshold
 	defaultAccountRateLimitCooldown    = 180 * time.Second
 	defaultAccountServerErrorCooldown  = 120 * time.Second
 )
 
 type accountSoftFailureTracker struct {
-	mu        sync.Mutex
-	events    map[int64][]time.Time
-	now       func() time.Time
-	window    time.Duration
-	threshold int
+	mu     sync.Mutex
+	events map[int64][]time.Time
+	now    func() time.Time
 }
 
-func newAccountSoftFailureTracker(cfg *config.Config) *accountSoftFailureTracker {
+func newAccountSoftFailureTracker() *accountSoftFailureTracker {
 	return &accountSoftFailureTracker{
-		events:    make(map[int64][]time.Time),
-		now:       time.Now,
-		window:    accountPoolSoftFailureWindow(cfg),
-		threshold: accountPoolSoftFailureThreshold(cfg),
+		events: make(map[int64][]time.Time),
+		now:    time.Now,
 	}
 }
 
@@ -42,7 +38,7 @@ func (t *accountSoftFailureTracker) Now() time.Time {
 	return t.now()
 }
 
-func (t *accountSoftFailureTracker) Record(accountID int64) int {
+func (t *accountSoftFailureTracker) Record(accountID int64, policy config.SoftFailurePolicy) int {
 	if t == nil || accountID <= 0 {
 		return 0
 	}
@@ -51,7 +47,7 @@ func (t *accountSoftFailureTracker) Record(accountID int64) int {
 	defer t.mu.Unlock()
 
 	now := t.Now()
-	windowStart := now.Add(-t.window)
+	windowStart := now.Add(-policy.Window)
 	valid := make([]time.Time, 0, len(t.events[accountID])+1)
 	for _, item := range t.events[accountID] {
 		if item.After(windowStart) {

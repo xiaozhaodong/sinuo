@@ -256,6 +256,8 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 			timeout_seconds INTEGER NOT NULL DEFAULT 300 CHECK (timeout_seconds > 0),
 			supports_count_tokens INTEGER NOT NULL DEFAULT 0 CHECK (supports_count_tokens IN (0, 1)),
 			model_rewrite_rules TEXT NOT NULL DEFAULT '',
+			soft_failure_window_minutes INTEGER,
+			soft_failure_threshold INTEGER,
 			cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (cost_multiplier > 0),
 			input_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (input_cost_multiplier > 0),
 			output_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (output_cost_multiplier > 0),

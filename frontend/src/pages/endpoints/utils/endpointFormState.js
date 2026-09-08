@@ -1,3 +1,5 @@
+import { buildSoftFailurePolicyPayload, createSoftFailurePolicyState, validateSoftFailurePolicyState } from '../../../utils/softFailurePolicy.js';
+
 import {
   createEmptyEndpointModelRewriteRule,
   parseEndpointModelRewriteSettings,
@@ -21,6 +23,7 @@ export const summarizeEndpointAuthentication = (endpoint = {}) => {
 export const createEndpointFormState = (endpoint = null) => {
   const modelRewriteSettings = parseEndpointModelRewriteSettings(endpoint?.modelRewriteRules || '');
   return {
+    ...createSoftFailurePolicyState(endpoint || {}),
     name: endpoint?.name || '',
     url: endpoint?.url || '',
     token: '',
@@ -51,6 +54,8 @@ export const createEndpointFormState = (endpoint = null) => {
 
 export const validateEndpointFormState = (state = {}) => {
   const errors = {};
+  const failurePolicyError = validateSoftFailurePolicyState(state);
+  if (failurePolicyError) errors.softFailurePolicy = failurePolicyError;
   if (!String(state.name || '').trim()) {
     errors.name = '请输入端点名称';
   }
@@ -96,6 +101,7 @@ export const buildEndpointFormPayload = (state = {}) => {
   }
 
   return {
+    ...buildSoftFailurePolicyPayload(state),
     name: String(state.name || '').trim(),
     url: String(state.url || '').trim(),
     token: String(state.token || '').trim(),

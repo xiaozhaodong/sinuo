@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 // EndpointRecord 表示数据库中的端点记录
@@ -32,8 +34,10 @@ type EndpointRecord struct {
 	TimeoutSeconds  int  `json:"timeout_seconds"`  // 请求超时（秒）
 
 	// 功能支持
-	SupportsCountTokens bool   `json:"supports_count_tokens"` // 是否支持 count_tokens
-	ModelRewriteRules   string `json:"model_rewrite_rules"`   // CC 端点模型兼容改写规则 JSON
+	SupportsCountTokens      bool   `json:"supports_count_tokens"` // 是否支持 count_tokens
+	ModelRewriteRules        string `json:"model_rewrite_rules"`   // CC 端点模型兼容改写规则 JSON
+	SoftFailureWindowMinutes *int   `json:"soft_failure_window_minutes"`
+	SoftFailureThreshold     *int   `json:"soft_failure_threshold"`
 
 	// 成本倍率
 	CostMultiplier                float64 `json:"cost_multiplier"`
@@ -119,6 +123,9 @@ func (s *SQLiteEndpointStore) getQuerier() interface {
 
 // Create 创建新端点
 func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord) (*EndpointRecord, error) {
+	if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,17 +162,17 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 		INSERT INTO endpoints (
 			name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
+			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
 		record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
+		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		boolToInt(record.IsAvailabilityEnabled()),
@@ -194,7 +201,7 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 	query := `
 		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
+			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
@@ -212,7 +219,7 @@ func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointR
 	query := `
 		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
+			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
@@ -230,7 +237,7 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 	query := `
 		SELECT id, name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
+			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
@@ -243,6 +250,9 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 
 // Update 更新端点
 func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord) error {
+	if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -256,7 +266,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 		UPDATE endpoints SET
 			url = ?, token = ?, api_key = ?, headers = ?,
 			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
-			supports_count_tokens = ?, model_rewrite_rules = ?,
+			supports_count_tokens = ?, model_rewrite_rules = ?, soft_failure_window_minutes = ?, soft_failure_threshold = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			availability_enabled = ?
@@ -266,7 +276,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	result, err := s.getQuerier().ExecContext(ctx, query,
 		record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
+		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		boolToInt(record.IsAvailabilityEnabled()),
@@ -354,6 +364,11 @@ func (s *SQLiteEndpointStore) SetFailoverEnabled(ctx context.Context, name strin
 
 // BatchCreate 批量创建端点
 func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*EndpointRecord) error {
+	for _, record := range records {
+		if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -372,11 +387,11 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		INSERT INTO endpoints (
 			name, url, token, api_key, headers,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
-			supports_count_tokens, model_rewrite_rules,
+			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	stmt, err := tx.PrepareContext(ctx, query)
@@ -417,7 +432,7 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		_, err = stmt.ExecContext(ctx,
 			record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 			record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
-			boolToInt(record.SupportsCountTokens), record.ModelRewriteRules,
+			boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 			record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 			record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 			boolToInt(record.IsAvailabilityEnabled()),
@@ -494,7 +509,7 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 		&record.ID, &record.Name, &record.URL,
 		&record.Token, &record.ApiKey, &headersJSON,
 		&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
-		&supportsCountTokens, &record.ModelRewriteRules,
+		&supportsCountTokens, &record.ModelRewriteRules, &record.SoftFailureWindowMinutes, &record.SoftFailureThreshold,
 		&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 		&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
 		&availabilityEnabled, &createdAt, &updatedAt,
@@ -520,6 +535,9 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	}
 
 	// 转换布尔值
+	if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+		return nil, fmt.Errorf("端点 %s 失败策略无效: %w", record.Name, err)
+	}
 	record.FailoverEnabled = failoverEnabled == 1
 	record.SupportsCountTokens = supportsCountTokens == 1
 	availValue := availabilityEnabled == 1
@@ -560,7 +578,7 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 			&record.ID, &record.Name, &record.URL,
 			&record.Token, &record.ApiKey, &headersJSON,
 			&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
-			&supportsCountTokens, &record.ModelRewriteRules,
+			&supportsCountTokens, &record.ModelRewriteRules, &record.SoftFailureWindowMinutes, &record.SoftFailureThreshold,
 			&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
 			&record.CacheCreationCostMultiplier, &record.CacheCreationCostMultiplier1h, &record.CacheReadCostMultiplier,
 			&availabilityEnabled, &createdAt, &updatedAt,
@@ -583,6 +601,9 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		}
 
 		// 转换布尔值
+		if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
+			return nil, fmt.Errorf("端点 %s 失败策略无效: %w", record.Name, err)
+		}
 		record.FailoverEnabled = failoverEnabled == 1
 		record.SupportsCountTokens = supportsCountTokens == 1
 		availValue := availabilityEnabled == 1

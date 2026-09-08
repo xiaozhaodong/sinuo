@@ -1,3 +1,5 @@
+import { buildSoftFailurePolicyPayload, createSoftFailurePolicyState, validateSoftFailurePolicyState } from '@utils/softFailurePolicy.js';
+
 // ============================================
 // Account Pool 账号表单与 OAuth Hook
 // 2026-03-07
@@ -181,6 +183,7 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     const modelRewriteRulesRaw = account.model_rewrite_rules || account.modelRewriteRules || '';
     const modelRewriteSettings = parseCodexModelRewriteSettings(modelRewriteRulesRaw);
     const nextForm = {
+      ...createSoftFailurePolicyState(account),
       account_name: account.account_name || account.accountName || '',
       auth_method: providerTypeToAuthMethod(providerType),
       provider_type: providerType,
@@ -265,10 +268,17 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
       return;
     }
 
+    const failurePolicyError = validateSoftFailurePolicyState(accountForm);
+    if (failurePolicyError) {
+      showNotice('error', failurePolicyError);
+      return;
+    }
+
     setAccountSubmitting(true);
     try {
       const payload = {
         ...accountForm,
+        ...buildSoftFailurePolicyPayload(accountForm),
         auth_method: authMethod,
         account_name: accountName,
         provider_type: providerType,

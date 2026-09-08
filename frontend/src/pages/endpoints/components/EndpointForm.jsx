@@ -1,3 +1,5 @@
+import SoftFailurePolicyFields from '@components/ui/SoftFailurePolicyFields.jsx';
+
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Save, Trash2 } from 'lucide-react';
@@ -251,6 +253,16 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
                 <Checkbox label="支持 count_tokens" help="允许转发 Token 计数请求" checked={state.supportsCountTokens} onChange={(event) => setState((current) => ({ ...current, supportsCountTokens: event.target.checked }))} />
               </div>
             </section>
+
+            <SoftFailurePolicyFields
+              value={state}
+              disabled={loading}
+              error={errors.softFailurePolicy}
+              onChange={(patch) => {
+                setState((current) => ({ ...current, ...patch }));
+                setErrors((current) => ({ ...current, softFailurePolicy: undefined }));
+              }}
+            />
 
             <section>
               <div className="mb-3 flex items-center justify-between">

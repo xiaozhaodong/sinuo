@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"cc-forwarder/config"
 	"cc-forwarder/internal/privacy"
 )
 
@@ -120,6 +121,11 @@ func createMigrationLedger(ctx context.Context, tx *sql.Tx, sourceMode SourceMod
 }
 
 func rebuildEndpoints(ctx context.Context, tx *sql.Tx, flattened EndpointFlattenResult) error {
+	for _, endpoint := range flattened.Endpoints {
+		if err := config.ValidateSoftFailureOverrides(endpoint.SoftFailureWindowMinutes, endpoint.SoftFailureThreshold); err != nil {
+			return fmt.Errorf("端点 %s 失败策略无效: %w", endpoint.Name, err)
+		}
+	}
 	hasRuntimeStates, err := tableExistsTx(ctx, tx, "endpoint_runtime_states")
 	if err != nil {
 		return err
@@ -144,10 +150,10 @@ func rebuildEndpoints(ctx context.Context, tx *sql.Tx, flattened EndpointFlatten
 	insert := `INSERT INTO endpoints_new (
 		id, name, url, token, api_key, headers, priority, failover_enabled,
 		availability_enabled, cooldown_seconds, timeout_seconds, supports_count_tokens,
-		model_rewrite_rules, cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+		model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold, cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 		cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h,
 		cache_read_cost_multiplier, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')), COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')))`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')), COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')))`
 	for _, endpoint := range flattened.Endpoints {
 		headers, err := json.Marshal(endpoint.Headers)
 		if err != nil {
@@ -161,7 +167,7 @@ func rebuildEndpoints(ctx context.Context, tx *sql.Tx, flattened EndpointFlatten
 			id, endpoint.Name, endpoint.URL, endpoint.Token, endpoint.APIKey, string(headers),
 			endpoint.Priority, boolInt(endpoint.FailoverEnabled), boolInt(endpoint.AvailabilityEnabled),
 			endpoint.CooldownSeconds, endpoint.TimeoutSeconds, boolInt(endpoint.SupportsCountTokens),
-			endpoint.ModelRewriteRules, endpoint.CostMultiplier, endpoint.InputCostMultiplier,
+			endpoint.ModelRewriteRules, endpoint.SoftFailureWindowMinutes, endpoint.SoftFailureThreshold, endpoint.CostMultiplier, endpoint.InputCostMultiplier,
 			endpoint.OutputCostMultiplier, endpoint.CacheCreationCostMultiplier,
 			endpoint.CacheCreationCostMultiplier1h, endpoint.CacheReadCostMultiplier,
 			endpoint.CreatedAt, endpoint.UpdatedAt,
@@ -213,6 +219,8 @@ func endpointTargetSchema(table string) string {
 		timeout_seconds INTEGER NOT NULL DEFAULT 300 CHECK (timeout_seconds > 0),
 		supports_count_tokens INTEGER NOT NULL DEFAULT 0 CHECK (supports_count_tokens IN (0, 1)),
 		model_rewrite_rules TEXT NOT NULL DEFAULT '',
+		soft_failure_window_minutes INTEGER,
+		soft_failure_threshold INTEGER,
 		cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (cost_multiplier > 0),
 		input_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (input_cost_multiplier > 0),
 		output_cost_multiplier REAL NOT NULL DEFAULT 1.0 CHECK (output_cost_multiplier > 0),

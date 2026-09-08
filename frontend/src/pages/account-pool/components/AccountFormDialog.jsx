@@ -1,3 +1,5 @@
+import SoftFailurePolicyFields from '@components/ui/SoftFailurePolicyFields.jsx';
+
 // ============================================
 // 账号池账号表单弹窗
 // 2026-03-07
@@ -213,6 +215,12 @@ const AccountFormDialog = ({
                 </div>
               </div>
             </section>
+
+            <SoftFailurePolicyFields
+              value={accountForm}
+              disabled={accountSubmitting || accountCredentialLoading}
+              onChange={(patch) => setAccountForm((current) => ({ ...current, ...patch }))}
+            />
 
             <section className="space-y-3">
               <h4 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">请求压缩</h4>

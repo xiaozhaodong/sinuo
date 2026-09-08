@@ -273,7 +273,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			})
 			if applied {
 				slog.Warn(fmt.Sprintf("⏳ [限流软失败] [%s] 端点 %s rate_limit 计数 %d/%d",
-					connID, ep.Config.Name, count, h.endpointManager.SoftFailureThreshold()))
+					connID, ep.Config.Name, count, h.endpointManager.SoftFailureThreshold(ep.Config.Name)))
 			} else {
 				slog.Info("跳过旧配置 attempt 的限流结算", "endpoint", ep.Config.Name, "revision", target.Revision())
 			}
@@ -440,7 +440,7 @@ func (h *Handler) recordEndpointAttemptSoftFailure(name string, revision int64, 
 	h.endpointManager.ApplyEndpointFailureSettlement(name, revision, epoch, func() {
 		count, tripped, _ = h.endpointManager.RecordSoftFailureFenced(name, endpoint.SoftFailureScopeMessages, category, epoch)
 		slog.Info(fmt.Sprintf("📊 [软失败] 端点 %s 记录 %s（%s），窗口内计数: %d/%d",
-			name, category, reason, count, h.endpointManager.SoftFailureThreshold()))
+			name, category, reason, count, h.endpointManager.SoftFailureThreshold(name)))
 		if tripped {
 			cooldown := endpointSoftFailureCooldown(h.config, category, retryAfter)
 			if h.endpointManager.SetEndpointCooldownFenced(name, cooldown, endpoint.SoftFailureCooldownReason(category), epoch) {

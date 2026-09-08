@@ -942,13 +942,13 @@ func TestToggleAccount_FailedPersistRestoresPinnedSelectionState(t *testing.T) {
 		t.Fatalf("create second account failed: %v", err)
 	}
 
-		changed, err := svc.PinAccountSelection(ctx, second.ID)
-		if err != nil {
-			t.Fatalf("PinAccountSelection failed: %v", err)
-		}
-		if !changed {
-			t.Fatal("expected pinning second account to change runtime selection")
-		}
+	changed, err := svc.PinAccountSelection(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("PinAccountSelection failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected pinning second account to change runtime selection")
+	}
 
 	failingStore := &failingUpdateStore{inner: st, failToggle: true}
 	svc.store = failingStore
@@ -972,5 +972,36 @@ func TestToggleAccount_FailedPersistRestoresPinnedSelectionState(t *testing.T) {
 	ordered := orderedSchedule.Accounts
 	if got, want := collectAccountIDs(ordered), []int64{second.ID, first.ID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected pinned account order restored after failed toggle persist, got %v want %v", got, want)
+	}
+}
+
+func TestAccountRuntimeCache_SoftFailurePolicyCopiesOverrideValues(t *testing.T) {
+	cache := newAccountRuntimeCache()
+	window, threshold := 10, 5
+	record := &store.UpstreamAccountRecord{ID: 1, AccountName: "policy", ProviderType: "api_key", Enabled: true, State: "active", SoftFailureWindowMinutes: &window, SoftFailureThreshold: &threshold}
+	cache.upsert(record)
+	window = 20
+	first, ok := cache.get(1)
+	if !ok || *first.SoftFailureWindowMinutes != 10 {
+		t.Fatal("发布账号配置时共享了外部指针")
+	}
+	if !cache.mergeRecordPreservingRuntimeState(record) {
+		t.Fatal("更新缓存失败")
+	}
+	window = 30
+	second, ok := cache.get(1)
+	if !ok || *second.SoftFailureWindowMinutes != 20 {
+		t.Fatal("更新账号配置时共享了外部指针")
+	}
+	*second.SoftFailureThreshold = 99
+	third, ok := cache.get(1)
+	if !ok || *third.SoftFailureThreshold != 5 {
+		t.Fatal("读取配置暴露了运行态可变指针")
+	}
+	cache.replaceAll([]*store.UpstreamAccountRecord{record})
+	window = 40
+	last, ok := cache.get(1)
+	if !ok || *last.SoftFailureWindowMinutes != 30 {
+		t.Fatal("全量加载配置时共享了外部指针")
 	}
 }

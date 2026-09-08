@@ -803,3 +803,58 @@ func TestEndpointPipeline_NoCandidates_DoesNotClearGlobalRouteDecision(t *testin
 		t.Fatalf("全局 LastEffectiveEndpoint 被本请求诊断改写: %q", got)
 	}
 }
+
+func TestEndpointPipeline_SoftFailurePolicy_429保留短重试并按独立阈值切换(t *testing.T) {
+	var primaryHits, backupHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryHits, 1)
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+	window, threshold := 10, 2
+	primaryConfig := endpointPipelineConfig("policy-primary", primary.URL, 1)
+	primaryConfig.SoftFailureWindowMinutes, primaryConfig.SoftFailureThreshold = &window, &threshold
+	handler, manager := newEndpointPipelineTestHandler(t, primaryConfig, endpointPipelineConfig("policy-backup", backup.URL, 2))
+	first := performEndpointPipelineRequest(t, handler, false)
+	if first.Code != http.StatusTooManyRequests || atomic.LoadInt32(&primaryHits) != 2 || atomic.LoadInt32(&backupHits) != 0 {
+		t.Fatal("第一次逻辑失败应只短重试一次")
+	}
+	if manager.GetFailureStats()["policy-primary"] != 1 {
+		t.Fatal("一次请求的两次 429 必须只计一次失败")
+	}
+	second := performEndpointPipelineRequest(t, handler, false)
+	if second.Code != http.StatusOK || atomic.LoadInt32(&primaryHits) != 4 || atomic.LoadInt32(&backupHits) != 1 {
+		t.Fatalf("第二次逻辑失败未按独立阈值切换: %d", second.Code)
+	}
+}
+
+func TestEndpointPipeline_SoftFailurePolicy_5xx仍结束当前请求(t *testing.T) {
+	var backupHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "busy", http.StatusServiceUnavailable) }))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(backup.Close)
+	window, threshold := 10, 1
+	primaryConfig := endpointPipelineConfig("policy-primary", primary.URL, 1)
+	primaryConfig.SoftFailureWindowMinutes, primaryConfig.SoftFailureThreshold = &window, &threshold
+	handler, manager := newEndpointPipelineTestHandler(t, primaryConfig, endpointPipelineConfig("policy-backup", backup.URL, 2))
+	first := performEndpointPipelineRequest(t, handler, false)
+	if first.Code != http.StatusInternalServerError || atomic.LoadInt32(&backupHits) != 0 {
+		t.Fatal("5xx 不应在当前请求内重放")
+	}
+	if !manager.GetEndpointByNameAny("policy-primary").IsInCooldown() {
+		t.Fatal("自定义阈值未触发冷却")
+	}
+	second := performEndpointPipelineRequest(t, handler, false)
+	if second.Code != http.StatusOK || atomic.LoadInt32(&backupHits) != 1 {
+		t.Fatal("后续请求未跳过已冷却端点")
+	}
+}

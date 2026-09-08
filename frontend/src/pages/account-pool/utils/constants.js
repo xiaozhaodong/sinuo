@@ -1,3 +1,5 @@
+import { createSoftFailurePolicyState } from '../../../utils/softFailurePolicy.js';
+
 // ============================================
 // Account Pool 常量与样式映射
 // 2026-03-07
@@ -79,6 +81,7 @@ const PLAN_TYPE_LABELS = {
 };
 
 const EMPTY_ACCOUNT_FORM = {
+  ...createSoftFailurePolicyState(),
   account_name: '',
   auth_method: 'chatgpt_refresh_token',
   provider_type: 'chatgpt_refresh_token',

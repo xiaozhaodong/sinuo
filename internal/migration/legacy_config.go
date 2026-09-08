@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-forwarder/config"
 	timezonepolicy "cc-forwarder/internal/timezone"
 
 	"gopkg.in/yaml.v3"
@@ -54,6 +55,8 @@ type LegacyEndpoint struct {
 	Cooldown                      *legacyDuration    `yaml:"cooldown"`
 	SupportsCountTokens           bool               `yaml:"supports_count_tokens"`
 	ModelRewriteRules             string             `yaml:"model_rewrite_rules"`
+	SoftFailureWindowMinutes      *int               `yaml:"soft_failure_window_minutes"`
+	SoftFailureThreshold          *int               `yaml:"soft_failure_threshold"`
 	Enabled                       *bool              `yaml:"enabled"`
 	AvailabilityEnabled           *bool              `yaml:"availability_enabled"`
 	FailoverEnabled               *bool              `yaml:"failover_enabled"`
@@ -63,6 +66,36 @@ type LegacyEndpoint struct {
 	CacheCreationCostMultiplier   float64            `yaml:"cache_creation_cost_multiplier"`
 	CacheCreationCostMultiplier1h float64            `yaml:"cache_creation_cost_multiplier_1h"`
 	CacheReadCostMultiplier       float64            `yaml:"cache_read_cost_multiplier"`
+}
+
+// UnmarshalYAML 阻止 YAML 将小数静默截断为整型策略值。
+func (endpoint *LegacyEndpoint) UnmarshalYAML(node *yaml.Node) error {
+	var fields map[string]yaml.Node
+	if err := node.Decode(&fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"soft_failure_window_minutes", "soft_failure_threshold"} {
+		field, exists := fields[name]
+		if !exists {
+			continue
+		}
+		for field.Kind == yaml.AliasNode && field.Alias != nil {
+			field = *field.Alias
+		}
+		if field.Tag != "!!int" && field.Tag != "!!null" {
+			return fmt.Errorf("%s 必须为整数或 null", name)
+		}
+	}
+	type plainEndpoint LegacyEndpoint
+	var decoded plainEndpoint
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	if err := config.ValidateSoftFailureOverrides(decoded.SoftFailureWindowMinutes, decoded.SoftFailureThreshold); err != nil {
+		return err
+	}
+	*endpoint = LegacyEndpoint(decoded)
+	return nil
 }
 
 type legacyConfigDocument struct {

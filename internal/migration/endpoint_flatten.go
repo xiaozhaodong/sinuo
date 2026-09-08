@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"cc-forwarder/config"
 )
 
 type EndpointSnapshot struct {
@@ -25,6 +27,8 @@ type EndpointSnapshot struct {
 	TimeoutSeconds                int64
 	SupportsCountTokens           bool
 	ModelRewriteRules             string
+	SoftFailureWindowMinutes      *int
+	SoftFailureThreshold          *int
 	CostMultiplier                float64
 	InputCostMultiplier           float64
 	OutputCostMultiplier          float64
@@ -131,6 +135,8 @@ func FlattenLegacyEndpoints(legacy *LegacyConfig) (EndpointFlattenResult, error)
 					TimeoutSeconds:                int64(timeout / time.Second),
 					SupportsCountTokens:           source.SupportsCountTokens,
 					ModelRewriteRules:             strings.TrimSpace(source.ModelRewriteRules),
+					SoftFailureWindowMinutes:      config.CloneSoftFailureValue(source.SoftFailureWindowMinutes),
+					SoftFailureThreshold:          config.CloneSoftFailureValue(source.SoftFailureThreshold),
 					CostMultiplier:                positiveOrDefault(source.CostMultiplier, 1),
 					InputCostMultiplier:           positiveOrDefault(source.InputCostMultiplier, 1),
 					OutputCostMultiplier:          positiveOrDefault(source.OutputCostMultiplier, 1),
@@ -310,7 +316,7 @@ func loadSQLiteEndpointSnapshots(ctx context.Context, tx *sql.Tx) (EndpointFlatt
 		expr("token", "''"), expr("api_key", "''"), expr("headers", "'{}'"),
 		expr("priority", "1"), expr("failover_enabled", "1"), expr("availability_enabled", "1"),
 		expr("cooldown_seconds", "NULL"), expr("timeout_seconds", "300"), expr("supports_count_tokens", "0"),
-		expr("model_rewrite_rules", "''"), expr("cost_multiplier", "1.0"),
+		expr("model_rewrite_rules", "''"), expr("soft_failure_window_minutes", "NULL"), expr("soft_failure_threshold", "NULL"), expr("cost_multiplier", "1.0"),
 		expr("input_cost_multiplier", "1.0"), expr("output_cost_multiplier", "1.0"),
 		expr("cache_creation_cost_multiplier", "1.0"), expr("cache_creation_cost_multiplier_1h", "1.0"),
 		expr("cache_read_cost_multiplier", "1.0"), expr("created_at", "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')"),
@@ -331,7 +337,7 @@ func loadSQLiteEndpointSnapshots(ctx context.Context, tx *sql.Tx) (EndpointFlatt
 		if err := rows.Scan(
 			&snapshot.ID, &snapshot.Name, &snapshot.URL, &snapshot.Token, &snapshot.APIKey, &headersJSON,
 			&snapshot.Priority, &failover, &availability, &cooldown, &snapshot.TimeoutSeconds, &supports,
-			&snapshot.ModelRewriteRules, &snapshot.CostMultiplier, &snapshot.InputCostMultiplier,
+			&snapshot.ModelRewriteRules, &snapshot.SoftFailureWindowMinutes, &snapshot.SoftFailureThreshold, &snapshot.CostMultiplier, &snapshot.InputCostMultiplier,
 			&snapshot.OutputCostMultiplier, &snapshot.CacheCreationCostMultiplier,
 			&snapshot.CacheCreationCostMultiplier1h, &snapshot.CacheReadCostMultiplier,
 			&snapshot.CreatedAt, &snapshot.UpdatedAt,

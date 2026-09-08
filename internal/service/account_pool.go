@@ -51,6 +51,7 @@ type AccountPoolService struct {
 	runtimeCache                  *accountRuntimeCache
 	runtimeWriter                 *accountPoolRuntimeWriter
 	startupConnectivityTestRunner func(context.Context, int64) error
+	failurePolicyMu               sync.Mutex // 串行策略发布、账号删除与失败结算
 	runtimeInitMu                 sync.Mutex
 	runtimeInitialized            atomic.Bool
 }
@@ -62,7 +63,7 @@ func NewAccountPoolService(st store.AccountPoolStore, cfg *config.Config) *Accou
 		config:              cfg,
 		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
 		scheduleSnapshots:   newLatestAccountScheduleSnapshotStore(),
-		softFailureTracker:  newAccountSoftFailureTracker(cfg),
+		softFailureTracker:  newAccountSoftFailureTracker(),
 		runtimeCache:        newAccountRuntimeCache(),
 	}
 	svc.runtimeWriter = newAccountPoolRuntimeWriter(context.Background(), st, svc.runtimeCache.matchesStateVersion)
@@ -200,6 +201,9 @@ func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.Upstr
 	if rec == nil {
 		return nil, fmt.Errorf("account record is nil")
 	}
+	if err := config.ValidateSoftFailureOverrides(rec.SoftFailureWindowMinutes, rec.SoftFailureThreshold); err != nil {
+		return nil, err
+	}
 	rec.AccountName = strings.TrimSpace(rec.AccountName)
 	rec.ProviderType = strings.TrimSpace(rec.ProviderType)
 	rec.CredentialRaw = strings.TrimSpace(rec.CredentialRaw)
@@ -222,6 +226,8 @@ func (s *AccountPoolService) CreateAccount(ctx context.Context, rec *store.Upstr
 }
 
 func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.UpstreamAccountRecord) error {
+	s.failurePolicyMu.Lock()
+	defer s.failurePolicyMu.Unlock()
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
@@ -240,6 +246,9 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 	if rec.ProviderType == "" {
 		rec.ProviderType = accountauth.InferProviderType(rec.CredentialRaw)
 	}
+	if err := config.ValidateSoftFailureOverrides(rec.SoftFailureWindowMinutes, rec.SoftFailureThreshold); err != nil {
+		return err
+	}
 	current, err := s.GetAccount(ctx, rec.ID)
 	if err != nil {
 		return err
@@ -254,6 +263,7 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 	if persistedCurrent == nil {
 		return fmt.Errorf("账号不存在: %d", rec.ID)
 	}
+	policyChanged := !config.SameSoftFailureOverrides(current.SoftFailureWindowMinutes, current.SoftFailureThreshold, rec.SoftFailureWindowMinutes, rec.SoftFailureThreshold)
 	shouldToggle := rec.Enabled != current.Enabled
 	var toggledBeforePersist bool
 	var toggledVersion uint64
@@ -277,6 +287,9 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 		}
 		return err
 	}
+	if policyChanged {
+		s.softFailureTracker.Clear(rec.ID)
+	}
 	if !s.runtimeCache.mergeRecordPreservingRuntimeState(merged) {
 		if err := s.reloadAccountIntoCache(ctx, rec.ID); err != nil {
 			return err
@@ -286,12 +299,15 @@ func (s *AccountPoolService) UpdateAccount(ctx context.Context, rec *store.Upstr
 }
 
 func (s *AccountPoolService) DeleteAccount(ctx context.Context, id int64) error {
+	s.failurePolicyMu.Lock()
+	defer s.failurePolicyMu.Unlock()
 	if err := s.ensureRuntimeCache(ctx); err != nil {
 		return err
 	}
 	if err := s.store.DeleteAccount(ctx, id); err != nil {
 		return err
 	}
+	s.softFailureTracker.Clear(id)
 	_ = s.clearPersistedPinnedAccountSelectionIfMatches(ctx, id)
 	if s.runtimeWriter != nil {
 		s.runtimeWriter.Drop(id)
@@ -582,39 +598,6 @@ func accountResetMatchDistance(existing *time.Time, target time.Time) (time.Dura
 	return diff, true
 }
 
-func (s *AccountPoolService) RecordAccountSoftFailure(ctx context.Context, id int64, reason, category string, retryAfter time.Duration) (bool, error) {
-	if err := s.ensureRuntimeCache(ctx); err != nil {
-		return false, err
-	}
-	if id <= 0 {
-		return false, fmt.Errorf("invalid account id: %d", id)
-	}
-
-	tracker := s.softFailureTracker
-	if tracker == nil {
-		tracker = newAccountSoftFailureTracker(s.config)
-		s.softFailureTracker = tracker
-	}
-
-	now := tracker.Now()
-	count := tracker.Record(id)
-	if count < tracker.threshold {
-		return false, nil
-	}
-
-	cooldown := resolveAccountSoftFailureCooldown(s.config, category, retryAfter)
-	cooldownUntil := now.Add(cooldown)
-	ok, stateVersion := s.runtimeCache.markTransientFailure(id, reason, cooldownUntil, now)
-	if !ok {
-		return false, fmt.Errorf("账号不存在: %d", id)
-	}
-	if s.runtimeWriter != nil {
-		s.runtimeWriter.EnqueueTransientFailure(id, stateVersion, reason, cooldownUntil, now)
-	}
-	tracker.Clear(id)
-	return true, nil
-}
-
 // TestUpstreamAccount 测试账号连通性
 func (s *AccountPoolService) TestUpstreamAccount(ctx context.Context, id int64) error {
 	if err := s.ensureRuntimeCache(ctx); err != nil {
@@ -895,6 +878,8 @@ func mergeEditableAccountRecord(current, incoming *store.UpstreamAccountRecord) 
 	merged.CredentialRaw = incoming.CredentialRaw
 	merged.BaseURL = incoming.BaseURL
 	merged.ModelRewriteRules = incoming.ModelRewriteRules
+	merged.SoftFailureWindowMinutes = config.CloneSoftFailureValue(incoming.SoftFailureWindowMinutes)
+	merged.SoftFailureThreshold = config.CloneSoftFailureValue(incoming.SoftFailureThreshold)
 	merged.EnableRequestCompression = incoming.EnableRequestCompression
 	merged.StripCodexInternalMetadata = incoming.StripCodexInternalMetadata
 	merged.CostMultiplier = incoming.CostMultiplier

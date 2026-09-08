@@ -142,3 +142,52 @@ func assertRequestFamily(t *testing.T, db *sql.DB, requestID, family, upstreamTy
 		t.Fatalf("request %s = %q/%q/%q, want %q/%q/%q", requestID, gotFamily, gotType, gotName, family, upstreamType, upstreamName)
 	}
 }
+
+func TestSoftFailurePolicy_YAML校验及端点重建保留(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		valid       bool
+	}{
+		{"整数", "10", true},
+		{"小数", "1.5", false},
+		{"零值", "0", false},
+		{"缺少窗口", "null", false},
+		{"字符串", "'10'", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			raw := "endpoints:\n  - name: policy\n    url: https://example.test\n    soft_failure_window_minutes: " + tc.value + "\n    soft_failure_threshold: 5\n"
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			legacy, err := LoadLegacyConfig(path)
+			if (err == nil) != tc.valid {
+				t.Fatalf("YAML 校验错误: %v", err)
+			}
+			if !tc.valid {
+				return
+			}
+			flattened, err := FlattenLegacyEndpoints(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db := openLegacyFixtureDB(t)
+			defer db.Close()
+			tx, err := db.BeginTx(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if err := rebuildEndpoints(context.Background(), tx, flattened); err != nil {
+				t.Fatal(err)
+			}
+			var window, threshold int
+			if err := tx.QueryRow("SELECT soft_failure_window_minutes, soft_failure_threshold FROM endpoints WHERE name = ?", "policy").Scan(&window, &threshold); err != nil {
+				t.Fatal(err)
+			}
+			if window != 10 || threshold != 5 {
+				t.Fatalf("迁移丢失策略: %d / %d", window, threshold)
+			}
+		})
+	}
+}

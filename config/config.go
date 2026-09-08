@@ -261,18 +261,20 @@ type AccountPoolFailureCooldownsConfig struct {
 }
 
 type EndpointConfig struct {
-	Name                string            `yaml:"name"`
-	URL                 string            `yaml:"url"`
-	Priority            int               `yaml:"priority"`
-	FailoverEnabled     *bool             `yaml:"failover_enabled,omitempty"` // v4.0: 是否参与故障转移，默认: true
-	Cooldown            *time.Duration    `yaml:"cooldown,omitempty"`         // v4.0: 端点级冷却时间（可选），默认使用全局配置
-	Token               string            `yaml:"-"`
-	ApiKey              string            `yaml:"-"`
-	Timeout             time.Duration     `yaml:"timeout"`
-	Headers             map[string]string `yaml:"-"`
-	SupportsCountTokens bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
-	ModelRewriteRules   string            `yaml:"model_rewrite_rules,omitempty"`   // CC 端点模型兼容改写规则 JSON
-	AvailabilityEnabled *bool             `yaml:"availability_enabled,omitempty"`  // v8: 硬启用，false=任何模式都不可使用，默认: true
+	Name                     string            `yaml:"name"`
+	URL                      string            `yaml:"url"`
+	Priority                 int               `yaml:"priority"`
+	FailoverEnabled          *bool             `yaml:"failover_enabled,omitempty"` // v4.0: 是否参与故障转移，默认: true
+	Cooldown                 *time.Duration    `yaml:"cooldown,omitempty"`         // v4.0: 端点级冷却时间（可选），默认使用全局配置
+	Token                    string            `yaml:"-"`
+	ApiKey                   string            `yaml:"-"`
+	Timeout                  time.Duration     `yaml:"timeout"`
+	Headers                  map[string]string `yaml:"-"`
+	SupportsCountTokens      bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
+	ModelRewriteRules        string            `yaml:"model_rewrite_rules,omitempty"`   // CC 端点模型兼容改写规则 JSON
+	SoftFailureWindowMinutes *int              `yaml:"soft_failure_window_minutes,omitempty"`
+	SoftFailureThreshold     *int              `yaml:"soft_failure_threshold,omitempty"`
+	AvailabilityEnabled      *bool             `yaml:"availability_enabled,omitempty"` // v8: 硬启用，false=任何模式都不可使用，默认: true
 }
 
 // IsAvailabilityEnabled 硬启用状态（nil 默认 true）
@@ -482,10 +484,10 @@ func (c *Config) setDefaults() {
 
 	// Set failure tracker defaults (v5.2.6+)
 	if c.FailureTracker.TimeWindow == 0 {
-		c.FailureTracker.TimeWindow = 5 * time.Minute // Default 5 minutes time window
+		c.FailureTracker.TimeWindow = DefaultSoftFailureWindow
 	}
 	if c.FailureTracker.Threshold == 0 {
-		c.FailureTracker.Threshold = 3 // Default threshold: 3 failures
+		c.FailureTracker.Threshold = DefaultSoftFailureThreshold
 	}
 	if c.FailureTracker.Action == "" {
 		c.FailureTracker.Action = "failover" // Default action: failover
@@ -495,10 +497,10 @@ func (c *Config) setDefaults() {
 
 	// Set account pool failure policy defaults (v6.0+)
 	if c.AccountPool.FailurePolicy.SoftFailureWindow == 0 {
-		c.AccountPool.FailurePolicy.SoftFailureWindow = 5 * time.Minute // Default soft failure window
+		c.AccountPool.FailurePolicy.SoftFailureWindow = DefaultSoftFailureWindow
 	}
 	if c.AccountPool.FailurePolicy.SoftFailureThreshold == 0 {
-		c.AccountPool.FailurePolicy.SoftFailureThreshold = 3 // Default soft failure threshold
+		c.AccountPool.FailurePolicy.SoftFailureThreshold = DefaultSoftFailureThreshold
 	}
 	if c.AccountPool.FailurePolicy.RespectRetryAfter == nil {
 		value := true
@@ -649,6 +651,9 @@ func (c *Config) validate() error {
 	}
 
 	for i, endpoint := range c.Endpoints {
+		if err := ValidateSoftFailureOverrides(endpoint.SoftFailureWindowMinutes, endpoint.SoftFailureThreshold); err != nil {
+			return fmt.Errorf("endpoint %d: %w", i, err)
+		}
 		if endpoint.Name == "" {
 			return fmt.Errorf("endpoint %d: name is required", i)
 		}

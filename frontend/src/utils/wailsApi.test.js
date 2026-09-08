@@ -396,3 +396,31 @@ test('normalizePrivacyExactSecret and import candidate do not require raw values
   assert.equal(payload.secret_value, ' raw-token ');
   assert.equal(payload.source_type, 'manual');
 });
+
+test('独立失败策略贯通账号与端点映射并可恢复默认', () => {
+  const policy = { soft_failure_window_minutes: 10, soft_failure_threshold: 5 };
+  const account = normalizeUpstreamAccount(policy);
+  const endpoint = mapEndpointRecord(policy);
+  assert.equal(account.softFailureWindowMinutes, 10);
+  assert.equal(account.softFailureThreshold, 5);
+  assert.equal(endpoint.softFailureWindowMinutes, 10);
+  assert.equal(endpoint.softFailureThreshold, 5);
+  for (const build of [buildUpstreamAccountPayload, buildEndpointRecordPayload]) {
+    const saved = build({ softFailureWindowMinutes: '10', softFailureThreshold: '5' });
+    assert.equal(saved.soft_failure_window_minutes, 10);
+    assert.equal(saved.soft_failure_threshold, 5);
+    const restored = build({ ...saved, soft_failure_window_minutes: null, soft_failure_threshold: null, softFailureWindowMinutes: 10, softFailureThreshold: 5 });
+    assert.equal(restored.soft_failure_window_minutes, null);
+    assert.equal(restored.soft_failure_threshold, null);
+    assert.equal(build(restored).soft_failure_window_minutes, null);
+    assert.throws(() => build({ soft_failure_window_minutes: 5 }));
+    assert.throws(() => build({ softFailureWindowMinutes: 5, softFailureThreshold: 1.5 }));
+  }
+});
+
+test('账号策略归一化清除内部表单字段与旧别名', () => {
+  const result = buildUpstreamAccountPayload({ softFailureCustom: true, SoftFailureWindowMinutes: 2, SoftFailureThreshold: 1 });
+  assert.equal(result.soft_failure_window_minutes, 2);
+  assert.equal(result.soft_failure_threshold, 1);
+  for (const key of ['softFailureCustom', 'SoftFailureWindowMinutes', 'SoftFailureThreshold']) assert.equal(key in result, false);
+});

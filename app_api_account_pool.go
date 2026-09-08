@@ -23,6 +23,8 @@ type UpstreamAccountInfo struct {
 	IsGroupPreferred              bool     `json:"is_group_preferred"`
 	BaseURL                       string   `json:"base_url"`
 	ModelRewriteRules             string   `json:"model_rewrite_rules"`
+	SoftFailureWindowMinutes      *int     `json:"soft_failure_window_minutes"`
+	SoftFailureThreshold          *int     `json:"soft_failure_threshold"`
 	EnableRequestCompression      bool     `json:"enable_request_compression"`
 	StripCodexInternalMetadata    bool     `json:"strip_codex_internal_metadata"`
 	CostMultiplier                float64  `json:"cost_multiplier"`
@@ -61,6 +63,8 @@ type CreateUpstreamAccountInput struct {
 	CredentialRaw                 string  `json:"credential_raw"`
 	BaseURL                       string  `json:"base_url"`
 	ModelRewriteRules             string  `json:"model_rewrite_rules"`
+	SoftFailureWindowMinutes      *int    `json:"soft_failure_window_minutes"`
+	SoftFailureThreshold          *int    `json:"soft_failure_threshold"`
 	EnableRequestCompression      bool    `json:"enable_request_compression"`
 	StripCodexInternalMetadata    *bool   `json:"strip_codex_internal_metadata,omitempty"`
 	CostMultiplier                float64 `json:"cost_multiplier"`
@@ -219,6 +223,8 @@ func (a *App) GetUpstreamAccounts() ([]UpstreamAccountInfo, error) {
 			IsGroupPreferred:              isGroupPreferred,
 			BaseURL:                       rec.BaseURL,
 			ModelRewriteRules:             rec.ModelRewriteRules,
+			SoftFailureWindowMinutes:      rec.SoftFailureWindowMinutes,
+			SoftFailureThreshold:          rec.SoftFailureThreshold,
 			EnableRequestCompression:      rec.EnableRequestCompression,
 			StripCodexInternalMetadata:    rec.StripCodexInternalMetadata,
 			CostMultiplier:                rec.CostMultiplier,
@@ -564,6 +570,8 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 		CredentialRaw:                 strings.TrimSpace(input.CredentialRaw),
 		BaseURL:                       strings.TrimSpace(input.BaseURL),
 		ModelRewriteRules:             strings.TrimSpace(input.ModelRewriteRules),
+		SoftFailureWindowMinutes:      input.SoftFailureWindowMinutes,
+		SoftFailureThreshold:          input.SoftFailureThreshold,
 		EnableRequestCompression:      input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType),
 		StripCodexInternalMetadata:    input.StripCodexInternalMetadata != nil && *input.StripCodexInternalMetadata,
 		CostMultiplier:                input.CostMultiplier,
@@ -609,6 +617,8 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	existing.CredentialRaw = strings.TrimSpace(input.CredentialRaw)
 	existing.BaseURL = strings.TrimSpace(input.BaseURL)
 	existing.ModelRewriteRules = strings.TrimSpace(input.ModelRewriteRules)
+	existing.SoftFailureWindowMinutes = input.SoftFailureWindowMinutes
+	existing.SoftFailureThreshold = input.SoftFailureThreshold
 	existing.EnableRequestCompression = input.EnableRequestCompression && store.SupportsAccountRequestCompression(input.ProviderType)
 	if input.StripCodexInternalMetadata != nil {
 		existing.StripCodexInternalMetadata = *input.StripCodexInternalMetadata

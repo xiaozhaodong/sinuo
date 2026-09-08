@@ -30,6 +30,8 @@ func createTestDB(t *testing.T) *sql.DB {
 			timeout_seconds INTEGER NOT NULL DEFAULT 300,
 			supports_count_tokens INTEGER NOT NULL DEFAULT 0,
 			model_rewrite_rules TEXT NOT NULL DEFAULT '',
+			soft_failure_window_minutes INTEGER,
+			soft_failure_threshold INTEGER,
 			cost_multiplier REAL NOT NULL DEFAULT 1.0,
 			input_cost_multiplier REAL NOT NULL DEFAULT 1.0,
 			output_cost_multiplier REAL NOT NULL DEFAULT 1.0,

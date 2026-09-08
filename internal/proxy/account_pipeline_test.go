@@ -2555,3 +2555,31 @@ func TestAccountPipeline_ResponsesStreamingCompletedAfterClientCancel_TreatedAsS
 		t.Fatalf("expected no transient failures, got %+v", service.transientCalls)
 	}
 }
+
+func TestAccountPipeline_SoftFailurePolicy_独立阈值触发换号(t *testing.T) {
+	var primaryHits, backupHits int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryHits, 1)
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(primary.Close)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&backupHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"policy-response","status":"completed","output":[]}`))
+	}))
+	t.Cleanup(backup.Close)
+	window, threshold := 10, 1
+	svc := newRealAccountPipelineTestService(t, []*store.UpstreamAccountRecord{
+		{ProviderType: "api_key", AccountName: "policy-primary", CredentialRaw: "fixture-primary", BaseURL: primary.URL, Priority: 10, Enabled: true, State: "active", SoftFailureWindowMinutes: &window, SoftFailureThreshold: &threshold},
+		{ProviderType: "api_key", AccountName: "policy-backup", CredentialRaw: "fixture-backup", BaseURL: backup.URL, Priority: 10, Enabled: true, State: "active"},
+	})
+	handler := newAccountPipelineTestHandler(t, primary.URL, svc)
+	result := performResponsesRequest(t, handler)
+	if result.Code != http.StatusOK {
+		t.Fatalf("自定义阈值未触发换号: %d %s", result.Code, result.Body.String())
+	}
+	if atomic.LoadInt32(&primaryHits) != 1 || atomic.LoadInt32(&backupHits) != 1 {
+		t.Fatal("同账号重试次数发生变化")
+	}
+}

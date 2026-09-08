@@ -52,3 +52,17 @@ test('URL and header validation reject malformed structured input', () => {
     headerRows: [{ name: 'X-Test', value: '1' }, { name: 'x-test', value: '2' }]
   }).headers, 'Header 名称不能重复');
 });
+
+test('端点表单保存独立失败策略并支持恢复全局默认', () => {
+  const original = createEndpointFormState({ name: 'policy', url: 'https://example.test', softFailureWindowMinutes: 10, softFailureThreshold: 5 });
+  assert.equal(original.softFailureCustom, true);
+  assert.equal(original.softFailureWindowMinutes, '10');
+  assert.equal(original.softFailureThreshold, '5');
+  const payload = buildEndpointFormPayload(original);
+  assert.equal(payload.soft_failure_window_minutes, 10);
+  assert.equal(payload.soft_failure_threshold, 5);
+  const reset = buildEndpointFormPayload({ ...original, softFailureCustom: false });
+  assert.equal(reset.soft_failure_window_minutes, null);
+  assert.equal(reset.soft_failure_threshold, null);
+  assert.ok(validateEndpointFormState({ ...original, softFailureWindowMinutes: '1.5' }).softFailurePolicy);
+});

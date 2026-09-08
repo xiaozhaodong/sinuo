@@ -28,17 +28,19 @@ type EndpointAttemptPlan struct {
 // EndpointAttemptTarget 是 admission 时生成的不可变出站快照。
 // 字段保持私有；Config 每次返回独立副本，调用方无法修改已取得的快照。
 type EndpointAttemptTarget struct {
-	name                string
-	url                 string
-	priority            int
-	timeout             time.Duration
-	headers             map[string]string
-	token               string
-	apiKey              string
-	supportsCountTokens bool
-	modelRewriteRules   string
-	configRevision      int64
-	failureEpoch        int64
+	name                     string
+	url                      string
+	priority                 int
+	timeout                  time.Duration
+	headers                  map[string]string
+	token                    string
+	apiKey                   string
+	supportsCountTokens      bool
+	modelRewriteRules        string
+	softFailureWindowMinutes *int
+	softFailureThreshold     *int
+	configRevision           int64
+	failureEpoch             int64
 }
 
 func (t *EndpointAttemptTarget) Name() string {
@@ -82,15 +84,17 @@ func (t *EndpointAttemptTarget) Config() config.EndpointConfig {
 		return config.EndpointConfig{}
 	}
 	return config.EndpointConfig{
-		Name:                t.name,
-		URL:                 t.url,
-		Priority:            t.priority,
-		Timeout:             t.timeout,
-		Headers:             cloneStringMap(t.headers),
-		Token:               t.token,
-		ApiKey:              t.apiKey,
-		SupportsCountTokens: t.supportsCountTokens,
-		ModelRewriteRules:   t.modelRewriteRules,
+		Name:                     t.name,
+		URL:                      t.url,
+		Priority:                 t.priority,
+		Timeout:                  t.timeout,
+		Headers:                  cloneStringMap(t.headers),
+		Token:                    t.token,
+		ApiKey:                   t.apiKey,
+		SupportsCountTokens:      t.supportsCountTokens,
+		ModelRewriteRules:        t.modelRewriteRules,
+		SoftFailureWindowMinutes: config.CloneSoftFailureValue(t.softFailureWindowMinutes),
+		SoftFailureThreshold:     config.CloneSoftFailureValue(t.softFailureThreshold),
 	}
 }
 
@@ -166,17 +170,19 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 		return reject("config_changed_during_admission")
 	}
 	target := &EndpointAttemptTarget{
-		name:                configSnapshot.Name,
-		url:                 configSnapshot.URL,
-		priority:            configSnapshot.Priority,
-		timeout:             configSnapshot.Timeout,
-		headers:             cloneStringMap(configSnapshot.Headers),
-		token:               plan.resolvedToken,
-		apiKey:              plan.resolvedAPIKey,
-		supportsCountTokens: configSnapshot.SupportsCountTokens,
-		modelRewriteRules:   configSnapshot.ModelRewriteRules,
-		configRevision:      revision,
-		failureEpoch:        plan.FailureEpoch,
+		name:                     configSnapshot.Name,
+		url:                      configSnapshot.URL,
+		priority:                 configSnapshot.Priority,
+		timeout:                  configSnapshot.Timeout,
+		headers:                  cloneStringMap(configSnapshot.Headers),
+		token:                    plan.resolvedToken,
+		apiKey:                   plan.resolvedAPIKey,
+		supportsCountTokens:      configSnapshot.SupportsCountTokens,
+		modelRewriteRules:        configSnapshot.ModelRewriteRules,
+		softFailureWindowMinutes: config.CloneSoftFailureValue(configSnapshot.SoftFailureWindowMinutes),
+		softFailureThreshold:     config.CloneSoftFailureValue(configSnapshot.SoftFailureThreshold),
+		configRevision:           revision,
+		failureEpoch:             plan.FailureEpoch,
 	}
 
 	released := false
@@ -244,6 +250,8 @@ func (m *Manager) ApplyEndpointFailureSettlement(endpointName string, expectedRe
 
 func cloneEndpointConfig(src config.EndpointConfig) config.EndpointConfig {
 	clone := src
+	clone.SoftFailureWindowMinutes = config.CloneSoftFailureValue(src.SoftFailureWindowMinutes)
+	clone.SoftFailureThreshold = config.CloneSoftFailureValue(src.SoftFailureThreshold)
 	clone.Headers = cloneStringMap(src.Headers)
 	if src.FailoverEnabled != nil {
 		value := *src.FailoverEnabled

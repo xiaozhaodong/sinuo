@@ -158,7 +158,7 @@ func NewManager(cfg *config.Config) *Manager {
 	// Initialize endpoints
 	for _, endpointCfg := range cfg.Endpoints {
 		endpoint := &Endpoint{
-			Config: endpointCfg,
+			Config: cloneEndpointConfig(endpointCfg),
 			Status: EndpointStatus{
 				Healthy:      false,
 				NeverChecked: true, // 标记为未检测，等待手动/批量连通性测试或真实请求结果
@@ -207,7 +207,7 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 
 	// 🔧 [热更新] 同步更新软失败追踪器配置
 	if m.softFailures != nil {
-		m.softFailures.UpdateConfig(cfg.FailureTracker.Enabled, cfg.FailureTracker.TimeWindow, cfg.FailureTracker.Threshold)
+		m.UpdateFailureTrackerConfig(cfg.FailureTracker.Enabled, cfg.FailureTracker.TimeWindow, cfg.FailureTracker.Threshold)
 	}
 
 	// Recreate transport with new proxy configuration
@@ -256,7 +256,13 @@ func (m *Manager) getConfigSnapshot() *config.Config {
 
 // RecordSoftFailure 记录一次分类软失败，返回窗口内计数与是否达到阈值（§9.3）
 func (m *Manager) RecordSoftFailure(endpointName string, scope SoftFailureScope, category SoftFailureCategory) (int, bool) {
-	return m.softFailures.Record(endpointName, scope, category)
+	ep := m.GetEndpointByNameAny(endpointName)
+	if ep == nil {
+		return m.softFailures.Record(endpointName, scope, category, nil, nil)
+	}
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	return m.softFailures.Record(endpointName, scope, category, ep.Config.SoftFailureWindowMinutes, ep.Config.SoftFailureThreshold)
 }
 
 // RecordSoftFailureFenced 在 ep.mutex.RLock 下校验故障 epoch 并完成软失败记录
@@ -277,7 +283,7 @@ func (m *Manager) RecordSoftFailureFenced(endpointName string, scope SoftFailure
 	if ep.failureEpoch != epoch {
 		return 0, false, false
 	}
-	count, tripped = m.softFailures.Record(endpointName, scope, category)
+	count, tripped = m.softFailures.Record(endpointName, scope, category, ep.Config.SoftFailureWindowMinutes, ep.Config.SoftFailureThreshold)
 	return count, tripped, true
 }
 
@@ -345,8 +351,14 @@ func (m *Manager) GetSoftFailureCounts(endpointName string, scope SoftFailureSco
 }
 
 // SoftFailureThreshold 当前软失败阈值
-func (m *Manager) SoftFailureThreshold() int {
-	return m.softFailures.Threshold()
+func (m *Manager) SoftFailureThreshold(endpointName string) int {
+	ep := m.GetEndpointByNameAny(endpointName)
+	if ep == nil {
+		return m.softFailures.Threshold(nil, nil)
+	}
+	ep.mutex.RLock()
+	defer ep.mutex.RUnlock()
+	return m.softFailures.Threshold(ep.Config.SoftFailureWindowMinutes, ep.Config.SoftFailureThreshold)
 }
 
 func (m *Manager) failureTrackerCleanupLoop() {
@@ -377,7 +389,24 @@ func (m *Manager) IsEndpointRoutable(ep *Endpoint) bool {
 
 // UpdateFailureTrackerConfig 热更新失败追踪器配置
 func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Duration, threshold int) {
-	m.softFailures.UpdateConfig(enabled, timeWindow, threshold)
+	m.endpointConfigMu.Lock()
+	defer m.endpointConfigMu.Unlock()
+	m.endpointsMu.RLock()
+	defer m.endpointsMu.RUnlock()
+
+	// 与单端点发布保持锁序一致。清零和推进版本期间阻止直接 fenced 写入，
+	// 避免旧请求在 tracker 更新后、epoch 更新前重新留下事件或冷却。
+	for _, ep := range m.endpoints {
+		ep.mutex.Lock()
+	}
+	policyChanged, enabledChanged := m.softFailures.UpdateConfig(enabled, timeWindow, threshold)
+	for _, ep := range m.endpoints {
+		if enabledChanged || policyChanged && ep.Config.SoftFailureWindowMinutes == nil {
+			ep.configRevision = NextEndpointConfigRevision()
+			ep.failureEpoch++
+		}
+		ep.mutex.Unlock()
+	}
 }
 
 // ShouldRejectRequest 检查是否应该拒绝请求（D15 冻结语义，§12）：

@@ -1,3 +1,5 @@
+import { normalizeSoftFailurePolicyPayload } from './softFailurePolicy.js';
+
 // ============================================
 // Wails API 适配层
 // 2025-12-04
@@ -508,6 +510,7 @@ const mirrorAliasedField = (target, snakeKey, camelKey, value) => {
 };
 
 export const normalizeUpstreamAccount = (account = {}) => {
+  const failurePolicy = normalizeSoftFailurePolicyPayload(account);
   const normalized = {
     id: parseEntityId(pickAccountValue(account, ['id', 'ID', 'Id', 'account_id', 'accountId', 'AccountID'], null)),
     priority: Number.parseInt(pickAccountValue(account, ['priority', 'Priority'], 1), 10) || 1,
@@ -529,6 +532,8 @@ export const normalizeUpstreamAccount = (account = {}) => {
     ['has_credential', 'hasCredential', hasCredential],
     ['base_url', 'baseURL', pickAccountValue(account, ['base_url', 'baseURL', 'BaseURL'], '')],
     ['model_rewrite_rules', 'modelRewriteRules', pickAccountValue(account, ['model_rewrite_rules', 'modelRewriteRules', 'ModelRewriteRules'], '')],
+    ['soft_failure_window_minutes', 'softFailureWindowMinutes', failurePolicy.soft_failure_window_minutes],
+    ['soft_failure_threshold', 'softFailureThreshold', failurePolicy.soft_failure_threshold],
     ['enable_request_compression', 'enableRequestCompression', pickAccountValue(account, ['enable_request_compression', 'enableRequestCompression', 'EnableRequestCompression'], false) === true],
     ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', pickAccountValue(account, ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata'], false) === true],
     ['cost_multiplier', 'costMultiplier', Number.parseFloat(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0)) || 1.0],
@@ -594,6 +599,9 @@ export const buildUpstreamAccountPayload = (input = {}) => {
     StripCodexInternalMetadata: stripGo,
     ...payloadInput
   } = input;
+  for (const key of ['softFailureCustom', 'softFailureWindowMinutes', 'softFailureThreshold', 'SoftFailureWindowMinutes', 'SoftFailureThreshold']) {
+    delete payloadInput[key];
+  }
   const stripMetadata = stripSnake ?? stripCamel ?? stripGo;
   if (stripMetadata != null && typeof stripMetadata !== 'boolean') {
     throw new TypeError('移除 Codex 内部元数据开关必须为布尔值');
@@ -609,6 +617,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
 
   return {
     ...payloadInput,
+    ...normalizeSoftFailurePolicyPayload(input),
     ...(stripMetadata == null ? {} : { strip_codex_internal_metadata: stripMetadata }),
     account_name: input.account_name || input.accountName || '',
     provider_type: input.provider_type || input.providerType || '',
@@ -1359,6 +1368,8 @@ export const mapEndpointRecord = (record = {}) => ({
   timeoutSeconds: record.timeout_seconds,
   supportsCountTokens: record.supports_count_tokens,
   modelRewriteRules: record.model_rewrite_rules || '',
+  softFailureWindowMinutes: record.soft_failure_window_minutes ?? null,
+  softFailureThreshold: record.soft_failure_threshold ?? null,
   costMultiplier: record.cost_multiplier,
   inputCostMultiplier: record.input_cost_multiplier,
   outputCostMultiplier: record.output_cost_multiplier,
@@ -1385,6 +1396,7 @@ export const mapEndpointRecord = (record = {}) => ({
 });
 
 export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
+  ...normalizeSoftFailurePolicyPayload(input),
   name: input.name || fallbackName,
   url: input.url || '',
   token: input.token || '',

@@ -470,6 +470,8 @@ export namespace main {
 	    timeout_seconds: number;
 	    supports_count_tokens: boolean;
 	    model_rewrite_rules: string;
+	    soft_failure_window_minutes?: number;
+	    soft_failure_threshold?: number;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -497,6 +499,8 @@ export namespace main {
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.supports_count_tokens = source["supports_count_tokens"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.soft_failure_window_minutes = source["soft_failure_window_minutes"];
+	        this.soft_failure_threshold = source["soft_failure_threshold"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -539,6 +543,8 @@ export namespace main {
 	    credential_raw: string;
 	    base_url: string;
 	    model_rewrite_rules: string;
+	    soft_failure_window_minutes?: number;
+	    soft_failure_threshold?: number;
 	    enable_request_compression: boolean;
 	    strip_codex_internal_metadata?: boolean;
 	    cost_multiplier: number;
@@ -562,6 +568,8 @@ export namespace main {
 	        this.credential_raw = source["credential_raw"];
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.soft_failure_window_minutes = source["soft_failure_window_minutes"];
+	        this.soft_failure_threshold = source["soft_failure_threshold"];
 	        this.enable_request_compression = source["enable_request_compression"];
 	        this.strip_codex_internal_metadata = source["strip_codex_internal_metadata"];
 	        this.cost_multiplier = source["cost_multiplier"];
@@ -662,6 +670,8 @@ export namespace main {
 	    timeout_seconds: number;
 	    supports_count_tokens: boolean;
 	    model_rewrite_rules: string;
+	    soft_failure_window_minutes?: number;
+	    soft_failure_threshold?: number;
 	    cost_multiplier: number;
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
@@ -698,6 +708,8 @@ export namespace main {
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.supports_count_tokens = source["supports_count_tokens"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.soft_failure_window_minutes = source["soft_failure_window_minutes"];
+	        this.soft_failure_threshold = source["soft_failure_threshold"];
 	        this.cost_multiplier = source["cost_multiplier"];
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
@@ -2107,6 +2119,8 @@ export namespace main {
 	    is_group_preferred: boolean;
 	    base_url: string;
 	    model_rewrite_rules: string;
+	    soft_failure_window_minutes?: number;
+	    soft_failure_threshold?: number;
 	    enable_request_compression: boolean;
 	    strip_codex_internal_metadata: boolean;
 	    cost_multiplier: number;
@@ -2153,6 +2167,8 @@ export namespace main {
 	        this.is_group_preferred = source["is_group_preferred"];
 	        this.base_url = source["base_url"];
 	        this.model_rewrite_rules = source["model_rewrite_rules"];
+	        this.soft_failure_window_minutes = source["soft_failure_window_minutes"];
+	        this.soft_failure_threshold = source["soft_failure_threshold"];
 	        this.enable_request_compression = source["enable_request_compression"];
 	        this.strip_codex_internal_metadata = source["strip_codex_internal_metadata"];
 	        this.cost_multiplier = source["cost_multiplier"];
