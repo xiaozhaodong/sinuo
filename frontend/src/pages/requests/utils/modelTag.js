@@ -53,6 +53,10 @@ const MODEL_COLOR_RULES = [
     classes: 'tone-sky'
   },
   {
+    matches: (modelName) => modelName.includes('gpt-6-astra'),
+    classes: 'tone-fuchsia'
+  },
+  {
     matches: (modelName) => modelName.includes('gpt-'),
     classes: 'tone-indigo'
   }

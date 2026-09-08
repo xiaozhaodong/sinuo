@@ -18,6 +18,12 @@ test('getModelColorClasses distinguishes GPT-5.6 model tiers', () => {
   assert.match(getModelColorClasses('gpt-5.6-luna'), /sky/);
 });
 
+test('getModelColorClasses distinguishes GPT-6 Astra from generic GPT', () => {
+  assert.match(getModelColorClasses('gpt-6-astra'), /fuchsia/);
+  assert.match(getModelColorClasses('gpt-6-astra-2026-09-01'), /fuchsia/);
+  assert.match(getModelColorClasses('GPT-6-Astra'), /fuchsia/);
+});
+
 test('getModelColorClasses keeps existing model color mappings', () => {
   assert.match(getModelColorClasses('claude-sonnet-4'), /orange/);
   assert.match(getModelColorClasses('claude-3-5-haiku'), /green/);
