@@ -150,9 +150,8 @@ func EmptySnapshot() *Snapshot {
 	}
 }
 
-// FailedSnapshot 返回加载失败快照。enabled 沿用上一次已知的开关状态：
-// 开关曾经打开则保持打开且无任何分配，于是所有模型都判为未分配并 fail-closed 返回 422；
-// 从未打开过则保持关闭，一次数据库抖动不会把没用过模型路由的用户的 Claude 转发打死。
+// FailedSnapshot 返回加载失败快照，enabled 由本次加载结果决定。
+// 开关读取失败传 false，使用全局路由；已明确开启但绑定加载失败传 true，返回 422。
 func FailedSnapshot(enabled bool) *Snapshot {
 	snapshot := EmptySnapshot()
 	snapshot.settings = Settings{Enabled: enabled}

@@ -241,6 +241,7 @@ func (s *CodexModelRoutingService) Prepare(ctx context.Context, model, path stri
 	result := make([]*store.UpstreamAccountRecord, 0, len(ids))
 	candidates := make([]AccountScheduleCandidateDecision, 0, len(ids))
 	generations := make(map[int64]uint64)
+	now := time.Now()
 	for _, id := range ids {
 		a := byID[id]
 		candidate := AccountScheduleCandidateDecision{AccountID: id, Decision: "skipped"}
@@ -268,9 +269,16 @@ func (s *CodexModelRoutingService) Prepare(ctx context.Context, model, path stri
 			candidates = append(candidates, candidate)
 			continue
 		}
-		if a.CooldownUntil != nil && time.Now().Before(*a.CooldownUntil) {
+		if a.CooldownUntil != nil && now.Before(*a.CooldownUntil) {
 			candidate.Reason = "cooldown"
 			candidate.ReasonDetail = "账号处于冷却期"
+			candidates = append(candidates, candidate)
+			continue
+		}
+		// 复用账号池的额度资格规则，候选顺序仍由模型绑定决定。
+		if eligibility := classifySchedulableAccount(a, now); eligibility.skipReason != "" {
+			candidate.Reason = eligibility.skipReason
+			candidate.ReasonDetail = eligibility.skipReasonDetail
 			candidates = append(candidates, candidate)
 			continue
 		}
@@ -398,22 +406,15 @@ func (s *CodexModelRoutingService) GetSettings(ctx context.Context) (*store.Mode
 func (s *CodexModelRoutingService) UpdateEnabled(ctx context.Context, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, err := s.store.GetSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if current == nil {
-		current = &store.ModelRoutingSettingsRecord{ID: 1}
-	}
-	current.CodexEnabled = enabled
-	if err := s.store.UpdateSettings(ctx, current); err != nil {
+	if err := s.store.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{CodexEnabled: &enabled}); err != nil {
 		return err
 	}
 	return s.rebuildLocked(ctx)
 }
 
 func (s *CodexModelRoutingService) rebuildLocked(ctx context.Context) error {
-	desired := s.Enabled()
+	// 读不到开关时使用全局账号池，不把一次读取失败写成持久化关闭。
+	desired := false
 	settings, err := s.store.GetSettings(ctx)
 	if err == nil && settings != nil {
 		desired = settings.CodexEnabled
@@ -422,7 +423,7 @@ func (s *CodexModelRoutingService) rebuildLocked(ctx context.Context) error {
 	}
 	var snap *codexModelRoutingSnapshot
 	if err == nil {
-		snap, err = loadCodexSnapshot(ctx, s.store)
+		snap, err = loadCodexSnapshotWithSettings(ctx, s.store, settings)
 	}
 	if err != nil {
 		s.publishSnapshot(&codexModelRoutingSnapshot{Enabled: desired, LoadFailed: true, Groups: map[int64]*codexModelRoutingGroup{}, ByModel: map[string]*codexModelRoutingAssignment{}}, ModelRoutingStatusLoadFailed)

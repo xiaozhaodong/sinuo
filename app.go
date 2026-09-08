@@ -198,7 +198,7 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	// 7.75 初始化隐私保护服务 (v6.1+ SQLite)
 	a.setupPrivacyService()
 
-	// 7.8 初始化按模型选择 Claude 上游组（加载失败保留服务并按开关状态 fail-closed）
+	// 7.8 初始化按模型选择 Claude 上游组（设置读取失败回到全局，绑定加载失败按开关状态 fail-closed）
 	a.setupModelRoutingService(ctx)
 
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
@@ -239,8 +239,8 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 }
 
 // setupModelRoutingService 初始化模型路由服务并把其接入端点调度器。
-// 加载失败按 fail-closed 处理：开关处于打开状态时所有 Claude 请求返回 422，
-// 不静默回落到全局端点路由——那会让用户以为模型隔离仍然生效。
+// 开关读取失败时使用全局路由，用户可在恢复后重新开启；
+// 已明确开启但绑定数据加载失败时按既有契约返回 422。
 func (a *App) setupModelRoutingService(ctx context.Context) {
 	db := a.coreDB()
 	if db == nil || a.endpointManager == nil {
@@ -263,14 +263,16 @@ func (a *App) setupModelRoutingService(ctx context.Context) {
 	claudeErr := a.modelRoutingService.Initialize(claudeInitCtx)
 	claudeCancel()
 	if claudeErr != nil {
-		a.logger.Error("❌ 模型路由配置加载失败，已进入 fail-closed（开关打开时 Claude 请求将返回 422）", "error", claudeErr)
+		a.logger.Error("❌ Claude 模型路由初始化失败", "error", claudeErr,
+			"model_routing_enabled", a.modelRoutingService.CurrentSnapshot().Enabled())
 	}
 	if a.codexModelRoutingService != nil {
 		codexInitCtx, codexCancel := context.WithTimeout(ctx, 30*time.Second)
 		codexErr := a.codexModelRoutingService.Initialize(codexInitCtx)
 		codexCancel()
 		if codexErr != nil {
-			a.logger.Error("❌ Codex 模型路由配置加载失败", "error", codexErr)
+			a.logger.Error("❌ Codex 模型路由初始化失败", "error", codexErr,
+				"model_routing_enabled", a.codexModelRoutingService.Enabled())
 		}
 	}
 	a.logger.Info("✅ 模型路由服务已加载 (SQLite)",

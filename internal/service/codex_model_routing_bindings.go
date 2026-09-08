@@ -97,6 +97,11 @@ func loadCodexSnapshot(ctx context.Context, st store.ModelRoutingStore) (*codexM
 	if err != nil {
 		return nil, err
 	}
+	return loadCodexSnapshotWithSettings(ctx, st, settings)
+}
+
+// loadCodexSnapshotWithSettings 使用调用方已经读取的设置，避免重建快照时重复读取开关。
+func loadCodexSnapshotWithSettings(ctx context.Context, st store.ModelRoutingStore, settings *store.ModelRoutingSettingsRecord) (*codexModelRoutingSnapshot, error) {
 	if settings == nil {
 		return nil, fmt.Errorf("模型路由设置行不存在")
 	}

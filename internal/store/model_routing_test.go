@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -31,8 +32,7 @@ func TestSQLiteModelRoutingStore_CRUD(t *testing.T) {
 	if settings.ID != 1 || settings.ClaudeEnabled {
 		t.Fatalf("unexpected default settings: %#v", settings)
 	}
-	settings.ClaudeEnabled = true
-	if err := st.UpdateSettings(ctx, settings); err != nil {
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("update settings failed: %v", err)
 	}
 	updated, err := st.GetSettings(ctx)
@@ -103,5 +103,67 @@ func TestSQLiteModelRoutingStore_SchemaIsIdempotent(t *testing.T) {
 		if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
 			t.Fatalf("table %s missing: %v", table, err)
 		}
+	}
+}
+
+func TestSQLiteModelRoutingStore_RetryAfterSchemaInitFailure(t *testing.T) {
+	st, db := openModelRoutingTestStore(t)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := st.GetSettings(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("首次初始化应返回取消错误: %v", err)
+	}
+	ctx := context.Background()
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)}); err != nil {
+		t.Fatalf("临时错误消失后应允许重新保存: %v", err)
+	}
+	settings, err := NewSQLiteModelRoutingStore(db).GetSettings(ctx)
+	if err != nil || settings == nil || !settings.ClaudeEnabled || !settings.CodexEnabled {
+		t.Fatalf("独立读取未确认设置已保存: settings=%+v err=%v", settings, err)
+	}
+}
+
+func TestSQLiteModelRoutingStore_SaveRestoresMissingSettingsRow(t *testing.T) {
+	st, db := openModelRoutingTestStore(t)
+	ctx := context.Background()
+	if _, err := st.GetSettings(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM model_routing_settings WHERE id = ?`, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)}); err != nil {
+		t.Fatalf("设置行缺失时重新保存失败: %v", err)
+	}
+	settings, err := st.GetSettings(ctx)
+	if err != nil || settings == nil || !settings.ClaudeEnabled || !settings.CodexEnabled {
+		t.Fatalf("保存成功却没有恢复设置行: settings=%+v err=%v", settings, err)
+	}
+}
+
+// TestSQLiteModelRoutingStore_PartialPatchKeepsOtherColumn 锁定列级写语义：
+// 只提交 Claude 开关时，并发/既有的 Codex 开关不能被整行写清掉。
+func TestSQLiteModelRoutingStore_PartialPatchKeepsOtherColumn(t *testing.T) {
+	st, _ := openModelRoutingTestStore(t)
+	ctx := context.Background()
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)}); err != nil {
+		t.Fatalf("开启两个开关失败: %v", err)
+	}
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(false)}); err != nil {
+		t.Fatalf("只关闭 Claude 失败: %v", err)
+	}
+	settings, err := st.GetSettings(ctx)
+	if err != nil || settings == nil {
+		t.Fatalf("读取设置失败: %+v, %v", settings, err)
+	}
+	if settings.ClaudeEnabled || !settings.CodexEnabled {
+		t.Fatalf("只写 Claude 列不应影响 Codex 列: %+v", settings)
+	}
+	if err := st.UpdateSettings(ctx, ModelRoutingSettingsPatch{}); err != nil {
+		t.Fatalf("空 patch 应是无操作: %v", err)
+	}
+	unchanged, err := st.GetSettings(ctx)
+	if err != nil || unchanged == nil || !unchanged.CodexEnabled {
+		t.Fatalf("空 patch 不应改写设置: %+v, %v", unchanged, err)
 	}
 }

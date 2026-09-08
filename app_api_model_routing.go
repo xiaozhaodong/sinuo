@@ -170,6 +170,7 @@ func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
 	claudeVersion := svc.SnapshotVersion()
 	claudeBindingCount := len(bindings)
 	info := ModelRoutingSettingsInfo{
+		ClaudeEnabled:      svc.CurrentSnapshot().Enabled(),
 		Status:             claudeStatus,
 		Version:            claudeVersion,
 		BindingCount:       claudeBindingCount,
@@ -187,12 +188,12 @@ func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
 			return ModelRoutingSettingsInfo{}, codexErr
 		}
 		info.CodexStatus = codexSvc.Status()
+		info.CodexEnabled = codexSvc.Enabled()
 		info.CodexVersion = codexSvc.SnapshotVersion()
 		info.CodexBindingCount = len(codexBindings)
 	}
 	if record != nil {
-		info.ClaudeEnabled = record.ClaudeEnabled
-		info.CodexEnabled = record.CodexEnabled
+		// 开关展示实际运行态，读取失败回到全局后，用户可直接重新开启并保存。
 		info.UpdatedAt = formatTime(record.UpdatedAt)
 	}
 	return info, nil
@@ -205,20 +206,11 @@ func (a *App) UpdateModelRoutingSettings(input UpdateModelRoutingSettingsInput) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	current, err := svc.GetSettings(ctx)
-	if err != nil {
-		return ModelRoutingSettingsInfo{}, err
-	}
-	if current == nil {
-		current = &store.ModelRoutingSettingsRecord{ID: 1}
-	}
-	if input.ClaudeEnabled != nil {
-		current.ClaudeEnabled = *input.ClaudeEnabled
-	}
-	if input.CodexEnabled != nil {
-		current.CodexEnabled = *input.CodexEnabled
-	}
-	if _, err := svc.UpdateSettings(ctx, current); err != nil {
+	// 只提交调用方显式指定的开关，未指定的列保持原值：并发开启 Claude 与 Codex 不会互相覆盖。
+	if _, err := svc.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{
+		ClaudeEnabled: input.ClaudeEnabled,
+		CodexEnabled:  input.CodexEnabled,
+	}); err != nil {
 		return ModelRoutingSettingsInfo{}, err
 	}
 	if a.codexModelRoutingService != nil {

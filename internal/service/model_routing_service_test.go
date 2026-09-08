@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/modelrouting"
 	"cc-forwarder/internal/store"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -25,6 +27,8 @@ func newModelRoutingServiceForTest(t *testing.T, check EndpointNameChecker) (*Mo
 	t.Cleanup(func() { _ = db.Close() })
 	return NewModelRoutingService(store.NewSQLiteModelRoutingStore(db), check), db
 }
+
+func boolPtr(value bool) *bool { return &value }
 
 func TestModelRoutingService_InitializeCreateAndResolve(t *testing.T) {
 	service, _ := newModelRoutingServiceForTest(t, func(name string) bool { return name == "endpoint-a" })
@@ -54,12 +58,7 @@ func TestModelRoutingService_InitializeCreateAndResolve(t *testing.T) {
 	if err != nil || updatedGroup.RouteRevision != 1 {
 		t.Fatalf("route revision should increment from persisted value: %#v, %v", updatedGroup, err)
 	}
-	settings, err := service.GetSettings(ctx)
-	if err != nil {
-		t.Fatalf("get settings failed: %v", err)
-	}
-	settings.ClaudeEnabled = true
-	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
 	resolved, ok := service.CurrentSnapshot().Resolve(" CLAUDE-SONNET ")
@@ -155,10 +154,8 @@ func TestModelRoutingService_EndpointAndGroupReferenceGuards(t *testing.T) {
 	}
 }
 
-// TestModelRoutingService_LoadFailureIsFailClosed 锁定 fail-closed 语义：
-// 开关打开后配置加载失败，所有模型必须落到未分配（上层返回 422），
-// 而不是静默回落到全局端点路由——那会让用户以为模型隔离仍然生效。
-func TestModelRoutingService_LoadFailureIsFailClosed(t *testing.T) {
+// 已明确读到开启的开关后，绑定数据损坏仍按原有规则返回 422。
+func TestModelRoutingService_BindingLoadFailureIsFailClosed(t *testing.T) {
 	service, db := newModelRoutingServiceForTest(t, func(name string) bool { return name == "endpoint-a" })
 	ctx := context.Background()
 	if err := service.Initialize(ctx); err != nil {
@@ -175,19 +172,19 @@ func TestModelRoutingService_LoadFailureIsFailClosed(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create assignment failed: %v", err)
 	}
-	if _, err := service.UpdateSettings(ctx, &store.ModelRoutingSettingsRecord{ID: 1, ClaudeEnabled: true}); err != nil {
+	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
 	if scope, ok := service.ResolveScope("claude-sonnet"); !ok || scope.Kind != endpoint.RouteScopeUpstreamGroup {
 		t.Fatalf("expected group scope before failure, got %#v ok=%v", scope, ok)
 	}
 
-	// 打断存储层，强制下一次快照重建失败。
-	if err := db.Close(); err != nil {
-		t.Fatalf("close db failed: %v", err)
+	// 开关仍能读取，仅破坏绑定数据。
+	if _, err := db.ExecContext(ctx, `UPDATE model_upstream_groups SET members_json = ? WHERE id = ?`, `[]`, group.ID); err != nil {
+		t.Fatalf("构造损坏的绑定失败: %v", err)
 	}
 	if err := service.Initialize(ctx); err == nil {
-		t.Fatal("expected reload to fail after closing the database")
+		t.Fatal("绑定数据损坏时应加载失败")
 	}
 	if service.Status() != ModelRoutingStatusLoadFailed {
 		t.Fatalf("expected load_failed status, got %s", service.Status())
@@ -202,6 +199,80 @@ func TestModelRoutingService_LoadFailureIsFailClosed(t *testing.T) {
 	}
 	if scope.UnassignedReason != "model_routing_load_failed" {
 		t.Fatalf("expected load-failure reason, got %q", scope.UnassignedReason)
+	}
+}
+
+type modelRoutingSettingsReadFailureStore struct {
+	store.ModelRoutingStore
+	fail bool
+}
+
+func (s *modelRoutingSettingsReadFailureStore) GetSettings(ctx context.Context) (*store.ModelRoutingSettingsRecord, error) {
+	if s.fail {
+		return nil, errors.New("临时设置读取错误")
+	}
+	return s.ModelRoutingStore.GetSettings(ctx)
+}
+
+func TestModelRoutingServices_SettingsReadFailureFallsBackAndRecovers(t *testing.T) {
+	for _, family := range []string{modelrouting.FamilyClaude, modelrouting.FamilyCodex} {
+		t.Run(family, func(t *testing.T) {
+			ctx := context.Background()
+			base := newCodexModelRoutingServiceForTest(t)
+			st := &modelRoutingSettingsReadFailureStore{ModelRoutingStore: base.store}
+			var initialize func(context.Context) error
+			var enabled func() bool
+			var resolve func() (string, bool)
+			var enable func(context.Context) error
+			if family == modelrouting.FamilyClaude {
+				svc := NewModelRoutingService(st)
+				if _, err := svc.CreateBinding(ctx, ModelRouteBindingInput{Model: "test-model", Endpoints: []string{"endpoint-a"}, RouteMode: modelrouting.RouteModeAuto, Enabled: true}); err != nil {
+					t.Fatal(err)
+				}
+				initialize = svc.Initialize
+				enabled = func() bool { return svc.CurrentSnapshot().Enabled() }
+				resolve = func() (string, bool) { scope, ok := svc.ResolveScope("test-model"); return scope.Kind, ok }
+				enable = func(ctx context.Context) error {
+					_, err := svc.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)})
+					return err
+				}
+			} else {
+				svc := NewCodexModelRoutingService(st, base.listAccounts)
+				if _, err := svc.CreateBinding(ctx, CodexModelRouteBindingInput{Model: "test-model", AccountIDs: []int64{1}, RouteMode: modelrouting.RouteModeAuto, Enabled: true}); err != nil {
+					t.Fatal(err)
+				}
+				initialize, enabled = svc.Initialize, svc.Enabled
+				resolve = func() (string, bool) { scope, ok := svc.ResolveScope("test-model"); return scope.Kind, ok }
+				enable = func(ctx context.Context) error { return svc.UpdateEnabled(ctx, true) }
+			}
+			if err := base.store.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := initialize(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if kind, ok := resolve(); !ok || kind != "upstream_group" {
+				t.Fatalf("初始模型绑定未生效: kind=%s applies=%v", kind, ok)
+			}
+			st.fail = true
+			if err := initialize(ctx); err == nil {
+				t.Fatal("应返回临时设置读取错误")
+			}
+			if kind, ok := resolve(); enabled() || ok {
+				t.Fatalf("开关读取失败后未恢复全局路由: enabled=%v kind=%s applies=%v", enabled(), kind, ok)
+			}
+			stored, err := base.store.GetSettings(ctx)
+			if err != nil || !stored.ClaudeEnabled || !stored.CodexEnabled {
+				t.Fatalf("运行时降级不应覆盖已保存开关: settings=%+v err=%v", stored, err)
+			}
+			st.fail = false
+			if err := enable(ctx); err != nil {
+				t.Fatalf("读取恢复后重新开启失败: %v", err)
+			}
+			if kind, ok := resolve(); !enabled() || !ok || kind != "upstream_group" {
+				t.Fatalf("重新开启后绑定未恢复: enabled=%v kind=%s applies=%v", enabled(), kind, ok)
+			}
+		})
 	}
 }
 
@@ -226,12 +297,7 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create assignment failed: %v", err)
 	}
-	settings, err := service.GetSettings(ctx)
-	if err != nil {
-		t.Fatalf("get settings failed: %v", err)
-	}
-	settings.ClaudeEnabled = true
-	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
 
@@ -278,8 +344,7 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	if !ok || fresh.Kind != endpoint.RouteScopeUpstreamGroup {
 		t.Fatalf("expected group scope before disabling, got %#v", fresh)
 	}
-	settings.ClaudeEnabled = false
-	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(false)}); err != nil {
 		t.Fatalf("disable model routing failed: %v", err)
 	}
 	service.SettleDecision(fresh, "endpoint-b", "success")
@@ -306,12 +371,7 @@ func TestModelRoutingService_RuntimeFencingIsAtomicWithPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create assignment failed: %v", err)
 	}
-	settings, err := service.GetSettings(ctx)
-	if err != nil {
-		t.Fatalf("get settings failed: %v", err)
-	}
-	settings.ClaudeEnabled = true
-	if _, err := service.UpdateSettings(ctx, settings); err != nil {
+	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
 	scope, ok := service.ResolveScope("claude-sonnet")

@@ -16,6 +16,13 @@ type ModelRoutingSettingsRecord struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// ModelRoutingSettingsPatch 是全局开关的列级更新意图：nil 表示不改动该列。
+// 写入只落 patch 指定的列，避免「读整行 → 改一列 → 写整行」在并发下丢更新。
+type ModelRoutingSettingsPatch struct {
+	ClaudeEnabled *bool
+	CodexEnabled  *bool
+}
+
 // ModelUpstreamGroupRecord 是模型路由上游组的持久化记录。
 type ModelUpstreamGroupRecord struct {
 	ID            int64     `json:"id"`
@@ -45,7 +52,7 @@ type ModelRoutingAssignmentRecord struct {
 // ModelRoutingStore 定义模型路由设置、组和分配的存储接口。
 type ModelRoutingStore interface {
 	GetSettings(ctx context.Context) (*ModelRoutingSettingsRecord, error)
-	UpdateSettings(ctx context.Context, record *ModelRoutingSettingsRecord) error
+	UpdateSettings(ctx context.Context, patch ModelRoutingSettingsPatch) error
 
 	ListGroups(ctx context.Context) ([]*ModelUpstreamGroupRecord, error)
 	GetGroup(ctx context.Context, id int64) (*ModelUpstreamGroupRecord, error)
@@ -69,20 +76,14 @@ type ModelRoutingStore interface {
 type SQLiteModelRoutingStore struct {
 	db *sql.DB
 	tx *sql.Tx
-	mu sync.RWMutex
+	mu sync.Mutex
 
-	schemaOnce  *sync.Once
-	schemaError *error
+	schemaReady bool
 }
 
 // NewSQLiteModelRoutingStore 创建模型路由存储。
 func NewSQLiteModelRoutingStore(db *sql.DB) *SQLiteModelRoutingStore {
-	err := error(nil)
-	return &SQLiteModelRoutingStore{
-		db:          db,
-		schemaOnce:  &sync.Once{},
-		schemaError: &err,
-	}
+	return &SQLiteModelRoutingStore{db: db}
 }
 
 func (s *SQLiteModelRoutingStore) WithTx(tx *sql.Tx) ModelRoutingStore {
@@ -90,10 +91,8 @@ func (s *SQLiteModelRoutingStore) WithTx(tx *sql.Tx) ModelRoutingStore {
 		return &SQLiteModelRoutingStore{tx: tx}
 	}
 	return &SQLiteModelRoutingStore{
-		db:          s.db,
-		tx:          tx,
-		schemaOnce:  s.schemaOnce,
-		schemaError: s.schemaError,
+		db: s.db,
+		tx: tx,
 	}
 }
 
@@ -150,28 +149,24 @@ func (s *SQLiteModelRoutingStore) ensureSchema(ctx context.Context) error {
 	if s.db == nil {
 		return fmt.Errorf("model routing store db is nil")
 	}
-	if s.schemaOnce == nil {
-		s.schemaOnce = &sync.Once{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.schemaReady {
+		return nil
 	}
-	if s.schemaError == nil {
-		err := error(nil)
-		s.schemaError = &err
-	}
-	s.schemaOnce.Do(func() {
-		for idx, statement := range modelRoutingSchemaStatements() {
-			if _, err := s.db.ExecContext(ctx, statement); err != nil {
-				*s.schemaError = fmt.Errorf("ensure model routing schema failed: %w", err)
-				return
-			}
-			if idx == 1 {
-				if err := ensureCodexEnabledColumn(ctx, s.db); err != nil {
-					*s.schemaError = err
-					return
-				}
+	// 只缓存初始化成功；临时失败后允许下一次读取或保存重新尝试。
+	for idx, statement := range modelRoutingSchemaStatements() {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("ensure model routing schema failed: %w", err)
+		}
+		if idx == 1 {
+			if err := ensureCodexEnabledColumn(ctx, s.db); err != nil {
+				return err
 			}
 		}
-	})
-	return *s.schemaError
+	}
+	s.schemaReady = true
+	return nil
 }
 
 func modelRoutingSchemaStatements() []string {
@@ -268,21 +263,34 @@ func (s *SQLiteModelRoutingStore) GetSettings(ctx context.Context) (*ModelRoutin
 		FROM model_routing_settings WHERE id = 1`))
 }
 
-func (s *SQLiteModelRoutingStore) UpdateSettings(ctx context.Context, record *ModelRoutingSettingsRecord) error {
-	if record == nil {
-		return fmt.Errorf("model routing settings is nil")
+// UpdateSettings 只写 patch 中非 nil 的列。COALESCE 让 UPDATE 分支保留未指定列的现值，
+// INSERT 分支（设置行缺失时）用 0 补齐，即关闭。空 patch 不触碰任何列与 updated_at。
+func (s *SQLiteModelRoutingStore) UpdateSettings(ctx context.Context, patch ModelRoutingSettingsPatch) error {
+	if patch.ClaudeEnabled == nil && patch.CodexEnabled == nil {
+		return nil
 	}
 	if err := s.ensureSchema(ctx); err != nil {
 		return err
 	}
 	_, err := s.getQuerier().ExecContext(ctx, `
-		UPDATE model_routing_settings
-		SET claude_enabled = ?, codex_enabled = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
-		WHERE id = 1`, boolToInt(record.ClaudeEnabled), boolToInt(record.CodexEnabled))
+		INSERT INTO model_routing_settings (id, claude_enabled, codex_enabled)
+		VALUES (1, COALESCE(?1, 0), COALESCE(?2, 0))
+		ON CONFLICT(id) DO UPDATE SET
+			claude_enabled = COALESCE(?1, claude_enabled),
+			codex_enabled = COALESCE(?2, codex_enabled),
+			updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')`,
+		boolPtrToNullableInt(patch.ClaudeEnabled), boolPtrToNullableInt(patch.CodexEnabled))
 	if err != nil {
 		return fmt.Errorf("update model routing settings failed: %w", err)
 	}
 	return nil
+}
+
+func boolPtrToNullableInt(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return boolToInt(*value)
 }
 
 func (s *SQLiteModelRoutingStore) ListGroups(ctx context.Context) ([]*ModelUpstreamGroupRecord, error) {

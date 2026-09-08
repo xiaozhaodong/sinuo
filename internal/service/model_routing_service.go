@@ -296,18 +296,18 @@ func (s *ModelRoutingService) GetSettings(ctx context.Context) (*store.ModelRout
 	return s.store.GetSettings(ctx)
 }
 
-func (s *ModelRoutingService) UpdateSettings(ctx context.Context, record *store.ModelRoutingSettingsRecord) (*store.ModelRoutingSettingsRecord, error) {
-	if record == nil {
-		return nil, fmt.Errorf("model routing settings is nil")
-	}
+// UpdateSettings 按列级 patch 写入全局开关：写入只落 patch 指定的列，调用方无需先读整行，
+// 因此并发开启 Claude 与 Codex 不会互相覆盖。空 patch 不重建快照。
+func (s *ModelRoutingService) UpdateSettings(ctx context.Context, patch store.ModelRoutingSettingsPatch) (*store.ModelRoutingSettingsRecord, error) {
 	if err := s.checkStore(); err != nil {
 		return nil, err
 	}
-	candidate := *record
-	candidate.ID = 1
+	if patch.ClaudeEnabled == nil && patch.CodexEnabled == nil {
+		return s.store.GetSettings(ctx)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.store.UpdateSettings(ctx, &candidate); err != nil {
+	if err := s.store.UpdateSettings(ctx, patch); err != nil {
 		return nil, err
 	}
 	if err := s.rebuildSnapshotLocked(ctx); err != nil {
@@ -601,23 +601,18 @@ func (s *ModelRoutingService) checkStore() error {
 }
 
 func (s *ModelRoutingService) rebuildSnapshotLocked(ctx context.Context) error {
-	// desiredEnabled 是「用户希望模型路由开着吗」的当前最佳认知：
-	// 优先用本次读到的 settings 行，读不到才退回上一次已发布快照。
-	// 加载失败时它决定 fail-closed 还是保持关闭。
-	desiredEnabled := s.CurrentSnapshot().Enabled()
-	fail := func(err error) error { return s.publishLoadFailure(desiredEnabled, err) }
-
+	// 开关读取失败时本次运行使用全局路由，保留数据库中的配置供用户重新开启。
 	if err := s.checkStore(); err != nil {
-		return fail(err)
+		return s.publishLoadFailure(false, err)
 	}
 	settingsRecord, err := s.store.GetSettings(ctx)
 	if err != nil {
-		return fail(err)
+		return s.publishLoadFailure(false, err)
 	}
 	if settingsRecord == nil {
-		return fail(fmt.Errorf("model routing settings row is missing"))
+		return s.publishLoadFailure(false, fmt.Errorf("model routing settings row is missing"))
 	}
-	desiredEnabled = settingsRecord.ClaudeEnabled
+	fail := func(err error) error { return s.publishLoadFailure(settingsRecord.ClaudeEnabled, err) }
 	groupRecords, err := s.store.ListGroups(ctx)
 	if err != nil {
 		return fail(err)
@@ -643,8 +638,8 @@ func (s *ModelRoutingService) rebuildSnapshotLocked(ctx context.Context) error {
 	return nil
 }
 
-// publishLoadFailure 发布 fail-closed 失败快照：开关曾经打开就让所有模型判为未分配（422），
-// 不静默回落到全局端点路由；从未打开过则保持关闭，避免一次数据库抖动打死 Claude 转发。
+// publishLoadFailure 只更新运行态；开关读取失败传 false，重新开启时再加载已保存的绑定。
+// 已明确开启但绑定数据加载失败时，仍按既有契约返回 422。
 func (s *ModelRoutingService) publishLoadFailure(desiredEnabled bool, err error) error {
 	snapshot := modelrouting.FailedSnapshot(desiredEnabled)
 	snapshot.Version = s.version.Add(1)
