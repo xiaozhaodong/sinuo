@@ -72,11 +72,12 @@ const ConnectionActivityChart = ({ active = false, refreshKey = 0 }) => {
     }
   }, [formatTimeOnly, timeRange]);
 
-  // 首次展开加载，之后由刷新按钮与时间范围变化触发
+  // 首次展开加载，之后由刷新按钮与时间范围变化触发。
+  // 一律置刷新态：数据为空时它撑起「加载中」占位，有数据时只让按钮图标转动。
   useEffect(() => {
     if (!active) return;
-    loadData(chartData.length > 0);
-  }, [active, refreshKey, loadData]); // eslint-disable-line react-hooks/exhaustive-deps
+    loadData(true);
+  }, [active, refreshKey, loadData]);
 
   const showPlaceholder = isRefreshing && chartData.length === 0;
 

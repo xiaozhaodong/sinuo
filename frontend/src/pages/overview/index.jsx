@@ -104,6 +104,7 @@ const OverviewPage = ({ onNavigate }) => {
       <KPICardsGrid
         today={snapshot.today}
         yesterday={snapshot.yesterday}
+        todayUnavailable={Boolean(errors.today)}
         comparisonUnavailable={Boolean(errors.yesterday)}
         trend={snapshot.todayTrend}
         trendUnavailable={Boolean(errors.todayTrend)}

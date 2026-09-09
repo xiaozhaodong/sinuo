@@ -260,6 +260,44 @@ func TestQueryModelUsageStatsWithHotPool_DeduplicatesOverlap(t *testing.T) {
 	_ = tracker.hotPool.Remove("req-mu-overlap")
 }
 
+func TestQueryModelUsageStatsWithHotPool_DropsEmptyGroupLeftByOverlap(t *testing.T) {
+	tracker := newModelUsageTestTracker(t)
+	now := time.Now()
+
+	// 起始记录先落库，此时还没有 model_name；热池里的同一请求随后带上了模型名。
+	// 空模型键被 subtract 减到 0 之后必须消失，不能输出「未知模型 · 0 请求」。
+	seedModelUsageRequests(t, tracker, []seededModelUsageRequest{
+		{requestID: "req-mu-ghost", modelName: "", requestFamily: "claude", upstreamType: "endpoint", status: "pending", startTime: now.Add(-1 * time.Minute)},
+	})
+
+	tracker.RecordRequestStart("req-mu-ghost", "127.0.0.1", "stats-agent", "POST", "/v1/messages", false)
+	status := "processing"
+	modelName := "claude-sonnet-4"
+	tracker.RecordRequestUpdate("req-mu-ghost", UpdateOptions{
+		Status:    &status,
+		ModelName: &modelName,
+	})
+	t.Cleanup(func() { _ = tracker.hotPool.Remove("req-mu-ghost") })
+
+	stats, err := tracker.QueryModelUsageStatsWithHotPool(context.Background(), modelUsageQueryRange(now), 8)
+	if err != nil {
+		t.Fatalf("QueryModelUsageStatsWithHotPool failed: %v", err)
+	}
+
+	if len(stats.Rows) != 1 {
+		t.Fatalf("expected the empty-model group to be dropped, got rows: %+v", stats.Rows)
+	}
+	if stats.Rows[0].ModelName != "claude-sonnet-4" || stats.Rows[0].RequestCount != 1 {
+		t.Fatalf("unexpected surviving row: %+v", stats.Rows[0])
+	}
+	if stats.Truncated {
+		t.Fatal("ghost group must not count towards truncation")
+	}
+	if stats.TotalRequests != 1 {
+		t.Fatalf("expected 1 total request, got %d", stats.TotalRequests)
+	}
+}
+
 func TestQueryModelUsageStatsWithHotPool_KeepsDimensionsForHotPoolOnlyModel(t *testing.T) {
 	tracker := newModelUsageTestTracker(t)
 	now := time.Now()

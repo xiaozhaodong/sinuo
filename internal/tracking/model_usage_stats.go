@@ -248,10 +248,10 @@ func modelUsageGroupsFromRequestDetails(details []RequestDetail) map[modelUsageK
 		group.requestFamily = key.requestFamily
 		group.upstreamType = key.upstreamType
 		group.requestCount++
-		switch req.Status {
-		case "completed", "processing":
+		switch {
+		case req.Status == "completed" || req.Status == "processing":
 			group.successCount++
-		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+		case isFailedRequestStatus(req.Status):
 			group.failedCount++
 		}
 		group.inputTokens += req.InputTokens
@@ -336,6 +336,11 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 	allRows := make([]ModelUsageRow, 0, len(groupsByKey))
 	stats := &ModelUsageStats{}
 	for _, group := range groupsByKey {
+		// 热池请求在库里的快照可能落在另一个键下（起始记录还没写入 model_name），
+		// subtract 后该键只剩一个空壳；不过滤会输出「未知模型 · 0 请求」的幽灵行。
+		if group.requestCount <= 0 {
+			continue
+		}
 		row := group.toRow()
 		allRows = append(allRows, row)
 		stats.TotalRequests += row.RequestCount

@@ -136,12 +136,30 @@ const countDeltaFormatter = ({ diff }) => {
   return `${diff > 0 ? '↑' : '↓'} ${formatCount(Math.abs(diff))}`;
 };
 
+const KPI_CARD_META = [
+  { key: 'requests', title: '今日请求', tone: 'tone-indigo' },
+  { key: 'success-rate', title: '成功率', tone: 'tone-emerald' },
+  { key: 'latency', title: '平均延迟', tone: 'tone-cyan' },
+  { key: 'failed', title: '失败请求', tone: 'tone-slate' }
+];
+
+/** 今日统计本身没查到：四张卡都给占位符，不能把「查询失败」画成「0 请求」。 */
+const buildUnavailableKpiCards = () => KPI_CARD_META.map((meta) => ({
+  ...meta,
+  value: EMPTY_VALUE,
+  comparison: { label: '今日数据不可用', deltaText: null, tone: 'neutral' },
+  attention: null
+}));
+
 /**
  * 构建 4 个 KPI 卡片（今日口径 + 与昨日环比）。
  * 昨日无请求时不编造百分比，直接说明「较昨日无数据」；
- * 昨日查询失败时用「较昨日数据不可用」区分「没有」和「没查到」。
+ * 昨日查询失败时用「较昨日数据不可用」区分「没有」和「没查到」；
+ * 今日查询失败时整体降级为占位符。
  */
-export const buildKpiCards = (today = {}, yesterday = {}, { comparisonUnavailable = false } = {}) => {
+export const buildKpiCards = (today = {}, yesterday = {}, { comparisonUnavailable = false, todayUnavailable = false } = {}) => {
+  if (todayUnavailable) return buildUnavailableKpiCards();
+
   const todayRequests = Number(today.total_requests) || 0;
   const yesterdayRequests = Number(yesterday.total_requests) || 0;
   const comparable = yesterdayRequests > 0;

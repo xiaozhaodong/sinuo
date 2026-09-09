@@ -14,8 +14,8 @@ const CARD_ICONS = {
 const SERIES_KEYS = { requests: 'total', 'success-rate': 'success', latency: 'avg', failed: 'fail' };
 const DELTA_TONE_CLASSES = { success: 'text-success', danger: 'text-danger', neutral: 'text-fg-muted' };
 
-const KPICardsGrid = ({ today, yesterday, comparisonUnavailable = false, trend, trendUnavailable = false, onRetry }) => {
-  const cards = buildKpiCards(today, yesterday, { comparisonUnavailable });
+const KPICardsGrid = ({ today, yesterday, todayUnavailable = false, comparisonUnavailable = false, trend, trendUnavailable = false, onRetry }) => {
+  const cards = buildKpiCards(today, yesterday, { comparisonUnavailable, todayUnavailable });
   const trends = buildKpiTrends(trend);
   const chart = useChartTheme();
 

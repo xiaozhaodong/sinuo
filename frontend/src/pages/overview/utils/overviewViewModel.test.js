@@ -77,6 +77,19 @@ test('KPI：昨日查询失败时区分「没有」与「没查到」', () => {
   cards.forEach((card) => assert.equal(card.comparison.label, '较昨日数据不可用'));
 });
 
+test('KPI：今日查询失败时四张卡都显示占位符，不画成 0 请求', () => {
+  const cards = buildKpiCards({}, { total_requests: 30 }, { todayUnavailable: true });
+
+  assert.equal(cards.length, 4);
+  cards.forEach((card) => {
+    assert.equal(card.value, '—');
+    assert.equal(card.comparison.label, '今日数据不可用');
+    assert.equal(card.comparison.deltaText, null);
+    assert.equal(card.attention, null);
+  });
+  assert.equal(cards[3].tone, 'tone-slate');
+});
+
 test('KPI：今日无请求时成功率与延迟显示占位符', () => {
   const cards = buildKpiCards({ total_requests: 0 }, { total_requests: 0 });
 
