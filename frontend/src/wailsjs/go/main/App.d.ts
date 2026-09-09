@@ -94,6 +94,8 @@ export function GetModelPricings():Promise<Array<main.ModelPricingInfo>>;
 
 export function GetModelRoutingSettings():Promise<main.ModelRoutingSettingsInfo>;
 
+export function GetModelUsageStats(arg1:main.ModelUsageQueryParams):Promise<main.ModelUsageStatsData>;
+
 export function GetPortInfo():Promise<main.PortInfo>;
 
 export function GetPrivacyRuntimeStats():Promise<main.PrivacyRuntimeStatsInfo>;
@@ -107,6 +109,8 @@ export function GetRecentLogs(arg1:number):Promise<Array<logging.LogEntry>>;
 export function GetRequestLifecycleDetail(arg1:string):Promise<main.RequestLifecycleDetail>;
 
 export function GetRequestTrendChart(arg1:number):Promise<Array<main.ChartDataPoint>>;
+
+export function GetRequestTrendData(arg1:main.RequestTrendQueryParams):Promise<main.RequestTrendData>;
 
 export function GetRequests(arg1:main.RequestQueryParams):Promise<main.RequestListResult>;
 

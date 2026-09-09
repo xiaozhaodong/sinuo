@@ -1,4 +1,4 @@
-import { getTodayTimeRange as getConfiguredTodayRange } from '../../../utils/timezone.js';
+import { getTodayTimeRange as getConfiguredTodayRange, getZonedDateParts, parseTimestamp } from '../../../utils/timezone.js';
 import { DEFAULT_FILTERS } from './constants.js';
 
 export const getTodayTimeRange = (timezone, now = new Date()) => {
@@ -22,6 +22,17 @@ const normalizeFilterDateTime = (value) => {
   return text;
 };
 
+// 绝对时刻仅在日期输入框中转为业务时区。筛选状态保留原始 offset/精度，
+// 直到用户主动编辑该字段，防止 DST 重复小时和分钟取整改变查询边界。
+export const formatFilterDateTimeInput = (value, timezone) => {
+  const text = String(value || '');
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) return text;
+  const parts = getZonedDateParts(parseTimestamp(text), timezone);
+  const pad = (number) => String(number).padStart(2, '0');
+  const fraction = text.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/i)?.[1].slice(0, 3);
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}${fraction ? `.${fraction}` : ''}`;
+};
+
 export const buildQueryParamsFromFilters = (filters = {}) => {
   const queryParams = {};
 
@@ -35,6 +46,7 @@ export const buildQueryParamsFromFilters = (filters = {}) => {
   if (filters.status && filters.status !== 'all') queryParams.status = filters.status;
   if (filters.model) queryParams.model = filters.model;
   if (filters.requestFamily && filters.requestFamily !== 'all') queryParams.request_family = filters.requestFamily;
+  if (filters.sourceView === 'endpoint' || filters.sourceView === 'account') queryParams.source_view = filters.sourceView;
   if (filters.upstreamName && filters.upstreamName !== 'all') queryParams.upstream_name = filters.upstreamName;
 
   return queryParams;

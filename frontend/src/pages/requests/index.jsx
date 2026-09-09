@@ -46,6 +46,7 @@ import { mergeRequestRows } from './utils/mergeRequestRows.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
 import { filterUpstreamOptionsByFamily } from './utils/requestSource.js';
 import { prefersReducedMotion } from '@utils/motion.js';
+import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
 
 // ============================================
 // Requests 页面
@@ -95,13 +96,24 @@ const RequestsPage = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   // 筛选器 Hook
+  // 概览页模型表跳转过来时会带一次性筛选条件（模型 / 请求族 / 滚动时间区间），
+  // 只在本页挂载时消费一次。概览的滚动区间不等于「今天 / 7天 / 30天」预设，
+  // 所以带日期时不让任何预设按钮保持高亮，避免列表窗口和按钮说明打架。
+  const handoffRef = useRef();
+  if (handoffRef.current === undefined) {
+    const pending = consumePendingRequestsFilters();
+    handoffRef.current = {
+      filters: pending || undefined,
+      timeRangeKey: pending && (pending.startDate || pending.endDate) ? 'custom' : 'today'
+    };
+  }
   const {
     filters,
     updateFilter,
     updateFilters,
     resetFilters,
     buildQueryParams
-  } = useFilters();
+  } = useFilters(handoffRef.current.filters);
   const [appliedQueryParams, setAppliedQueryParams] = useState(() => buildQueryParams());
 
   // 列配置 Hook
@@ -118,7 +130,7 @@ const RequestsPage = () => {
     updateFilters(nextState.filters);
     setAppliedQueryParams(nextState.appliedQueryParams);
     setPagination(prev => ({ ...prev, page: 1 }));
-  });
+  }, handoffRef.current.timeRangeKey);
 
   // 分页状态
   const [pagination, setPagination] = useState({
@@ -165,7 +177,7 @@ const RequestsPage = () => {
     const requestId = ++loadRequestIdRef.current;
     const requestsQueryParams = {
       ...appliedQueryParams,
-      source_view: 'all'
+      source_view: appliedQueryParams.source_view || 'all'
     };
     const statsParams = {
       ...requestsQueryParams,

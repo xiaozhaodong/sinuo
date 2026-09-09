@@ -1,9 +1,10 @@
 // ============================================
 // 连接活动图表组件
 // 2025-11-28
+// 2026-09-09 概览改版：随详细性能区展开时加载，移除 30 秒定时器与 chartUpdate 监听
 // ============================================
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Wifi } from 'lucide-react';
 import {
   AreaChart,
@@ -18,6 +19,7 @@ import { fetchConnectionActivityData } from '@utils/api.js';
 import { CustomSelect } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import useChartTheme from '@hooks/useChartTheme.js';
+import SectionError from './SectionError.jsx';
 
 // 时间范围选项
 const TIME_RANGE_OPTIONS = [
@@ -45,79 +47,38 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
-const ConnectionActivityChart = () => {
+/**
+ * @param {boolean} active - 详细性能区是否展开；折叠时不发起请求
+ * @param {number} refreshKey - 顶部刷新按钮的信号，变化时重取
+ */
+const ConnectionActivityChart = ({ active = false, refreshKey = 0 }) => {
   const { formatTimeOnly } = useTimezone();
   const chart = useChartTheme();
   const [chartData, setChartData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState(60);
-  const refreshIntervalRef = useRef(null);
 
-  // 加载数据
   const loadData = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setIsRefreshing(true);
-    }
+    if (showRefreshing) setIsRefreshing(true);
     try {
       const data = await fetchConnectionActivityData(timeRange);
       setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
-    } catch (error) {
-      console.error('加载连接活动数据失败:', error);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError);
     } finally {
-      setLoading(false);
       setIsRefreshing(false);
     }
   }, [formatTimeOnly, timeRange]);
 
-  // 初始加载
+  // 首次展开加载，之后由刷新按钮与时间范围变化触发
   useEffect(() => {
-    loadData();
-  }, [timeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!active) return;
+    loadData(chartData.length > 0);
+  }, [active, refreshKey, loadData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 定时刷新（每 30 秒）
-  useEffect(() => {
-    refreshIntervalRef.current = setInterval(() => {
-      loadData(false);
-    }, 30000);
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    };
-  }, [loadData]);
-
-  // 监听 SSE 图表更新事件
-  useEffect(() => {
-    const handleChartUpdate = (event) => {
-      const { chart_type, data } = event.detail || {};
-      if (chart_type === 'connection_activity' || chart_type === 'connectionActivity') {
-        if (Array.isArray(data)) {
-          setChartData(data.map((point) => ({ ...point, time: formatTimeOnly(point.timestamp || point.time) })));
-        } else if (data?.labels && data?.datasets) {
-          // Chart.js 格式转换
-          const connectionsData = data.datasets[0]?.data || [];
-          const converted = data.labels.map((time, i) => ({
-            time,
-            connections: connectionsData[i] || 0
-          }));
-          setChartData(converted);
-        }
-        console.log('📊 [SSE] 连接活动图已更新');
-      }
-    };
-
-    document.addEventListener('chartUpdate', handleChartUpdate);
-    return () => {
-      document.removeEventListener('chartUpdate', handleChartUpdate);
-    };
-  }, [formatTimeOnly]);
-
-  // 手动刷新
-  const handleRefresh = () => {
-    loadData(true);
-  };
+  const showPlaceholder = isRefreshing && chartData.length === 0;
 
   // 计算当前连接数（最后一个数据点）
   const currentConnections = chartData.length > 0
@@ -130,14 +91,14 @@ const ConnectionActivityChart = () => {
     : 0;
 
   return (
-    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm flex flex-col h-full">
+    <div className="bg-surface-sub p-5 rounded-xl border border-line-soft flex flex-col h-full">
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center space-x-2">
           {/* tone-violet 给底色，inline color 覆到 series 色（tone 在 components 层，inline 优先） */}
           <div className="p-1.5 tone-violet rounded-md" style={{ color: chart.series.connections }}>
             <Wifi size={16} />
           </div>
-          <h3 className="font-semibold text-fg">连接活动</h3>
+          <h3 className="font-semibold text-fg text-sm">连接活动</h3>
         </div>
         <div className="flex items-center space-x-2">
           <CustomSelect
@@ -147,7 +108,8 @@ const ConnectionActivityChart = () => {
             size="xs"
           />
           <button
-            onClick={handleRefresh}
+            type="button"
+            onClick={() => loadData(true)}
             disabled={isRefreshing}
             className="p-1.5 text-fg-subtle hover:text-fg-muted hover:bg-surface-mut rounded-md transition-colors disabled:opacity-50"
             title="刷新数据"
@@ -163,10 +125,14 @@ const ConnectionActivityChart = () => {
       </p>
 
       <div className="flex-1 min-h-[200px]">
-        {loading ? (
+        {showPlaceholder ? (
           <div className="h-full flex items-center justify-center text-fg-subtle">
             <RefreshCw size={20} className="animate-spin mr-2" />
             加载中...
+          </div>
+        ) : error ? (
+          <div className="h-full flex items-center justify-center">
+            <SectionError error={error} onRetry={() => loadData(true)} compact />
           </div>
         ) : chartData.length === 0 ? (
           <div className="h-full flex items-center justify-center text-fg-subtle text-sm">
@@ -213,7 +179,7 @@ const ConnectionActivityChart = () => {
       </div>
 
       {/* 图例 */}
-      {!loading && chartData.length > 0 && (
+      {!error && chartData.length > 0 && (
         <div className="flex justify-center space-x-6 mt-3 pt-3 border-t border-line-soft">
           <div className="flex items-center text-xs text-fg-muted">
             <span className="w-3 h-3 rounded mr-2" style={{ backgroundColor: chart.series.connections }} />

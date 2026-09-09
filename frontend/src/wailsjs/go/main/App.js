@@ -182,6 +182,10 @@ export function GetModelRoutingSettings() {
   return window['go']['main']['App']['GetModelRoutingSettings']();
 }
 
+export function GetModelUsageStats(arg1) {
+  return window['go']['main']['App']['GetModelUsageStats'](arg1);
+}
+
 export function GetPortInfo() {
   return window['go']['main']['App']['GetPortInfo']();
 }
@@ -208,6 +212,10 @@ export function GetRequestLifecycleDetail(arg1) {
 
 export function GetRequestTrendChart(arg1) {
   return window['go']['main']['App']['GetRequestTrendChart'](arg1);
+}
+
+export function GetRequestTrendData(arg1) {
+  return window['go']['main']['App']['GetRequestTrendData'](arg1);
 }
 
 export function GetRequests(arg1) {

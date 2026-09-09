@@ -493,6 +493,51 @@ type UsageStatsQueryParams struct {
 	SourceView    string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
 }
 
+// resolveUsageStatsRange 解析统计查询的时间范围：显式 start/end 优先，否则按 period 计算。
+// 未知 period 回退到 30 天，与 GetUsageStats 的既有口径一致。
+func resolveUsageStatsRange(policy *timezonepolicy.Policy, period, startDateStr, endDateStr string) (time.Time, time.Time, string, error) {
+	var startTime, endTime time.Time
+	var useCustomRange bool
+
+	if startDateStr != "" {
+		parsed, err := policy.ParseInput(startDateStr)
+		if err != nil {
+			return startTime, endTime, period, err
+		}
+		startTime = parsed
+		useCustomRange = true
+	}
+	if endDateStr != "" {
+		parsed, err := policy.ParseInput(endDateStr)
+		if err != nil {
+			return startTime, endTime, period, err
+		}
+		endTime = parsed
+		useCustomRange = true
+	}
+	if useCustomRange {
+		return startTime, endTime, period, nil
+	}
+
+	endTime = time.Now()
+	switch period {
+	case "1h":
+		startTime = endTime.Add(-1 * time.Hour)
+	case "1d":
+		startTime = endTime.AddDate(0, 0, -1)
+	case "7d":
+		startTime = endTime.AddDate(0, 0, -7)
+	case "30d":
+		startTime = endTime.AddDate(0, 0, -30)
+	case "90d":
+		startTime = endTime.AddDate(0, 0, -90)
+	default:
+		startTime = endTime.AddDate(0, 0, -30)
+		period = "30d"
+	}
+	return startTime, endTime, period, nil
+}
+
 // GetUsageStats 获取使用统计（与 HTTP API 格式一致）
 // 支持完整筛选参数，与前端 buildQueryParams() 配合
 func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error) {
@@ -514,44 +559,12 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		return result, err
 	}
 
-	var startTime, endTime time.Time
-	var useCustomRange bool
-
-	// 优先使用自定义时间范围
-	if params.StartDate != "" {
-		startTime, err = policy.ParseInput(params.StartDate)
-		if err != nil {
-			return result, err
-		}
-		useCustomRange = true
+	// 优先使用自定义时间范围，否则按 period 计算
+	startTime, endTime, normalizedPeriod, err := resolveUsageStatsRange(policy, period, params.StartDate, params.EndDate)
+	if err != nil {
+		return result, err
 	}
-	if params.EndDate != "" {
-		endTime, err = policy.ParseInput(params.EndDate)
-		if err != nil {
-			return result, err
-		}
-		useCustomRange = true
-	}
-
-	// 如果没有自定义时间，使用 period 计算
-	if !useCustomRange {
-		endTime = time.Now()
-		switch period {
-		case "1h":
-			startTime = endTime.Add(-1 * time.Hour)
-		case "1d":
-			startTime = endTime.AddDate(0, 0, -1)
-		case "7d":
-			startTime = endTime.AddDate(0, 0, -7)
-		case "30d":
-			startTime = endTime.AddDate(0, 0, -30)
-		case "90d":
-			startTime = endTime.AddDate(0, 0, -90)
-		default:
-			startTime = endTime.AddDate(0, 0, -30)
-			result.Period = "30d"
-		}
-	}
+	result.Period = normalizedPeriod
 
 	// 如果有 usageTracker，使用数据库聚合 + 热池补偿，避免加载大量明细到内存
 	if a.usageTracker != nil {

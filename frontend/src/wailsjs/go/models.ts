@@ -1248,6 +1248,124 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ModelUsageQueryParams {
+	    period: string;
+	    start_date: string;
+	    end_date: string;
+	    model: string;
+	    request_family: string;
+	    source_view: string;
+	    upstream_name: string;
+	    limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsageQueryParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.period = source["period"];
+	        this.start_date = source["start_date"];
+	        this.end_date = source["end_date"];
+	        this.model = source["model"];
+	        this.request_family = source["request_family"];
+	        this.source_view = source["source_view"];
+	        this.upstream_name = source["upstream_name"];
+	        this.limit = source["limit"];
+	    }
+	}
+	export class ModelUsageRowData {
+	    model_name: string;
+	    request_family: string;
+	    upstream_type: string;
+	    request_count: number;
+	    success_count: number;
+	    failed_count: number;
+	    success_rate: number;
+	    avg_duration_ms: number;
+	    duration_count: number;
+	    total_tokens: number;
+	    total_cost_usd: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsageRowData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model_name = source["model_name"];
+	        this.request_family = source["request_family"];
+	        this.upstream_type = source["upstream_type"];
+	        this.request_count = source["request_count"];
+	        this.success_count = source["success_count"];
+	        this.failed_count = source["failed_count"];
+	        this.success_rate = source["success_rate"];
+	        this.avg_duration_ms = source["avg_duration_ms"];
+	        this.duration_count = source["duration_count"];
+	        this.total_tokens = source["total_tokens"];
+	        this.total_cost_usd = source["total_cost_usd"];
+	    }
+	}
+	export class ModelUsageStatsData {
+	    period: string;
+	    start_time: string;
+	    end_time: string;
+	    rows: ModelUsageRowData[];
+	    truncated: boolean;
+	    total_requests: number;
+	    success_requests: number;
+	    failed_requests: number;
+	    total_tokens: number;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cache_creation_tokens: number;
+	    cache_read_tokens: number;
+	    total_cost_usd: number;
+	    claude_count: number;
+	    codex_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsageStatsData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.period = source["period"];
+	        this.start_time = source["start_time"];
+	        this.end_time = source["end_time"];
+	        this.rows = this.convertValues(source["rows"], ModelUsageRowData);
+	        this.truncated = source["truncated"];
+	        this.total_requests = source["total_requests"];
+	        this.success_requests = source["success_requests"];
+	        this.failed_requests = source["failed_requests"];
+	        this.total_tokens = source["total_tokens"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cache_creation_tokens = source["cache_creation_tokens"];
+	        this.cache_read_tokens = source["cache_read_tokens"];
+	        this.total_cost_usd = source["total_cost_usd"];
+	        this.claude_count = source["claude_count"];
+	        this.codex_count = source["codex_count"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class MoveUpstreamAccountToTierResult {
 	    success: boolean;
 	    changed: boolean;
@@ -1879,6 +1997,91 @@ export namespace main {
 	    }
 	}
 	
+	export class RequestTrendPoint {
+	    time: string;
+	    total: number;
+	    success: number;
+	    fail: number;
+	    avg_duration_ms: number;
+	    duration_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestTrendPoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.total = source["total"];
+	        this.success = source["success"];
+	        this.fail = source["fail"];
+	        this.avg_duration_ms = source["avg_duration_ms"];
+	        this.duration_count = source["duration_count"];
+	    }
+	}
+	export class RequestTrendData {
+	    period: string;
+	    granularity: string;
+	    start_time: string;
+	    end_time: string;
+	    points: RequestTrendPoint[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestTrendData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.period = source["period"];
+	        this.granularity = source["granularity"];
+	        this.start_time = source["start_time"];
+	        this.end_time = source["end_time"];
+	        this.points = this.convertValues(source["points"], RequestTrendPoint);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class RequestTrendQueryParams {
+	    period: string;
+	    start_date: string;
+	    end_date: string;
+	    model: string;
+	    request_family: string;
+	    source_view: string;
+	    upstream_name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestTrendQueryParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.period = source["period"];
+	        this.start_date = source["start_date"];
+	        this.end_date = source["end_date"];
+	        this.model = source["model"];
+	        this.request_family = source["request_family"];
+	        this.source_view = source["source_view"];
+	        this.upstream_name = source["upstream_name"];
+	    }
+	}
 	export class SaveCodexModelCatalogInput {
 	    enabled: boolean;
 	    mode: string;

@@ -1,0 +1,177 @@
+package main
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	timezonepolicy "cc-forwarder/internal/timezone"
+)
+
+func TestGetRequestTrendData_BucketsComeFromRequestLogs(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	db := app.usageTracker.GetWriteDB()
+	if db == nil {
+		t.Fatal("expected write db")
+	}
+
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		id    string
+		start time.Time
+	}{
+		{id: "trend-recent", start: now.Add(-30 * time.Minute)},
+		{id: "trend-two-days", start: now.Add(-48 * time.Hour)},
+		{id: "trend-ten-days", start: now.Add(-10 * 24 * time.Hour)},
+	} {
+		if _, err := db.Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name, model_name
+		) VALUES (?, ?, 'completed', 'claude', 'endpoint', 'upstream', 'claude-sonnet-4')`,
+			row.id, timezonepolicy.FormatStorage(row.start)); err != nil {
+			t.Fatalf("failed to seed %s: %v", row.id, err)
+		}
+	}
+
+	sum := func(data RequestTrendData) int64 {
+		var total int64
+		for _, point := range data.Points {
+			total += point.Total
+		}
+		return total
+	}
+
+	sevenDays, err := app.GetRequestTrendData(RequestTrendQueryParams{Period: "7d", SourceView: "all"})
+	if err != nil {
+		t.Fatalf("GetRequestTrendData(7d) failed: %v", err)
+	}
+	if sevenDays.Granularity != "day" {
+		t.Fatalf("expected day granularity for 7d, got %q", sevenDays.Granularity)
+	}
+	if len(sevenDays.Points) == 0 {
+		t.Fatal("expected non-empty trend points")
+	}
+	if got := sum(sevenDays); got != 2 {
+		t.Fatalf("expected 2 requests inside the 7d window, got %d", got)
+	}
+
+	oneDay, err := app.GetRequestTrendData(RequestTrendQueryParams{Period: "1d", SourceView: "all"})
+	if err != nil {
+		t.Fatalf("GetRequestTrendData(1d) failed: %v", err)
+	}
+	if oneDay.Granularity != "hour" {
+		t.Fatalf("expected hour granularity for 1d, got %q", oneDay.Granularity)
+	}
+	if got := sum(oneDay); got != 1 {
+		t.Fatalf("expected 1 request inside the 1d window, got %d", got)
+	}
+
+	oneHour, err := app.GetRequestTrendData(RequestTrendQueryParams{Period: "1h", SourceView: "all"})
+	if err != nil {
+		t.Fatalf("GetRequestTrendData(1h) failed: %v", err)
+	}
+	if oneHour.Granularity != "minute" {
+		t.Fatalf("expected minute granularity for 1h, got %q", oneHour.Granularity)
+	}
+	if got := sum(oneHour); got != 1 {
+		t.Fatalf("expected 1 request inside the 1h window, got %d", got)
+	}
+
+	// 桶起点必须是 UTC ISO，且与返回的时间范围一致
+	if oneHour.StartTime == "" || oneHour.EndTime == "" {
+		t.Fatalf("expected range metadata, got %+v", oneHour)
+	}
+	if len(oneHour.Points) > 0 && oneHour.Points[0].Time == "" {
+		t.Fatal("expected bucket start timestamp")
+	}
+}
+
+func TestGetRequestTrendData_RejectsInvalidStartDate(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+
+	if _, err := app.GetRequestTrendData(RequestTrendQueryParams{StartDate: "not-a-date"}); err == nil {
+		t.Fatal("expected invalid start_date to return an error")
+	}
+}
+
+func TestGetRequestTrendData_ExactWindowMatchesModelStats(t *testing.T) {
+	for _, period := range []string{"1h", "1d", "7d", "30d"} {
+		t.Run(period, func(t *testing.T) {
+			app := newUsageStatsTestApp(t)
+			policy, err := app.activeTimezonePolicy()
+			if err != nil {
+				t.Fatal(err)
+			}
+			start, _ := policy.ParseInput("2026-09-02T10:07:31.123456")
+			end, _ := policy.ParseInput("2026-09-02T11:08:32.654321")
+			for i, at := range []time.Time{start.Add(-time.Microsecond), start, start.Add(time.Minute), end.Add(-time.Microsecond), end, end.Add(time.Minute)} {
+				duration := int64(0)
+				if i == 1 {
+					duration = 100
+				}
+				if i == 2 {
+					duration = 300
+				}
+				_, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs
+      (request_id,start_time,status,request_family,upstream_type,model_name,duration_ms)
+      VALUES (?,?,'completed','codex','account','m',?)`, fmt.Sprintf("edge-%d", i), timezonepolicy.FormatStorage(at), duration)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			query := RequestTrendQueryParams{Period: period, StartDate: formatAPITime(start), EndDate: formatAPITime(end), SourceView: "account", Model: "m"}
+			trend, err := app.GetRequestTrendData(query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			model, err := app.GetModelUsageStats(ModelUsageQueryParams{Period: period, StartDate: query.StartDate, EndDate: query.EndDate, SourceView: "account", Model: "m"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var total, samples int64
+			var durationSum float64
+			for _, p := range trend.Points {
+				total += p.Total
+				samples += p.DurationCount
+				durationSum += p.AvgDurationMs * float64(p.DurationCount)
+			}
+			if total != 3 || total != model.TotalRequests {
+				t.Fatalf("trend=%d model=%d, expected 3", total, model.TotalRequests)
+			}
+			if samples != 2 || durationSum != 400 {
+				t.Fatalf("bad duration samples: n=%d sum=%f", samples, durationSum)
+			}
+			if trend.StartTime != model.StartTime || trend.EndTime != model.EndTime {
+				t.Fatal("range metadata differs")
+			}
+		})
+	}
+}
+
+func TestOverviewStats_RejectIncompleteReversedAndOversizedRanges(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	for _, query := range []RequestTrendQueryParams{
+		{StartDate: "2026-09-02T10:00:00Z"},
+		{EndDate: "2026-09-02T10:00:00Z"},
+		{StartDate: "2026-09-02T11:00:00Z", EndDate: "2026-09-02T10:00:00Z"},
+	} {
+		if _, err := app.GetRequestTrendData(query); err == nil {
+			t.Fatalf("expected invalid range error: %+v", query)
+		}
+		if _, err := app.GetModelUsageStats(ModelUsageQueryParams{StartDate: query.StartDate, EndDate: query.EndDate}); err == nil {
+			t.Fatal("model stats must reject the same invalid range")
+		}
+	}
+	if _, err := app.GetRequestTrendData(RequestTrendQueryParams{Period: "1h", StartDate: "2020-01-01T00:00:00Z", EndDate: "2026-01-01T00:00:00Z"}); err == nil {
+		t.Fatal("expected oversized bucket error")
+	}
+}
+
+func TestGetRequestTrendChart_CompatibilityKeepsCumulativeHistory(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	recordRuntimeStats(app, nil)
+	app.monitoringMiddleware.GetMetrics().AddHistoryDataPoints()
+	points := app.GetRequestTrendChart(60)
+	if len(points) != 1 || points[0].Total != 1 {
+		t.Fatalf("legacy history changed: %+v", points)
+	}
+}

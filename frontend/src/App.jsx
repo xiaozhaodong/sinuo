@@ -98,7 +98,8 @@ const AppRoutes = () => {
   // 渲染当前页面
   const renderPage = () => {
     const pages = {
-      overview: <OverviewPage />,
+      // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
+      overview: <OverviewPage onNavigate={setActiveTab} />,
       endpoints: <EndpointsPage />,
       requests: <RequestsPage />,
       // v6.1: 隐私保护页面

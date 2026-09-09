@@ -44,6 +44,7 @@ export const DEFAULT_FILTERS = {
   status: 'all',
   model: '',
   requestFamily: 'all',
+  sourceView: 'all',
   upstreamName: 'all',
   startDate: '',
   endDate: ''

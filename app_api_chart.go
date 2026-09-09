@@ -5,7 +5,10 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"cc-forwarder/internal/tracking"
 )
 
 // ============================================================
@@ -25,7 +28,128 @@ type ChartDataPoint struct {
 	Timestamp string  `json:"timestamp"`
 }
 
-// GetRequestTrendChart 获取请求趋势图表数据
+// ============================================================
+// 请求趋势（按 request_logs 时间分桶）
+// ============================================================
+
+// RequestTrendQueryParams 请求趋势查询参数
+type RequestTrendQueryParams struct {
+	Period        string `json:"period"`     // 1h/1d/7d/30d/90d，默认 1d
+	StartDate     string `json:"start_date"` // 优先于 period
+	EndDate       string `json:"end_date"`   // 优先于 period
+	Model         string `json:"model"`      // 可选：模型精确匹配
+	RequestFamily string `json:"request_family"`
+	SourceView    string `json:"source_view"` // endpoint/account/all
+	UpstreamName  string `json:"upstream_name"`
+}
+
+// RequestTrendPoint 趋势数据点：一个时间桶的请求数 / 成功 / 失败。
+type RequestTrendPoint struct {
+	Time          string  `json:"time"` // 桶起点（UTC ISO）
+	Total         int64   `json:"total"`
+	Success       int64   `json:"success"`
+	Fail          int64   `json:"fail"`
+	AvgDurationMs float64 `json:"avg_duration_ms"`
+	DurationCount int64   `json:"duration_count"`
+}
+
+// RequestTrendData 请求趋势结果
+type RequestTrendData struct {
+	Period      string              `json:"period"`
+	Granularity string              `json:"granularity"` // minute/hour/day
+	StartTime   string              `json:"start_time"`
+	EndTime     string              `json:"end_time"`
+	Points      []RequestTrendPoint `json:"points"`
+}
+
+// trendMaxBuckets 单次趋势查询的桶数上限，防止异常大的区间把查询拖垮。
+const trendMaxBuckets = 400
+
+func trendGranularityForPeriod(period string) tracking.TrendGranularity {
+	switch period {
+	case "1h":
+		return tracking.TrendGranularityMinute
+	case "1d":
+		return tracking.TrendGranularityHour
+	default:
+		return tracking.TrendGranularityDay
+	}
+}
+
+// GetRequestTrendData 获取请求趋势（按 request_logs 时间分桶，含热池补偿）。
+// 桶边界按配置时区对齐：1h 用 5 分钟桶、1d 用小时桶、7d/30d/90d 用业务日桶。
+func (a *App) GetRequestTrendData(params RequestTrendQueryParams) (RequestTrendData, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	result := RequestTrendData{Points: []RequestTrendPoint{}}
+
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		return result, err
+	}
+
+	period := strings.TrimSpace(params.Period)
+	if period == "" {
+		period = "1d"
+	}
+	startTime, endTime, normalizedPeriod, err := resolveOverviewStatsRange(policy, period, params.StartDate, params.EndDate)
+	if err != nil {
+		return result, err
+	}
+	result.Period = normalizedPeriod
+	result.StartTime = formatAPITime(startTime)
+	result.EndTime = formatAPITime(endTime)
+
+	granularity := trendGranularityForPeriod(normalizedPeriod)
+	result.Granularity = string(granularity)
+
+	if a.usageTracker == nil {
+		return result, nil
+	}
+
+	buckets, err := tracking.BuildTrendBuckets(policy, startTime, endTime, granularity, trendMaxBuckets)
+	if err != nil {
+		return result, err
+	}
+	if len(buckets) == 0 {
+		return result, nil
+	}
+
+	opts := &tracking.QueryOptions{
+		StartDate:     &startTime,
+		EndDate:       &endTime,
+		ModelName:     params.Model,
+		RequestFamily: params.RequestFamily,
+		UpstreamName:  params.UpstreamName,
+		UpstreamType:  sourceViewToUpstreamType(params.SourceView),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	stats, err := a.usageTracker.QueryRequestTrendBuckets(ctx, opts, buckets)
+	if err != nil {
+		return result, err
+	}
+
+	result.Points = make([]RequestTrendPoint, 0, len(stats))
+	for _, bucket := range stats {
+		result.Points = append(result.Points, RequestTrendPoint{
+			Time:          formatAPITime(bucket.Start),
+			Total:         bucket.Total,
+			Success:       bucket.Success,
+			Fail:          bucket.Failed,
+			AvgDurationMs: bucket.AvgDurationMs,
+			DurationCount: bucket.DurationCount,
+		})
+	}
+
+	return result, nil
+}
+
+// GetRequestTrendChart 保留旧 Wails 接口的进程内累计采样行为。
+// Deprecated: 概览请使用 GetRequestTrendData 查询真实历史分桶。
 func (a *App) GetRequestTrendChart(minutes int) []ChartDataPoint {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

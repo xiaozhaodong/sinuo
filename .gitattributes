@@ -1,0 +1,6 @@
+# Wails 生成产物按生成器原样入库（见 97167eb：对齐 generate module 输出，
+# 消除反复出现的空白差异）。生成器会在空行上写制表符，属于既定格式，
+# 因此对这几个路径关闭行尾空白检查，避免 git diff --check 持续误报。
+frontend/src/wailsjs/go/models.ts whitespace=-blank-at-eol
+frontend/src/wailsjs/go/main/App.js whitespace=-blank-at-eol
+frontend/src/wailsjs/go/main/App.d.ts whitespace=-blank-at-eol

@@ -127,6 +127,131 @@ func TestGetUsageStats_DoesNotFallbackToRuntimeWhenFiltered(t *testing.T) {
 	}
 }
 
+func TestGetModelUsageStats_ReturnsRowsAndSummary(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	db := app.usageTracker.GetWriteDB()
+	if db == nil {
+		t.Fatal("expected write db")
+	}
+
+	now := time.Now().UTC()
+	rows := []struct {
+		id       string
+		model    string
+		family   string
+		upstream string
+		status   string
+		input    int64
+		output   int64
+		cost     float64
+		duration int64
+	}{
+		{id: "mu-1", model: "claude-sonnet-4", family: "claude", upstream: "endpoint", status: "completed", input: 100, output: 50, cost: 0.5, duration: 200},
+		{id: "mu-2", model: "claude-sonnet-4", family: "claude", upstream: "endpoint", status: "failed", input: 0, output: 0, cost: 0, duration: 0},
+		{id: "mu-3", model: "gpt-5-codex", family: "codex", upstream: "account", status: "completed", input: 60, output: 20, cost: 0.75, duration: 600},
+	}
+	for _, row := range rows {
+		if _, err := db.Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name,
+			model_name, input_tokens, output_tokens, total_cost_usd, duration_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.id,
+			timezonepolicy.FormatStorage(now.Add(-5*time.Minute)),
+			row.status,
+			row.family,
+			row.upstream,
+			row.upstream+"-name",
+			row.model,
+			row.input,
+			row.output,
+			row.cost,
+			row.duration,
+		); err != nil {
+			t.Fatalf("failed to seed %s: %v", row.id, err)
+		}
+	}
+
+	result, err := app.GetModelUsageStats(ModelUsageQueryParams{
+		Period:     "1d",
+		SourceView: "all",
+		StartDate:  now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05-07:00"),
+		EndDate:    now.Add(1 * time.Hour).Format("2006-01-02T15:04:05-07:00"),
+	})
+	if err != nil {
+		t.Fatalf("GetModelUsageStats failed: %v", err)
+	}
+
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 model rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0].ModelName != "claude-sonnet-4" || result.Rows[0].RequestCount != 2 {
+		t.Fatalf("unexpected first row: %+v", result.Rows[0])
+	}
+	if result.Rows[0].SuccessRate != 50 {
+		t.Fatalf("expected 50%% success rate, got %f", result.Rows[0].SuccessRate)
+	}
+	if result.TotalRequests != 3 || result.SuccessRequests != 2 || result.FailedRequests != 1 {
+		t.Fatalf("unexpected summary counts: %+v", result)
+	}
+	if result.ClaudeCount != 2 || result.CodexCount != 1 {
+		t.Fatalf("unexpected family counts: claude=%d codex=%d", result.ClaudeCount, result.CodexCount)
+	}
+	if result.TotalTokens != 230 || result.TotalCostUSD != 1.25 {
+		t.Fatalf("unexpected token/cost summary: tokens=%d cost=%f", result.TotalTokens, result.TotalCostUSD)
+	}
+	if result.StartTime == "" || result.EndTime == "" || result.Period != "1d" {
+		t.Fatalf("expected range metadata to be echoed back, got %+v", result)
+	}
+}
+
+func TestGetModelUsageStats_SourceViewFiltersUpstreamType(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	db := app.usageTracker.GetWriteDB()
+	now := time.Now().UTC()
+
+	for _, row := range []struct{ id, upstream string }{
+		{id: "src-endpoint", upstream: "endpoint"},
+		{id: "src-account", upstream: "account"},
+	} {
+		if _, err := db.Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name, model_name
+		) VALUES (?, ?, 'completed', 'claude', ?, 'upstream', 'claude-sonnet-4')`,
+			row.id, timezonepolicy.FormatStorage(now.Add(-5*time.Minute)), row.upstream); err != nil {
+			t.Fatalf("failed to seed %s: %v", row.id, err)
+		}
+	}
+
+	params := ModelUsageQueryParams{
+		Period:    "1d",
+		StartDate: now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05-07:00"),
+		EndDate:   now.Add(1 * time.Hour).Format("2006-01-02T15:04:05-07:00"),
+	}
+
+	endpointResult, err := app.GetModelUsageStats(ModelUsageQueryParams{Period: params.Period, StartDate: params.StartDate, EndDate: params.EndDate, SourceView: "endpoint"})
+	if err != nil {
+		t.Fatalf("GetModelUsageStats(endpoint) failed: %v", err)
+	}
+	if endpointResult.TotalRequests != 1 || len(endpointResult.Rows) != 1 || endpointResult.Rows[0].UpstreamType != "endpoint" {
+		t.Fatalf("unexpected endpoint view: %+v", endpointResult)
+	}
+
+	accountResult, err := app.GetModelUsageStats(ModelUsageQueryParams{Period: params.Period, StartDate: params.StartDate, EndDate: params.EndDate, SourceView: "account"})
+	if err != nil {
+		t.Fatalf("GetModelUsageStats(account) failed: %v", err)
+	}
+	if accountResult.TotalRequests != 1 || len(accountResult.Rows) != 1 || accountResult.Rows[0].UpstreamType != "account" {
+		t.Fatalf("unexpected account view: %+v", accountResult)
+	}
+}
+
+func TestGetModelUsageStats_RejectsInvalidStartDate(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+
+	if _, err := app.GetModelUsageStats(ModelUsageQueryParams{StartDate: "not-a-date"}); err == nil {
+		t.Fatal("expected invalid start_date to return an error")
+	}
+}
+
 func TestGetRequestsUsesConfiguredDSTDayRangeAndReturnsUTC(t *testing.T) {
 	policy, err := timezonepolicy.New("America/New_York")
 	if err != nil {

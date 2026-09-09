@@ -1091,6 +1091,56 @@ export const getUsageStats = async (params = {}) => {
   };
 };
 
+/**
+ * 获取模型维度调用统计（概览页模型调用表 / Token 分布）
+ * @param {Object} params - 查询参数
+ * @param {string} params.period - 时间周期: "1h", "1d", "7d", "30d", "90d"（默认 1d）
+ * @param {string} params.start_date - 开始时间（优先于 period）
+ * @param {string} params.end_date - 结束时间（优先于 period）
+ * @param {string} params.model - 模型筛选
+ * @param {string} params.request_family - 请求类型筛选
+ * @param {string} params.source_view - endpoint/account/all
+ * @param {string} params.upstream_name - 上游筛选
+ * @param {number} params.limit - Top N，默认 8
+ * @returns {Promise<Object>} - { period, start_time, end_time, rows, truncated, ...汇总字段 }
+ */
+export const getModelUsageStats = async (params = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const queryParams = {
+    period: params.period || '1d',
+    start_date: params.start_date || '',
+    end_date: params.end_date || '',
+    model: params.model || '',
+    request_family: params.request_family || params.requestFamily || '',
+    source_view: params.source_view || params.sourceView || 'all',
+    upstream_name: params.upstream_name || params.upstreamName || '',
+    limit: Number(params.limit) || 0
+  };
+
+  const data = await WailsApp.GetModelUsageStats(queryParams);
+
+  return {
+    period: data.period || queryParams.period,
+    start_time: data.start_time || '',
+    end_time: data.end_time || '',
+    rows: Array.isArray(data.rows) ? data.rows : [],
+    truncated: data.truncated === true,
+    total_requests: data.total_requests || 0,
+    success_requests: data.success_requests || 0,
+    failed_requests: data.failed_requests || 0,
+    total_tokens: data.total_tokens || 0,
+    input_tokens: data.input_tokens || 0,
+    output_tokens: data.output_tokens || 0,
+    cache_creation_tokens: data.cache_creation_tokens || 0,
+    cache_read_tokens: data.cache_read_tokens || 0,
+    total_cost_usd: data.total_cost_usd || 0,
+    claude_count: data.claude_count || 0,
+    codex_count: data.codex_count || 0
+  };
+};
+
 export const getUsageSummary = async (startTime = '', endTime = '') => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
@@ -1230,18 +1280,39 @@ export const isProxyRunning = async () => {
 // ============================================
 
 /**
- * 获取请求趋势图表数据
- * @param {number} minutes - 时间范围（分钟）
- * @returns {Promise<Array>} - 图表数据点数组 [{time, total, success, fail}]
+ * 获取请求趋势图表数据（按 request_logs 时间分桶）
+ * @param {Object} params - 查询参数
+ * @param {string} params.period - 时间周期: "1h", "1d", "7d", "30d"（默认 1d）
+ * @param {string} params.start_date - 开始时间（优先于 period）
+ * @param {string} params.end_date - 结束时间（优先于 period）
+ * @param {string} params.request_family - 请求类型筛选
+ * @param {string} params.source_view - endpoint/account/all
+ * @param {string} params.model - 模型筛选
+ * @param {string} params.upstream_name - 上游筛选
+ * @returns {Promise<Object>} - { period, granularity, start_time, end_time, points: [{time,total,success,fail}] }
  */
-export const getRequestTrendChart = async (minutes = 30) => {
+export const getRequestTrendData = async (params = {}) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  console.log('📊 [Wails] 调用 GetRequestTrendChart, minutes:', minutes);
-  const data = await WailsApp.GetRequestTrendChart(minutes);
-  console.log('📊 [Wails] GetRequestTrendChart 返回:', data ? `${data.length} 个数据点` : '无数据', data);
-  return data || [];
+  const queryParams = {
+    period: params.period || '1d',
+    start_date: params.start_date || '',
+    end_date: params.end_date || '',
+    model: params.model || '',
+    request_family: params.request_family || params.requestFamily || '',
+    source_view: params.source_view || params.sourceView || 'all',
+    upstream_name: params.upstream_name || params.upstreamName || ''
+  };
+
+  const data = await WailsApp.GetRequestTrendData(queryParams);
+  return {
+    period: data.period || queryParams.period,
+    granularity: data.granularity || 'hour',
+    start_time: data.start_time || '',
+    end_time: data.end_time || '',
+    points: Array.isArray(data.points) ? data.points : []
+  };
 };
 
 /**

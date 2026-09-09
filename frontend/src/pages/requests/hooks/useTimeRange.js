@@ -14,11 +14,12 @@ import { useTimezone } from '@/contexts/TimezoneContext.jsx';
 /**
  * useTimeRange Hook - 管理时间范围快捷选择
  * @param {Function} onRangeChange - 时间范围变更回调
+ * @param {string} initialRange - 初始高亮的范围（概览带过来的自定义区间传 'custom'，不点亮任何预设）
  * @returns {Object}
  */
-export const useTimeRange = (onRangeChange) => {
+export const useTimeRange = (onRangeChange, initialRange = 'today') => {
   const { getTodayTimeRange, getRecentDaysRange } = useTimezone();
-  const [activeRange, setActiveRange] = useState('today');
+  const [activeRange, setActiveRange] = useState(initialRange);
 
   // 选择时间范围
   const selectRange = useCallback((range) => {

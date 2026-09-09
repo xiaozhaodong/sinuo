@@ -2,6 +2,14 @@ import { useMemo } from 'react';
 import { Calendar, Check, Filter, X } from 'lucide-react';
 import { CustomSelect } from '@components/ui';
 import { STATUS_SELECT_OPTIONS } from '../utils/constants.js';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
+import { formatFilterDateTimeInput } from '../utils/filterTime.js';
+
+const SOURCE_OPTIONS = [
+  { value: 'all', label: '全部来源' },
+  { value: 'endpoint', label: '端点' },
+  { value: 'account', label: '账号池' }
+];
 
 const FAMILY_OPTIONS = [
   { value: '', label: '全部类型' },
@@ -12,6 +20,7 @@ const FAMILY_OPTIONS = [
 ];
 
 const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset, models = [], upstreams = [] }) => {
+  const { timezone } = useTimezone();
   const modelOptions = useMemo(() => [
     { value: '', label: '所有模型' },
     ...models.map((model) => {
@@ -40,15 +49,16 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
               {index === 1 && <span className="text-sm text-fg-subtle">至</span>}
               <div className="relative">
                 <Calendar className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
-                <input type="datetime-local" value={filters[field]} onChange={(event) => updateFilter(field, event.target.value)} className="w-[200px] rounded-lg border border-line bg-surface py-1.5 pl-9 pr-2 text-sm text-fg-body focus:border-accent-ring focus:ring-2 focus:ring-accent-ring/20" />
+                <input type="datetime-local" step="any" aria-label={index === 0 ? '开始时间' : '结束时间'} value={formatFilterDateTimeInput(filters[field], timezone)} onChange={(event) => updateFilter(field, event.target.value)} className="w-[250px] rounded-lg border border-line bg-surface py-1.5 pl-9 pr-2 text-sm text-fg-body focus:border-accent-ring focus:ring-2 focus:ring-accent-ring/20" />
               </div>
             </div>
           ))}
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <CustomSelect options={STATUS_SELECT_OPTIONS} value={filters.status} onChange={(value) => updateFilter('status', value)} size="sm" placeholder="状态" />
           <CustomSelect options={modelOptions} value={filters.model} onChange={(value) => updateFilter('model', value)} size="sm" placeholder="模型" />
           <CustomSelect options={FAMILY_OPTIONS} value={filters.requestFamily === 'all' ? '' : filters.requestFamily} onChange={(value) => { updateFilter('requestFamily', value || 'all'); updateFilter('upstreamName', 'all'); }} size="sm" placeholder="类型" />
+          <CustomSelect options={SOURCE_OPTIONS} value={filters.sourceView || 'all'} onChange={(value) => { updateFilter('sourceView', value); updateFilter('upstreamName', 'all'); }} size="sm" placeholder="来源" />
           <CustomSelect options={upstreamOptions} value={filters.upstreamName === 'all' ? '' : filters.upstreamName} onChange={(value) => updateFilter('upstreamName', value || 'all')} size="sm" placeholder="上游" />
         </div>
       </div>

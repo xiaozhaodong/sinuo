@@ -309,6 +309,18 @@ export const fetchUsageStats = async (params = {}) => {
   return await fetchWithTimeout(url);
 };
 
+/**
+ * 获取模型维度调用统计（概览页模型调用表 / Token 分布）。
+ * 目前只有桌面端 Wails 绑定提供该聚合接口，HTTP 环境无对应服务。
+ * @param {Object} params - period/start_date/end_date/model/request_family/source_view/upstream_name/limit
+ */
+export const fetchModelUsageStats = async (params = {}) => {
+  if (isWailsEnvironment()) {
+    return await WailsApi.getModelUsageStats(params);
+  }
+  throw new Error('当前运行环境暂不支持模型调用统计');
+};
+
 export const fetchRequests = async (params = {}) => {
   const queryInput = {
     ...params,
@@ -464,23 +476,18 @@ const transformChartJsToRecharts = (chartJsData, keyMapping) => {
 };
 
 /**
- * 获取请求趋势数据
- * @param {number} minutes - 时间范围（分钟），默认 30
+ * 获取请求趋势数据（按 request_logs 时间分桶）
+ * 失败时抛出错误，由调用方呈现局部错误状态（概览页快照需要区分「无数据」与「查询失败」）
+ * @param {Object} params - period/start_date/end_date/model/request_family/source_view/upstream_name
+ * @returns {Promise<Object>} - { period, granularity, start_time, end_time, points }
  */
-export const fetchRequestTrendData = async (minutes = 30) => {
-  try {
-    // Wails 环境使用绑定
-    if (isWailsEnvironment()) {
-      return await WailsApi.getRequestTrendChart(minutes);
-    }
-
-    const data = await fetchWithTimeout(`/api/v1/chart/request-trends?minutes=${minutes}`);
-    // 转换为 Recharts 格式: total, success, fail
-    return transformChartJsToRecharts(data, ['total', 'success', 'fail']);
-  } catch (error) {
-    console.error('获取请求趋势数据失败:', error);
-    return [];
+export const fetchRequestTrendData = async (params = {}) => {
+  // Wails 环境使用绑定
+  if (isWailsEnvironment()) {
+    return await WailsApi.getRequestTrendData(params);
   }
+
+  throw new Error('当前运行环境暂不支持请求趋势查询');
 };
 
 /**
@@ -488,19 +495,14 @@ export const fetchRequestTrendData = async (minutes = 30) => {
  * @param {number} minutes - 时间范围（分钟），默认 30
  */
 export const fetchResponseTimeData = async (minutes = 30) => {
-  try {
-    // Wails 环境使用绑定
-    if (isWailsEnvironment()) {
-      return await WailsApi.getResponseTimeChart(minutes);
-    }
-
-    const data = await fetchWithTimeout(`/api/v1/chart/response-times?minutes=${minutes}`);
-    // 转换为 Recharts 格式: avg, min, max
-    return transformChartJsToRecharts(data, ['avg', 'min', 'max']);
-  } catch (error) {
-    console.error('获取响应时间数据失败:', error);
-    return [];
+  // Wails 环境使用绑定
+  if (isWailsEnvironment()) {
+    return await WailsApi.getResponseTimeChart(minutes);
   }
+
+  const data = await fetchWithTimeout(`/api/v1/chart/response-times?minutes=${minutes}`);
+  // 转换为 Recharts 格式: avg, min, max
+  return transformChartJsToRecharts(data, ['avg', 'min', 'max']);
 };
 
 /**
@@ -552,40 +554,36 @@ export const fetchEndpointHealthData = async () => {
 
 /**
  * 获取端点成本数据
+ * 失败时抛出错误，由调用方呈现局部错误状态。
  */
 export const fetchEndpointCostsData = async () => {
-  try {
-    // Wails 环境使用绑定
-    if (isWailsEnvironment()) {
-      return await WailsApi.getEndpointCosts();
-    }
-
-    const data = await fetchWithTimeout('/api/v1/chart/endpoint-costs');
-    // 转换为 Recharts 格式: { name, tokens, cost }
-    if (data.labels && data.datasets) {
-      // 查找 Token 数据集（label 包含 "Token" 或 "token"）
-      const tokensDataset = data.datasets.find(d =>
-        d.label?.toLowerCase().includes('token')
-      );
-      // 查找成本数据集（label 包含 "成本" 或 "Cost" 或 "USD"）
-      const costDataset = data.datasets.find(d =>
-        d.label?.includes('成本') || d.label?.toLowerCase().includes('cost') || d.label?.includes('USD')
-      );
-
-      const tokensData = tokensDataset?.data || [];
-      const costData = costDataset?.data || [];
-
-      return data.labels.map((name, i) => ({
-        name,
-        tokens: tokensData[i] || 0,
-        cost: costData[i] || 0
-      }));
-    }
-    return [];
-  } catch (error) {
-    console.error('获取端点成本数据失败:', error);
-    return [];
+  // Wails 环境使用绑定
+  if (isWailsEnvironment()) {
+    return await WailsApi.getEndpointCosts();
   }
+
+  const data = await fetchWithTimeout('/api/v1/chart/endpoint-costs');
+  // 转换为 Recharts 格式: { name, tokens, cost }
+  if (data.labels && data.datasets) {
+    // 查找 Token 数据集（label 包含 "Token" 或 "token"）
+    const tokensDataset = data.datasets.find(d =>
+      d.label?.toLowerCase().includes('token')
+    );
+    // 查找成本数据集（label 包含 "成本" 或 "Cost" 或 "USD"）
+    const costDataset = data.datasets.find(d =>
+      d.label?.includes('成本') || d.label?.toLowerCase().includes('cost') || d.label?.includes('USD')
+    );
+
+    const tokensData = tokensDataset?.data || [];
+    const costData = costDataset?.data || [];
+
+    return data.labels.map((name, i) => ({
+      name,
+      tokens: tokensData[i] || 0,
+      cost: costData[i] || 0
+    }));
+  }
+  return [];
 };
 
 /**
@@ -593,18 +591,13 @@ export const fetchEndpointCostsData = async () => {
  * @param {number} minutes - 时间范围（分钟），默认 60
  */
 export const fetchConnectionActivityData = async (minutes = 60) => {
-  try {
-    // Wails 环境使用绑定
-    if (isWailsEnvironment()) {
-      return await WailsApi.getConnectionActivityChart(minutes);
-    }
-
-    const data = await fetchWithTimeout(`/api/v1/chart/connection-activity?minutes=${minutes}`);
-    return transformChartJsToRecharts(data, ['connections']);
-  } catch (error) {
-    console.error('获取连接活动数据失败:', error);
-    return [];
+  // Wails 环境使用绑定
+  if (isWailsEnvironment()) {
+    return await WailsApi.getConnectionActivityChart(minutes);
   }
+
+  const data = await fetchWithTimeout(`/api/v1/chart/connection-activity?minutes=${minutes}`);
+  return transformChartJsToRecharts(data, ['connections']);
 };
 
 // ============================================
