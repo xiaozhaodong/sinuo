@@ -35,10 +35,48 @@ func walkerForPath(requestPath string) segmentMatcher {
 		return matchClaudeMessagesTextPath
 	case "/v1/responses", "/v1/responses/compact":
 		return matchCodexResponsesTextPath
+	case "/v1/alpha/search":
+		return matchCodexSearchTextPath
 	case "/v1/images/generations", "/v1/images/edits":
 		return matchOpenAIImagesGenerationsTextPath
 	default:
 		return nil
+	}
+}
+
+// matchCodexSearchTextPath 匹配 Codex /v1/alpha/search 可扫描文本字段（rust-v0.153.4 SearchRequest）：
+//  1. input（字符串）
+//  2. input[].content（字符串）
+//  3. input[].content[].text（最近对话消息的 input_text/output_text）
+//  4. commands.search_query[].q / commands.image_query[].q
+//  5. commands.find[].pattern
+//
+// id/model/settings、open/click/find 的 ref_id、recency/domains 等引用与控制字段不匹配；
+// 看似 base64 或高熵的字符串不因此跳过。
+func matchCodexSearchTextPath(path []pathElem) bool {
+	switch len(path) {
+	case 1:
+		return path[0].Key == "input" && path[0].Index < 0
+	case 3:
+		return path[0].Key == "input" && path[1].Index >= 0 && path[2].Key == "content"
+	case 4:
+		if path[0].Key != "commands" || path[0].Index >= 0 || path[2].Index < 0 {
+			return false
+		}
+		switch path[1].Key {
+		case "search_query", "image_query":
+			return path[3].Key == "q"
+		case "find":
+			return path[3].Key == "pattern"
+		default:
+			return false
+		}
+	case 5:
+		return path[0].Key == "input" && path[1].Index >= 0 &&
+			path[2].Key == "content" && path[3].Index >= 0 &&
+			path[4].Key == "text"
+	default:
+		return false
 	}
 }
 
@@ -87,30 +125,58 @@ func matchClaudeMessagesTextPath(path []pathElem) bool {
 	}
 }
 
-// matchCodexResponsesTextPath 匹配 Codex /v1/responses 可扫描文本字段：
+// matchCodexResponsesTextPath 匹配 Codex /v1/responses 可扫描文本字段。
+// WS response.create 可能把请求放在 response 对象中；两种包形共用同一规则。
 //  1. instructions（字符串）
 //  2. input（字符串）
 //  3. input[].content（字符串）
 //  4. input[].content[].text（input_text/text）
 //  5. input[].output（function_call_output 的输出字符串）
+//  6. input[].output[].text（工具结果数组中的明文块）
+//  7. input[].arguments / input[].input（回放的 function/custom 工具输入）
+//  8. tools/additional_tools 中的 description、JSON schema description/default/examples
 //
-// model/tools/metadata/reasoning/stream 等路径天然不匹配。
+// encrypted_content/encrypted_output/encrypted_function_args、图片/文件、名称、属性键、
+// enum、模型、引用与控制字段天然不匹配；不能因普通字符串看似密文就跳过。
 func matchCodexResponsesTextPath(path []pathElem) bool {
+	if len(path) > 1 && path[0].Key == "response" && path[0].Index < 0 {
+		path = path[1:]
+	}
 	switch len(path) {
 	case 1:
 		return (path[0].Key == "instructions" || path[0].Key == "input") && path[0].Index < 0
 	case 3:
-		if path[0].Key != "input" || path[1].Index < 0 {
-			return false
+		if path[0].Key == "input" && path[1].Index >= 0 {
+			switch path[2].Key {
+			case "content", "output", "arguments", "input":
+				return true
+			}
 		}
-		return path[2].Key == "content" || path[2].Key == "output"
+		return isCodexToolArray(path[0]) && path[1].Index >= 0 && path[2].Key == "description"
 	case 5:
-		return path[0].Key == "input" && path[1].Index >= 0 &&
-			path[2].Key == "content" && path[3].Index >= 0 &&
-			path[4].Key == "text"
+		if path[0].Key == "input" && path[1].Index >= 0 && path[3].Index >= 0 && path[4].Key == "text" {
+			return path[2].Key == "content" || path[2].Key == "output"
+		}
 	default:
+	}
+	return matchCodexToolSchemaTextPath(path)
+}
+
+func isCodexToolArray(elem pathElem) bool {
+	return elem.Index < 0 && (elem.Key == "tools" || elem.Key == "additional_tools")
+}
+
+// matchCodexToolSchemaTextPath 只匹配工具 JSON schema 内明确可读的说明/示例值。
+// properties 的键和 enum 值属于调用契约，不得改写。
+func matchCodexToolSchemaTextPath(path []pathElem) bool {
+	if len(path) < 4 || !isCodexToolArray(path[0]) || path[1].Index < 0 || path[2].Key != "parameters" {
 		return false
 	}
+	last := path[len(path)-1]
+	if last.Index < 0 && (last.Key == "description" || last.Key == "default") {
+		return true
+	}
+	return len(path) >= 2 && path[len(path)-2].Key == "examples" && last.Index >= 0
 }
 
 // collectJSONTextSegments 用 offset-aware 方式收集 body 中可扫描文本字段。

@@ -233,10 +233,11 @@ func TestSubscriptionProxyRuntimeStopClosesActiveWebSockets(t *testing.T) {
 
 	writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer writeCancel()
-	if err := conn.Write(writeCtx, websocket.MessageText, []byte("ping")); err != nil {
+	const warmup = `{"type":"response.create","generate":false,"input":[]}`
+	if err := conn.Write(writeCtx, websocket.MessageText, []byte(warmup)); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
-	if _, data, err := conn.Read(writeCtx); err != nil || string(data) != "ping" {
+	if _, data, err := conn.Read(writeCtx); err != nil || string(data) != warmup {
 		t.Fatalf("回显失败: %v %q", err, string(data))
 	}
 	if got := runtime.Status().ActiveWebSockets; got != 2 {

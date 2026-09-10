@@ -38,10 +38,17 @@ const (
 	DirectionUpstreamToDownstream Direction = "upstream_to_downstream"
 )
 
-// MessageInterceptor 在消息进入转发队列前逐条处理；返回 nil 表示丢弃该消息。
-// 同一方向严格按读取顺序调用，供父包挂接隐私扫描等能力。
+// InterceptResult 描述一次拦截结果。Forward=nil 表示不向原方向转发；
+// Reply 会进入反方向现有写队列，保持与该方向其它响应消息相同的背压与顺序约束。
+type InterceptResult struct {
+	Forward []byte
+	Reply   []byte
+}
+
+// MessageInterceptor 在消息进入转发队列前逐条处理。
+// 同一方向严格按读取顺序调用，供父包挂接隐私扫描与事件关联。
 type MessageInterceptor interface {
-	Intercept(ctx context.Context, direction Direction, payload []byte) ([]byte, error)
+	Intercept(ctx context.Context, direction Direction, payload []byte) (InterceptResult, error)
 }
 
 // Options 握手与桥接参数。
@@ -130,11 +137,13 @@ func Bridge(ctx context.Context, downstream, upstream *websocket.Conn, opts Opti
 	defer cancel()
 
 	results := make(chan laneResult, 2)
+	downstreamQueue := newMessageQueue(opts.MaxQueueMessages, opts.MaxQueueBytes)
+	upstreamQueue := newMessageQueue(opts.MaxQueueMessages, opts.MaxQueueBytes)
 	go func() {
-		results <- runLane(ctx, DirectionDownstreamToUpstream, downstream, upstream, opts)
+		results <- runLane(ctx, DirectionDownstreamToUpstream, downstream, upstream, upstreamQueue, downstreamQueue, opts)
 	}()
 	go func() {
-		results <- runLane(ctx, DirectionUpstreamToDownstream, upstream, downstream, opts)
+		results <- runLane(ctx, DirectionUpstreamToDownstream, upstream, downstream, downstreamQueue, upstreamQueue, opts)
 	}()
 
 	first := <-results
@@ -168,11 +177,10 @@ type writerResult struct {
 }
 
 // runLane 运行一个方向的读取 → 队列 → 写入；返回时对端连接已按需关闭。
-func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn, opts Options) laneResult {
+func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn, queue, reverseQueue *messageQueue, opts Options) laneResult {
 	laneCtx, laneCancel := context.WithCancel(ctx)
 	defer laneCancel()
 
-	queue := newMessageQueue(opts.MaxQueueMessages, opts.MaxQueueBytes)
 	writer := make(chan writerResult, 1)
 	go func() { writer <- writeLane(laneCtx, laneCancel, queue, dst, opts.WriteTimeout) }()
 
@@ -197,11 +205,19 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 			break
 		}
 		if opts.Interceptor != nil {
-			payload, err = opts.Interceptor.Intercept(laneCtx, direction, payload)
+			intercepted, interceptErr := opts.Interceptor.Intercept(laneCtx, direction, payload)
+			err = interceptErr
 			if err != nil {
 				stop(err)
 				break
 			}
+			if intercepted.Reply != nil {
+				if err := reverseQueue.push(laneCtx, message{typ: websocket.MessageText, data: intercepted.Reply}); err != nil {
+					stop(err)
+					break
+				}
+			}
+			payload = intercepted.Forward
 			if payload == nil {
 				continue
 			}

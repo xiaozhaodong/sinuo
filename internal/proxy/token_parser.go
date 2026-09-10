@@ -26,6 +26,7 @@ var (
 // 用于将Token解析与状态记录分离，支持职责纯化
 type ParseResult struct {
 	TokenUsage        *tracking.TokenUsage
+	HasTokenUsage     bool
 	ModelName         string
 	ErrorInfo         *ErrorInfo
 	IsCompleted       bool
@@ -365,7 +366,7 @@ func (tp *TokenParser) isTrackedResponsesEvent(eventType string) bool {
 
 func isResponsesTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
 		return true
 	default:
 		return false
@@ -518,7 +519,144 @@ func (tp *TokenParser) trackMessageStop() {
 	}
 }
 
-// parseResponsesEventV2 解析 /v1/responses 关键事件，返回 ParseResult
+// ParseResponsesEventJSON 是 SSE 与 WS 共用的 Responses 事件解析入口。
+// 它不依赖传输状态；调用方自行负责事件关联与一次性结算。
+func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		if inferred, ok := inferSSEEventTypeFromPayload(string(jsonData)); ok {
+			eventType = inferred
+		}
+	}
+	if len(jsonData) == 0 {
+		return nil
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(jsonData, &payload); err != nil {
+		modelName := extractResponsesModelFromRawJSON(string(jsonData))
+		if modelName == "" {
+			modelName = "default"
+		}
+		switch eventType {
+		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
+			return &ParseResult{
+				ModelName:       "error:response_failed",
+				ErrorInfo:       &ErrorInfo{Type: "response_failed", Message: "responses stream failed (payload parse failed)"},
+				IsCompleted:     true,
+				Status:          StatusErrorAPI,
+				HasStreamOutput: true,
+			}
+		case "response.completed", "response.done":
+			result := &ParseResult{
+				ModelName:         modelName,
+				IsCompleted:       true,
+				Status:            "non_token_response",
+				HasStreamOutput:   true,
+				HasFallbackOutput: true,
+			}
+			if usage, ok := extractResponsesUsageFromRawJSON(string(jsonData)); ok {
+				result.TokenUsage = usage
+				result.HasTokenUsage = true
+				result.Status = "completed"
+			} else {
+				result.TokenUsage = &tracking.TokenUsage{}
+			}
+			return result
+		default:
+			return &ParseResult{ModelName: modelName, HasStreamOutput: true}
+		}
+	}
+
+	modelName := extractResponsesModel(payload)
+	if modelName == "" {
+		modelName = "default"
+	}
+	switch eventType {
+	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
+		result := &ParseResult{
+			ModelName:       modelName,
+			IsCompleted:     true,
+			Status:          StatusErrorAPI,
+			HasStreamOutput: true,
+		}
+		if usageMap := extractResponsesUsageMap(payload); usageMap != nil {
+			result.TokenUsage = tokenUsageFromResponsesUsageMap(usageMap)
+			result.HasTokenUsage = responsesUsageReported(usageMap)
+		}
+		if eventType == "response.incomplete" && responsesIncompleteReason(payload) == "steered" {
+			result.Status = "steered"
+			return result
+		}
+		result.ErrorInfo = normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
+		return result
+	case "response.completed", "response.done":
+		result := &ParseResult{
+			ModelName:         modelName,
+			IsCompleted:       true,
+			Status:            "non_token_response",
+			HasStreamOutput:   true,
+			HasFallbackOutput: true,
+		}
+		if usageMap := extractResponsesUsageMap(payload); usageMap != nil {
+			result.TokenUsage = tokenUsageFromResponsesUsageMap(usageMap)
+			result.HasTokenUsage = responsesUsageReported(usageMap)
+			result.Status = "completed"
+		} else {
+			result.TokenUsage = &tracking.TokenUsage{}
+		}
+		return result
+	default:
+		result := &ParseResult{ModelName: modelName, HasStreamOutput: true}
+		if visibleText := extractVisibleTextFromResponsesPayload(eventType, payload); visibleText != "" {
+			result.HasVisibleText = true
+			result.HasFallbackOutput = true
+		}
+		return result
+	}
+}
+
+// responsesUsageReported 区分上游明确报告的零用量与空/无效 usage。
+// 旧解析结果仍保留 TokenUsage 指针，新增入口只在此标记为真时持久化用量。
+func responsesUsageReported(usage map[string]interface{}) bool {
+	for _, key := range []string{"input_tokens", "output_tokens"} {
+		value, ok := usage[key].(float64)
+		if ok && value >= 0 && value < float64(1<<63) && value == float64(int64(value)) {
+			return true
+		}
+	}
+	return false
+}
+
+func tokenUsageFromResponsesUsageMap(usageMap map[string]interface{}) *tracking.TokenUsage {
+	usage := &tracking.TokenUsage{
+		InputTokens:  parseInt64Field(usageMap["input_tokens"]),
+		OutputTokens: parseInt64Field(usageMap["output_tokens"]),
+	}
+	if inputDetails, ok := usageMap["input_tokens_details"].(map[string]interface{}); ok {
+		usage.CacheReadTokens = parseInt64Field(inputDetails["cached_tokens"])
+	}
+	return usage
+}
+
+func responsesIncompleteReason(payload map[string]interface{}) string {
+	if reason, ok := payload["reason"].(string); ok {
+		return strings.TrimSpace(reason)
+	}
+	if response, ok := payload["response"].(map[string]interface{}); ok {
+		if reason, ok := response["reason"].(string); ok {
+			return strings.TrimSpace(reason)
+		}
+		if details, ok := response["incomplete_details"].(map[string]interface{}); ok {
+			if reason, ok := details["reason"].(string); ok {
+				return strings.TrimSpace(reason)
+			}
+		}
+	}
+	return ""
+}
+
+// parseResponsesEventV2 是 SSE eventBuffer 的薄包装。
 func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 	defer func() {
 		tp.eventBuffer.Reset()
@@ -526,141 +664,9 @@ func (tp *TokenParser) parseResponsesEventV2(eventType string) *ParseResult {
 		tp.currentEvent = ""
 	}()
 
-	tp.hasResponsesEvent = true
-
-	jsonData := tp.eventBuffer.String()
-	if jsonData == "" {
-		return nil
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonData), &payload); err != nil {
-		switch eventType {
-		case "response.in_progress":
-			if modelName := extractResponsesModelFromRawJSON(jsonData); modelName != "" {
-				tp.modelName = modelName
-			}
-			return &ParseResult{HasStreamOutput: true}
-		case "response.failed":
-			errorType := "response_failed"
-			errorMessage := "responses stream failed (payload parse failed)"
-			return &ParseResult{
-				TokenUsage: &tracking.TokenUsage{
-					InputTokens:         0,
-					OutputTokens:        0,
-					CacheCreationTokens: 0,
-					CacheReadTokens:     0,
-				},
-				ModelName:   fmt.Sprintf("error:%s", errorType),
-				ErrorInfo:   &ErrorInfo{Type: errorType, Message: errorMessage},
-				IsCompleted: true,
-				Status:      StatusErrorAPI,
-			}
-		case "response.completed":
-			tp.hasResponseCompleted = true
-			if modelName := extractResponsesModelFromRawJSON(jsonData); modelName != "" {
-				tp.modelName = modelName
-			}
-			if usage, ok := extractResponsesUsageFromRawJSON(jsonData); ok {
-				tp.hasResponseCompletedUsage = true
-				tp.finalUsage = usage
-				return &ParseResult{
-					TokenUsage:        tp.finalUsage,
-					ModelName:         tp.getModelNameOrDefault(),
-					IsCompleted:       true,
-					Status:            "completed",
-					HasStreamOutput:   true,
-					HasFallbackOutput: true,
-				}
-			}
-			return &ParseResult{
-				TokenUsage: &tracking.TokenUsage{
-					InputTokens:         0,
-					OutputTokens:        0,
-					CacheCreationTokens: 0,
-					CacheReadTokens:     0,
-				},
-				ModelName:         tp.getModelNameOrDefault(),
-				IsCompleted:       true,
-				Status:            "non_token_response",
-				HasStreamOutput:   true,
-				HasFallbackOutput: true,
-			}
-		default:
-			return &ParseResult{HasStreamOutput: true}
-		}
-	}
-
-	tp.captureResponsesModel(payload, eventType)
-
-	if visibleText := extractVisibleTextFromResponsesPayload(eventType, payload); visibleText != "" {
-		return &ParseResult{HasStreamOutput: true, HasVisibleText: true, HasFallbackOutput: true}
-	}
-
-	switch eventType {
-	case "response.in_progress":
-		return &ParseResult{HasStreamOutput: true}
-	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
-		tp.hasResponseCompleted = true
-		tp.responseTerminalEvent = eventType
-		errorInfo := normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
-		return &ParseResult{
-			TokenUsage: &tracking.TokenUsage{
-				InputTokens:         0,
-				OutputTokens:        0,
-				CacheCreationTokens: 0,
-				CacheReadTokens:     0,
-			},
-			ModelName:       fmt.Sprintf("error:%s", errorInfo.Type),
-			ErrorInfo:       errorInfo,
-			IsCompleted:     true,
-			Status:          StatusErrorAPI,
-			HasStreamOutput: true,
-		}
-	case "response.completed", "response.done":
-		tp.hasResponseCompleted = true
-		tp.responseTerminalEvent = eventType
-		usageMap := extractResponsesUsageMap(payload)
-		if usageMap == nil {
-			return &ParseResult{
-				TokenUsage: &tracking.TokenUsage{
-					InputTokens:         0,
-					OutputTokens:        0,
-					CacheCreationTokens: 0,
-					CacheReadTokens:     0,
-				},
-				ModelName:   tp.getModelNameOrDefault(),
-				IsCompleted: true,
-				Status:      "non_token_response",
-			}
-		}
-
-		inputTokens := parseInt64Field(usageMap["input_tokens"])
-		outputTokens := parseInt64Field(usageMap["output_tokens"])
-		cacheReadTokens := int64(0)
-		if inputDetails, ok := usageMap["input_tokens_details"].(map[string]interface{}); ok {
-			cacheReadTokens = parseInt64Field(inputDetails["cached_tokens"])
-		}
-
-		tp.hasResponseCompletedUsage = true
-		tp.finalUsage = &tracking.TokenUsage{
-			InputTokens:         inputTokens,
-			OutputTokens:        outputTokens,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     cacheReadTokens,
-		}
-
-		return &ParseResult{
-			TokenUsage:        tp.finalUsage,
-			ModelName:         tp.getModelNameOrDefault(),
-			IsCompleted:       true,
-			Status:            "completed",
-			HasStreamOutput:   true,
-			HasFallbackOutput: true,
-		}
-	default:
-		return &ParseResult{HasStreamOutput: true}
-	}
+	result := ParseResponsesEventJSON(eventType, []byte(tp.eventBuffer.String()))
+	tp.applyResponsesParseResult(eventType, result)
+	return result
 }
 
 // parseResponsesEvent 解析 /v1/responses 关键事件，返回 monitor.TokenUsage（兼容旧接口）
@@ -671,61 +677,37 @@ func (tp *TokenParser) parseResponsesEvent(eventType string) *monitor.TokenUsage
 		tp.currentEvent = ""
 	}()
 
+	result := ParseResponsesEventJSON(eventType, []byte(tp.eventBuffer.String()))
+	tp.applyResponsesParseResult(eventType, result)
+	if result == nil || result.Status != "completed" || !result.HasTokenUsage || result.TokenUsage == nil {
+		return nil
+	}
+	return &monitor.TokenUsage{
+		InputTokens:         result.TokenUsage.InputTokens,
+		OutputTokens:        result.TokenUsage.OutputTokens,
+		CacheCreationTokens: result.TokenUsage.CacheCreationTokens,
+		CacheReadTokens:     result.TokenUsage.CacheReadTokens,
+	}
+}
+
+func (tp *TokenParser) applyResponsesParseResult(eventType string, result *ParseResult) {
 	tp.hasResponsesEvent = true
-
-	jsonData := tp.eventBuffer.String()
-	if jsonData == "" {
-		return nil
+	if result == nil {
+		return
 	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonData), &payload); err != nil {
-		return nil
+	if result.ModelName != "" && result.ModelName != "default" && !strings.HasPrefix(result.ModelName, "error:") {
+		tp.modelName = result.ModelName
+		result.ModelName = tp.modelName
+	} else if tp.modelName != "" && (result.ModelName == "" || result.ModelName == "default") {
+		result.ModelName = tp.modelName
 	}
-
-	tp.captureResponsesModel(payload, eventType)
-
-	switch eventType {
-	case "response.completed", "response.done":
+	if result.IsCompleted {
 		tp.hasResponseCompleted = true
-		tp.responseTerminalEvent = eventType
-		usageMap := extractResponsesUsageMap(payload)
-		if usageMap == nil {
-			return nil
-		}
-
-		inputTokens := parseInt64Field(usageMap["input_tokens"])
-		outputTokens := parseInt64Field(usageMap["output_tokens"])
-		cacheReadTokens := int64(0)
-		if inputDetails, ok := usageMap["input_tokens_details"].(map[string]interface{}); ok {
-			cacheReadTokens = parseInt64Field(inputDetails["cached_tokens"])
-		}
-
+		tp.responseTerminalEvent = strings.TrimSpace(eventType)
+	}
+	if result.HasTokenUsage && result.TokenUsage != nil {
 		tp.hasResponseCompletedUsage = true
-		tp.finalUsage = &tracking.TokenUsage{
-			InputTokens:         inputTokens,
-			OutputTokens:        outputTokens,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     cacheReadTokens,
-		}
-
-		return &monitor.TokenUsage{
-			InputTokens:         inputTokens,
-			OutputTokens:        outputTokens,
-			CacheCreationTokens: 0,
-			CacheReadTokens:     cacheReadTokens,
-		}
-	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
-		tp.hasResponseCompleted = true
-		tp.responseTerminalEvent = eventType
-		errorInfo := normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
-		errorType := errorInfo.Type
-		errorMessage := errorInfo.Message
-		slog.Info(fmt.Sprintf("❌ [API错误] [%s] 错误类型: %s, 错误信息: %s",
-			tp.requestID, errorType, errorMessage))
-		return nil
-	default:
-		return nil
+		tp.finalUsage = result.TokenUsage
 	}
 }
 

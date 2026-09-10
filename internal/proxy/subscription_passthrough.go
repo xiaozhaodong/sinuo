@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/privacy"
+	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/transport"
 )
 
@@ -42,6 +44,9 @@ type subscriptionPassthrough struct {
 	clientOnce sync.Once
 	client     *http.Client
 	clientErr  error
+
+	// privacyObserver 由 P2b 显式注入扫描摘要持久化；nil 只表示当前阶段不落库。
+	privacyObserver subscriptionPrivacyResultObserver
 }
 
 // newSubscriptionPassthrough 创建直通转发器；baseURL 固定为 ChatGPT Codex 后端。
@@ -68,6 +73,22 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
 		return
 	}
+	privacyState := newSubscriptionPrivacyRequestState(requestID, p.privacyObserver)
+	r = withSubscriptionPrivacyState(r, privacyState)
+	filteredBody, privacyErr := applySubscriptionPrivacy(p.privacyFilter(), r, route.InternalPath, body.normalizedBody)
+	if privacyErr != nil {
+		if policyErr := handlers.AsPrivacyPolicyError(privacyErr); policyErr != nil {
+			p.logger.Warn("⚠️ [Codex 订阅代理] 请求被隐私策略阻断",
+				"conn_id", requestID, "kind", string(route.Kind), "code", policyErr.Code)
+			handlers.WritePrivacyPolicyErrorResponse(w, policyErr)
+			return
+		}
+		p.logger.Warn("⚠️ [Codex 订阅代理] 隐私处理失败",
+			"conn_id", requestID, "kind", string(route.Kind), "code", privacy.CodeScanFailed)
+		writeAccountPipelineError(w, http.StatusUnprocessableEntity, privacy.CodeScanFailed, "privacy scan failed")
+		return
+	}
+	body.normalizedBody = filteredBody
 	wireBody := body.normalizedBody
 	outboundEncoding := ""
 	if route.NormalizeBody {
@@ -101,7 +122,7 @@ func (p *subscriptionPassthrough) prepareOutboundBody(body *normalizedRequestBod
 	compressed, err := compressNormalizedRequestBody(body, body.normalizedBody)
 	if err != nil {
 		if p.logger != nil {
-			p.logger.Warn("⚠️ [Codex 订阅代理] 出站压缩失败，改为明文转发", "error", err)
+			p.logger.Warn("⚠️ [Codex 订阅代理] 出站压缩失败，改为明文转发", "code", "subscription_compression_failed")
 		}
 		return body.normalizedBody, ""
 	}
@@ -158,7 +179,7 @@ func (p *subscriptionPassthrough) writeResponse(w http.ResponseWriter, resp *htt
 	if _, err := io.CopyBuffer(writer, resp.Body, make([]byte, subscriptionCopyBufferSize)); err != nil {
 		// 下游断开或上游中断：状态与已写字节已经反映在传输层，这里只记录。
 		if p.logger != nil && !errors.Is(err, context.Canceled) {
-			p.logger.Debug("⚠️ [Codex 订阅代理] 直通响应复制中断", "error", err)
+			p.logger.Debug("⚠️ [Codex 订阅代理] 直通响应复制中断", "code", "subscription_response_copy_interrupted")
 		}
 	}
 }
@@ -178,8 +199,15 @@ func (p *subscriptionPassthrough) writeTransportError(w http.ResponseWriter, r *
 		message = "the Codex subscription upstream did not respond in time"
 	}
 	p.logger.Warn(fmt.Sprintf("⚠️ [Codex 订阅代理] [%s] 直通失败: %s", requestID, code),
-		"conn_id", requestID, "kind", string(route.Kind), "error", err)
+		"conn_id", requestID, "kind", string(route.Kind))
 	writeAccountPipelineError(w, status, code, message)
+}
+
+func (p *subscriptionPassthrough) privacyFilter() handlers.PrivacyFilter {
+	if p == nil || p.proxy == nil {
+		return nil
+	}
+	return p.proxy.privacyFilter
 }
 
 // httpClient 返回直通共用 client：禁用自动压缩与总超时，只限制响应头等待。

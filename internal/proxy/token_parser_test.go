@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestResponsesUsageDistinguishesUnknownAndReportedZero(t *testing.T) {
+	for _, tc := range []struct {
+		usage    string
+		reported bool
+	}{
+		{`null`, false}, {`{}`, false}, {`{"input_tokens":"unknown"}`, false},
+		{`{"input_tokens":-1}`, false}, {`{"input_tokens":0,"output_tokens":0}`, true},
+	} {
+		for _, event := range []string{"response.completed", "response.failed"} {
+			result := ParseResponsesEventJSON(event, []byte(`{"response":{"usage":`+tc.usage+`}}`))
+			if result == nil || result.HasTokenUsage != tc.reported {
+				t.Fatalf("%s usage=%s: %+v", event, tc.usage, result)
+			}
+		}
+	}
+}
+
 func TestTokenParser(t *testing.T) {
 	parser := NewTokenParser()
 
@@ -571,6 +588,45 @@ func TestTokenParserV2_ResponsesCompletedWithUsage_FallbackWhenPayloadInvalid(t 
 	completeness := parser.GetStreamCompleteness()
 	if !completeness.IsComplete {
 		t.Fatalf("Expected responses stream complete after fallback, got reason=%s failure=%s", completeness.Reason, completeness.FailureReason)
+	}
+}
+
+func TestParseResponsesEventJSONMatchesSSEPath(t *testing.T) {
+	payload := `{"type":"response.completed","response":{"id":"resp-shared","model":"gpt-6-astra","usage":{"input_tokens":42,"output_tokens":7,"input_tokens_details":{"cached_tokens":5}}}}`
+	direct := ParseResponsesEventJSON("response.completed", []byte(payload))
+	parser := NewTokenParserWithRequestID("test-shared-parser")
+	_ = parser.ParseSSELineV2("event: response.completed")
+	_ = parser.ParseSSELineV2("data: " + payload)
+	viaSSE := parser.ParseSSELineV2("")
+
+	if direct == nil || viaSSE == nil || direct.TokenUsage == nil || viaSSE.TokenUsage == nil {
+		t.Fatalf("shared parser returned nil: direct=%+v sse=%+v", direct, viaSSE)
+	}
+	if direct.Status != viaSSE.Status || direct.IsCompleted != viaSSE.IsCompleted || direct.HasTokenUsage != viaSSE.HasTokenUsage ||
+		direct.ModelName != viaSSE.ModelName || *direct.TokenUsage != *viaSSE.TokenUsage {
+		t.Fatalf("SSE and JSON parser diverged: direct=%+v sse=%+v", direct, viaSSE)
+	}
+}
+
+func TestParseResponsesEventJSONFailedAndSteeredTerminalSemantics(t *testing.T) {
+	failed := ParseResponsesEventJSON("response.failed", []byte(`{"type":"response.failed","response":{"id":"r1","error":{"type":"invalid_request_error","message":"synthetic"},"usage":{"input_tokens":9,"output_tokens":1}}}`))
+	if failed == nil || !failed.IsCompleted || failed.Status != StatusErrorAPI || failed.ErrorInfo == nil ||
+		!failed.HasTokenUsage || failed.TokenUsage == nil || failed.TokenUsage.InputTokens != 9 {
+		t.Fatalf("failed terminal parse mismatch: %+v", failed)
+	}
+	steered := ParseResponsesEventJSON("response.incomplete", []byte(`{"type":"response.incomplete","response":{"id":"r2","incomplete_details":{"reason":"steered"}}}`))
+	if steered == nil || !steered.IsCompleted || steered.Status != "steered" || steered.ErrorInfo != nil || steered.HasTokenUsage {
+		t.Fatalf("steered terminal parse mismatch: %+v", steered)
+	}
+}
+
+func TestParseResponsesEventJSONWrappedErrorIsTerminal(t *testing.T) {
+	result := ParseResponsesEventJSON("error", []byte(`{"type":"error","status":429,"error":{"type":"rate_limit_error","message":"synthetic","resets_in_seconds":30}}`))
+	if result == nil || !result.IsCompleted || result.Status != StatusErrorAPI || result.ErrorInfo == nil {
+		t.Fatalf("wrapped error must be terminal: %+v", result)
+	}
+	if result.ErrorInfo.Type != "rate_limit_error" || result.ErrorInfo.ResetsInSeconds != 30 {
+		t.Fatalf("wrapped error fields mismatch: %+v", result.ErrorInfo)
 	}
 }
 

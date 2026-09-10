@@ -102,7 +102,7 @@ func TestCodexWalkerCollectsExpectedFields(t *testing.T) {
 	}`
 	segments := mustCollect(t, body, "/v1/responses")
 	got := segmentValues(segments)
-	want := []string{"instr text", "input text block", "string content", "tool output text"}
+	want := []string{"instr text", "input text block", "string content", "tool output text", "tool-desc"}
 	if len(got) != len(want) {
 		t.Fatalf("segment count = %d, want %d: %v", len(got), len(want), got)
 	}
@@ -119,6 +119,56 @@ func TestCodexWalkerInputString(t *testing.T) {
 	got := segmentValues(segments)
 	if len(got) != 1 || got[0] != "raw input string" {
 		t.Fatalf("got %v, want [raw input string]", got)
+	}
+}
+
+func TestCodexWalkerCollectsToolArraysAndReplayText(t *testing.T) {
+	body := `{
+		"model":"gpt-6-astra",
+		"input":[
+			{"type":"function_call","name":"lookup","arguments":"{\"query\":\"ACME-SECRET-2\"}","encrypted_function_args":"opaque-secret"},
+			{"type":"custom_tool_call","name":"shell","input":"echo ACME-SECRET-3"},
+			{"type":"function_call_output","output":[{"type":"output_text","text":"tool result"},{"type":"computer_image","image_url":"data:image/png;base64,AAAA"}],"encrypted_output":"opaque-output"}
+		],
+		"tools":[{"type":"function","name":"lookup","description":"lookup description","parameters":{"type":"object","description":"root schema description","default":"root schema default","properties":{"query":{"type":"string","description":"query description","default":"default query","examples":["example query"]}},"required":["query"]}}],
+		"additional_tools":[{"type":"function","name":"extra","description":"extra description","parameters":{"type":"object","properties":{"mode":{"type":"string","enum":["safe","fast"]}}}}]
+	}`
+	got := segmentValues(mustCollect(t, body, "/v1/responses"))
+	want := []string{
+		`{"query":"ACME-SECRET-2"}`,
+		"echo ACME-SECRET-3",
+		"tool result",
+		"lookup description",
+		"root schema description",
+		"root schema default",
+		"query description",
+		"default query",
+		"example query",
+		"extra description",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("segment[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCodexWalkerPreservesKnownOpaqueAndContractFields(t *testing.T) {
+	body := `{"input":[{"encrypted_content":"looks-readable","encrypted_output":"opaque","encrypted_function_args":"opaque","content":[{"type":"input_image","image_url":"data:image/png;base64,SECRET"}]}],"tools":[{"name":"SECRET_NAME","parameters":{"properties":{"SECRET_KEY":{"enum":["SECRET_ENUM"]}}}}]}`
+	if got := segmentValues(mustCollect(t, body, "/v1/responses")); len(got) != 0 {
+		t.Fatalf("opaque/contract fields must stay outside scanning, got %v", got)
+	}
+}
+
+func TestCodexWalkerSupportsWebSocketResponseCreateEnvelope(t *testing.T) {
+	body := `{"type":"response.create","response":{"model":"gpt-6-astra","instructions":"system secret","input":[{"type":"message","content":[{"type":"input_text","text":"user secret"}]}]}}`
+	got := segmentValues(mustCollect(t, body, "/v1/responses"))
+	want := []string{"system secret", "user secret"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
@@ -234,5 +284,151 @@ func TestCountTokensReusesClaudeWalker(t *testing.T) {
 	got := segmentValues(segments)
 	if len(got) != 1 || got[0] != "count me" {
 		t.Fatalf("got %v, want [count me]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Codex /v1/alpha/search（订阅代理 P2a 新增分支）
+// ---------------------------------------------------------------------------
+
+func TestSearchWalkerCollectsInputAndCommandText(t *testing.T) {
+	body := `{
+		"id": "search-1",
+		"model": "gpt-6-astra",
+		"reasoning": {"effort": "low"},
+		"input": [
+			{"type": "message", "role": "user", "content": [
+				{"type": "input_text", "text": "user asks about ACME-SECRET-1"}
+			]},
+			{"type": "message", "role": "assistant", "content": [
+				{"type": "output_text", "text": "assistant recap"}
+			]},
+			{"type": "message", "role": "user", "content": "plain string content"}
+		],
+		"commands": {
+			"search_query": [{"q": "first query", "recency": 7, "domains": ["example.com"]}, {"q": "second query"}],
+			"image_query": [{"q": "image query"}],
+			"open": [{"ref_id": "turn0search0", "lineno": 12}],
+			"click": [{"ref_id": "turn0search1", "id": 3}],
+			"find": [{"ref_id": "https://example.com/docs", "pattern": "install token"}],
+			"response_length": "medium"
+		},
+		"settings": {"tenant": "should-not-scan"},
+		"max_output_tokens": 4096
+	}`
+	segments := mustCollect(t, body, "/v1/alpha/search")
+	got := segmentValues(segments)
+	want := []string{
+		"user asks about ACME-SECRET-1",
+		"assistant recap",
+		"plain string content",
+		"first query",
+		"second query",
+		"image query",
+		"install token",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("segment count = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("segment[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSearchWalkerInputStringVariant(t *testing.T) {
+	body := `{"id":"s","model":"m","input":"raw search context","commands":{"search_query":[{"q":"q1"}]}}`
+	got := segmentValues(mustCollect(t, body, "/v1/alpha/search"))
+	want := []string{"raw search context", "q1"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestSearchWalkerKeepsReferencesAndControlFieldsUntouched(t *testing.T) {
+	// 引用、ID、模型与设置不进入扫描；看似 base64 / 高熵的 ref_id 同样不匹配。
+	body := `{
+		"id": "aGlnaC1lbnRyb3B5LWlkPT0=",
+		"model": "gpt-6-astra",
+		"input": [],
+		"commands": {
+			"open": [{"ref_id": "aHR0cHM6Ly9leGFtcGxlLmNvbQ=="}],
+			"click": [{"ref_id": "turn0search0", "id": 1}],
+			"find": [{"ref_id": "turn0search2", "pattern": "needle"}],
+			"finance": [{"ticker": "AAPL"}],
+			"weather": [{"location": "Shanghai"}],
+			"time": [{"utc_offset": "+08:00"}]
+		},
+		"settings": {"tenant": "t"}
+	}`
+	got := segmentValues(mustCollect(t, body, "/v1/alpha/search"))
+	if len(got) != 1 || got[0] != "needle" {
+		t.Fatalf("only find[].pattern should be collected, got %v", got)
+	}
+}
+
+func TestSearchWalkerNestedJSONTextAndBigIntStayValidAfterReplace(t *testing.T) {
+	// 文本里嵌套 JSON 字符串与大整数：替换后整包仍是合法 JSON，未命中字节保持一致。
+	body := `{"id":"s","model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"{\"token\":\"SECRET\"}"}]}],"commands":{"search_query":[{"q":"SECRET","recency":18446744073709551615}]},"max_output_tokens":18446744073709551615}`
+	segments := mustCollect(t, body, "/v1/alpha/search")
+	if len(segments) != 2 {
+		t.Fatalf("segment count = %d, want 2", len(segments))
+	}
+	replaced := replaceSegments([]byte(body), segments, map[int]string{
+		0: `{"token":"[已脱敏]"}`,
+		1: "[已脱敏]",
+	})
+	if !json.Valid(replaced) {
+		t.Fatalf("replaced body is not valid JSON: %s", replaced)
+	}
+	if !bytes.Contains(replaced, []byte(`18446744073709551615`)) {
+		t.Fatalf("big integer must stay byte-identical: %s", replaced)
+	}
+	if strings.Contains(string(replaced), "SECRET") {
+		t.Fatalf("secret leaked after replace: %s", replaced)
+	}
+	var decoded struct {
+		Input []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"input"`
+		Commands struct {
+			SearchQuery []struct {
+				Q string `json:"q"`
+			} `json:"search_query"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(replaced, &decoded); err != nil {
+		t.Fatalf("decode replaced body: %v", err)
+	}
+	if decoded.Input[0].Content[0].Text != `{"token":"[已脱敏]"}` || decoded.Commands.SearchQuery[0].Q != "[已脱敏]" {
+		t.Fatalf("unexpected replaced values: %+v", decoded)
+	}
+}
+
+func TestSearchWalkerArrayOutputTextBlocksInInput(t *testing.T) {
+	// 数组文本块：多个 content 项都应被收集，非文本项（图片/密文）保持不匹配。
+	body := `{"id":"s","model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_text","text":"first"},
+		{"type":"input_image","image_url":"data:image/png;base64,AAAA"},
+		{"type":"input_text","text":"second"}
+	]}],"commands":{"search_query":[{"q":"q"}]}}`
+	got := segmentValues(mustCollect(t, body, "/v1/alpha/search"))
+	want := []string{"first", "second", "q"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestWalkerForPathSearchRegistered(t *testing.T) {
+	if walkerForPath("/v1/alpha/search") == nil {
+		t.Fatal("search walker must be registered")
 	}
 }

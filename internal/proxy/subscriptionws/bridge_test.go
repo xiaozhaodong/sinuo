@@ -364,3 +364,114 @@ func TestBridgeClosesDownstreamWhenUpstreamDrops(t *testing.T) {
 		t.Fatal("上游断开后下游仍未及时关闭")
 	}
 }
+
+type testInterceptor func(context.Context, Direction, []byte) (InterceptResult, error)
+
+func (f testInterceptor) Intercept(ctx context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+	return f(ctx, direction, payload)
+}
+
+func TestBridgeInjectsReplyWithoutForwardOrClosingConnection(t *testing.T) {
+	interceptor := testInterceptor(func(_ context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+		if direction == DirectionDownstreamToUpstream && string(payload) == "blocked" {
+			return InterceptResult{Reply: []byte(`{"type":"error","status":422}`)}, nil
+		}
+		return InterceptResult{Forward: payload}, nil
+	})
+	options := Options{ReadLimit: testReadLimit, CompressionMode: websocket.CompressionDisabled, Interceptor: interceptor}
+	upstream := newEchoServer(t, websocket.CompressionDisabled)
+	server := bridgeServer(t, upstream.wsURL(t), options)
+
+	ctx := testContext(t)
+	conn, _ := dialBridge(ctx, t, server, websocket.CompressionDisabled)
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("blocked")); err != nil {
+		t.Fatalf("write blocked message: %v", err)
+	}
+	typ, reply, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read local reply: %v", err)
+	}
+	if typ != websocket.MessageText {
+		t.Fatalf("local JSON error must be text, got %v", typ)
+	}
+	if string(reply) != `{"type":"error","status":422}` {
+		t.Fatalf("unexpected local reply: %s", reply)
+	}
+	if got := writeAndEcho(ctx, t, conn, "allowed-after-block"); got != "allowed-after-block" {
+		t.Fatalf("blocked payload leaked upstream or connection stopped: %q", got)
+	}
+}
+
+func TestBridgeReplySharesReverseQueueOrderWithUpstreamEvents(t *testing.T) {
+	upstreamSent := make(chan struct{})
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		if err := conn.Write(r.Context(), websocket.MessageText, []byte("upstream-first")); err != nil {
+			return
+		}
+		close(upstreamSent)
+		for {
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(upstreamServer.Close)
+
+	interceptor := testInterceptor(func(_ context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+		if direction == DirectionDownstreamToUpstream && string(payload) == "blocked" {
+			return InterceptResult{Reply: []byte(`{"type":"error","status":422}`)}, nil
+		}
+		return InterceptResult{Forward: payload}, nil
+	})
+	options := Options{ReadLimit: testReadLimit, CompressionMode: websocket.CompressionDisabled, Interceptor: interceptor}
+	server := bridgeServer(t, "ws"+strings.TrimPrefix(upstreamServer.URL, "http"), options)
+	ctx := testContext(t)
+	conn, _ := dialBridge(ctx, t, server, websocket.CompressionDisabled)
+	select {
+	case <-upstreamSent:
+	case <-ctx.Done():
+		t.Fatal("upstream event was not queued")
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte("blocked")); err != nil {
+		t.Fatalf("write blocked message: %v", err)
+	}
+	_, first, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read upstream event: %v", err)
+	}
+	_, second, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read local reply: %v", err)
+	}
+	if string(first) != "upstream-first" || string(second) != `{"type":"error","status":422}` {
+		t.Fatalf("reverse queue order mismatch: first=%s second=%s", first, second)
+	}
+}
+
+func TestBridgeInterceptorErrorStillTerminatesConnection(t *testing.T) {
+	interceptor := testInterceptor(func(_ context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+		if direction == DirectionDownstreamToUpstream {
+			return InterceptResult{}, errors.New("synthetic interceptor failure")
+		}
+		return InterceptResult{Forward: payload}, nil
+	})
+	options := Options{ReadLimit: testReadLimit, CompressionMode: websocket.CompressionDisabled, Interceptor: interceptor}
+	upstream := newEchoServer(t, websocket.CompressionDisabled)
+	server := bridgeServer(t, upstream.wsURL(t), options)
+
+	ctx := testContext(t)
+	conn, _ := dialBridge(ctx, t, server, websocket.CompressionDisabled)
+	if err := conn.Write(ctx, websocket.MessageText, []byte("fatal")); err != nil {
+		t.Fatalf("write fatal message: %v", err)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, _, err := conn.Read(readCtx); err == nil {
+		t.Fatal("connection-level interceptor error must terminate the bridge")
+	}
+}

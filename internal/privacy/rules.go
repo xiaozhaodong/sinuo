@@ -40,10 +40,12 @@ const (
 	ActionRedact = "redact"
 )
 
-// 上游类型
+// 上游类型。subscription 表示 Codex 订阅代理的凭据直通目标：没有本地账号 ID。
+// 空 upstream_types scope 仍按既有语义匹配全部目标；显式 subscription 可将规则收窄到直通目标。
 const (
-	UpstreamTypeEndpoint = "endpoint"
-	UpstreamTypeAccount  = "account"
+	UpstreamTypeEndpoint     = "endpoint"
+	UpstreamTypeAccount      = "account"
+	UpstreamTypeSubscription = "subscription"
 )
 
 // 规则来源

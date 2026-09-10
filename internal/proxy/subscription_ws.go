@@ -8,6 +8,8 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +19,9 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/privacy"
+	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/subscriptionws"
 	svc "cc-forwarder/internal/service"
 
@@ -27,7 +32,8 @@ const (
 	// subscriptionWSHandshakeTimeout 上游握手超时；长连接寿命不套用该超时。
 	subscriptionWSHandshakeTimeout = 30 * time.Second
 	// subscriptionWSFailureBodyLimit 回传上游握手失败正文的上限。
-	subscriptionWSFailureBodyLimit = 64 << 10
+	subscriptionWSFailureBodyLimit     = 64 << 10
+	subscriptionUnsupportedWSEventCode = "codex_subscription_ws_event_unsupported"
 )
 
 // subscriptionWSProxy Responses WS 分支。
@@ -36,6 +42,8 @@ type subscriptionWSProxy struct {
 	logger      *slog.Logger
 	baseURL     string
 	registry    *subscriptionWSRegistry
+	// observer 由 P2b 显式注入；P2a 状态机本身不写数据库。
+	observer subscriptionSubmissionObserver
 }
 
 // newSubscriptionWSProxy 创建 WS 分支；出站 transport 与订阅直通共用。
@@ -64,7 +72,7 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 
 	client, err := p.passthrough.httpClient()
 	if err != nil {
-		p.logger.Error("❌ [Codex 订阅代理] WS 出站客户端不可用", "conn_id", requestID, "error", err)
+		p.logger.Error("❌ [Codex 订阅代理] WS 出站客户端不可用", "conn_id", requestID, "code", "subscription_ws_transport_unavailable")
 		writeAccountPipelineError(w, http.StatusServiceUnavailable, "codex_subscription_transport_unavailable",
 			"failed to initialize the subscription proxy transport")
 		return
@@ -92,7 +100,7 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	downstream, err := subscriptionws.AcceptDownstream(w, r, options)
 	if err != nil {
 		_ = upstream.CloseNow()
-		p.logger.Warn("⚠️ [Codex 订阅代理] 下游 WS 握手失败", "conn_id", requestID, "error", err)
+		p.logger.Warn("⚠️ [Codex 订阅代理] 下游 WS 握手失败", "conn_id", requestID, "code", "subscription_ws_downstream_handshake_failed")
 		return
 	}
 
@@ -108,7 +116,14 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	p.logger.Debug("🔌 [Codex 订阅代理] WS 已建立",
 		"conn_id", requestID, "mode", snapshotMode(snap), "active", p.registry.count())
 
+	submissions := newSubscriptionSubmissionState(r.Context(), requestID, p.observer)
+	options.Interceptor = &subscriptionWSInterceptor{
+		filter:      p.passthrough.privacyFilter(),
+		logger:      p.logger,
+		submissions: submissions,
+	}
 	stats := subscriptionws.Bridge(r.Context(), downstream, upstream, options)
+	submissions.close("connection_closed")
 	p.logger.Debug("🔌 [Codex 订阅代理] WS 已结束",
 		"conn_id", requestID,
 		"upstream_messages", stats.DownstreamToUpstream.Messages,
@@ -122,13 +137,13 @@ func (p *subscriptionWSProxy) relayHandshakeFailure(w http.ResponseWriter, upstr
 		status := http.StatusBadGateway
 		code := "codex_subscription_upstream_unreachable"
 		message := "failed to reach the Codex subscription upstream"
-		if err != nil && strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 			code = "codex_subscription_upstream_timeout"
 			message = "the Codex subscription upstream did not complete the WebSocket handshake in time"
 		}
 		p.logger.Warn(fmt.Sprintf("⚠️ [Codex 订阅代理] [%s] WS 握手失败: %s", requestID, code),
-			"conn_id", requestID, "error", err)
+			"conn_id", requestID)
 		writeAccountPipelineError(w, status, code, message)
 		return
 	}
@@ -139,6 +154,100 @@ func (p *subscriptionWSProxy) relayHandshakeFailure(w http.ResponseWriter, upstr
 	_, _ = io.CopyN(w, upstreamResp.Body, subscriptionWSFailureBodyLimit)
 	p.logger.Debug("⚠️ [Codex 订阅代理] 上游拒绝 WS 握手",
 		"conn_id", requestID, "status_code", upstreamResp.StatusCode)
+}
+
+// subscriptionWSInterceptor 将隐私处理与传输桥隔离：PolicyError 生成本地 error 帧，
+// 返回 nil Forward 保证被拒正文零出站，但不返回连接级 error、也不主动 close。
+type subscriptionWSInterceptor struct {
+	filter      handlers.PrivacyFilter
+	logger      *slog.Logger
+	submissions *subscriptionSubmissionState
+}
+
+func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction subscriptionws.Direction, payload []byte) (subscriptionws.InterceptResult, error) {
+	if direction == subscriptionws.DirectionUpstreamToDownstream {
+		if i.submissions != nil {
+			i.submissions.handleUpstream(payload)
+		}
+		return subscriptionws.InterceptResult{Forward: payload}, nil
+	}
+
+	if err := validateSubscriptionJSON(payload); err != nil {
+		i.warn("invalid_json")
+		return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusBadRequest, subscriptionInvalidJSONCode,
+			"request contains invalid or ambiguous JSON")}, nil
+	}
+
+	submission, isCreate := i.submissions.beginCreate(payload)
+	requestID := monitor.NewConnectionID()
+	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
+	requestContext := ctx
+	if submission != nil {
+		requestID = submission.RequestID
+		privacyState = submission.PrivacyState
+		requestContext = submission.Context
+	} else {
+		requestContext = context.WithValue(ctx, "conn_id", requestID) //nolint:staticcheck
+		requestContext = handlers.WithPrivacyRequestState(requestContext, privacyState)
+	}
+	req := (&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": []string{"application/json"}}}).WithContext(requestContext)
+	filtered, err := applySubscriptionPrivacy(i.filter, req, "/v1/responses", payload)
+	if err == nil {
+		if !isCreate {
+			i.submissions.warn("unsupported_client_event")
+			i.warn(subscriptionUnsupportedWSEventCode)
+			return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusBadRequest,
+				subscriptionUnsupportedWSEventCode, "unsupported WebSocket client event")}, nil
+		}
+		return subscriptionws.InterceptResult{Forward: filtered}, nil
+	}
+	policyErr := handlers.AsPrivacyPolicyError(err)
+	if policyErr == nil {
+		policyErr = &privacy.PolicyError{StatusCode: http.StatusUnprocessableEntity, Code: privacy.CodeScanFailed, Message: "privacy scan failed"}
+	}
+	policyErr = sanitizeSubscriptionPolicyError(policyErr)
+	if isCreate && submission != nil {
+		i.submissions.reject(submission, policyErr)
+	} else {
+		i.submissions.warn("non_create_privacy_rejected")
+	}
+	i.warn(policyErr.Code)
+	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message)}, nil
+}
+
+func (i *subscriptionWSInterceptor) warn(code string) {
+	if i == nil || i.logger == nil {
+		return
+	}
+	connectionID := ""
+	if i.submissions != nil {
+		connectionID = i.submissions.connectionID
+	}
+	i.logger.Warn("⚠️ [Codex 订阅代理] WS 提交被本地拒绝", "conn_id", connectionID, "code", code)
+}
+
+func subscriptionWSErrorReply(status int, code, message string) []byte {
+	if status < 400 || status > 499 {
+		status = http.StatusUnprocessableEntity
+	}
+	payload, _ := json.Marshal(struct {
+		Type   string `json:"type"`
+		Status int    `json:"status"`
+		Error  struct {
+			Type    string `json:"type"`
+			Code    string `json:"code,omitempty"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{
+		Type:   "error",
+		Status: status,
+		Error: struct {
+			Type    string `json:"type"`
+			Code    string `json:"code,omitempty"`
+			Message string `json:"message"`
+		}{Type: "invalid_request_error", Code: code, Message: message},
+	})
+	return payload
 }
 
 // buildSubscriptionWebSocketHeaders 按白名单重建握手头；没有正文，移除正文相关字段。

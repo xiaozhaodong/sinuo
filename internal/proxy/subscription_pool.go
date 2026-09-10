@@ -11,11 +11,41 @@
 package proxy
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"cc-forwarder/config"
 )
+
+const (
+	subscriptionRequestSource  = "codex_subscription_proxy"
+	subscriptionGenerationKind = "generation"
+)
+
+type subscriptionPoolMetadata struct {
+	RequestSource string
+	RequestKind   string
+}
+
+type subscriptionPoolMetadataKey struct{}
+
+// withSubscriptionPoolMetadata 是 P2b lifecycle_manager/handler 的唯一 context 接缝。
+// 本适配器不创建生命周期、不创建 PrivacyRequestState，也不扫描正文。
+func withSubscriptionPoolMetadata(ctx context.Context) context.Context {
+	return context.WithValue(ctx, subscriptionPoolMetadataKey{}, subscriptionPoolMetadata{
+		RequestSource: subscriptionRequestSource,
+		RequestKind:   subscriptionGenerationKind,
+	})
+}
+
+func subscriptionPoolMetadataFromContext(ctx context.Context) (subscriptionPoolMetadata, bool) {
+	if ctx == nil {
+		return subscriptionPoolMetadata{}, false
+	}
+	metadata, ok := ctx.Value(subscriptionPoolMetadataKey{}).(subscriptionPoolMetadata)
+	return metadata, ok
+}
 
 // subscriptionPoolAdapter 池模式请求适配器。
 type subscriptionPoolAdapter struct {
@@ -58,6 +88,7 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 
 	// 就地重建：后续 copyRequestHeadersForAccount 只能看到这两项，客户端身份头无法回流。
 	r.Header = buildSubscriptionPoolHeaders(r.Header)
+	*r = *r.WithContext(withSubscriptionPoolMetadata(r.Context()))
 	a.proxy.ServeCodexPoolRequest(w, r)
 }
 
