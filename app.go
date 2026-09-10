@@ -89,6 +89,12 @@ type App struct {
 	privacyStore   store.PrivacyStore      // 隐私规则数据持久化
 	privacyService *service.PrivacyService // 隐私保护业务服务
 
+	// v9: Codex 订阅代理独立入口（独立回环 listener；只读依赖旧入口的账号池与隐私服务）
+	subscriptionProxyMu              sync.RWMutex
+	subscriptionProxySettingsService *service.CodexSubscriptionProxySettingsService
+	subscriptionProxyHandler         *proxy.CodexSubscriptionProxyHandler
+	subscriptionProxyRuntime         *proxy.CodexSubscriptionProxyRuntime
+
 	// HTTP 代理服务器 (保留，监听配置的端口)
 	proxyServer   *http.Server
 	proxyRequests *proxyRequestLifecycle
@@ -223,6 +229,9 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	// 10. 启动 HTTP 代理服务器
 	a.startProxyServer()
 
+	// 10.5 启动 Codex 订阅代理独立入口（未启用时不监听；失败不影响旧入口）
+	a.setupCodexSubscriptionProxy(ctx)
+
 	// 11. 设置配置热重载
 	a.setupConfigReload()
 
@@ -297,10 +306,21 @@ func (a *App) shutdown(ctx context.Context) {
 	done := make(chan struct{})
 	a.shutdownDone = done
 	server, requests := a.proxyServer, a.proxyRequests
+	subscriptionRuntime := a.subscriptionProxyRuntime
 	a.mu.Unlock()
 	defer close(done)
 
 	a.logger.Info("🛑 正在关闭 AI Switchboard...")
+
+	// 0. 先停 Codex 订阅代理新入口：它持有独立 listener 与 WS 连接，
+	//    停用只关闭自己的资源，不影响仍被旧入口使用的账号池与追踪服务。
+	if subscriptionRuntime != nil {
+		stopCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		if err := subscriptionRuntime.Stop(stopCtx); err != nil {
+			a.logger.Error("Codex 订阅代理停用失败", "error", err)
+		}
+		cancel()
+	}
 
 	// 1. 停止接收新请求
 	if server != nil {
