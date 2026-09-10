@@ -14,6 +14,7 @@ import {
   formatDurationMs,
   formatSuccessRate,
   formatTrendBucketLabel,
+  isUnresolvedModelName,
   modelDisplayName,
   resolveOverviewPeriod,
   successRateTone
@@ -99,7 +100,7 @@ test('KPI：今日无请求时成功率与延迟显示占位符', () => {
   assert.equal(cards[3].value, '0');
 });
 
-test('模型表：空模型名标记为未知模型，无耗时样本显示占位符', () => {
+test('模型表：未解析模型不作为正常模型行展示', () => {
   const rows = buildModelRows({
     rows: [
       {
@@ -125,7 +126,7 @@ test('模型表：空模型名标记为未知模型，无耗时样本显示占�
     ]
   });
 
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 1);
   assert.equal(rows[0].modelName, 'claude-sonnet-4');
   assert.equal(rows[0].sourceLabel, 'Claude · 端点');
   assert.equal(rows[0].requestCountText, '18,420');
@@ -134,11 +135,6 @@ test('模型表：空模型名标记为未知模型，无耗时样本显示占�
   assert.equal(rows[0].tokensText, '2.8M');
   assert.equal(rows[0].costText, '$4.82');
 
-  assert.equal(rows[1].modelName, '未知模型');
-  assert.equal(rows[1].sourceLabel, 'Codex · 账号池');
-  assert.equal(rows[1].durationText, '—');
-  // 33% 成功率不该挂绿色
-  assert.equal(rows[1].successRateTone, 'danger');
   assert.equal(rows[0].successRateTone, 'success');
 });
 
@@ -155,7 +151,9 @@ test('成功率着色：只有接近满分才给绿色', () => {
 test('模型表：接口无数据时返回空数组而不是假行', () => {
   assert.deepEqual(buildModelRows(undefined), []);
   assert.deepEqual(buildModelRows({ rows: [] }), []);
-  assert.equal(modelDisplayName('   '), '未知模型');
+  assert.equal(isUnresolvedModelName('   '), true);
+  assert.equal(isUnresolvedModelName('unknown'), true);
+  assert.equal(isUnresolvedModelName('default'), true);
   assert.equal(modelDisplayName('gpt-6-astra'), 'gpt-6-astra');
 });
 

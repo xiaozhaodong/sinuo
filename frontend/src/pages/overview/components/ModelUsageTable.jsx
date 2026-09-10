@@ -6,7 +6,7 @@
 
 import { Boxes, ExternalLink, Filter } from 'lucide-react';
 import SectionError from './SectionError.jsx';
-import { buildModelRows, formatCount, formatCostUSD } from '../utils/overviewViewModel.js';
+import { buildModelRows, formatCount, formatCostUSD, isUnresolvedModelName } from '../utils/overviewViewModel.js';
 
 const FAMILY_PILLS = [
   { key: 'claude', label: 'Claude', dotClass: 'bg-accent' },
@@ -21,6 +21,9 @@ const SUCCESS_TONE_CLASSES = {
 
 const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRetry, onOpenRequests }) => {
   const rows = buildModelRows(modelUsage);
+  const unresolvedRequestCount = (Array.isArray(modelUsage?.rows) ? modelUsage.rows : [])
+    .filter((row) => isUnresolvedModelName(row?.model_name))
+    .reduce((total, row) => total + (Number(row?.request_count) || 0), 0);
   const familyCounts = {
     claude: Number(modelUsage?.claude_count) || 0,
     codex: Number(modelUsage?.codex_count) || 0
@@ -91,7 +94,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
           <SectionError error={error} onRetry={onRetry} />
         ) : rows.length === 0 ? (
           <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-fg-subtle">
-            暂无模型调用数据
+            {unresolvedRequestCount > 0 ? `${formatCount(unresolvedRequestCount)} 个请求未解析模型` : '暂无模型调用数据'}
           </div>
         ) : (
           <div className="max-h-[340px] overflow-auto">
@@ -138,10 +141,11 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
         )}
       </div>
 
-      {!loading && !error && rows.length > 0 && (
+      {!loading && !error && (rows.length > 0 || unresolvedRequestCount > 0) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-soft px-5 py-3">
           <span className="text-[11px] text-fg-subtle">
             {modelUsage?.truncated ? `Top ${rows.length} · 按请求数排序` : `共 ${rows.length} 个模型`}
+            {unresolvedRequestCount > 0 ? ` · ${formatCount(unresolvedRequestCount)} 个请求未解析模型` : ''}
           </span>
           <button
             type="button"

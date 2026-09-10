@@ -229,11 +229,13 @@ export const familyLabel = (family) => FAMILY_LABELS[family] || '其他';
 
 export const upstreamTypeLabel = (upstreamType) => UPSTREAM_TYPE_LABELS[upstreamType] || '未知来源';
 
-/** 模型名称为空时显式标记，不静默丢弃。 */
-export const modelDisplayName = (modelName) => {
-  const name = String(modelName || '').trim();
-  return name === '' ? '未知模型' : name;
+/** 模型尚未解析时不应伪装成一个可筛选的真实模型。 */
+export const isUnresolvedModelName = (modelName) => {
+  const name = String(modelName || '').trim().toLowerCase();
+  return name === '' || name === 'unknown' || name === 'default';
 };
+
+export const modelDisplayName = (modelName) => String(modelName || '').trim();
 
 /**
  * 成功率着色：只有「接近满分」才给绿色，低于 90% 直接标红，
@@ -254,7 +256,7 @@ export const successRateTone = (rate, requestCount) => {
  */
 export const buildModelRows = (modelUsage) => {
   const rows = Array.isArray(modelUsage?.rows) ? modelUsage.rows : [];
-  return rows.map((row) => ({
+  return rows.filter((row) => !isUnresolvedModelName(row?.model_name)).map((row) => ({
     key: `${row.model_name}|${row.request_family}|${row.upstream_type}`,
     modelName: modelDisplayName(row.model_name),
     rawModelName: String(row.model_name || ''),
