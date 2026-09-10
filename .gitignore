@@ -85,3 +85,6 @@ docs/plans/2026-06-02-claude-endpoint-routing-strategy-plan.md
 
 # 本地 UI mockup（不入库）
 /design/
+
+# Codex 订阅代理 P0 录制工具，本地验证用，不进版本库
+/tools/codex-recorder/
