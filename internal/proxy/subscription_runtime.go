@@ -215,7 +215,7 @@ func (rt *CodexSubscriptionProxyRuntime) start(snap *SubscriptionProxySnapshot) 
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			rt.setFailed(fmt.Sprintf("服务退出: %v", err))
+			rt.failIfCurrent(server, fmt.Sprintf("服务退出: %v", err))
 			rt.logger.Error("❌ [Codex 订阅代理] 服务异常退出", "error", err)
 		}
 	}()
@@ -277,6 +277,17 @@ func (rt *CodexSubscriptionProxyRuntime) setFailed(reason string) {
 	rt.state = SubscriptionProxyStateFailed
 	rt.lastError = reason
 	rt.mu.Unlock()
+}
+
+// failIfCurrent 只在该 server 仍是当前实例时记录失败，避免旧 goroutine 覆盖新一轮运行态。
+func (rt *CodexSubscriptionProxyRuntime) failIfCurrent(server *http.Server, reason string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.server != server {
+		return
+	}
+	rt.state = SubscriptionProxyStateFailed
+	rt.lastError = reason
 }
 
 // listenSubscriptionAddress 绑定固定地址；仅对“地址仍被上一次监听占用”做有界重试。

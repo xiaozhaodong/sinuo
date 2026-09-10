@@ -254,7 +254,7 @@ func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *htt
 	}
 
 	duration := time.Since(start)
-	h.recordResponse(requestID, rw.status(), duration, rw.bytesWritten())
+	h.recordResponse(requestID, rw.status(), duration, rw.bytesWritten(), rw.hijacked)
 	h.logger.Debug(fmt.Sprintf("📤 [Codex 订阅代理] [%s] %s %s → %d (%s)", requestID, r.Method, route.InternalPath, rw.status(), duration.Round(time.Millisecond)),
 		"conn_id", requestID, "kind", string(route.Kind), "status_code", rw.status(), "bytes_written", rw.bytesWritten())
 }
@@ -267,11 +267,18 @@ func (h *CodexSubscriptionProxyHandler) newRequestID(clientIP, userAgent, method
 	return monitor.NewConnectionID()
 }
 
-func (h *CodexSubscriptionProxyHandler) recordResponse(requestID string, status int, duration time.Duration, bytes int64) {
+// recordResponse 收尾监控连接。101 是协议切换确认而不是失败，
+// 监控中间件按 HTTP 语义统计成功/失败，因此握手成功的 WS 按成功归类；
+// 生成级别的成败由 P2 的请求追踪按 request_kind 单独记录。
+func (h *CodexSubscriptionProxyHandler) recordResponse(requestID string, status int, duration time.Duration, bytes int64, hijacked bool) {
 	if h.monitoring == nil || requestID == "" {
 		return
 	}
-	h.monitoring.RecordResponse(requestID, status, duration, bytes, "unknown")
+	metricStatus := status
+	if hijacked && status == http.StatusSwitchingProtocols {
+		metricStatus = http.StatusOK
+	}
+	h.monitoring.RecordResponse(requestID, metricStatus, duration, bytes, "unknown")
 }
 
 // subscriptionHostMatches 要求 Host 与监听地址完全一致（忽略大小写；IPv6 方括号形式按 host:port 比较）。

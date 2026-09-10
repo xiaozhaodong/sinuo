@@ -42,17 +42,14 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// 正文规范化必须在剥离 Content-Encoding 之前完成：之后重建的头里不再有该字段。
-	body, bodyErr := normalizeRequestBodyWithMetadata(w, r, a.config())
-	if bodyErr != nil {
+	// ServeHTTP 会再规范化一次，此时正文已是明文、没有压缩标记，等价且无副作用。
+	if _, bodyErr := normalizeRequestBodyWithMetadata(w, r, a.config()); bodyErr != nil {
 		if a.logger != nil {
 			a.logger.Debug("⚠️ [Codex 订阅代理] [池模式] 请求体不可用",
 				"conn_id", requestID, "code", bodyErr.Code)
 		}
 		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
 		return
-	}
-	if body != nil {
-		attachNormalizedRequestBodyMetadata(r, body)
 	}
 
 	association := subscriptionRequestAssociation(r)
