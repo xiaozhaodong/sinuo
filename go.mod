@@ -6,6 +6,7 @@ toolchain go1.24.4
 
 require (
 	github.com/andybalholm/brotli v1.2.0
+	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.4

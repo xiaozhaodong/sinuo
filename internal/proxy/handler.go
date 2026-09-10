@@ -338,6 +338,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handleEndpointPipeline(ctx, w, r, bodyBytes, lifecycleManager, isSSE)
 }
 
+// ServeCodexPoolRequest 供 Codex 订阅代理的池模式适配器调用。
+// 只接受精确的 POST /v1/responses，其余路径与方法一律 404；请求头隔离由调用方完成，
+// 这里只做入口守卫后交给既有 ServeHTTP 管线，旧入口行为不变。
+func (h *Handler) ServeCodexPoolRequest(w http.ResponseWriter, r *http.Request) {
+	if r == nil || r.URL == nil || r.Method != http.MethodPost || r.URL.Path != "/v1/responses" {
+		writeAccountPipelineError(w, http.StatusNotFound, "codex_subscription_operation_not_supported",
+			"the Codex subscription proxy only routes POST /v1/responses to the account pool")
+		return
+	}
+	h.ServeHTTP(w, r)
+}
+
 func writeRequestBodyError(w http.ResponseWriter, path string, bodyErr *requestBodyError) {
 	if bodyErr == nil {
 		return

@@ -858,6 +858,12 @@ func (m *Metrics) GetEndpointHealthDistribution() map[string]int {
 	return distribution
 }
 
+// NewConnectionID 对外暴露与 RecordRequest 相同格式（req-xxxxxxxx）的 ID 生成，
+// 供不登记监控连接的入口（如 Codex 订阅代理的 WS 逐提交派生 ID）复用同一格式。
+func NewConnectionID() string {
+	return generateConnectionID()
+}
+
 // generateConnectionID generates a unique connection ID in format req-xxxxxxxx
 func generateConnectionID() string {
 	// Generate 4 random bytes for 8 hex characters
