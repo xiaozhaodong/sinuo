@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -26,7 +27,39 @@ const (
 	CategoryServer          = "server"
 	CategoryClaudeRouting   = "claude_routing"
 	CategoryImageGeneration = "image_generation"
+	// CategoryCodexSubscriptionProxy 由 CodexSubscriptionProxySettingsService 独占：
+	// 单行 JSON 配置 + revision CAS，不注册默认值/元数据，通用写入、重置、删除一律拒绝。
+	CategoryCodexSubscriptionProxy = "codex_subscription_proxy"
 )
+
+// ErrProtectedSettingsCategory 表示该分类只能通过专用设置服务修改。
+var ErrProtectedSettingsCategory = errors.New("该设置分类受保护，请使用专用设置页修改")
+
+// protectedSettingsCategories 列出禁止经通用 Set/BatchSet/UpdateAndApply/Delete/ResetCategory 修改的分类。
+var protectedSettingsCategories = map[string]struct{}{
+	CategoryCodexSubscriptionProxy: {},
+}
+
+// assertSettingsCategoryWritable 在任何通用写入之前检查分类是否受保护。
+func assertSettingsCategoryWritable(category string) error {
+	if _, protected := protectedSettingsCategories[category]; protected {
+		return fmt.Errorf("%w: %s", ErrProtectedSettingsCategory, category)
+	}
+	return nil
+}
+
+// assertSettingsRecordsWritable 批量写入前整体校验，任一记录受保护则整批拒绝、不落库。
+func assertSettingsRecordsWritable(records []*store.SettingRecord) error {
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		if err := assertSettingsCategoryWritable(record.Category); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // SettingValueType 设置值类型常量
 const (
@@ -241,6 +274,9 @@ func (s *SettingsService) GetAll(ctx context.Context) ([]*store.SettingRecord, e
 
 // Set 设置单个值
 func (s *SettingsService) Set(ctx context.Context, category, key, value string) error {
+	if err := assertSettingsCategoryWritable(category); err != nil {
+		return err
+	}
 	if err := s.store.Set(ctx, category, key, value); err != nil {
 		return err
 	}
@@ -250,6 +286,9 @@ func (s *SettingsService) Set(ctx context.Context, category, key, value string) 
 
 // Delete 删除单个设置
 func (s *SettingsService) Delete(ctx context.Context, category, key string) error {
+	if err := assertSettingsCategoryWritable(category); err != nil {
+		return err
+	}
 	if err := s.store.Delete(ctx, category, key); err != nil {
 		return err
 	}
@@ -259,12 +298,18 @@ func (s *SettingsService) Delete(ctx context.Context, category, key string) erro
 
 // BatchSet 批量设置（不触发回调，需手动触发）
 func (s *SettingsService) BatchSet(ctx context.Context, records []*store.SettingRecord) error {
+	if err := assertSettingsRecordsWritable(records); err != nil {
+		return err
+	}
 	return s.store.BatchSet(ctx, records)
 }
 
 // UpdateAndApply 批量更新并应用（触发热更新）
 // 只更新 value，保留 label、description 等元数据
 func (s *SettingsService) UpdateAndApply(ctx context.Context, records []*store.SettingRecord) error {
+	if err := assertSettingsRecordsWritable(records); err != nil {
+		return err
+	}
 	if err := s.store.BatchUpdateValues(ctx, records); err != nil {
 		return fmt.Errorf("保存设置失败: %w", err)
 	}
@@ -280,6 +325,10 @@ func (s *SettingsService) UpdateAndApply(ctx context.Context, records []*store.S
 
 // ResetCategory 重置分类设置为默认值
 func (s *SettingsService) ResetCategory(ctx context.Context, category string) error {
+	// 受保护分类禁止“先删分类再写默认值”，否则会清掉 config、密钥 hash 与 revision
+	if err := assertSettingsCategoryWritable(category); err != nil {
+		return err
+	}
 	// 删除当前分类的所有设置
 	if err := s.store.DeleteByCategory(ctx, category); err != nil {
 		return fmt.Errorf("删除分类设置失败: %w", err)

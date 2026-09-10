@@ -49,6 +49,10 @@ type SettingsStore interface {
 	BatchUpdateValues(ctx context.Context, records []*SettingRecord) error // 只更新value
 	DeleteByCategory(ctx context.Context, category string) error
 
+	// 单行原子写入（供专用配置服务使用，不经过默认值初始化/元数据同步/分类重置）
+	InsertIfAbsent(ctx context.Context, record *SettingRecord) (bool, error)
+	CompareAndSwapValue(ctx context.Context, category, key, expectedValue, newValue string) (bool, error)
+
 	// 初始化
 	InitDefaults(ctx context.Context, defaults []*SettingRecord) error
 	IsInitialized(ctx context.Context) (bool, error)
@@ -277,6 +281,55 @@ func (s *SQLiteSettingsStore) BatchSet(ctx context.Context, records []*SettingRe
 	}
 
 	return nil
+}
+
+// InsertIfAbsent 仅在 (category, key) 不存在时插入完整记录，返回是否真正插入。
+// 已存在时不改动任何列；用于“首次初始化只允许插入缺行”的专用配置，
+// 与 BatchSet/SyncMetadata 的 upsert 语义严格区分。
+func (s *SQLiteSettingsStore) InsertIfAbsent(ctx context.Context, record *SettingRecord) (bool, error) {
+	if record == nil {
+		return false, fmt.Errorf("设置记录为空")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `
+		INSERT INTO settings (category, key, value, value_type, label, description, display_order, requires_restart)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(category, key) DO NOTHING
+	`
+	result, err := s.db.ExecContext(ctx, query,
+		record.Category, record.Key, record.Value, record.ValueType,
+		record.Label, record.Description, record.DisplayOrder,
+		boolToInt(record.RequiresRestart),
+	)
+	if err != nil {
+		return false, fmt.Errorf("插入设置 %s.%s 失败: %w", record.Category, record.Key, err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("读取插入结果失败: %w", err)
+	}
+	return inserted == 1, nil
+}
+
+// CompareAndSwapValue 仅当当前 value 与 expectedValue 逐字节相等时更新为 newValue，返回是否命中。
+// 记录不存在或值已被其他写入者改变时返回 false 且不做任何修改；
+// 调用方据此返回明确的并发冲突错误，不得退化为“先 Get 再 Set”。
+func (s *SQLiteSettingsStore) CompareAndSwapValue(ctx context.Context, category, key, expectedValue, newValue string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `UPDATE settings SET value = ? WHERE category = ? AND key = ? AND value = ?`
+	result, err := s.db.ExecContext(ctx, query, newValue, category, key, expectedValue)
+	if err != nil {
+		return false, fmt.Errorf("原子更新设置 %s.%s 失败: %w", category, key, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("读取更新结果失败: %w", err)
+	}
+	return updated == 1, nil
 }
 
 // DeleteByCategory 删除分类下的所有设置
