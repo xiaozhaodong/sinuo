@@ -24,7 +24,10 @@ const TABLE_FIELDS = [
   'outputTokens',
   'cacheCreationTokens',
   'cacheReadTokens',
-  'cost'
+  'cost',
+  // 表格用它们决定 token / 成本列显示数字还是占位符
+  'usageKnown',
+  'costKnown'
 ];
 
 // 表格不渲染、但详情弹窗会读的字段。
@@ -49,7 +52,10 @@ const DETAIL_ONLY_FIELDS = [
   'retryCount',
   'retry_count',
   'method',
-  'path'
+  'path',
+  'requestKind',
+  'usageKnown',
+  'costKnown'
 ];
 
 // 参与比对的字段 = 行对象在 UI 任何位置被读到的字段，而不只是被渲染的字段。

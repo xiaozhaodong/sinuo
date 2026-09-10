@@ -40,6 +40,18 @@ test('概览页是快照页：不订阅 SSE、不派发 chartUpdate、不保留�
   }
 });
 
+test('概览跳转按入口区分口径：次数入口仅生成，用量与模型明细保留独立压缩', async () => {
+  const [pageSource, tableSource] = await Promise.all([
+    readSource(overviewPagePath),
+    readSource('./components/ModelUsageTable.jsx')
+  ]);
+
+  // 页面本身不下发一刀切口径，口径随入口 filter 传递
+  assert.doesNotMatch(pageSource, /includeCompaction: false/);
+  // 家族计数是生成口径，点到列表必须收窄，否则行数与数字对不上
+  assert.match(tableSource, /includeCompaction: false/);
+});
+
 test('概览页不再渲染端点健康环形图与底部连接统计大卡', async () => {
   const pageSource = await readSource(overviewPagePath);
 

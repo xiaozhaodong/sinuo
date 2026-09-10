@@ -22,6 +22,20 @@ test('buildQueryParamsFromFilters normalizes supported date-time precisions with
 });
 
 
+test('订阅来源与「仅生成」口径随查询传递', () => {
+  assert.deepEqual(
+    buildQueryParamsFromFilters({ sourceView: 'subscription' }),
+    { source_view: 'subscription' }
+  );
+  assert.deepEqual(
+    buildQueryParamsFromFilters({ sourceView: 'all', includeCompaction: false }),
+    { include_compaction: false }
+  );
+  // 默认（含独立压缩）不下传，由后端承载全部落库记录
+  assert.deepEqual(buildQueryParamsFromFilters({ includeCompaction: true }), {});
+  assert.deepEqual(buildQueryParamsFromFilters({}), {});
+});
+
 test('概览交接保留绝对边界和来源，日期输入转换不修改查询', () => {
   const filters = { startDate: '2026-11-01T05:30:00.123456Z', endDate: '2026-11-01T06:30:00.654321Z', model: 'm', requestFamily: 'codex', sourceView: 'account' };
   const expected = { start_date: filters.startDate, end_date: filters.endDate, model: 'm', request_family: 'codex', source_view: 'account' };

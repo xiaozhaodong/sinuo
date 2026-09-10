@@ -23,12 +23,14 @@ export const PRIVACY_PATH_OPTIONS = [
   '/v1/messages',
   '/v1/messages/count_tokens',
   '/v1/responses',
-  '/v1/responses/compact'
+  '/v1/responses/compact',
+  '/v1/alpha/search'
 ];
 
 export const PRIVACY_UPSTREAM_TYPE_OPTIONS = [
   { value: 'endpoint', label: 'Claude 端点' },
-  { value: 'account', label: 'Codex 账号' }
+  { value: 'account', label: 'Codex 账号' },
+  { value: 'subscription', label: 'Codex 订阅直通' }
 ];
 
 export const PRIVACY_PROVIDER_TYPE_OPTIONS = [

@@ -269,6 +269,9 @@ func modelUsageGroupsFromRequestDetails(details []RequestDetail) map[modelUsageK
 }
 
 // QueryModelUsageStatsWithHotPool 查询模型维度聚合统计（数据库 + 热池）。
+// 计数、成功率与生成耗时使用生成口径（legacy + generation）；Token 与成本使用含独立
+// 压缩的用量口径（legacy + generation + compaction）。压缩专用模型可以调用次数为 0、
+// 用量或成本非零，必须保留为 0 次调用行，不能丢行或清零。
 // limit <= 0 时使用 DefaultModelUsageLimit；Rows 只保留请求数最高的 limit 个模型，
 // Truncated 标记是否截断，汇总字段始终按全部模型计算。
 func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opts *QueryOptions, limit int) (*ModelUsageStats, error) {
@@ -282,10 +285,91 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 		limit = DefaultModelUsageLimit
 	}
 
-	source := resolveRequestQuerySource(opts.UpstreamType)
-	dbGroups, err := ut.queryModelUsageGroupsBySource(ctx, opts, source)
+	generationRows, generationStats, err := ut.aggregateModelUsageByKinds(ctx, opts, GenerationMetricRequestKinds())
 	if err != nil {
 		return nil, err
+	}
+	usageRows, usageStats, err := ut.aggregateModelUsageByKinds(ctx, opts, UsageMetricRequestKinds())
+	if err != nil {
+		return nil, err
+	}
+
+	// 合并两个口径：行键取并集，计数/成功率/耗时来自生成口径，Token/成本来自用量口径。
+	rowsByKey := make(map[modelUsageKey]*ModelUsageRow, len(generationRows)+len(usageRows))
+	for _, row := range generationRows {
+		copied := row
+		rowsByKey[modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily, upstreamType: row.UpstreamType}] = &copied
+	}
+	for _, row := range usageRows {
+		key := modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily, upstreamType: row.UpstreamType}
+		existing, ok := rowsByKey[key]
+		if !ok {
+			// 只出现在用量口径的模型（压缩专用）：保留 0 次调用行。
+			rowsByKey[key] = &ModelUsageRow{
+				ModelName:     row.ModelName,
+				RequestFamily: row.RequestFamily,
+				UpstreamType:  row.UpstreamType,
+				TotalTokens:   row.TotalTokens,
+				TotalCostUSD:  row.TotalCostUSD,
+			}
+			continue
+		}
+		existing.TotalTokens = row.TotalTokens
+		existing.TotalCostUSD = row.TotalCostUSD
+	}
+
+	allRows := make([]ModelUsageRow, 0, len(rowsByKey))
+	for _, row := range rowsByKey {
+		allRows = append(allRows, *row)
+	}
+
+	sort.Slice(allRows, func(i, j int) bool {
+		if allRows[i].RequestCount != allRows[j].RequestCount {
+			return allRows[i].RequestCount > allRows[j].RequestCount
+		}
+		if allRows[i].ModelName != allRows[j].ModelName {
+			return allRows[i].ModelName < allRows[j].ModelName
+		}
+		if allRows[i].RequestFamily != allRows[j].RequestFamily {
+			return allRows[i].RequestFamily < allRows[j].RequestFamily
+		}
+		return allRows[i].UpstreamType < allRows[j].UpstreamType
+	})
+
+	stats := &ModelUsageStats{
+		TotalRequests:       generationStats.TotalRequests,
+		SuccessRequests:     generationStats.SuccessRequests,
+		FailedRequests:      generationStats.FailedRequests,
+		TotalTokens:         usageStats.TotalTokens,
+		InputTokens:         usageStats.InputTokens,
+		OutputTokens:        usageStats.OutputTokens,
+		CacheCreationTokens: usageStats.CacheCreationTokens,
+		CacheReadTokens:     usageStats.CacheReadTokens,
+		TotalCostUSD:        usageStats.TotalCostUSD,
+		ClaudeCount:         generationStats.ClaudeCount,
+		CodexCount:          generationStats.CodexCount,
+	}
+
+	if len(allRows) > limit {
+		stats.Truncated = true
+		allRows = allRows[:limit]
+	}
+	stats.Rows = allRows
+
+	return stats, nil
+}
+
+// aggregateModelUsageByKinds 执行单一指标口径（kinds 白名单）的模型聚合：
+// 数据库 + 热池去重补偿，返回全部模型行（未排序、未截断）与该口径的汇总。
+// opts 必须非 nil，由 QueryModelUsageStatsWithHotPool 统一构造。
+func (ut *UsageTracker) aggregateModelUsageByKinds(ctx context.Context, opts *QueryOptions, kinds []string) ([]ModelUsageRow, ModelUsageStats, error) {
+	kindOpts := *opts
+	kindOpts.RequestKinds = kinds
+
+	source := resolveRequestQuerySource(kindOpts.UpstreamType)
+	dbGroups, err := ut.queryModelUsageGroupsBySource(ctx, &kindOpts, source)
+	if err != nil {
+		return nil, ModelUsageStats{}, err
 	}
 
 	groupsByKey := make(map[modelUsageKey]modelUsageGroup, len(dbGroups))
@@ -293,7 +377,7 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 		groupsByKey[group.key()] = group
 	}
 
-	hotPoolRequests := ut.getFilteredHotPoolRequests(opts)
+	hotPoolRequests := ut.getFilteredHotPoolRequests(&kindOpts)
 	if len(hotPoolRequests) > 0 {
 		hotPoolIDs := make(map[string]struct{}, len(hotPoolRequests))
 		uniqueHotPoolRequests := make([]RequestDetail, 0, len(hotPoolRequests))
@@ -307,9 +391,9 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 			hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
 		}
 
-		overlapGroups, err := ut.queryModelUsageGroupsBySourceAndRequestIDs(ctx, opts, source, hotPoolRequestIDs)
+		overlapGroups, err := ut.queryModelUsageGroupsBySourceAndRequestIDs(ctx, &kindOpts, source, hotPoolRequestIDs)
 		if err != nil {
-			return nil, err
+			return nil, ModelUsageStats{}, err
 		}
 		for _, overlap := range overlapGroups {
 			key := overlap.key()
@@ -360,24 +444,5 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 		}
 	}
 
-	sort.Slice(allRows, func(i, j int) bool {
-		if allRows[i].RequestCount != allRows[j].RequestCount {
-			return allRows[i].RequestCount > allRows[j].RequestCount
-		}
-		if allRows[i].ModelName != allRows[j].ModelName {
-			return allRows[i].ModelName < allRows[j].ModelName
-		}
-		if allRows[i].RequestFamily != allRows[j].RequestFamily {
-			return allRows[i].RequestFamily < allRows[j].RequestFamily
-		}
-		return allRows[i].UpstreamType < allRows[j].UpstreamType
-	})
-
-	if len(allRows) > limit {
-		stats.Truncated = true
-		allRows = allRows[:limit]
-	}
-	stats.Rows = allRows
-
-	return stats, nil
+	return allRows, *stats, nil
 }

@@ -16,9 +16,18 @@ export const getRequestFamilyMeta = (value) => REQUEST_FAMILY_META[normalizeRequ
 
 export const UNKNOWN_UPSTREAM_LABEL = '未知上游';
 
+// 订阅直通固定标识：库里 upstream_name 是 chatgpt-subscription，
+// 界面统一显示为「订阅直通」，筛选仍用真实存储值。
+export const SUBSCRIPTION_UPSTREAM_NAME = 'chatgpt-subscription';
+export const SUBSCRIPTION_UPSTREAM_LABEL = '订阅直通';
+
+export const isSubscriptionRequest = (request = {}) => (
+  (request.upstreamType || request.upstream_type) === 'subscription'
+);
+
 // 合成上游标签：不是真实上游名，DB 里对应的 upstream_name 为空。
 // 上游筛选按 upstream_name 精确查库，放进选项必然返回 0 条，故排除出候选。
-const SYNTHETIC_UPSTREAM_LABELS = new Set([UNKNOWN_UPSTREAM_LABEL, NO_UPSTREAM_LABEL]);
+const SYNTHETIC_UPSTREAM_LABELS = new Set([UNKNOWN_UPSTREAM_LABEL, NO_UPSTREAM_LABEL, SUBSCRIPTION_UPSTREAM_LABEL]);
 
 // 空上游归属：候选为空时后端没有端点可归属（endpoint_pipeline.go 的 no_endpoints_available 分支），
 // 一律显示「未知上游」会被读成数据丢失，而实际是明确的「没有端点可路由」。
@@ -30,13 +39,15 @@ const resolveMissingUpstreamLabel = (request = {}) => (
 );
 
 export const resolveRequestUpstream = (request = {}) => (
-  request.upstreamName
-  || request.upstream_name
-  || request.effectiveEndpoint
-  || request.effective_endpoint
-  || request.endpoint
-  || request.endpoint_name
-  || resolveMissingUpstreamLabel(request)
+  isSubscriptionRequest(request)
+    ? SUBSCRIPTION_UPSTREAM_LABEL
+    : (request.upstreamName
+      || request.upstream_name
+      || request.effectiveEndpoint
+      || request.effective_endpoint
+      || request.endpoint
+      || request.endpoint_name
+      || resolveMissingUpstreamLabel(request))
 );
 
 export const normalizeRequestSource = (request = {}) => ({
@@ -45,15 +56,22 @@ export const normalizeRequestSource = (request = {}) => ({
   upstreamName: resolveRequestUpstream(request)
 });
 
+// 上游筛选候选：返回 { value, label }，订阅直通的 value 仍是真实存储的
+// upstream_name（筛选按精确值查库），只有展示名固定为「订阅直通」。
 export const filterUpstreamOptionsByFamily = (requests = [], family = 'all') => {
   const selectedFamily = family === 'all' ? '' : normalizeRequestFamily(family);
-  const names = new Set();
+  const options = new Map();
   for (const request of requests) {
     const normalized = normalizeRequestSource(request);
     if (selectedFamily && normalized.requestFamily !== selectedFamily) continue;
-    if (normalized.upstreamName && !SYNTHETIC_UPSTREAM_LABELS.has(normalized.upstreamName)) {
-      names.add(normalized.upstreamName);
+    if (isSubscriptionRequest(request)) {
+      options.set(SUBSCRIPTION_UPSTREAM_NAME, { value: SUBSCRIPTION_UPSTREAM_NAME, label: SUBSCRIPTION_UPSTREAM_LABEL });
+      continue;
+    }
+    const name = normalized.upstreamName;
+    if (name && !SYNTHETIC_UPSTREAM_LABELS.has(name)) {
+      options.set(name, { value: name, label: name });
     }
   }
-  return [...names].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
 };

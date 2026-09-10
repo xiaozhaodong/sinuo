@@ -1075,6 +1075,10 @@ export const getUsageStats = async (params = {}) => {
     upstream_name: params.upstream_name || params.upstreamName || '',
     source_view: params.source_view || params.sourceView || 'all'
   };
+  // 请求页显式下传列表口径；概览不传，走后端按指标混合口径。
+  if (typeof params.include_compaction === 'boolean') {
+    queryParams.include_compaction = params.include_compaction;
+  }
 
   console.log('📊 [Wails] GetUsageStats 参数:', queryParams);
   const data = await WailsApp.GetUsageStats(queryParams);
@@ -1099,7 +1103,7 @@ export const getUsageStats = async (params = {}) => {
  * @param {string} params.end_date - 结束时间（优先于 period）
  * @param {string} params.model - 模型筛选
  * @param {string} params.request_family - 请求类型筛选
- * @param {string} params.source_view - endpoint/account/all
+ * @param {string} params.source_view - endpoint/account/subscription/all
  * @param {string} params.upstream_name - 上游筛选
  * @param {number} params.limit - Top N，默认 8
  * @returns {Promise<Object>} - { period, start_time, end_time, rows, truncated, ...汇总字段 }
@@ -1181,6 +1185,10 @@ export const getRequests = async (params = {}) => {
     upstream_name: params.upstream_name || params.upstreamName || '',
     source_view: params.source_view || params.sourceView || 'all'
   };
+  // 概览跳转的「仅生成」口径：只在显式收窄时下传，缺省由后端承载全部落库记录。
+  if (params.include_compaction === false) {
+    queryParams.include_compaction = false;
+  }
 
   console.log('🔍 [Wails] GetRequests 参数:', queryParams);
   const result = await WailsApp.GetRequests(queryParams);
@@ -1193,6 +1201,8 @@ export const getRequests = async (params = {}) => {
     timestamp: r.timestamp,
     start_time: r.timestamp,
     request_family: r.request_family || 'other',
+    request_source: r.request_source || '',
+    request_kind: r.request_kind || 'legacy',
     upstream_type: r.upstream_type || 'endpoint',
     upstream_name: r.upstream_name || '',
     upstream_source_name: r.upstream_source_name || '',
@@ -1205,6 +1215,10 @@ export const getRequests = async (params = {}) => {
     status_code: r.http_status,
     http_status_code: r.http_status,  // 添加 http_status_code 映射
     retry_count: r.retry_count || 0,  // 添加重试次数
+    path: r.path || '',
+    method: r.method || '',
+    usage_known: r.usage_known !== false,
+    cost_known: r.cost_known !== false,
     input_tokens: r.input_tokens,
     output_tokens: r.output_tokens,
     cache_creation_tokens: r.cache_creation_tokens,
@@ -1286,7 +1300,7 @@ export const isProxyRunning = async () => {
  * @param {string} params.start_date - 开始时间（优先于 period）
  * @param {string} params.end_date - 结束时间（优先于 period）
  * @param {string} params.request_family - 请求类型筛选
- * @param {string} params.source_view - endpoint/account/all
+ * @param {string} params.source_view - endpoint/account/subscription/all
  * @param {string} params.model - 模型筛选
  * @param {string} params.upstream_name - 上游筛选
  * @returns {Promise<Object>} - { period, granularity, start_time, end_time, points: [{time,total,success,fail}] }

@@ -151,6 +151,8 @@ func normalizeSourceView(sourceView string) string {
 	switch strings.ToLower(strings.TrimSpace(sourceView)) {
 	case "account":
 		return "account"
+	case "subscription":
+		return "subscription"
 	case "all":
 		return "all"
 	default:
@@ -163,6 +165,8 @@ func sourceViewToUpstreamType(sourceView string) string {
 	switch normalizeSourceView(sourceView) {
 	case "account":
 		return "account"
+	case "subscription":
+		return "subscription"
 	case "all":
 		return ""
 	default:
@@ -193,7 +197,7 @@ func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableNa
 }
 
 // queryStatsFromDB 按 source_view 查询成本、tokens 和请求数：
-// endpoint/account/all 统一基于 request_logs + upstream_type 查询
+// endpoint/account/subscription/all 统一基于 request_logs + upstream_type 查询
 func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time, sourceView string) (cost float64, tokens int64, requests int64) {
 	db := a.coreDB()
 	if db == nil {
@@ -241,11 +245,17 @@ type RequestRecord struct {
 	Endpoint              string  `json:"endpoint"` // Claude 路由诊断兼容字段
 	Model                 string  `json:"model"`
 	Status                string  `json:"status"`
-	HTTPStatus            int     `json:"http_status"`
+	HTTPStatus            *int    `json:"http_status"`              // 无 HTTP 响应（如订阅 WS 内生成）为 null
 	RetryCount            int     `json:"retry_count"`              // 重试次数
 	FailureReason         string  `json:"failure_reason,omitempty"` // 失败原因
 	CancelReason          string  `json:"cancel_reason,omitempty"`  // 取消原因
-	UpstreamType          string  `json:"upstream_type"`            // endpoint/account
+	Path                  string  `json:"path"`                     // 规范化请求路径
+	Method                string  `json:"method"`                   // 请求方法（订阅 WS 内生成为 GET）
+	RequestSource         string  `json:"request_source"`           // legacy_proxy / codex_subscription_proxy
+	RequestKind           string  `json:"request_kind"`             // legacy / generation / compaction
+	UsageKnown            bool    `json:"usage_known"`              // false 表示未收到用量，token 列的 0 是未知而非真实零
+	CostKnown             bool    `json:"cost_known"`               // false 表示未收到成本，cost 的 0 是未知而非真实零
+	UpstreamType          string  `json:"upstream_type"`            // endpoint/account/subscription
 	UpstreamSourceName    string  `json:"upstream_source_name"`     // 订阅源
 	UpstreamName          string  `json:"upstream_name"`            // 账号名/端点名
 	UpstreamID            int64   `json:"upstream_id"`              // 账号ID（可空）
@@ -285,7 +295,10 @@ type RequestQueryParams struct {
 	Model         string `json:"model"`      // 可选：模型名称
 	RequestFamily string `json:"request_family"`
 	UpstreamName  string `json:"upstream_name"`
-	SourceView    string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
+	SourceView    string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
+	// IncludeCompaction 可选：显式 false 时列表只保留生成口径（legacy + generation）。
+	// 概览的次数指标是生成口径，跳转时收窄列表避免行数对不上；缺省承载全部落库记录。
+	IncludeCompaction *bool `json:"include_compaction"`
 }
 
 // GetRequests 获取请求记录列表（热池+数据库双源查询）
@@ -359,6 +372,11 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		Offset:        offset,
 	}
 	opts.UpstreamType = sourceViewToUpstreamType(params.SourceView)
+	if params.IncludeCompaction != nil && !*params.IncludeCompaction {
+		opts.RequestKinds = tracking.GenerationMetricRequestKinds()
+	} else {
+		opts.RequestKinds = tracking.UsageMetricRequestKinds()
+	}
 
 	requests, total, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
 	if err != nil {
@@ -401,6 +419,12 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		RequestedEndpoint:     r.RequestedEndpoint,
 		EffectiveEndpoint:     r.EffectiveEndpoint,
 		FallbackReason:        r.FallbackReason,
+		Path:                  r.Path,
+		Method:                r.Method,
+		RequestSource:         r.RequestSource,
+		RequestKind:           r.RequestKind,
+		UsageKnown:            r.UsageKnown,
+		CostKnown:             r.CostKnown,
 		InputTokens:           r.InputTokens,
 		OutputTokens:          r.OutputTokens,
 		CacheCreationTokens:   r.CacheCreationTokens,
@@ -412,9 +436,7 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	}
 
 	// 处理指针字段
-	if r.HTTPStatusCode != nil {
-		record.HTTPStatus = *r.HTTPStatusCode
-	}
+	record.HTTPStatus = r.HTTPStatusCode
 	if r.DurationMs != nil {
 		record.ResponseTime = *r.DurationMs
 	}
@@ -490,7 +512,11 @@ type UsageStatsQueryParams struct {
 	Model         string `json:"model"`      // 可选：模型筛选
 	RequestFamily string `json:"request_family"`
 	UpstreamName  string `json:"upstream_name"`
-	SourceView    string `json:"source_view"` // 可选：endpoint/account/all，默认 endpoint
+	SourceView    string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
+	// IncludeCompaction 可选：请求页把列表口径一起带进来，显式传值时次数与用量两项
+	// 指标使用同一种范围（true=含独立压缩，false=仅生成），保证顶部汇总与列表一致；
+	// 缺省（概览快照）才按指标分别取口径。
+	IncludeCompaction *bool `json:"include_compaction"`
 }
 
 // resolveUsageStatsRange 解析统计查询的时间范围：显式 start/end 优先，否则按 period 计算。
@@ -566,12 +592,15 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 	}
 	result.Period = normalizedPeriod
 
-	// 如果有 usageTracker，使用数据库聚合 + 热池补偿，避免加载大量明细到内存
+	// 如果有 usageTracker，使用数据库聚合 + 热池补偿，避免加载大量明细到内存。
+	// 指标口径由后端统一定义，前端不传种类：同一接口混合两类指标，不能把全部字段
+	// 套进同一个 kind 条件 —— 次数、成功率与生成耗时只计生成口径；Token 与成本计入
+	// 独立压缩的已报告用量与可计算成本。
 	if a.usageTracker != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		opts := &tracking.QueryOptions{
+		baseOpts := &tracking.QueryOptions{
 			StartDate:     &startTime,
 			EndDate:       &endTime,
 			ModelName:     params.Model,
@@ -580,25 +609,47 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 			UpstreamType:  sourceViewToUpstreamType(normalizedSourceView),
 			Status:        params.Status,
 		}
-
-		stats, err := a.usageTracker.QueryAggregatedRequestStatsWithHotPool(ctx, opts)
-		if err == nil && stats != nil {
-			if stats.TotalRequests > 0 {
-				result.TotalRequests = int(stats.TotalRequests)
-				result.TotalTokens = stats.TotalTokens
-				result.TotalCostUSD = stats.TotalCostUSD
-				result.FailedCount = int(stats.FailedRequests)
-				result.SuccessRate = float64(stats.SuccessRequests) / float64(stats.TotalRequests) * 100
-				if stats.DurationCount > 0 {
-					result.AvgDurationMs = float64(stats.TotalDurationMs) / float64(stats.DurationCount)
-				}
+		generationKinds := tracking.GenerationMetricRequestKinds()
+		usageKinds := tracking.UsageMetricRequestKinds()
+		if params.IncludeCompaction != nil {
+			// 请求页：列表与顶部汇总同口径，不能只改 GetRequests。
+			listKinds := tracking.UsageMetricRequestKinds()
+			if !*params.IncludeCompaction {
+				listKinds = tracking.GenerationMetricRequestKinds()
 			}
-			return result, nil
+			generationKinds, usageKinds = listKinds, listKinds
 		}
-		// 查询失败时继续使用运行时统计
+
+		generationOpts := *baseOpts
+		generationOpts.RequestKinds = generationKinds
+		usageOpts := *baseOpts
+		usageOpts.RequestKinds = usageKinds
+
+		generationStats, err := a.usageTracker.QueryAggregatedRequestStatsWithHotPool(ctx, &generationOpts)
+		if err != nil {
+			return result, err
+		}
+		usageStats, err := a.usageTracker.QueryAggregatedRequestStatsWithHotPool(ctx, &usageOpts)
+		if err != nil {
+			return result, err
+		}
+
+		result.TotalRequests = int(generationStats.TotalRequests)
+		result.FailedCount = int(generationStats.FailedRequests)
+		if generationStats.TotalRequests > 0 {
+			result.SuccessRate = float64(generationStats.SuccessRequests) / float64(generationStats.TotalRequests) * 100
+		}
+		if generationStats.DurationCount > 0 {
+			result.AvgDurationMs = float64(generationStats.TotalDurationMs) / float64(generationStats.DurationCount)
+		}
+		// 只有独立压缩的窗口仍返回实际 Token 与成本，不因生成次数为 0 而清零。
+		result.TotalTokens = usageStats.TotalTokens
+		result.TotalCostUSD = usageStats.TotalCostUSD
+		return result, nil
 	}
 
-	// 从运行时 Metrics 获取统计（降级方案，或无 usageTracker 时）
+	// 无 usageTracker（异常装配）时退回运行时统计；查询失败在上方直接返回错误，
+	// 不能用不含种类信息的累计值兜底过滤结果。
 	return a.getUsageStatsFromRuntime(period), nil
 }
 

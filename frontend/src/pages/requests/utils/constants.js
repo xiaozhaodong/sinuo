@@ -39,6 +39,15 @@ export const PAGINATION_CONFIG = {
   PAGE_SIZE_OPTIONS: [10, 20, 50, 100]
 };
 
+// 来源视图选项：value 与服务端 source_view 取值一一对应，
+// subscription 是 Codex 订阅直通的落库来源（upstream_type=subscription）。
+export const SOURCE_VIEW_OPTIONS = [
+  { value: 'all', label: '全部来源' },
+  { value: 'endpoint', label: '端点' },
+  { value: 'account', label: '账号池' },
+  { value: 'subscription', label: '订阅直通' }
+];
+
 // 默认筛选器状态（v4.0: 移除group筛选）
 export const DEFAULT_FILTERS = {
   status: 'all',
@@ -47,7 +56,9 @@ export const DEFAULT_FILTERS = {
   sourceView: 'all',
   upstreamName: 'all',
   startDate: '',
-  endDate: ''
+  endDate: '',
+  // 概览跳转携带「仅生成」（false）以对齐生成口径；默认承载全部落库记录。
+  includeCompaction: true
 };
 
 // 表格列定义。这个数组的顺序就是表格的渲染顺序（表头与数据格同源，

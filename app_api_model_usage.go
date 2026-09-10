@@ -17,7 +17,7 @@ import (
 type ModelUsageRowData struct {
 	ModelName     string  `json:"model_name"`     // 请求模型名，空值原样返回（前端标记为未知模型）
 	RequestFamily string  `json:"request_family"` // claude/codex/image/other
-	UpstreamType  string  `json:"upstream_type"`  // endpoint/account
+	UpstreamType  string  `json:"upstream_type"`  // endpoint/account/subscription
 	RequestCount  int64   `json:"request_count"`
 	SuccessCount  int64   `json:"success_count"` // completed + processing，与 GetUsageStats 同口径
 	FailedCount   int64   `json:"failed_count"`
@@ -55,7 +55,7 @@ type ModelUsageQueryParams struct {
 	EndDate       string `json:"end_date"`   // 优先于 period
 	Model         string `json:"model"`      // 可选：模型精确匹配
 	RequestFamily string `json:"request_family"`
-	SourceView    string `json:"source_view"` // endpoint/account/all，默认 endpoint
+	SourceView    string `json:"source_view"` // endpoint/account/subscription/all，默认 endpoint
 	UpstreamName  string `json:"upstream_name"`
 	Limit         int    `json:"limit"` // Top N，默认 8，上限 100
 }
@@ -79,6 +79,9 @@ func resolveOverviewStatsRange(policy *timezonepolicy.Policy, period, startDate,
 }
 
 // GetModelUsageStats 获取模型维度调用统计（概览页模型调用表与 Token 分布）。
+// 指标口径由后端统一定义：次数、成功率与生成耗时只计生成口径（legacy + generation），
+// Token 与成本含独立压缩（legacy + generation + compaction）；压缩专用模型保留
+// 0 次调用行，不因次数为 0 丢行。
 // 汇总字段覆盖全部模型，Rows 只保留请求数最高的 Limit 个。
 func (a *App) GetModelUsageStats(params ModelUsageQueryParams) (ModelUsageStatsData, error) {
 	a.mu.RLock()

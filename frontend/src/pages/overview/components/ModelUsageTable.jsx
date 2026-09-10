@@ -46,7 +46,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
             <h3 className="font-semibold text-fg">模型调用情况</h3>
           </div>
           <p className="text-xs text-fg-muted mt-1">
-            按模型聚合请求、成功率、耗时与成本{periodCaption ? ` · ${periodCaption}` : ''}
+            按模型聚合请求、成功率、耗时与成本 · 次数仅计生成，用量含独立压缩{periodCaption ? ` · ${periodCaption}` : ''}
           </p>
         </div>
         <button
@@ -62,11 +62,12 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
 
       {hasSummary && !loading && !error && (
         <div className="flex flex-wrap items-center gap-2 px-5 pb-3">
+          {/* 家族计数是生成口径：跳转收窄为「仅生成」，列表行数才能与数字对齐 */}
           {FAMILY_PILLS.map((pill) => (
             <button
               key={pill.key}
               type="button"
-              onClick={() => openRequests({ requestFamily: pill.key })}
+              onClick={() => openRequests({ requestFamily: pill.key, includeCompaction: false })}
               className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-sub px-2.5 py-1 text-[11px] font-semibold text-fg-body hover:border-accent-line hover:text-accent"
               title={`只看 ${pill.label} 请求`}
             >

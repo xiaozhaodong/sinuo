@@ -46,8 +46,10 @@ export const buildQueryParamsFromFilters = (filters = {}) => {
   if (filters.status && filters.status !== 'all') queryParams.status = filters.status;
   if (filters.model) queryParams.model = filters.model;
   if (filters.requestFamily && filters.requestFamily !== 'all') queryParams.request_family = filters.requestFamily;
-  if (filters.sourceView === 'endpoint' || filters.sourceView === 'account') queryParams.source_view = filters.sourceView;
+  if (filters.sourceView === 'endpoint' || filters.sourceView === 'account' || filters.sourceView === 'subscription') queryParams.source_view = filters.sourceView;
   if (filters.upstreamName && filters.upstreamName !== 'all') queryParams.upstream_name = filters.upstreamName;
+  // 概览跳转携带「仅生成」时收窄列表；缺省不下传，由后端承载全部落库记录。
+  if (filters.includeCompaction === false) queryParams.include_compaction = false;
 
   return queryParams;
 };

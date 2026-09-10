@@ -18,6 +18,13 @@ test('requests page switches accounts by pinning the selected account instead of
   assert.doesNotMatch(source, /已经是主组账号/);
 });
 
+test('请求页顶部汇总与列表同口径', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  // 统计接口缺省是概览的按指标混合口径；请求页必须显式下传列表口径。
+  assert.match(source, /include_compaction: requestsQueryParams\.include_compaction !== false/);
+});
+
 test('requests page surfaces upstream account load failures to users', async () => {
   const source = await readFile(sourcePath, 'utf8');
 

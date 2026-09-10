@@ -299,3 +299,255 @@ func TestGetRequestsUsesConfiguredDSTDayRangeAndReturnsUTC(t *testing.T) {
 		}
 	}
 }
+
+// seededRequestLog 是 request_logs 播种行：先落库、再经 Wails API 读回，
+// 覆盖来源/种类两个新维度在查询侧的口径。
+type seededRequestLog struct {
+	ID           string
+	Kind         string // legacy / generation / compaction
+	Source       string // legacy_proxy / codex_subscription_proxy
+	UpstreamType string // endpoint / account / subscription
+	UpstreamName string
+	Model        string
+	Status       string
+	InputTokens  int64
+	OutputTokens int64
+	Cost         float64
+}
+
+func insertRequestLogRow(t *testing.T, app *App, row seededRequestLog) {
+	t.Helper()
+	if _, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+		request_id, start_time, status, request_family, request_source, request_kind,
+		upstream_type, upstream_name, model_name,
+		input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_cost_usd
+	) VALUES (?, ?, ?, 'codex', ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+		row.ID, timezonepolicy.FormatStorage(time.Now().UTC()), row.Status, row.Source, row.Kind,
+		row.UpstreamType, row.UpstreamName, row.Model,
+		row.InputTokens, row.OutputTokens, row.Cost); err != nil {
+		t.Fatalf("failed to seed request log %s: %v", row.ID, err)
+	}
+}
+
+func explicitUsageWindow() (string, string) {
+	now := time.Now()
+	return now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05-07:00"),
+		now.Add(1 * time.Hour).Format("2006-01-02T15:04:05-07:00")
+}
+
+func TestGetUsageStats_SplitsCountsAndUsageByRequestKind(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "gen-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 10, OutputTokens: 2, Cost: 0.3,
+	})
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "comp-1", Kind: tracking.RequestKindCompaction, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 100, OutputTokens: 5, Cost: 1.2,
+	})
+
+	startDate, endDate := explicitUsageWindow()
+	result, err := app.GetUsageStats(UsageStatsQueryParams{Period: "1d", SourceView: "all", StartDate: startDate, EndDate: endDate})
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	if result.TotalRequests != 1 || result.FailedCount != 0 {
+		t.Fatalf("compaction must not enter the generation denominator: %+v", result)
+	}
+	if result.SuccessRate != 100 {
+		t.Fatalf("success rate should be computed on generation only, got %f", result.SuccessRate)
+	}
+	if result.TotalTokens != 117 {
+		t.Fatalf("token usage must include compaction, got %d", result.TotalTokens)
+	}
+	if result.TotalCostUSD != 1.5 {
+		t.Fatalf("cost must include compaction, got %f", result.TotalCostUSD)
+	}
+}
+
+func TestGetUsageStats_CompactionOnlyWindowKeepsUsage(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "comp-only", Kind: tracking.RequestKindCompaction, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 100, OutputTokens: 5, Cost: 1.2,
+	})
+
+	startDate, endDate := explicitUsageWindow()
+	result, err := app.GetUsageStats(UsageStatsQueryParams{Period: "1d", SourceView: "all", StartDate: startDate, EndDate: endDate})
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	if result.TotalRequests != 0 {
+		t.Fatalf("compaction-only window must keep generation count at zero, got %d", result.TotalRequests)
+	}
+	if result.TotalTokens != 105 || result.TotalCostUSD != 1.2 {
+		t.Fatalf("compaction-only window must keep reported usage, got tokens=%d cost=%f", result.TotalTokens, result.TotalCostUSD)
+	}
+}
+
+func TestGetUsageStats_SubscriptionSourceView(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "sub-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 10, OutputTokens: 2, Cost: 0.3,
+	})
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "acc-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceLegacyProxy,
+		UpstreamType: "account", UpstreamName: "account-a", Model: "gpt-5",
+		Status: "completed", InputTokens: 200, OutputTokens: 20, Cost: 4,
+	})
+
+	startDate, endDate := explicitUsageWindow()
+	result, err := app.GetUsageStats(UsageStatsQueryParams{Period: "1d", SourceView: "subscription", StartDate: startDate, EndDate: endDate})
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	if result.TotalRequests != 1 || result.TotalTokens != 12 || result.TotalCostUSD != 0.3 {
+		t.Fatalf("subscription source view must only count direct-passthrough rows: %+v", result)
+	}
+}
+
+func TestGetRequests_IncludeCompactionNarrowsToGeneration(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "gen-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5", Status: "completed",
+	})
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "comp-1", Kind: tracking.RequestKindCompaction, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5", Status: "completed",
+	})
+
+	startDate, endDate := explicitUsageWindow()
+	base := RequestQueryParams{Page: 1, PageSize: 10, StartDate: startDate, EndDate: endDate, SourceView: "all"}
+
+	all, err := app.GetRequests(base)
+	if err != nil {
+		t.Fatalf("GetRequests failed: %v", err)
+	}
+	if all.Total != 2 {
+		t.Fatalf("default list must carry every record kind, got %d", all.Total)
+	}
+
+	generationOnly := base
+	includeCompaction := false
+	generationOnly.IncludeCompaction = &includeCompaction
+	narrowed, err := app.GetRequests(generationOnly)
+	if err != nil {
+		t.Fatalf("GetRequests failed: %v", err)
+	}
+	if narrowed.Total != 1 || len(narrowed.Requests) != 1 || narrowed.Requests[0].RequestID != "gen-1" {
+		t.Fatalf("include_compaction=false must narrow to generation records: %+v", narrowed)
+	}
+}
+
+// 未知用量必须与真实零区分；分类与路径贯通桌面 DTO；无 HTTP 响应的记录保留 null。
+func TestGetRequests_PreservesUnknownUsageAndClassification(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	started := timezonepolicy.FormatStorage(time.Now().UTC())
+	// cache_creation_5m/1h_tokens 也要显式写 NULL：漏列会落到 DEFAULT 0，
+	// 被 UsageKnown 的判定当成「已报告用量」。
+	if _, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+		request_id, start_time, status, request_family, request_source, request_kind,
+		upstream_type, upstream_name, model_name, method, path, http_status_code,
+		input_tokens, output_tokens, cache_creation_tokens, cache_creation_5m_tokens,
+		cache_creation_1h_tokens, cache_read_tokens, total_cost_usd
+	) VALUES
+		('ws-unknown', ?, 'failed', 'codex', 'codex_subscription_proxy', 'generation',
+		 'subscription', 'chatgpt-subscription', 'gpt-5', 'GET', '/v1/responses', NULL,
+		 NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+		('ws-zero', ?, 'completed', 'codex', 'codex_subscription_proxy', 'compaction',
+		 'subscription', 'chatgpt-subscription', 'gpt-5', 'POST', '/v1/responses/compact', 200,
+		 0, 0, 0, 0, 0, 0, 0)`, started, started); err != nil {
+		t.Fatal(err)
+	}
+
+	startDate, endDate := explicitUsageWindow()
+	result, err := app.GetRequests(RequestQueryParams{Page: 1, PageSize: 10, StartDate: startDate, EndDate: endDate, SourceView: "all"})
+	if err != nil {
+		t.Fatalf("GetRequests failed: %v", err)
+	}
+	byID := make(map[string]RequestRecord, len(result.Requests))
+	for _, record := range result.Requests {
+		byID[record.RequestID] = record
+	}
+
+	unknown, ok := byID["ws-unknown"]
+	if !ok {
+		t.Fatalf("missing ws-unknown record: %+v", result.Requests)
+	}
+	if unknown.UsageKnown || unknown.CostKnown {
+		t.Fatalf("unknown usage must stay unknown: %+v", unknown)
+	}
+	if unknown.HTTPStatus != nil {
+		t.Fatalf("missing HTTP response must stay null, got %v", unknown.HTTPStatus)
+	}
+	if unknown.Path != "/v1/responses" || unknown.Method != "GET" ||
+		unknown.RequestKind != "generation" || unknown.RequestSource != "codex_subscription_proxy" {
+		t.Fatalf("classification fields lost in DTO: %+v", unknown)
+	}
+
+	zero, ok := byID["ws-zero"]
+	if !ok {
+		t.Fatalf("missing ws-zero record: %+v", result.Requests)
+	}
+	if !zero.UsageKnown || !zero.CostKnown {
+		t.Fatalf("explicit zero usage must stay known: %+v", zero)
+	}
+	if zero.HTTPStatus == nil || *zero.HTTPStatus != 200 {
+		t.Fatalf("HTTP status must be preserved: %+v", zero.HTTPStatus)
+	}
+}
+
+// 请求页把列表口径带进统计：显式下传时两项指标同口径；概览缺省保持按指标混合。
+func TestGetUsageStats_IncludeCompactionMatchesListScope(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "gen-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 10, OutputTokens: 2, Cost: 0.3,
+	})
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "comp-1", Kind: tracking.RequestKindCompaction, Source: tracking.RequestSourceCodexSubscriptionProxy,
+		UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "gpt-5",
+		Status: "completed", InputTokens: 100, OutputTokens: 5, Cost: 1.2,
+	})
+
+	startDate, endDate := explicitUsageWindow()
+	includeCompaction := true
+	all, err := app.GetUsageStats(UsageStatsQueryParams{
+		Period: "1d", SourceView: "all", StartDate: startDate, EndDate: endDate, IncludeCompaction: &includeCompaction,
+	})
+	if err != nil {
+		t.Fatalf("GetUsageStats(all) failed: %v", err)
+	}
+	if all.TotalRequests != 2 || all.TotalTokens != 117 || all.TotalCostUSD != 1.5 {
+		t.Fatalf("list scope with compaction must count both records: %+v", all)
+	}
+
+	generationOnly := false
+	narrowed, err := app.GetUsageStats(UsageStatsQueryParams{
+		Period: "1d", SourceView: "all", StartDate: startDate, EndDate: endDate, IncludeCompaction: &generationOnly,
+	})
+	if err != nil {
+		t.Fatalf("GetUsageStats(generation) failed: %v", err)
+	}
+	if narrowed.TotalRequests != 1 || narrowed.TotalTokens != 12 || narrowed.TotalCostUSD != 0.3 {
+		t.Fatalf("generation-only scope must drop compaction from both metrics: %+v", narrowed)
+	}
+
+	mixed, err := app.GetUsageStats(UsageStatsQueryParams{Period: "1d", SourceView: "all", StartDate: startDate, EndDate: endDate})
+	if err != nil {
+		t.Fatalf("GetUsageStats(default) failed: %v", err)
+	}
+	if mixed.TotalRequests != 1 || mixed.TotalTokens != 117 || mixed.TotalCostUSD != 1.5 {
+		t.Fatalf("overview default must keep per-metric scopes: %+v", mixed)
+	}
+}

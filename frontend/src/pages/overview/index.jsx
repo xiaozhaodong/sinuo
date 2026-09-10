@@ -43,6 +43,8 @@ const OverviewPage = ({ onNavigate }) => {
   // 时间范围必须跟着走，否则请求页停在默认「今天」，和模型表的窗口对不上账。
   const openRequests = useCallback((filter) => {
     if (!snapshot.modelUsage || snapshotPeriod !== period || errors.modelUsage) return;
+    // 口径随入口 filter 走：次数入口显式带 includeCompaction=false（仅生成），
+    // 用量、成本与模型明细不带，保留独立压缩记录。
     setPendingRequestsFilters({
       ...filter,
       ...buildRequestsRangeFromSnapshot(snapshot.modelUsage)

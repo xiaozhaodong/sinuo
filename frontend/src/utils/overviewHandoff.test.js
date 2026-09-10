@@ -42,6 +42,18 @@ test('空筛选条件视为无交接，避免给请求页塞默认值', () => {
 });
 
 
+test('订阅来源与「仅生成」口径随交接保留', () => {
+  setPendingRequestsFilters({ model: 'gpt-5', sourceView: 'subscription', includeCompaction: false });
+  assert.deepEqual(consumePendingRequestsFilters(), {
+    model: 'gpt-5',
+    sourceView: 'subscription',
+    includeCompaction: false
+  });
+  // 默认「含独立压缩」不写进交接，避免给请求页塞默认值
+  setPendingRequestsFilters({ includeCompaction: true });
+  assert.equal(consumePendingRequestsFilters(), null);
+});
+
 test('模型行交接包含精确时间、请求族与上游类型，消费后清空', () => {
   const filters = { model: 'm', requestFamily: 'codex', sourceView: 'account',
     startDate: '2026-11-01T05:30:00.123456Z', endDate: '2026-11-01T06:30:00.654321Z' };

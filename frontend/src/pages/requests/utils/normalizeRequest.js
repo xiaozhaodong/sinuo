@@ -36,6 +36,13 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   retryCount: pick(request, ['retry_count', 'retryCount'], 0),
   failureReason: pick(request, ['failure_reason', 'failureReason'], ''),
   cancelReason: pick(request, ['cancel_reason', 'cancelReason'], ''),
+  path: pick(request, ['path'], ''),
+  method: pick(request, ['method'], ''),
+  requestSource: pick(request, ['request_source', 'requestSource'], ''),
+  requestKind: pick(request, ['request_kind', 'requestKind'], 'legacy'),
+  // 缺省 true 兼容旧来源：没有该标记时 0 视为真实零。
+  usageKnown: pick(request, ['usage_known', 'usageKnown'], true),
+  costKnown: pick(request, ['cost_known', 'costKnown'], true),
   httpStatusCode: pick(
     request,
     ['http_status_code', 'httpStatusCode', 'status_code', 'statusCode', 'http_status'],

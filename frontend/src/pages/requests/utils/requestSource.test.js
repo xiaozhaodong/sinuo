@@ -26,8 +26,31 @@ test('upstream options follow selected request family', () => {
     { request_family: 'codex', upstream_name: 'account-a' },
     { request_family: 'claude', upstream_name: 'ep-b' }
   ];
-  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'claude'), ['ep-a', 'ep-b']);
-  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'codex'), ['account-a']);
+  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'claude'), [
+    { value: 'ep-a', label: 'ep-a' },
+    { value: 'ep-b', label: 'ep-b' }
+  ]);
+  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'codex'), [
+    { value: 'account-a', label: 'account-a' }
+  ]);
+});
+
+// 订阅直通的展示名固定为「订阅直通」，但筛选候选值仍是真实存储的
+// upstream_name —— 上游筛选按该列精确查库。
+test('订阅直通行显示固定标签，候选值保留真实存储值', () => {
+  const subscription = { request_family: 'codex', upstream_type: 'subscription', upstream_name: 'chatgpt-subscription' };
+  const account = { request_family: 'codex', upstream_type: 'account', upstream_name: 'account-a' };
+
+  assert.equal(resolveRequestUpstream(subscription), '订阅直通');
+  assert.equal(normalizeRequestSource(subscription).upstreamName, '订阅直通');
+  assert.deepEqual(
+    filterUpstreamOptionsByFamily([subscription, account], 'codex').map((option) => option.value).sort(),
+    ['account-a', 'chatgpt-subscription']
+  );
+  assert.deepEqual(
+    filterUpstreamOptionsByFamily([subscription, account], 'codex').find((option) => option.value === 'chatgpt-subscription'),
+    { value: 'chatgpt-subscription', label: '订阅直通' }
+  );
 });
 
 test('空上游按终态码归类：候选为空显示「无可用上游」而非「未知上游」', () => {
@@ -64,6 +87,6 @@ test('合成上游标签不进筛选选项', () => {
     { request_family: 'claude', upstream_name: '', failure_reason: 'no_endpoints_available: no routable endpoint candidates' },
     { request_family: 'claude', upstream_name: '', failure_reason: 'request_body_read_failed: Failed to read request body' }
   ];
-  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'claude'), ['xuanwulei']);
-  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'all'), ['xuanwulei']);
+  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'claude').map((option) => option.value), ['xuanwulei']);
+  assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'all').map((option) => option.value), ['xuanwulei']);
 });

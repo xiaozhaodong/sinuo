@@ -17,8 +17,14 @@ import {
   isUnresolvedModelName,
   modelDisplayName,
   resolveOverviewPeriod,
-  successRateTone
+  successRateTone,
+  upstreamTypeLabel
 } from './overviewViewModel.js';
+
+test('upstreamTypeLabel 认识订阅直通来源', () => {
+  assert.equal(upstreamTypeLabel('subscription'), '订阅直通');
+  assert.equal(upstreamTypeLabel('endpoint'), '端点');
+});
 
 test('时间范围解析：默认 24h，未知值回退到默认项', () => {
   assert.equal(DEFAULT_OVERVIEW_PERIOD, '1d');

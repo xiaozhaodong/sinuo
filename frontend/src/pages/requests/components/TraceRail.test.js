@@ -165,6 +165,13 @@ test('在途时 token 与成本显示占位符而不是 0', () => {
   assert.match(TABLE_CODE, /const PENDING_VALUE = '—'/, '占位符必须是破折号，不能是 0');
   assert.match(TABLE_CODE, /pending \? PENDING_VALUE : children/);
 
+  // 已落定但用量未知（usage_known / cost_known 为 false）同理：没收到 usage 的
+  // 失败/取消记录，0 是「还不知道」而不是「用了 0 个」。
+  assert.match(TABLE_CODE, /const usagePending = pending \|\| request\.usageKnown === false/,
+    'usage_known=false 的记录必须显示占位符');
+  assert.match(TABLE_CODE, /const costPending = pending \|\| request\.costKnown === false/,
+    'cost_known=false 的记录必须显示占位符');
+
   for (const col of ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens', 'cost']) {
     assert.match(TABLE_CODE, new RegExp(`case '${col}':[\\s\\S]{0,160}?<ValueCell`),
       `${col} 没走 ValueCell，在途时会显示 0`);

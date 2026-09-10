@@ -6,6 +6,7 @@ import (
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
+	"cc-forwarder/internal/tracking"
 )
 
 func TestGetRequestTrendData_BucketsComeFromRequestLogs(t *testing.T) {
@@ -173,5 +174,50 @@ func TestGetRequestTrendChart_CompatibilityKeepsCumulativeHistory(t *testing.T) 
 	points := app.GetRequestTrendChart(60)
 	if len(points) != 1 || points[0].Total != 1 {
 		t.Fatalf("legacy history changed: %+v", points)
+	}
+}
+
+// 趋势分桶是生成口径：独立压缩不进入请求数趋势，但同一窗口的 Token / 成本仍计入。
+func TestGetRequestTrendData_GenerationScopeExcludesCompaction(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "gen-1", Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceLegacyProxy,
+		UpstreamType: "account", UpstreamName: "account-a", Model: "m",
+		Status: "completed", InputTokens: 10, OutputTokens: 2, Cost: 0.3,
+	})
+	insertRequestLogRow(t, app, seededRequestLog{
+		ID: "comp-1", Kind: tracking.RequestKindCompaction, Source: tracking.RequestSourceLegacyProxy,
+		UpstreamType: "account", UpstreamName: "account-a", Model: "m",
+		Status: "completed", InputTokens: 100, OutputTokens: 5, Cost: 1.2,
+	})
+
+	now := time.Now()
+	query := RequestTrendQueryParams{
+		Period:     "1d",
+		StartDate:  formatAPITime(now.Add(-1 * time.Hour)),
+		EndDate:    formatAPITime(now.Add(1 * time.Hour)),
+		SourceView: "account",
+		Model:      "m",
+	}
+	trend, err := app.GetRequestTrendData(query)
+	if err != nil {
+		t.Fatalf("GetRequestTrendData failed: %v", err)
+	}
+	var total int64
+	for _, point := range trend.Points {
+		total += point.Total
+	}
+	if total != 1 {
+		t.Fatalf("compaction must not enter the generation trend, got %d", total)
+	}
+
+	model, err := app.GetModelUsageStats(ModelUsageQueryParams{
+		Period: "1d", StartDate: query.StartDate, EndDate: query.EndDate, SourceView: "account", Model: "m",
+	})
+	if err != nil {
+		t.Fatalf("GetModelUsageStats failed: %v", err)
+	}
+	if model.TotalRequests != 1 || model.TotalTokens != 117 || model.TotalCostUSD != 1.5 {
+		t.Fatalf("model summary must count generation but carry full usage: %+v", model)
 	}
 }

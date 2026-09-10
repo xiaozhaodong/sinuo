@@ -1,15 +1,9 @@
 import { useMemo } from 'react';
 import { Calendar, Check, Filter, X } from 'lucide-react';
 import { CustomSelect } from '@components/ui';
-import { STATUS_SELECT_OPTIONS } from '../utils/constants.js';
+import { SOURCE_VIEW_OPTIONS, STATUS_SELECT_OPTIONS } from '../utils/constants.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { formatFilterDateTimeInput } from '../utils/filterTime.js';
-
-const SOURCE_OPTIONS = [
-  { value: 'all', label: '全部来源' },
-  { value: 'endpoint', label: '端点' },
-  { value: 'account', label: '账号池' }
-];
 
 const FAMILY_OPTIONS = [
   { value: '', label: '全部类型' },
@@ -31,7 +25,7 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
 
   const upstreamOptions = useMemo(() => [
     { value: '', label: '所有上游' },
-    ...upstreams.map((upstream) => ({ value: upstream, label: upstream }))
+    ...upstreams
   ], [upstreams]);
 
   if (!isOpen) return null;
@@ -58,7 +52,7 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
           <CustomSelect options={STATUS_SELECT_OPTIONS} value={filters.status} onChange={(value) => updateFilter('status', value)} size="sm" placeholder="状态" />
           <CustomSelect options={modelOptions} value={filters.model} onChange={(value) => updateFilter('model', value)} size="sm" placeholder="模型" />
           <CustomSelect options={FAMILY_OPTIONS} value={filters.requestFamily === 'all' ? '' : filters.requestFamily} onChange={(value) => { updateFilter('requestFamily', value || 'all'); updateFilter('upstreamName', 'all'); }} size="sm" placeholder="类型" />
-          <CustomSelect options={SOURCE_OPTIONS} value={filters.sourceView || 'all'} onChange={(value) => { updateFilter('sourceView', value); updateFilter('upstreamName', 'all'); }} size="sm" placeholder="来源" />
+          <CustomSelect options={SOURCE_VIEW_OPTIONS} value={filters.sourceView || 'all'} onChange={(value) => { updateFilter('sourceView', value); updateFilter('upstreamName', 'all'); }} size="sm" placeholder="来源" />
           <CustomSelect options={upstreamOptions} value={filters.upstreamName === 'all' ? '' : filters.upstreamName} onChange={(value) => updateFilter('upstreamName', value || 'all')} size="sm" placeholder="上游" />
         </div>
       </div>

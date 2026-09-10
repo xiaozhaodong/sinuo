@@ -108,6 +108,12 @@ const TokenCard = ({ icon: Icon, label, value, tone }) => (
   </div>
 );
 
+// 请求种类展示：legacy 是历史与旧入口记录，不额外占一行。
+const REQUEST_KIND_LABELS = {
+  generation: '生成',
+  compaction: '独立压缩'
+};
+
 const formatRouteMode = (mode) => {
   switch (mode) {
     case 'manual_fixed':
@@ -136,6 +142,10 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   const request = lifecycle?.request
     ? { ...lifecycle.request, upstreamWriteMs: lifecycle.upstreamWriteMs ?? null }
     : initialRequest;
+
+  // 未知用量与成本显示占位符：终态但没收到 usage 时，0 是「还不知道」而不是「用了 0 个」。
+  const usageKnown = request.usageKnown !== false;
+  const costKnown = request.costKnown !== false;
 
   // 计算 Token 总数
   const totalTokens = (request.inputTokens || 0) + (request.outputTokens || 0);
@@ -240,7 +250,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                     <DollarSign className="w-4 h-4" />
                   </div>
                   <div className="text-2xl font-bold font-mono">
-                    {formatCost(request.cost)}
+                    {costKnown ? formatCost(request.cost) : '—'}
                   </div>
                 </div>
               </div>
@@ -254,6 +264,9 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                   <InfoRow icon={FileText} label="请求 ID" value={request.requestId} copyable />
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
                   <InfoRow icon={Activity} label="类型" value={family.label} />
+                  {REQUEST_KIND_LABELS[request.requestKind] && (
+                    <InfoRow icon={Activity} label="请求种类" value={REQUEST_KIND_LABELS[request.requestKind]} />
+                  )}
                   <InfoRow icon={Server} label="上游" value={request.upstreamName || '未知上游'} />
                   <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />
                   {request.requestedEndpoint && (
@@ -318,13 +331,13 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                 <TokenCard
                   icon={TrendingUp}
                   label="输入 Token"
-                  value={request.inputTokens || 0}
+                  value={usageKnown ? request.inputTokens || 0 : '—'}
                   tone="tone-blue"
                 />
                 <TokenCard
                   icon={TrendingDown}
                   label="输出 Token"
-                  value={request.outputTokens || 0}
+                  value={usageKnown ? request.outputTokens || 0 : '—'}
                   tone="tone-emerald"
                 />
               </div>
@@ -334,25 +347,25 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                 <TokenCard
                   icon={Database}
                   label="缓存创建 (5分钟)"
-                  value={request.cacheCreation5mTokens || 0}
+                  value={usageKnown ? request.cacheCreation5mTokens || 0 : '—'}
                   tone="tone-purple"
                 />
                 <TokenCard
                   icon={Database}
                   label="缓存创建 (1小时)"
-                  value={request.cacheCreation1hTokens || 0}
+                  value={usageKnown ? request.cacheCreation1hTokens || 0 : '—'}
                   tone="tone-violet"
                 />
                 <TokenCard
                   icon={Zap}
                   label="缓存读取"
-                  value={request.cacheReadTokens || 0}
+                  value={usageKnown ? request.cacheReadTokens || 0 : '—'}
                   tone="tone-amber"
                 />
                 <TokenCard
                   icon={Database}
                   label="缓存创建 (总计)"
-                  value={request.cacheCreationTokens || 0}
+                  value={usageKnown ? request.cacheCreationTokens || 0 : '—'}
                   tone="tone-slate"
                 />
               </div>
@@ -370,21 +383,23 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                     </div>
                   </div>
                   <div className="text-3xl font-bold font-mono">
-                    {totalTokens.toLocaleString()}
+                    {usageKnown ? totalTokens.toLocaleString() : '—'}
                   </div>
                 </div>
 
-                {/* 分布条 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span>输入 {inputPercent}%</span>
-                    <span>输出 {outputPercent}%</span>
+                {/* 分布条：未知用量不画 0% 的假分布 */}
+                {usageKnown && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>输入 {inputPercent}%</span>
+                      <span>输出 {outputPercent}%</span>
+                    </div>
+                    <div className="h-2 bg-surface-emph rounded-full overflow-hidden flex">
+                      <div className="bg-blue-500" style={{ width: `${inputPercent}%` }} />
+                      <div className="bg-success-solid" style={{ width: `${outputPercent}%` }} />
+                    </div>
                   </div>
-                  <div className="h-2 bg-surface-emph rounded-full overflow-hidden flex">
-                    <div className="bg-blue-500" style={{ width: `${inputPercent}%` }} />
-                    <div className="bg-success-solid" style={{ width: `${outputPercent}%` }} />
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           )}
@@ -398,8 +413,8 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
               <div className="p-4">
                 <InfoRow icon={Server} label="HTTP 状态码" value={request.http_status_code || request.httpStatusCode || '-'} />
                 <InfoRow icon={RefreshCw} label="重试次数" value={`${request.retry_count || request.retryCount || 0} 次`} />
-                <InfoRow icon={Activity} label="请求方法" value={request.method || 'POST'} />
-                <InfoRow icon={FileText} label="请求路径" value={request.path || '/v1/messages'} copyable />
+                <InfoRow icon={Activity} label="请求方法" value={request.method || '-'} />
+                <InfoRow icon={FileText} label="请求路径" value={request.path || '-'} copyable />
               </div>
             </div>
           )}

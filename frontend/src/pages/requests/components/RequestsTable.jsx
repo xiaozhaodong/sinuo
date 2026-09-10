@@ -190,6 +190,9 @@ const ValueCell = ({ pending, tone, children }) => (
  */
 const renderCell = (columnId, request, formatTimestamp) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
+  // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
+  const usagePending = pending || request.usageKnown === false;
+  const costPending = pending || request.costKnown === false;
 
   switch (columnId) {
     case 'requestId':
@@ -214,15 +217,15 @@ const renderCell = (columnId, request, formatTimestamp) => {
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
-      return <ValueCell pending={pending} tone="text-fg-body">{request.inputTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-body">{request.inputTokens}</ValueCell>;
     case 'outputTokens':
-      return <ValueCell pending={pending} tone="text-fg-body">{request.outputTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-body">{request.outputTokens}</ValueCell>;
     case 'cacheCreationTokens':
-      return <ValueCell pending={pending} tone="text-fg-muted">{request.cacheCreationTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-muted">{request.cacheCreationTokens}</ValueCell>;
     case 'cacheReadTokens':
-      return <ValueCell pending={pending} tone="text-fg-muted">{request.cacheReadTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-muted">{request.cacheReadTokens}</ValueCell>;
     case 'cost':
-      return <ValueCell pending={pending} tone="text-warn font-medium">{formatCost(request.cost)}</ValueCell>;
+      return <ValueCell pending={costPending} tone="text-warn font-medium">{formatCost(request.cost)}</ValueCell>;
     default:
       return null;
   }

@@ -245,7 +245,9 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
 
         {/* 计费输入 */}
         <LifecycleCell icon={Zap} iconClass="text-warn-solid" title="计费输入" loading={false}>
-          {isAccountRequest ? (
+          {request.usageKnown === false ? (
+            <DashText />
+          ) : isAccountRequest ? (
             <div className="font-mono text-lg text-fg">
               {Math.max((request.inputTokens || 0) - (request.cacheReadTokens || 0), 0).toLocaleString()}
               <span className="text-xs text-fg-subtle ml-1">input − cache_read</span>

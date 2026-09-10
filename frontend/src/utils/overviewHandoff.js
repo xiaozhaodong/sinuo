@@ -18,7 +18,9 @@ export const setPendingRequestsFilters = (filters) => {
   const next = {};
   if (filters.model) next.model = filters.model;
   if (filters.requestFamily && filters.requestFamily !== 'all') next.requestFamily = filters.requestFamily;
-  if (filters.sourceView === 'endpoint' || filters.sourceView === 'account') next.sourceView = filters.sourceView;
+  if (filters.sourceView === 'endpoint' || filters.sourceView === 'account' || filters.sourceView === 'subscription') next.sourceView = filters.sourceView;
+  // 「含独立压缩 / 仅生成」必须随交接保留：概览数字是生成口径，默认对齐为仅生成。
+  if (filters.includeCompaction === false) next.includeCompaction = false;
   if (filters.startDate) next.startDate = filters.startDate;
   if (filters.endDate) next.endDate = filters.endDate;
   pendingRequestsFilters = Object.keys(next).length > 0 ? next : null;

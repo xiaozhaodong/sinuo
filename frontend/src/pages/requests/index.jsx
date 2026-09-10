@@ -181,7 +181,9 @@ const RequestsPage = () => {
     };
     const statsParams = {
       ...requestsQueryParams,
-      period: '30d'
+      period: '30d',
+      // 顶部汇总必须与列表同口径：显式下传（缺省才是后端按指标混合的概览口径）。
+      include_compaction: requestsQueryParams.include_compaction !== false
     };
 
     const [requestsData, statsData] = await Promise.all([

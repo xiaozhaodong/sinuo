@@ -222,7 +222,8 @@ const FAMILY_LABELS = {
 
 const UPSTREAM_TYPE_LABELS = {
   endpoint: '端点',
-  account: '账号池'
+  account: '账号池',
+  subscription: '订阅直通'
 };
 
 export const familyLabel = (family) => FAMILY_LABELS[family] || '其他';

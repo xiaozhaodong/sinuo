@@ -11,6 +11,8 @@ import {
   filterPrivacyExactSecrets,
   filterPrivacyRules,
   formatScanBytes,
+  PRIVACY_PATH_OPTIONS,
+  PRIVACY_UPSTREAM_TYPE_OPTIONS,
   moveRuleInList,
   sourceLabel,
   summarizeScope,
@@ -24,6 +26,14 @@ test('formatScanBytes renders human readable sizes', () => {
   assert.equal(formatScanBytes(512), '512 B');
   assert.equal(formatScanBytes(0), '-');
   assert.equal(formatScanBytes('oops'), '-');
+});
+
+test('订阅代理可选路径与上游类型进入 scope 选项', () => {
+  assert.ok(PRIVACY_PATH_OPTIONS.includes('/v1/alpha/search'));
+  assert.deepEqual(
+    PRIVACY_UPSTREAM_TYPE_OPTIONS.find((option) => option.value === 'subscription'),
+    { value: 'subscription', label: 'Codex 订阅直通' }
+  );
 });
 
 test('summarizeScope shows 全部请求 for empty scope and joins dimensions', () => {

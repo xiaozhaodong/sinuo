@@ -125,7 +125,8 @@ func BuildTrendBuckets(policy *timezonepolicy.Policy, start, end time.Time, gran
 }
 
 // QueryRequestTrendBuckets 按给定时间桶统计请求数 / 成功 / 失败（数据库 + 热池）。
-// 复用 QueryAggregatedRequestStatsWithHotPool，保证与概览 KPI、请求页同一口径。
+// 只统计生成口径（legacy + generation）：与概览 KPI、模型表的次数口径一致，
+// 独立压缩（compaction）不进入生成分母。调用方无需再传 RequestKinds。
 func (ut *UsageTracker) QueryRequestTrendBuckets(ctx context.Context, opts *QueryOptions, buckets []TimeBucket) ([]RequestTrendBucket, error) {
 	if ut.readDB == nil {
 		return nil, fmt.Errorf("read database not initialized")
@@ -154,6 +155,7 @@ func (ut *UsageTracker) QueryRequestTrendBuckets(ctx context.Context, opts *Quer
 		bucketOpts.EndDate = &end
 		bucketOpts.Limit = 0
 		bucketOpts.Offset = 0
+		bucketOpts.RequestKinds = GenerationMetricRequestKinds()
 
 		stats, err := ut.QueryAggregatedRequestStatsWithHotPool(ctx, &bucketOpts)
 		if err != nil {
