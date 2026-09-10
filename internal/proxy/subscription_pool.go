@@ -26,6 +26,8 @@ const (
 type subscriptionPoolMetadata struct {
 	RequestSource string
 	RequestKind   string
+	BodyMetadata  *normalizedRequestBodyMetadata
+	BodyError     *requestBodyError
 }
 
 type subscriptionPoolMetadataKey struct{}
@@ -72,14 +74,13 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// 正文规范化必须在剥离 Content-Encoding 之前完成：之后重建的头里不再有该字段。
-	// ServeHTTP 会再规范化一次，此时正文已是明文、没有压缩标记，等价且无副作用。
-	if _, bodyErr := normalizeRequestBodyWithMetadata(w, r, a.config()); bodyErr != nil {
-		if a.logger != nil {
-			a.logger.Debug("⚠️ [Codex 订阅代理] [池模式] 请求体不可用",
-				"conn_id", requestID, "code", bodyErr.Code)
+	// 原 Handler 消费该结果并独占失败记录，避免重复读取、丢失压缩元数据或漏记失败。
+	body, bodyErr := normalizeRequestBodyWithMetadata(w, r, a.config())
+	if bodyErr == nil && body != nil {
+		if err := validateSubscriptionJSON(body.normalizedBody); err != nil {
+			bodyErr = &requestBodyError{StatusCode: http.StatusBadRequest, Code: subscriptionInvalidJSONCode,
+				Message: "request contains invalid or ambiguous JSON"}
 		}
-		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
-		return
 	}
 
 	association := subscriptionRequestAssociation(r)
@@ -89,6 +90,9 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 	// 就地重建：后续 copyRequestHeadersForAccount 只能看到这两项，客户端身份头无法回流。
 	r.Header = buildSubscriptionPoolHeaders(r.Header)
 	*r = *r.WithContext(withSubscriptionPoolMetadata(r.Context()))
+	metadata, _ := subscriptionPoolMetadataFromContext(r.Context())
+	metadata.BodyMetadata, metadata.BodyError = body, bodyErr
+	*r = *r.WithContext(context.WithValue(r.Context(), subscriptionPoolMetadataKey{}, metadata))
 	a.proxy.ServeCodexPoolRequest(w, r)
 }
 

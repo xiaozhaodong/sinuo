@@ -127,6 +127,173 @@ func TestDatabaseOperations(t *testing.T) {
 	}
 }
 
+func TestRecordRequestStartRejectsInvalidSourceKindPairs(t *testing.T) {
+	tracker, err := NewUsageTracker(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 10, BatchSize: 1,
+		FlushInterval: time.Hour, MaxRetry: 1, CleanupInterval: time.Hour, RetentionDays: 30,
+		HotPool: &HotPoolSettings{Enabled: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	tests := []RequestDimensions{
+		{RequestSource: RequestSourceLegacyProxy, RequestKind: RequestKindGeneration},
+		{RequestSource: RequestSourceCodexSubscriptionProxy, RequestKind: RequestKindLegacy, UpstreamType: "subscription"},
+		{RequestSource: RequestSourceCodexSubscriptionProxy, RequestKind: "", UpstreamType: "subscription"},
+	}
+	for index, dimensions := range tests {
+		if err := tracker.RecordRequestStartAtWithDimensions(
+			"invalid-pair", "", "", "POST", "/v1/responses", RequestFamilyCodex, true, time.Now(), dimensions,
+		); err == nil {
+			t.Fatalf("case %d unexpectedly accepted %+v", index, dimensions)
+		}
+	}
+	if err := tracker.RecordRequestStartAtWithDimensions(
+		"valid-pair", "", "", "POST", "/v1/responses", RequestFamilyCodex, true, time.Now(),
+		RequestDimensions{RequestSource: RequestSourceCodexSubscriptionProxy, RequestKind: RequestKindGeneration, UpstreamType: "subscription"},
+	); err != nil {
+		t.Fatalf("valid subscription pair rejected: %v", err)
+	}
+}
+
+func TestNonHotAccountSuccessUsesSelectedAccountMultiplier(t *testing.T) {
+	tracker, err := NewUsageTracker(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 10, BatchSize: 10,
+		FlushInterval: time.Hour, MaxRetry: 1, CleanupInterval: time.Hour, RetentionDays: 30,
+		HotPool:      &HotPoolSettings{Enabled: false},
+		ModelPricing: map[string]ModelPricing{"synthetic-model": {Input: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+	tracker.UpdateAccountMultipliers(map[int64]EndpointMultiplier{7: {
+		CostMultiplier: 2, InputCostMultiplier: 1, OutputCostMultiplier: 1,
+		CacheCreationCostMultiplier: 1, CacheCreationCostMultiplier1h: 1, CacheReadCostMultiplier: 1,
+	}})
+	started := time.Now().Add(-time.Second)
+	if err := tracker.processBatch([]RequestEvent{{
+		Type: "start", RequestID: "account-multiplier", Timestamp: started,
+		Data: RequestStartData{
+			Method: "POST", Path: "/v1/responses", RequestFamily: RequestFamilyCodex,
+			RequestSource: RequestSourceLegacyProxy, RequestKind: RequestKindLegacy,
+			UpstreamType: "account", UpstreamName: "selected-account", UpstreamID: 7, UsageKnown: true,
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.processBatch([]RequestEvent{{
+		Type: "success", RequestID: "account-multiplier", Timestamp: time.Now(),
+		Data: RequestCompleteData{
+			ModelName: "synthetic-model", Path: "/v1/responses", InputTokens: 1_000_000,
+			Duration: time.Second, HasTokenUsage: true,
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var cost float64
+	if err := tracker.GetReadDB().QueryRow(`SELECT total_cost_usd FROM request_logs WHERE request_id='account-multiplier'`).Scan(&cost); err != nil {
+		t.Fatal(err)
+	}
+	if cost != 2 {
+		t.Fatalf("account cost = %v, want 2", cost)
+	}
+}
+
+func TestRequestAccountMultiplierPropagatesDatabaseErrors(t *testing.T) {
+	tracker, err := NewUsageTracker(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 10, BatchSize: 10,
+		FlushInterval: time.Hour, MaxRetry: 1, CleanupInterval: time.Hour, RetentionDays: 30,
+		HotPool: &HotPoolSettings{Enabled: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+	if _, err := tracker.GetWriteDB().Exec(`DROP TABLE request_logs`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tracker.requestAccountMultiplier("synthetic-request"); err == nil {
+		t.Fatal("database query error was silently treated as the default multiplier")
+	}
+}
+
+func TestUsageKnownStateMatchesAcrossHotAndColdFinalization(t *testing.T) {
+	for _, hot := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cold", true: "hot"}[hot], func(t *testing.T) {
+			tracker, err := NewUsageTracker(&Config{
+				Enabled: true, DatabasePath: ":memory:", BufferSize: 50, BatchSize: 1,
+				FlushInterval: 10 * time.Millisecond, MaxRetry: 1, CleanupInterval: time.Hour, RetentionDays: 30,
+				HotPool: &HotPoolSettings{Enabled: hot, MaxSize: 100, MaxAge: time.Hour, CleanupInterval: time.Hour},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tracker.Close()
+
+			start := func(id string, dimensions RequestDimensions) {
+				t.Helper()
+				if err := tracker.RecordRequestStartAtWithDimensions(
+					id, "", "", "POST", "/v1/responses", RequestFamilyCodex, true, time.Now(), dimensions,
+				); err != nil {
+					t.Fatal(err)
+				}
+				waitTrackingDetail(t, tracker, id, "pending")
+			}
+
+			start("legacy-no-usage", RequestDimensions{
+				RequestSource: RequestSourceLegacyProxy, RequestKind: RequestKindLegacy, UpstreamType: "endpoint", UsageKnown: true,
+			})
+			tracker.RecordRequestSuccess("legacy-no-usage", "synthetic-model", nil, time.Millisecond)
+
+			start("pool-no-usage", RequestDimensions{
+				RequestSource: RequestSourceCodexSubscriptionProxy, RequestKind: RequestKindGeneration,
+				UpstreamType: "account", UpstreamName: "selected-account", UpstreamID: 7, UsageKnown: false,
+			})
+			tracker.RecordRequestSuccess("pool-no-usage", "synthetic-model", nil, time.Millisecond)
+
+			start("pool-reported-before-failure", RequestDimensions{
+				RequestSource: RequestSourceCodexSubscriptionProxy, RequestKind: RequestKindGeneration,
+				UpstreamType: "account", UpstreamName: "selected-account", UpstreamID: 7, UsageKnown: false,
+			})
+			tracker.RecordFailedRequestTokens("pool-reported-before-failure", "synthetic-model", &TokenUsage{InputTokens: 7}, time.Millisecond, "partial_usage")
+			tracker.RecordRequestFinalFailure("pool-reported-before-failure", "synthetic-model", "failed", "synthetic_failure", "", time.Millisecond, 500, nil)
+
+			legacy := waitTrackingDetail(t, tracker, "legacy-no-usage", "completed")
+			if !legacy.UsageKnown || !legacy.CostKnown {
+				t.Fatalf("legacy known state = %+v", legacy)
+			}
+			unknown := waitTrackingDetail(t, tracker, "pool-no-usage", "completed")
+			if unknown.UsageKnown || unknown.CostKnown {
+				t.Fatalf("pool unknown state = %+v", unknown)
+			}
+			reported := waitTrackingDetail(t, tracker, "pool-reported-before-failure", "failed")
+			if !reported.UsageKnown || !reported.CostKnown || reported.InputTokens != 7 {
+				t.Fatalf("pool reported state = %+v", reported)
+			}
+		})
+	}
+}
+
+func waitTrackingDetail(t *testing.T, tracker *UsageTracker, requestID, status string) RequestDetail {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		details, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &QueryOptions{
+			RequestID: requestID, UpstreamType: "all", Limit: 10,
+		})
+		if err == nil && len(details) == 1 && details[0].Status == status {
+			return details[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("request %s did not reach %s", requestID, status)
+	return RequestDetail{}
+}
+
 func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
 	config := &Config{
 		Enabled:         true,

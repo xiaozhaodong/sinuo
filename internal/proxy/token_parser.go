@@ -30,6 +30,7 @@ type ParseResult struct {
 	ModelName         string
 	ErrorInfo         *ErrorInfo
 	IsCompleted       bool
+	IsCancelled       bool // 明确的 Responses 取消终态；旧 Status/ErrorInfo 语义保持兼容。
 	Status            string
 	HasStreamOutput   bool
 	HasVisibleText    bool
@@ -541,6 +542,7 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 		switch eventType {
 		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
 			return &ParseResult{
+				IsCancelled:     eventType == "response.cancelled" || eventType == "response.canceled",
 				ModelName:       "error:response_failed",
 				ErrorInfo:       &ErrorInfo{Type: "response_failed", Message: "responses stream failed (payload parse failed)"},
 				IsCompleted:     true,
@@ -575,6 +577,7 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 	switch eventType {
 	case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
 		result := &ParseResult{
+			IsCancelled:     eventType == "response.cancelled" || eventType == "response.canceled",
 			ModelName:       modelName,
 			IsCompleted:     true,
 			Status:          StatusErrorAPI,

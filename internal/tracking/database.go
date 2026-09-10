@@ -199,6 +199,8 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 		return ut.buildSuccessQuery(event)
 	case "final_failure": // 新增：失败/取消完成
 		return ut.buildFinalFailureQuery(event)
+	case "subscription_settlement":
+		return ut.buildSubscriptionSettlementQuery(event)
 	case "complete":
 		// 对于complete事件，直接使用传入的持续时间，不需要查询数据库
 		data, ok := event.Data.(RequestCompleteData)
@@ -384,6 +386,62 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 	}
 }
 
+func (ut *UsageTracker) buildSubscriptionSettlementQuery(event RequestEvent) (string, []interface{}, error) {
+	data, ok := event.Data.(RequestSettlement)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid subscription settlement event data type")
+	}
+	if data.Status != "completed" && data.Status != "failed" && data.Status != "cancelled" {
+		return "", nil, fmt.Errorf("invalid subscription settlement status %q", data.Status)
+	}
+
+	var input, output, creation, creation5m, creation1h, read interface{}
+	var inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost interface{}
+	if data.TokenUsage != nil {
+		usage := data.TokenUsage
+		pricing := ut.GetPricing(data.ModelName)
+		cost := CalculateCostV2(usage, &pricing, nil, data.Path)
+		input, output = usage.InputTokens, usage.OutputTokens
+		creation, creation5m, creation1h = usage.CacheCreationTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens
+		read = usage.CacheReadTokens
+		inputCost, outputCost = cost.InputCost, cost.OutputCost
+		creationCost, creation5mCost, creation1hCost = cost.CacheCreationCost, cost.CacheCreation5mCost, cost.CacheCreation1hCost
+		readCost, totalCost = cost.CacheReadCost, cost.TotalCost
+	}
+
+	query := fmt.Sprintf(`UPDATE request_logs SET
+		end_time = ?, duration_ms = ?, status = ?,
+		model_name = COALESCE(NULLIF(NULLIF(?, ''), 'default'), model_name),
+		failure_reason = ?, last_failure_reason = NULL, http_status_code = ?,
+		input_tokens = ?, output_tokens = ?, cache_creation_tokens = ?,
+		cache_creation_5m_tokens = ?, cache_creation_1h_tokens = ?, cache_read_tokens = ?,
+		input_cost_usd = ?, output_cost_usd = ?, cache_creation_cost_usd = ?,
+		cache_creation_5m_cost_usd = ?, cache_creation_1h_cost_usd = ?, cache_read_cost_usd = ?, total_cost_usd = ?,
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
+	return query, []interface{}{
+		timezonepolicy.FormatStorage(event.Timestamp), data.Duration.Milliseconds(), data.Status,
+		data.ModelName, nullStringValue(data.FailureReason), nullIntValue(data.HTTPStatus),
+		input, output, creation, creation5m, creation1h, read,
+		inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
+		event.RequestID,
+	}, nil
+}
+
+func nullStringValue(value string) interface{} {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func nullIntValue(value *int) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
 // buildStartQuery 构建开始事件查询
 func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface{}, error) {
 	data, ok := event.Data.(RequestStartData)
@@ -396,8 +454,16 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	if upstreamType == "" {
 		upstreamType = "endpoint"
 	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
+	requestSource, err := normalizeRequestSource(data.RequestSource)
+	if err != nil {
+		return "", nil, err
+	}
+	requestKind, err := normalizeRequestKind(data.RequestKind)
+	if err != nil {
+		return "", nil, err
+	}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "request_source", "request_kind", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -408,12 +474,22 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.Method,
 		data.Path,
 		normalizeRequestFamily(data.RequestFamily),
+		requestSource,
+		requestKind,
 		timezonepolicy.FormatStorage(event.Timestamp),
 		data.IsStreaming,
 		upstreamType,
 		data.UpstreamSourceName,
 		data.UpstreamName,
 		data.UpstreamID,
+	}
+	usageKnown := data.UsageKnown || data.RequestSource == "" || requestSource == RequestSourceLegacyProxy
+	for i := 0; i < 13; i++ {
+		if usageKnown {
+			args = append(args, 0)
+		} else {
+			args = append(args, nil)
+		}
 	}
 
 	return query, args, nil
@@ -499,6 +575,26 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 	if opts.UpstreamID != nil {
 		setParts = append(setParts, "upstream_id = ?")
 		args = append(args, *opts.UpstreamID)
+	}
+	if opts.RequestSource != nil {
+		value, err := normalizeRequestSource(*opts.RequestSource)
+		if err != nil {
+			return "", nil, err
+		}
+		setParts = append(setParts, "request_source = ?")
+		args = append(args, value)
+	}
+	if opts.RequestKind != nil {
+		value, err := normalizeRequestKind(*opts.RequestKind)
+		if err != nil {
+			return "", nil, err
+		}
+		setParts = append(setParts, "request_kind = ?")
+		args = append(args, value)
+	}
+	if opts.IsStreaming != nil {
+		setParts = append(setParts, "is_streaming = ?")
+		args = append(args, *opts.IsStreaming)
 	}
 	if opts.Status != nil {
 		setParts = append(setParts, "status = ?")
@@ -596,7 +692,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		return "", nil, fmt.Errorf("invalid success event data type")
 	}
 
-	// 计算成本
+	// 只有调用方明确报告 usage（或旧事件含非零 token）时才写 token/cost。
 	tokens := &TokenUsage{
 		InputTokens:           data.InputTokens,
 		OutputTokens:          data.OutputTokens,
@@ -606,10 +702,28 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		CacheReadTokens:       data.CacheReadTokens,
 	}
 
+	hasTokenUsage := data.HasTokenUsage || data.InputTokens != 0 || data.OutputTokens != 0 ||
+		data.CacheCreationTokens != 0 || data.CacheCreation5mTokens != 0 || data.CacheCreation1hTokens != 0 || data.CacheReadTokens != 0
 	pricing := ut.GetPricing(data.ModelName)
-	costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
+	multiplier, err := ut.requestAccountMultiplier(event.RequestID)
+	if err != nil {
+		return "", nil, err
+	}
+	costBreakdown := CalculateCostV2(tokens, &pricing, multiplier, data.Path)
 	if data.CostOverrideUSD != nil {
 		costBreakdown = CostBreakdown{TotalCost: *data.CostOverrideUSD}
+	}
+	var input, output, creation, creation5m, creation1h, read interface{}
+	var inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost interface{}
+	if hasTokenUsage {
+		input, output = data.InputTokens, data.OutputTokens
+		creation, creation5m, creation1h = data.CacheCreationTokens, data.CacheCreation5mTokens, data.CacheCreation1hTokens
+		read = data.CacheReadTokens
+		inputCost, outputCost = costBreakdown.InputCost, costBreakdown.OutputCost
+		creationCost, creation5mCost, creation1hCost = costBreakdown.CacheCreationCost, costBreakdown.CacheCreation5mCost, costBreakdown.CacheCreation1hCost
+		readCost, totalCost = costBreakdown.CacheReadCost, costBreakdown.TotalCost
+	} else if data.CostOverrideUSD != nil {
+		totalCost = costBreakdown.TotalCost
 	}
 
 	// 🔧 [方案A补充] 支持 failure_reason 写入（用于数据质量标记，如 stream_truncated）
@@ -617,19 +731,19 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		end_time = ?,
 		duration_ms = ?,
 		model_name = ?,
-		input_tokens = ?,
-		output_tokens = ?,
-		cache_creation_tokens = ?,
-		cache_creation_5m_tokens = ?,
-		cache_creation_1h_tokens = ?,
-		cache_read_tokens = ?,
-		input_cost_usd = ?,
-		output_cost_usd = ?,
-		cache_creation_cost_usd = ?,
-		cache_creation_5m_cost_usd = ?,
-		cache_creation_1h_cost_usd = ?,
-		cache_read_cost_usd = ?,
-		total_cost_usd = ?,
+		input_tokens = COALESCE(?, input_tokens),
+		output_tokens = COALESCE(?, output_tokens),
+		cache_creation_tokens = COALESCE(?, cache_creation_tokens),
+		cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
+		cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+		cache_read_tokens = COALESCE(?, cache_read_tokens),
+		input_cost_usd = COALESCE(?, input_cost_usd),
+		output_cost_usd = COALESCE(?, output_cost_usd),
+		cache_creation_cost_usd = COALESCE(?, cache_creation_cost_usd),
+		cache_creation_5m_cost_usd = COALESCE(?, cache_creation_5m_cost_usd),
+		cache_creation_1h_cost_usd = COALESCE(?, cache_creation_1h_cost_usd),
+		cache_read_cost_usd = COALESCE(?, cache_read_cost_usd),
+		total_cost_usd = COALESCE(?, total_cost_usd),
 		failure_reason = ?,
 		http_status_code = CASE WHEN http_status_code IS NULL OR http_status_code = 0 THEN 200 ELSE http_status_code END,
 		status = 'completed',
@@ -640,19 +754,19 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		timezonepolicy.FormatStorage(event.Timestamp),
 		data.Duration.Milliseconds(),
 		data.ModelName,
-		data.InputTokens,
-		data.OutputTokens,
-		data.CacheCreationTokens,
-		data.CacheCreation5mTokens,
-		data.CacheCreation1hTokens,
-		data.CacheReadTokens,
-		costBreakdown.InputCost,
-		costBreakdown.OutputCost,
-		costBreakdown.CacheCreationCost,
-		costBreakdown.CacheCreation5mCost,
-		costBreakdown.CacheCreation1hCost,
-		costBreakdown.CacheReadCost,
-		costBreakdown.TotalCost,
+		input,
+		output,
+		creation,
+		creation5m,
+		creation1h,
+		read,
+		inputCost,
+		outputCost,
+		creationCost,
+		creation5mCost,
+		creation1hCost,
+		readCost,
+		totalCost,
 		data.FailureReason, // 🔧 [方案A补充] 写入 failure_reason（可为空）
 		event.RequestID,
 	}
@@ -681,6 +795,23 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 	cacheCreation5mTokens, _ := data["cache_creation_5m_tokens"].(int64) // 🔧 [修复] 2025-12-11
 	cacheCreation1hTokens, _ := data["cache_creation_1h_tokens"].(int64) // 🔧 [修复] 2025-12-11
 	cacheReadTokens, _ := data["cache_read_tokens"].(int64)
+	hasTokenUsage, _ := data["has_token_usage"].(bool)
+	hasTokenUsage = hasTokenUsage || inputTokens != 0 || outputTokens != 0 || cacheCreationTokens != 0 || cacheCreation5mTokens != 0 || cacheCreation1hTokens != 0 || cacheReadTokens != 0
+	var input, output, creation, creation5m, creation1h, read interface{}
+	var inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost interface{}
+	if hasTokenUsage {
+		usage := &TokenUsage{InputTokens: inputTokens, OutputTokens: outputTokens, CacheCreationTokens: cacheCreationTokens,
+			CacheCreation5mTokens: cacheCreation5mTokens, CacheCreation1hTokens: cacheCreation1hTokens, CacheReadTokens: cacheReadTokens}
+		pricing := ut.GetPricing(modelName)
+		multiplier, err := ut.requestAccountMultiplier(event.RequestID)
+		if err != nil {
+			return "", nil, err
+		}
+		cost := CalculateCostV2(usage, &pricing, multiplier, ut.lookupRequestPath(event.RequestID))
+		input, output, creation, creation5m, creation1h, read = inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens
+		inputCost, outputCost, creationCost = cost.InputCost, cost.OutputCost, cost.CacheCreationCost
+		creation5mCost, creation1hCost, readCost, totalCost = cost.CacheCreation5mCost, cost.CacheCreation1hCost, cost.CacheReadCost, cost.TotalCost
+	}
 
 	// 根据状态设置相应的reason字段
 	var query string
@@ -694,12 +825,17 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cancel_reason = ?,
 			http_status_code = ?,
 			model_name = COALESCE(NULLIF(NULLIF(?, ''), 'unknown'), model_name),
-			input_tokens = ?,
-			output_tokens = ?,
-			cache_creation_tokens = ?,
-			cache_creation_5m_tokens = ?,
-			cache_creation_1h_tokens = ?,
-			cache_read_tokens = ?,
+			input_tokens = COALESCE(?, input_tokens),
+			output_tokens = COALESCE(?, output_tokens),
+			cache_creation_tokens = COALESCE(?, cache_creation_tokens),
+			cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
+			cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+			cache_read_tokens = COALESCE(?, cache_read_tokens),
+			input_cost_usd = COALESCE(?, input_cost_usd), output_cost_usd = COALESCE(?, output_cost_usd),
+			cache_creation_cost_usd = COALESCE(?, cache_creation_cost_usd),
+			cache_creation_5m_cost_usd = COALESCE(?, cache_creation_5m_cost_usd),
+			cache_creation_1h_cost_usd = COALESCE(?, cache_creation_1h_cost_usd),
+			cache_read_cost_usd = COALESCE(?, cache_read_cost_usd), total_cost_usd = COALESCE(?, total_cost_usd),
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -709,12 +845,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			reason,     // cancel_reason
 			httpStatus, // http_status_code
 			modelName,  // 🔧 [修复] 2025-12-11: model_name (空字符串和 'unknown' 都会被忽略)
-			inputTokens,
-			outputTokens,
-			cacheCreationTokens,
-			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
-			cacheReadTokens,
+			input, output, creation, creation5m, creation1h, read,
+			inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
 			event.RequestID,
 		}
 	} else {
@@ -727,12 +859,17 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			last_failure_reason = ?,
 			http_status_code = ?,
 			model_name = COALESCE(NULLIF(NULLIF(?, ''), 'unknown'), model_name),
-			input_tokens = ?,
-			output_tokens = ?,
-			cache_creation_tokens = ?,
-			cache_creation_5m_tokens = ?,
-			cache_creation_1h_tokens = ?,
-			cache_read_tokens = ?,
+			input_tokens = COALESCE(?, input_tokens),
+			output_tokens = COALESCE(?, output_tokens),
+			cache_creation_tokens = COALESCE(?, cache_creation_tokens),
+			cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
+			cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+			cache_read_tokens = COALESCE(?, cache_read_tokens),
+			input_cost_usd = COALESCE(?, input_cost_usd), output_cost_usd = COALESCE(?, output_cost_usd),
+			cache_creation_cost_usd = COALESCE(?, cache_creation_cost_usd),
+			cache_creation_5m_cost_usd = COALESCE(?, cache_creation_5m_cost_usd),
+			cache_creation_1h_cost_usd = COALESCE(?, cache_creation_1h_cost_usd),
+			cache_read_cost_usd = COALESCE(?, cache_read_cost_usd), total_cost_usd = COALESCE(?, total_cost_usd),
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -743,17 +880,31 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			errorDetail, // last_failure_reason
 			httpStatus,  // http_status_code
 			modelName,   // 🔧 [修复] 2025-12-11: model_name (空字符串和 'unknown' 都会被忽略)
-			inputTokens,
-			outputTokens,
-			cacheCreationTokens,
-			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
-			cacheReadTokens,
+			input, output, creation, creation5m, creation1h, read,
+			inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
 			event.RequestID,
 		}
 	}
 
 	return query, args, nil
+}
+
+func (ut *UsageTracker) requestAccountMultiplier(requestID string) (*EndpointMultiplier, error) {
+	var upstreamType string
+	var upstreamID int64
+	err := ut.readDB.QueryRow(`SELECT COALESCE(upstream_type, ''), COALESCE(upstream_id, 0)
+		FROM request_logs WHERE request_id = ?`, requestID).Scan(&upstreamType, &upstreamID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read request upstream for cost calculation: %w", err)
+	}
+	if upstreamType != "account" {
+		return nil, nil
+	}
+	multiplier := ut.GetAccountMultiplier(upstreamID)
+	return &multiplier, nil
 }
 
 // buildCompleteQueryWithTx 在事务中构建完成事件查询，可以查询start_time计算准确持续时间
@@ -833,34 +984,11 @@ func (ut *UsageTracker) buildCompleteQueryWithTx(ctx context.Context, tx *sql.Tx
 
 // insertRequestStart 插入请求开始记录
 func (ut *UsageTracker) insertRequestStart(ctx context.Context, tx *sql.Tx, event RequestEvent) error {
-	data, ok := event.Data.(RequestStartData)
-	if !ok {
-		return fmt.Errorf("invalid start event data type")
+	query, args, err := ut.buildStartQuery(event)
+	if err != nil {
+		return err
 	}
-
-	// 使用适配器构建INSERT OR REPLACE查询
-	upstreamType := data.UpstreamType
-	if upstreamType == "" {
-		upstreamType = "endpoint"
-	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
-	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
-
-	_, err := tx.ExecContext(ctx, query,
-		event.RequestID,
-		data.ClientIP,
-		data.UserAgent,
-		data.Method,
-		data.Path,
-		normalizeRequestFamily(data.RequestFamily),
-		timezonepolicy.FormatStorage(event.Timestamp),
-		data.IsStreaming,
-		upstreamType,
-		data.UpstreamSourceName,
-		data.UpstreamName,
-		data.UpstreamID)
-
+	_, err = tx.ExecContext(ctx, query, args...)
 	return err
 }
 

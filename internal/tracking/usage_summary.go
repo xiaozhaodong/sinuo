@@ -15,6 +15,7 @@ type usageSummaryKey struct {
 	date          string
 	modelName     string
 	requestFamily string
+	requestKind   string
 	upstreamType  string
 	upstreamName  string
 	upstreamID    int64
@@ -101,21 +102,8 @@ func (ut *UsageTracker) rebuildRecentUsageSummary(ctx context.Context, days int)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_summary WHERE timezone_name = ?`, timezoneName); err != nil {
 		return err
 	}
-	for _, summary := range summaries {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_summary (
-			timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id,
-			request_count, success_count, error_count, total_input_tokens, total_output_tokens,
-			total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			timezoneName, summary.Date, summary.ModelName, summary.RequestFamily,
-			summary.UpstreamType, summary.UpstreamName, summary.UpstreamID,
-			summary.RequestCount, summary.SuccessCount, summary.ErrorCount,
-			summary.TotalInputTokens, summary.TotalOutputTokens,
-			summary.TotalCacheCreationTokens, summary.TotalCacheReadTokens,
-			summary.TotalCostUSD, summary.AvgDurationMs,
-		); err != nil {
-			return err
-		}
+	if err := insertUsageSummaries(ctx, tx, summaries); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_summary WHERE timezone_name <> ?`, timezoneName); err != nil {
 		return err
@@ -130,12 +118,67 @@ func (ut *UsageTracker) rebuildRecentUsageSummary(ctx context.Context, days int)
 	return nil
 }
 
+type usageSummaryExecutor interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+}
+
+func insertUsageSummaries(ctx context.Context, executor usageSummaryExecutor, summaries []UsageSummary) error {
+	for _, summary := range summaries {
+		if _, err := executor.ExecContext(ctx, `INSERT INTO usage_summary (
+			timezone_name, date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id,
+			request_count, success_count, error_count, total_input_tokens, total_output_tokens,
+			total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			summary.TimezoneName, summary.Date, summary.ModelName, summary.RequestFamily, summary.RequestKind,
+			summary.UpstreamType, summary.UpstreamName, summary.UpstreamID,
+			summary.RequestCount, summary.SuccessCount, summary.ErrorCount,
+			nullableSummaryInt64(summary.TotalInputTokens, summary.UsageKnown),
+			nullableSummaryInt64(summary.TotalOutputTokens, summary.UsageKnown),
+			nullableSummaryInt64(summary.TotalCacheCreationTokens, summary.UsageKnown),
+			nullableSummaryInt64(summary.TotalCacheReadTokens, summary.UsageKnown),
+			nullableSummaryFloat64(summary.TotalCostUSD, summary.CostKnown), summary.AvgDurationMs,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func nullableSummaryInt64(value int64, known bool) interface{} {
+	if !known {
+		return nil
+	}
+	return value
+}
+
+func nullableSummaryFloat64(value float64, known bool) interface{} {
+	if !known {
+		return nil
+	}
+	return value
+}
+
+type usageSummaryQuerier interface {
+	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+}
+
 func (ut *UsageTracker) aggregateUsageSummary(ctx context.Context, startUTC, endUTC time.Time, opts *QueryOptions, policy *timezonepolicy.Policy) ([]UsageSummary, error) {
+	return AggregateUsageSummaryWithQuerier(ctx, ut.readDB, startUTC, endUTC, opts, policy)
+}
+
+// AggregateUsageSummaryWithQuerier 是运行时缓存与 schema 迁移共用的唯一 summary 聚合实现。
+func AggregateUsageSummaryWithQuerier(ctx context.Context, querier usageSummaryQuerier, startUTC, endUTC time.Time, opts *QueryOptions, policy *timezonepolicy.Policy) ([]UsageSummary, error) {
 	if policy == nil || policy.Name() == "" {
 		return nil, fmt.Errorf("timezone policy snapshot is not initialized")
 	}
+	if querier == nil {
+		return nil, fmt.Errorf("usage summary querier is not initialized")
+	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, err
+	}
 	query := `SELECT CAST(start_time AS TEXT), COALESCE(model_name, ''), COALESCE(request_family, 'other'),
-		COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0),
+		COALESCE(request_kind, 'legacy'), COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0),
 		status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 		total_cost_usd, duration_ms
 		FROM request_logs WHERE start_time >= ? AND start_time < ?`
@@ -153,8 +196,14 @@ func (ut *UsageTracker) aggregateUsageSummary(ctx context.Context, startUTC, end
 			query += " AND upstream_name = ?"
 			args = append(args, opts.UpstreamName)
 		}
+		query, args = appendUpstreamTypeFilter(query, args, opts.UpstreamType)
+		if len(opts.RequestKinds) > 0 {
+			condition, kindArgs, _ := RequestKindSQLFilter("request_kind", opts.RequestKinds)
+			query += " AND " + condition
+			args = append(args, kindArgs...)
+		}
 	}
-	rows, err := ut.readDB.QueryContext(ctx, query, args...)
+	rows, err := querier.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -163,24 +212,24 @@ func (ut *UsageTracker) aggregateUsageSummary(ctx context.Context, startUTC, end
 	groups := make(map[usageSummaryKey]*usageSummaryAccumulator)
 	for rows.Next() {
 		var start timezonepolicy.DBTime
-		var model, family, upstreamType, upstreamName, status string
+		var model, family, requestKind, upstreamType, upstreamName, status string
 		var upstreamID int64
-		var input, output, cacheCreation, cacheRead int64
-		var cost float64
+		var input, output, cacheCreation, cacheRead sql.NullInt64
+		var cost sql.NullFloat64
 		var duration sql.NullInt64
-		if err := rows.Scan(&start, &model, &family, &upstreamType, &upstreamName, &upstreamID,
+		if err := rows.Scan(&start, &model, &family, &requestKind, &upstreamType, &upstreamName, &upstreamID,
 			&status, &input, &output, &cacheCreation, &cacheRead, &cost, &duration); err != nil {
 			return nil, err
 		}
 		key := usageSummaryKey{
 			date: policy.BusinessDate(start.Time), modelName: model,
-			requestFamily: family, upstreamType: upstreamType, upstreamName: upstreamName, upstreamID: upstreamID,
+			requestFamily: family, requestKind: requestKind, upstreamType: upstreamType, upstreamName: upstreamName, upstreamID: upstreamID,
 		}
 		acc := groups[key]
 		if acc == nil {
 			acc = &usageSummaryAccumulator{UsageSummary: UsageSummary{
 				TimezoneName: policy.Name(), Date: key.date, ModelName: model,
-				RequestFamily: family, UpstreamType: upstreamType, UpstreamName: upstreamName, UpstreamID: upstreamID,
+				RequestFamily: family, RequestKind: requestKind, UpstreamType: upstreamType, UpstreamName: upstreamName, UpstreamID: upstreamID,
 			}}
 			groups[key] = acc
 		}
@@ -191,11 +240,17 @@ func (ut *UsageTracker) aggregateUsageSummary(ctx context.Context, startUTC, end
 		if isFailedRequestStatus(status) {
 			acc.ErrorCount++
 		}
-		acc.TotalInputTokens += input
-		acc.TotalOutputTokens += output
-		acc.TotalCacheCreationTokens += cacheCreation
-		acc.TotalCacheReadTokens += cacheRead
-		acc.TotalCostUSD += cost
+		if input.Valid || output.Valid || cacheCreation.Valid || cacheRead.Valid {
+			acc.UsageKnown = true
+		}
+		acc.TotalInputTokens += input.Int64
+		acc.TotalOutputTokens += output.Int64
+		acc.TotalCacheCreationTokens += cacheCreation.Int64
+		acc.TotalCacheReadTokens += cacheRead.Int64
+		if cost.Valid {
+			acc.CostKnown = true
+			acc.TotalCostUSD += cost.Float64
+		}
 		if duration.Valid && duration.Int64 > 0 {
 			acc.durationTotal += duration.Int64
 			acc.durationCount++

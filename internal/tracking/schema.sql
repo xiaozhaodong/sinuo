@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_write_ms INTEGER,              -- v6.2: 成功尝试上游请求写完相对 start_time 偏移（含此前失败尝试耗时）
     schedule_snapshot_json TEXT,            -- v6.2+: 账号池/端点调度快照（白名单 DTO JSON，终态覆盖写）
     privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）
+    request_source TEXT NOT NULL DEFAULT 'legacy_proxy'
+        CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy')),
+    request_kind TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (request_kind IN ('legacy', 'generation', 'compaction')),
     
     -- 转发信息
     request_family TEXT NOT NULL DEFAULT 'other'
@@ -99,6 +103,8 @@ CREATE TABLE IF NOT EXISTS usage_summary (
     model_name TEXT NOT NULL,
     request_family TEXT NOT NULL
         CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
+    request_kind TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (request_kind IN ('legacy', 'generation', 'compaction')),
     upstream_type TEXT NOT NULL DEFAULT '',
     upstream_name TEXT NOT NULL DEFAULT '',
     upstream_id INTEGER NOT NULL DEFAULT 0,
@@ -118,7 +124,7 @@ CREATE TABLE IF NOT EXISTS usage_summary (
     created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
     
-    UNIQUE(timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id)
+    UNIQUE(timezone_name, date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id)
 );
 
 -- 汇总表索引
@@ -126,6 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_usage_summary_date ON usage_summary(date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_timezone_date ON usage_summary(timezone_name, date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_family ON usage_summary(request_family);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_kind ON usage_summary(request_kind);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id);
 
 -- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式，微秒精度）

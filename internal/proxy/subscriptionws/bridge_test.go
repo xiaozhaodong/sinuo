@@ -367,6 +367,37 @@ func TestBridgeClosesDownstreamWhenUpstreamDrops(t *testing.T) {
 
 type testInterceptor func(context.Context, Direction, []byte) (InterceptResult, error)
 
+type testWriteObserver struct{ written chan int64 }
+
+func (o *testWriteObserver) Intercept(_ context.Context, _ Direction, body []byte) (InterceptResult, error) {
+	return InterceptResult{Forward: body}, nil
+}
+
+func (o *testWriteObserver) Forwarded(direction Direction, size int64, _ time.Time) {
+	if direction == DirectionDownstreamToUpstream {
+		o.written <- size
+	}
+}
+
+func TestBridgeReportsActualForwardedBytes(t *testing.T) {
+	observer := &testWriteObserver{written: make(chan int64, 1)}
+	upstream := newEchoServer(t, websocket.CompressionDisabled)
+	server := bridgeServer(t, upstream.wsURL(t), Options{Interceptor: observer})
+	ctx := testContext(t)
+	conn, _ := dialBridge(ctx, t, server, websocket.CompressionDisabled)
+	if got := writeAndEcho(ctx, t, conn, "synthetic"); got != "synthetic" {
+		t.Fatal(got)
+	}
+	select {
+	case size := <-observer.written:
+		if size != int64(len("synthetic")) {
+			t.Fatal(size)
+		}
+	case <-ctx.Done():
+		t.Fatal("missing successful-write notification")
+	}
+}
+
 func (f testInterceptor) Intercept(ctx context.Context, direction Direction, payload []byte) (InterceptResult, error) {
 	return f(ctx, direction, payload)
 }

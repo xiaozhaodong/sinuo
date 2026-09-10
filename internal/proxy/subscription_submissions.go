@@ -38,7 +38,9 @@ type subscriptionSubmission struct {
 	PrivacyState       *handlers.PrivacyRequestState
 	Context            context.Context
 
-	settled bool
+	settled       bool
+	responseBytes int64
+	firstOutput   bool
 }
 
 type subscriptionSubmissionState struct {
@@ -121,13 +123,57 @@ func (s *subscriptionSubmissionState) handleUpstream(payload []byte) *ParseResul
 
 	if eventType == "response.created" {
 		s.bindCreated(responseID, result)
+		s.responseProgress(responseID, eventType, int64(len(payload)))
 		return result
 	}
+	s.responseProgress(responseID, eventType, int64(len(payload)))
 	if result == nil || !result.IsCompleted || !isResponsesTerminalEvent(eventType) {
 		return result
 	}
 	s.finishTerminal(responseID, eventType, result)
 	return result
+}
+
+// responseProgress 只向观察者传有界关联与字节/时序，不保存帧或逐帧推送 UI。
+func (s *subscriptionSubmissionState) responseProgress(responseID, eventType string, size int64) {
+	s.mu.Lock()
+	submission := s.byResponseID[responseID]
+	if responseID == "" && len(s.active) > 0 {
+		submission = s.active[0]
+	}
+	if submission == nil || submission.settled {
+		s.mu.Unlock()
+		return
+	}
+	submission.responseBytes += size
+	first := !submission.firstOutput && isSubscriptionOutputEvent(eventType)
+	if first {
+		submission.firstOutput = true
+	}
+	total := submission.responseBytes
+	s.mu.Unlock()
+	if first {
+		if observer, ok := s.observer.(interface {
+			SubmissionFirstOutput(*subscriptionSubmission, int64, time.Time)
+		}); ok {
+			observer.SubmissionFirstOutput(submission, total, time.Now())
+		}
+	}
+	if observer, ok := s.observer.(interface {
+		SubmissionResponseProgress(*subscriptionSubmission, int64)
+	}); ok {
+		observer.SubmissionResponseProgress(submission, total)
+	}
+}
+
+func isSubscriptionOutputEvent(eventType string) bool {
+	switch eventType {
+	case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta",
+		"response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.output_item.added", "response.content_part.added":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) {

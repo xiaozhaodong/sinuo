@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"cc-forwarder/internal/tracking"
 )
 
 func TestRequestHistoryMigrationUsesPathBeforeUpstreamType(t *testing.T) {
@@ -23,6 +25,39 @@ func TestRequestHistoryMigrationUsesPathBeforeUpstreamType(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRequestFamily(t, db, "req-fixture-codex", "codex", "endpoint", "codex-fixture")
+}
+
+func TestRequestHistoryMigrationBackfillsSourceKindWithoutTouchingUpdatedAt(t *testing.T) {
+	db := openLegacyFixtureDB(t)
+	defer db.Close()
+	var before string
+	if err := db.QueryRow(`SELECT CAST(updated_at AS TEXT) FROM request_logs WHERE request_id='req-fixture-claude'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for run := 0; run < 2; run++ {
+		tx, err := db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := migrateRequestHistory(context.Background(), tx); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var source, kind, after string
+	if err := db.QueryRow(`SELECT request_source, request_kind, CAST(updated_at AS TEXT)
+		FROM request_logs WHERE request_id='req-fixture-claude'`).Scan(&source, &kind, &after); err != nil {
+		t.Fatal(err)
+	}
+	if source != tracking.RequestSourceLegacyProxy || kind != tracking.RequestKindLegacy {
+		t.Fatalf("source/kind = %q/%q", source, kind)
+	}
+	if after != before {
+		t.Fatalf("updated_at changed: before=%q after=%q", before, after)
+	}
 }
 
 func TestRequestHistoryMigrationRecognizesStandaloneCodexSearch(t *testing.T) {
@@ -154,5 +189,45 @@ func TestRebuildUsageSummaryMatchesRuntimeAggregation(t *testing.T) {
 	}
 	if requestCount != 5 || successCount != 1 || errorCount != 3 || avgDuration != 300 {
 		t.Fatalf("summary = requests:%d success:%d errors:%d avg:%v", requestCount, successCount, errorCount, avgDuration)
+	}
+}
+
+func TestRebuildUsageSummaryPreservesUnknownUsage(t *testing.T) {
+	db := openLegacyFixtureDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`DELETE FROM request_logs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO request_logs (
+		request_id, path, start_time, model_name, status,
+		input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_cost_usd
+	) VALUES ('unknown-summary', '/v1/responses', CURRENT_TIMESTAMP, 'unknown-model', 'failed',
+		NULL, NULL, NULL, NULL, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrateRequestHistory(context.Background(), tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := rebuildUsageSummary(context.Background(), tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var input, output, creation, read sql.NullInt64
+	var cost sql.NullFloat64
+	if err := db.QueryRow(`SELECT total_input_tokens, total_output_tokens,
+		total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd
+		FROM usage_summary WHERE model_name='unknown-model'`).Scan(&input, &output, &creation, &read, &cost); err != nil {
+		t.Fatal(err)
+	}
+	if input.Valid || output.Valid || creation.Valid || read.Valid || cost.Valid {
+		t.Fatalf("unknown summary became known: input=%v output=%v creation=%v read=%v cost=%v", input, output, creation, read, cost)
 	}
 }

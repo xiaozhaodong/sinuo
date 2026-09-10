@@ -14,11 +14,74 @@ import (
 type requestQuerySource string
 
 const (
-	requestQuerySourceAll      requestQuerySource = "all"
-	requestQuerySourceEndpoint requestQuerySource = "endpoint"
-	requestQuerySourceAccount  requestQuerySource = "account"
-	requestQuerySourceRaw      requestQuerySource = "raw"
+	requestQuerySourceAll          requestQuerySource = "all"
+	requestQuerySourceEndpoint     requestQuerySource = "endpoint"
+	requestQuerySourceAccount      requestQuerySource = "account"
+	requestQuerySourceSubscription requestQuerySource = "subscription"
+	requestQuerySourceRaw          requestQuerySource = "raw"
 )
+
+// GenerationMetricRequestKinds 返回调用次数、成功率与生成耗时的唯一 kind 白名单。
+func GenerationMetricRequestKinds() []string {
+	return []string{RequestKindLegacy, RequestKindGeneration}
+}
+
+// UsageMetricRequestKinds 返回 Token 与成本的唯一 kind 白名单。
+func UsageMetricRequestKinds() []string {
+	return []string{RequestKindLegacy, RequestKindGeneration, RequestKindCompaction}
+}
+
+// RequestKindSQLFilter 返回参数化 kind 条件；空集合或非法 kind 一律报错，不能退化为无过滤。
+func RequestKindSQLFilter(column string, kinds []string) (string, []interface{}, error) {
+	if len(kinds) == 0 {
+		return "", nil, fmt.Errorf("request kind filter must not be empty")
+	}
+	if column == "" {
+		column = "request_kind"
+	}
+	args := make([]interface{}, 0, len(kinds))
+	placeholders := make([]string, 0, len(kinds))
+	seen := make(map[string]struct{}, len(kinds))
+	for _, kind := range kinds {
+		if strings.TrimSpace(kind) == "" {
+			return "", nil, fmt.Errorf("invalid request kind filter %q", kind)
+		}
+		normalized, err := normalizeRequestKind(kind)
+		if err != nil || normalized == "" {
+			return "", nil, fmt.Errorf("invalid request kind filter %q", kind)
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		placeholders = append(placeholders, "?")
+		args = append(args, normalized)
+	}
+	return column + " IN (" + strings.Join(placeholders, ", ") + ")", args, nil
+}
+
+func validateQueryRequestKinds(opts *QueryOptions) error {
+	if opts == nil || len(opts.RequestKinds) == 0 {
+		return nil
+	}
+	_, _, err := RequestKindSQLFilter("request_kind", opts.RequestKinds)
+	return err
+}
+
+func appendUpstreamTypeFilter(query string, args []interface{}, upstreamType string) (string, []interface{}) {
+	switch resolveRequestQuerySource(upstreamType) {
+	case requestQuerySourceAll:
+		return query, args
+	case requestQuerySourceEndpoint:
+		return query + " AND COALESCE(upstream_type, 'endpoint') = 'endpoint'", args
+	case requestQuerySourceAccount:
+		return query + " AND COALESCE(upstream_type, 'endpoint') = 'account'", args
+	case requestQuerySourceSubscription:
+		return query + " AND COALESCE(upstream_type, 'endpoint') = 'subscription'", args
+	default:
+		return query + " AND COALESCE(upstream_type, 'endpoint') = ?", append(args, upstreamType)
+	}
+}
 
 // FailedRequestStatusesSQLList 是历史兼容失败状态的统一 SQL 列表，不包含独立统计的 cancelled。
 const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout'"
@@ -28,6 +91,8 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(user_agent, '') as user_agent,
 	method, path, CAST(start_time AS TEXT), CAST(end_time AS TEXT), duration_ms, first_token_ms, completion_ms,
 	COALESCE(request_family, 'other') as request_family,
+	COALESCE(request_source, 'legacy_proxy') as request_source,
+	COALESCE(request_kind, 'legacy') as request_kind,
 	COALESCE(endpoint_name, '') as endpoint_name,
 	COALESCE(upstream_type, 'endpoint') as upstream_type,
 	COALESCE(upstream_source_name, '') as upstream_source_name,
@@ -45,7 +110,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(last_failure_reason, '') as last_failure_reason,
 	COALESCE(cancel_reason, '') as cancel_reason,
 	input_tokens, output_tokens,
-	cache_creation_tokens, COALESCE(cache_creation_5m_tokens, 0) as cache_creation_5m_tokens, COALESCE(cache_creation_1h_tokens, 0) as cache_creation_1h_tokens,
+	cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
 	cache_read_tokens,
 	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
 	cache_read_cost_usd, total_cost_usd,
@@ -60,6 +125,8 @@ func resolveRequestQuerySource(upstreamType string) requestQuerySource {
 		return requestQuerySourceEndpoint
 	case "account":
 		return requestQuerySourceAccount
+	case "subscription":
+		return requestQuerySourceSubscription
 	default:
 		return requestQuerySourceRaw
 	}
@@ -132,12 +199,22 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 		query += " AND upstream_name = ?"
 		args = append(args, opts.UpstreamName)
 	}
+	if len(opts.RequestKinds) > 0 {
+		condition, kindArgs, err := RequestKindSQLFilter("request_kind", opts.RequestKinds)
+		if err != nil {
+			return query + " AND 1=0", args
+		}
+		query += " AND " + condition
+		args = append(args, kindArgs...)
+	}
 
 	switch source {
 	case requestQuerySourceEndpoint:
 		query += " AND COALESCE(upstream_type, 'endpoint') = 'endpoint'"
 	case requestQuerySourceAccount:
 		query += " AND COALESCE(upstream_type, 'endpoint') = 'account'"
+	case requestQuerySourceSubscription:
+		query += " AND COALESCE(upstream_type, 'endpoint') = 'subscription'"
 	case requestQuerySourceRaw:
 		if opts.UpstreamType != "" {
 			query += " AND COALESCE(upstream_type, 'endpoint') = ?"
@@ -180,20 +257,22 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 		var detail RequestDetail
 		var startAt, createdAt, updatedAt timezonepolicy.DBTime
 		var endAt, routeDecisionAt timezonepolicy.NullDBTime
+		var input, output, creation, creation5m, creation1h, read sql.NullInt64
+		var inputCost, outputCost, creationCost, readCost, totalCost sql.NullFloat64
 		err := rows.Scan(
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
 			&startAt, &endAt, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
-			&detail.RequestFamily, &detail.EndpointName,
+			&detail.RequestFamily, &detail.RequestSource, &detail.RequestKind, &detail.EndpointName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
 			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &routeDecisionAt,
 			&detail.ModelName, &detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
-			&detail.InputTokens, &detail.OutputTokens,
-			&detail.CacheCreationTokens, &detail.CacheCreation5mTokens, &detail.CacheCreation1hTokens, &detail.CacheReadTokens,
-			&detail.InputCostUSD, &detail.OutputCostUSD,
-			&detail.CacheCreationCostUSD, &detail.CacheReadCostUSD, &detail.TotalCostUSD,
+			&input, &output,
+			&creation, &creation5m, &creation1h, &read,
+			&inputCost, &outputCost,
+			&creationCost, &readCost, &totalCost,
 			&createdAt, &updatedAt,
 		)
 		if err != nil {
@@ -210,6 +289,41 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 		}
 		detail.CreatedAt = createdAt.Time.UTC()
 		detail.UpdatedAt = updatedAt.Time.UTC()
+		detail.UsageKnown = input.Valid || output.Valid || creation.Valid || creation5m.Valid || creation1h.Valid || read.Valid
+		if input.Valid {
+			detail.InputTokens = input.Int64
+		}
+		if output.Valid {
+			detail.OutputTokens = output.Int64
+		}
+		if creation.Valid {
+			detail.CacheCreationTokens = creation.Int64
+		}
+		if creation5m.Valid {
+			detail.CacheCreation5mTokens = creation5m.Int64
+		}
+		if creation1h.Valid {
+			detail.CacheCreation1hTokens = creation1h.Int64
+		}
+		if read.Valid {
+			detail.CacheReadTokens = read.Int64
+		}
+		detail.CostKnown = totalCost.Valid
+		if inputCost.Valid {
+			detail.InputCostUSD = inputCost.Float64
+		}
+		if outputCost.Valid {
+			detail.OutputCostUSD = outputCost.Float64
+		}
+		if creationCost.Valid {
+			detail.CacheCreationCostUSD = creationCost.Float64
+		}
+		if readCost.Valid {
+			detail.CacheReadCostUSD = readCost.Float64
+		}
+		if totalCost.Valid {
+			detail.TotalCostUSD = totalCost.Float64
+		}
 		details = append(details, detail)
 	}
 
@@ -284,7 +398,7 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
 		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, source, requestIDs)
 	default:
 		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, requestIDs)
@@ -302,6 +416,7 @@ type QueryOptions struct {
 	UpstreamName  string
 	UpstreamType  string
 	Status        string
+	RequestKinds  []string
 	Limit         int
 	Offset        int
 }
@@ -312,6 +427,7 @@ type UsageSummary struct {
 	Date          string `json:"date"`
 	ModelName     string `json:"model_name"`
 	RequestFamily string `json:"request_family"`
+	RequestKind   string `json:"request_kind"`
 	UpstreamType  string `json:"upstream_type"`
 	UpstreamName  string `json:"upstream_name"`
 	UpstreamID    int64  `json:"upstream_id"`
@@ -324,6 +440,8 @@ type UsageSummary struct {
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalCostUSD             float64 `json:"total_cost_usd"`
+	UsageKnown               bool    `json:"usage_known"`
+	CostKnown                bool    `json:"cost_known"`
 
 	AvgDurationMs float64   `json:"avg_duration_ms"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -346,6 +464,8 @@ type RequestDetail struct {
 	CompletionMs *int64     `json:"completion_ms"`
 
 	RequestFamily      string     `json:"request_family"`
+	RequestSource      string     `json:"request_source"`
+	RequestKind        string     `json:"request_kind"`
 	EndpointName       string     `json:"endpoint_name"`
 	UpstreamType       string     `json:"upstream_type"`
 	UpstreamSourceName string     `json:"upstream_source_name"`
@@ -374,12 +494,14 @@ type RequestDetail struct {
 	CacheCreation5mTokens int64 `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
 	CacheCreation1hTokens int64 `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
 	CacheReadTokens       int64 `json:"cache_read_tokens"`
+	UsageKnown            bool  `json:"usage_known"`
 
 	InputCostUSD         float64 `json:"input_cost_usd"`
 	OutputCostUSD        float64 `json:"output_cost_usd"`
 	CacheCreationCostUSD float64 `json:"cache_creation_cost_usd"`
 	CacheReadCostUSD     float64 `json:"cache_read_cost_usd"`
 	TotalCostUSD         float64 `json:"total_cost_usd"`
+	CostKnown            bool    `json:"cost_known"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -536,12 +658,15 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, err
+	}
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	var stats AggregatedRequestStats
 
 	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
 		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, source)
 		if err != nil {
 			return nil, err
@@ -573,7 +698,7 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 	}
 
 	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
 		overlapStats, err := ut.queryAggregatedRequestStatsBySourceAndRequestIDs(ctx, opts, source, hotPoolRequestIDs)
 		if err != nil {
 			return nil, err
@@ -638,6 +763,9 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, err
+	}
 	if ut.timezonePolicy == nil {
 		return nil, fmt.Errorf("timezone policy is not initialized")
 	}
@@ -668,7 +796,7 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		return ut.aggregateUsageSummary(ctx, startUTC, endUTC, opts, policy)
 	}
 
-	query := `SELECT timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id,
+	query := `SELECT timezone_name, date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id,
 		request_count, success_count, error_count,
 		total_input_tokens, total_output_tokens, 
 		total_cache_creation_tokens, total_cache_read_tokens,
@@ -691,6 +819,12 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	if opts.UpstreamName != "" {
 		query += " AND upstream_name = ?"
 		args = append(args, opts.UpstreamName)
+	}
+	query, args = appendUpstreamTypeFilter(query, args, opts.UpstreamType)
+	if len(opts.RequestKinds) > 0 {
+		condition, kindArgs, _ := RequestKindSQLFilter("request_kind", opts.RequestKinds)
+		query += " AND " + condition
+		args = append(args, kindArgs...)
 	}
 
 	query += " ORDER BY date DESC, total_cost_usd DESC"
@@ -715,18 +849,27 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 	var summaries []UsageSummary
 	for rows.Next() {
 		var summary UsageSummary
+		var input, output, cacheCreation, cacheRead sql.NullInt64
+		var cost sql.NullFloat64
 		var createdAt, updatedAt timezonepolicy.DBTime
 		err := rows.Scan(
-			&summary.TimezoneName, &summary.Date, &summary.ModelName, &summary.RequestFamily, &summary.UpstreamType, &summary.UpstreamName, &summary.UpstreamID,
+			&summary.TimezoneName, &summary.Date, &summary.ModelName, &summary.RequestFamily, &summary.RequestKind,
+			&summary.UpstreamType, &summary.UpstreamName, &summary.UpstreamID,
 			&summary.RequestCount, &summary.SuccessCount, &summary.ErrorCount,
-			&summary.TotalInputTokens, &summary.TotalOutputTokens,
-			&summary.TotalCacheCreationTokens, &summary.TotalCacheReadTokens,
-			&summary.TotalCostUSD, &summary.AvgDurationMs,
+			&input, &output, &cacheCreation, &cacheRead,
+			&cost, &summary.AvgDurationMs,
 			&createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan usage summary: %w", err)
 		}
+		summary.UsageKnown = input.Valid || output.Valid || cacheCreation.Valid || cacheRead.Valid
+		summary.TotalInputTokens = input.Int64
+		summary.TotalOutputTokens = output.Int64
+		summary.TotalCacheCreationTokens = cacheCreation.Int64
+		summary.TotalCacheReadTokens = cacheRead.Int64
+		summary.CostKnown = cost.Valid
+		summary.TotalCostUSD = cost.Float64
 		summary.CreatedAt = createdAt.Time.UTC()
 		summary.UpdatedAt = updatedAt.Time.UTC()
 		summaries = append(summaries, summary)
@@ -747,10 +890,13 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, err
+	}
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
 		return ut.queryRequestDetailsBySource(ctx, opts, source)
 	default:
 		return ut.queryRequestDetailsBySource(ctx, opts, requestQuerySourceRaw)
@@ -820,20 +966,15 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return 0, err
+	}
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
 	switch source {
 	case requestQuerySourceAll:
-		endpointCount, err := ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceEndpoint)
-		if err != nil {
-			return 0, err
-		}
-		accountCount, err := ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceAccount)
-		if err != nil {
-			return 0, err
-		}
-		return endpointCount + accountCount, nil
-	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceRaw:
+		return ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceAll)
+	case requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
 		return ut.countRequestDetailsBySource(ctx, opts, source)
 	default:
 		return ut.countRequestDetailsBySource(ctx, opts, requestQuerySourceRaw)

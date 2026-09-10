@@ -152,9 +152,15 @@ func (h *Handler) SetCodexModelRouter(router CodexModelRouter) {
 // SetPrivacyFilter 注入出站隐私过滤依赖，并传递给 endpoint 常规/流式与账号池链路。
 // 必须在 SetUsageTracker 之后保持有效（SetUsageTracker 重建 handler 时会重新注入）。
 func (h *Handler) SetPrivacyFilter(filter handlers.PrivacyFilter) {
-	h.privacyFilter = filter
+	wrapped := filter
+	if filter != nil {
+		if _, ok := filter.(subscriptionPrivacyFilter); !ok {
+			wrapped = subscriptionPrivacyFilter{inner: filter}
+		}
+	}
+	h.privacyFilter = wrapped
 	if h.forwarder != nil {
-		h.forwarder.SetPrivacyFilter(filter)
+		h.forwarder.SetPrivacyFilter(wrapped)
 	}
 }
 
@@ -217,11 +223,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled
+	poolMetadata, hasPoolMetadata := subscriptionPoolMetadataFromContext(r.Context())
 	var lifecycleManager *RequestLifecycleManager
 	startTrackedRequest := func(bool) {}
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+		if hasPoolMetadata {
+			lifecycleManager.SetRequestSource(poolMetadata.RequestSource)
+			lifecycleManager.SetRequestKind(poolMetadata.RequestKind)
+		}
 		switch {
 		case h.isAccountPipelinePath(r.URL.Path):
 			lifecycleManager.SetRequestFamily(tracking.RequestFamilyCodex)
@@ -251,7 +262,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 请求方向唯一规范化入口：读取一次，必要时解压 zstd，并清理压缩元数据。
-	normalizedBodyMetadata, bodyErr := normalizeRequestBodyWithMetadata(w, r, h.config)
+	var normalizedBodyMetadata *normalizedRequestBodyMetadata
+	var bodyErr *requestBodyError
+	if hasPoolMetadata && (poolMetadata.BodyMetadata != nil || poolMetadata.BodyError != nil) {
+		normalizedBodyMetadata, bodyErr = poolMetadata.BodyMetadata, poolMetadata.BodyError
+	} else {
+		normalizedBodyMetadata, bodyErr = normalizeRequestBodyWithMetadata(w, r, h.config)
+	}
 	if bodyErr != nil {
 		if lifecycleManager != nil {
 			startTrackedRequest(false)

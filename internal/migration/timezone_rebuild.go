@@ -535,6 +535,7 @@ const usageSummaryUTCSchema = `CREATE TABLE usage_summary (
 	date TEXT NOT NULL,
 	model_name TEXT NOT NULL DEFAULT '',
 	request_family TEXT NOT NULL CHECK (request_family IN ('claude','codex','image','other')),
+	request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy','generation','compaction')),
 	upstream_type TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '', upstream_id INTEGER NOT NULL DEFAULT 0,
 	request_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
 	total_input_tokens INTEGER DEFAULT 0, total_output_tokens INTEGER DEFAULT 0,
@@ -542,11 +543,12 @@ const usageSummaryUTCSchema = `CREATE TABLE usage_summary (
 	total_cost_usd REAL DEFAULT 0, avg_duration_ms REAL DEFAULT 0,
 	created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 	updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
-	UNIQUE(timezone_name, date, model_name, request_family, upstream_type, upstream_name, upstream_id)
+	UNIQUE(timezone_name, date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id)
 );
 CREATE INDEX idx_usage_summary_timezone_date ON usage_summary(timezone_name, date);
 CREATE INDEX idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX idx_usage_summary_family_date ON usage_summary(request_family, date);
+CREATE INDEX idx_usage_summary_kind ON usage_summary(request_kind);
 CREATE INDEX idx_usage_summary_upstream_date ON usage_summary(upstream_name, date);
 CREATE TRIGGER update_usage_summary_timestamp AFTER UPDATE ON usage_summary
 	FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at BEGIN

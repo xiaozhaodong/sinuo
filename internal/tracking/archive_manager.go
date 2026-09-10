@@ -311,7 +311,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			request_id, client_ip, user_agent, method, path,
 			start_time, end_time, duration_ms, first_token_ms, completion_ms,
 			upstream_write_ms, schedule_snapshot_json, privacy_scan_json,
-			request_family, endpoint_name, model_name,
+			request_family, request_source, request_kind, endpoint_name, model_name,
 			upstream_type, upstream_source_name, upstream_name, upstream_id,
 			route_mode, requested_endpoint, effective_endpoint, fallback_reason, route_decision_at,
 			status, http_status_code, retry_count,
@@ -323,7 +323,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
@@ -383,7 +383,7 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		upstreamType = "endpoint"
 	}
 
-	// v5.0.1+: 计算分开的成本
+	// v5.0.1+: 只有上游明确报告用量时才计算并持久化成本。
 	costBreakdown := am.calculateCostV2(req)
 
 	// 格式化时间
@@ -404,6 +404,17 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 	if routeMode == "" {
 		routeMode = "auto"
 	}
+	requestSource := req.RequestSource
+	requestKind := req.RequestKind
+	legacyCompatibility := requestSource == ""
+	if requestSource == "" {
+		requestSource = RequestSourceLegacyProxy
+	}
+	if requestKind == "" {
+		requestKind = RequestKindLegacy
+	}
+	usageKnown := req.UsageKnown || legacyCompatibility
+	costKnown := req.CostKnown || legacyCompatibility
 
 	_, err := requestStmt.ExecContext(ctx,
 		req.RequestID,
@@ -420,6 +431,8 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		nullString(req.ScheduleSnapshotJSON),
 		nullString(req.PrivacyScanJSON),
 		normalizeRequestFamily(req.RequestFamily),
+		requestSource,
+		requestKind,
 		req.EndpointName,
 		req.ModelName,
 		upstreamType,
@@ -432,24 +445,24 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		req.FallbackReason,
 		routeDecisionAt,
 		req.Status,
-		req.HTTPStatus,
+		nullableInt(req.HTTPStatus, req.HTTPStatusKnown),
 		req.RetryCount,
 		nullString(req.FailureReason),
 		nullString(req.CancelReason),
 		req.IsStreaming,
-		req.InputTokens,
-		req.OutputTokens,
-		req.CacheCreationTokens,
-		req.CacheCreation5mTokens,
-		req.CacheCreation1hTokens,
-		req.CacheReadTokens,
-		costBreakdown.InputCost,
-		costBreakdown.OutputCost,
-		costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
-		costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
-		costBreakdown.CacheCreation1hCost, // 1小时缓存成本
-		costBreakdown.CacheReadCost,
-		costBreakdown.TotalCost,
+		nullableInt64(req.InputTokens, usageKnown),
+		nullableInt64(req.OutputTokens, usageKnown),
+		nullableInt64(req.CacheCreationTokens, usageKnown),
+		nullableInt64(req.CacheCreation5mTokens, usageKnown),
+		nullableInt64(req.CacheCreation1hTokens, usageKnown),
+		nullableInt64(req.CacheReadTokens, usageKnown),
+		nullableFloat64(costBreakdown.InputCost, costKnown),
+		nullableFloat64(costBreakdown.OutputCost, costKnown),
+		nullableFloat64(costBreakdown.CacheCreationCost, costKnown),
+		nullableFloat64(costBreakdown.CacheCreation5mCost, costKnown),
+		nullableFloat64(costBreakdown.CacheCreation1hCost, costKnown),
+		nullableFloat64(costBreakdown.CacheReadCost, costKnown),
+		nullableFloat64(costBreakdown.TotalCost, costKnown),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
@@ -558,6 +571,27 @@ func nullInt64(v int64) interface{} {
 		return sql.NullInt64{}
 	}
 	return v
+}
+
+func nullableInt(value int, known bool) interface{} {
+	if !known {
+		return nil
+	}
+	return value
+}
+
+func nullableInt64(value int64, known bool) interface{} {
+	if !known {
+		return nil
+	}
+	return value
+}
+
+func nullableFloat64(value float64, known bool) interface{} {
+	if !known {
+		return nil
+	}
+	return value
 }
 
 // GetStats 获取统计信息（返回快照，不含锁）

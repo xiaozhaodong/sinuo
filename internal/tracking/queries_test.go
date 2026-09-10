@@ -2,11 +2,149 @@ package tracking
 
 import (
 	"context"
+	"encoding/csv"
+	"strings"
 	"testing"
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
+
+func TestRequestKindsFilterAndUnknownUsageAcrossSummaryPaths(t *testing.T) {
+	tracker, err := NewUsageTracker(&Config{
+		Enabled: true, DatabasePath: ":memory:", BufferSize: 20, BatchSize: 5,
+		FlushInterval: time.Hour, MaxRetry: 1, CleanupInterval: time.Hour, RetentionDays: 30,
+		HotPool: &HotPoolSettings{Enabled: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	started := timezonepolicy.FormatStorage(time.Now().UTC().Truncate(time.Second))
+	if _, err := tracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+		request_id, start_time, model_name, request_family, request_source, request_kind,
+		upstream_type, upstream_name, status, input_tokens, output_tokens,
+		cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens,
+		input_cost_usd, output_cost_usd, cache_creation_cost_usd,
+		cache_creation_5m_cost_usd, cache_creation_1h_cost_usd, cache_read_cost_usd, total_cost_usd
+	) VALUES
+		('known-generation', ?, 'synthetic-model', 'codex', 'codex_subscription_proxy', 'generation',
+		 'subscription', 'chatgpt-subscription', 'completed', 10, 2, 0, 0, 0, 3, 0.1, 0.2, 0, 0, 0, 0.03, 0.33),
+		('known-compaction', ?, 'synthetic-model', 'codex', 'codex_subscription_proxy', 'compaction',
+		 'subscription', 'chatgpt-subscription', 'completed', 5, 1, 0, 0, 0, 1, 0.05, 0.1, 0, 0, 0, 0.01, 0.16),
+		('unknown-generation', ?, 'unknown-model', 'codex', 'codex_subscription_proxy', 'generation',
+		 'subscription', 'chatgpt-subscription', 'failed', NULL, NULL, NULL, NULL, NULL, NULL,
+		 NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+		('endpoint-compaction', ?, 'synthetic-model', 'codex', 'legacy_proxy', 'compaction',
+		 'endpoint', 'same-model-endpoint', 'completed', 100, 10, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 2),
+		('account-compaction', ?, 'synthetic-model', 'codex', 'legacy_proxy', 'compaction',
+		 'account', 'same-model-account', 'completed', 200, 20, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 4)`,
+		started, started, started, started, started); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	unknown, err := tracker.QueryRequestDetails(ctx, &QueryOptions{RequestID: "unknown-generation", UpstreamType: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unknown) != 1 || unknown[0].UsageKnown || unknown[0].CostKnown {
+		t.Fatalf("unknown detail = %+v", unknown)
+	}
+	startExport, endExport := time.Now().Add(-48*time.Hour), time.Now().Add(48*time.Hour)
+	exported, err := tracker.ExportToCSV(ctx, startExport, endExport, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells, err := csv.NewReader(strings.NewReader(string(exported))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	indices := make(map[string]int)
+	for index, header := range cells[0] {
+		indices[header] = index
+	}
+	foundUnknown := false
+	for _, row := range cells[1:] {
+		if row[indices["request_id"]] != "unknown-generation" {
+			continue
+		}
+		foundUnknown = true
+		for key, want := range map[string]string{
+			"input_tokens": "", "total_cost_usd": "", "http_status_code": "",
+			"request_source": RequestSourceCodexSubscriptionProxy, "request_kind": RequestKindGeneration,
+			"usage_known": "false", "cost_known": "false",
+		} {
+			index, present := indices[key]
+			if !present || row[index] != want {
+				t.Fatalf("CSV %s=%q, want %q", key, row[index], want)
+			}
+		}
+	}
+	if !foundUnknown {
+		t.Fatal("CSV omitted unknown request")
+	}
+
+	generationKinds := GenerationMetricRequestKinds()
+	details, err := tracker.QueryRequestDetails(ctx, &QueryOptions{UpstreamType: "all", RequestKinds: generationKinds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 2 {
+		t.Fatalf("generation details = %d, want 2", len(details))
+	}
+	count, err := tracker.CountRequestDetails(ctx, &QueryOptions{UpstreamType: "subscription", RequestKinds: []string{RequestKindCompaction}})
+	if err != nil || count != 1 {
+		t.Fatalf("compaction count = %d, err=%v", count, err)
+	}
+	stats, err := tracker.QueryAggregatedRequestStatsWithHotPool(ctx, &QueryOptions{UpstreamType: "all", RequestKinds: generationKinds})
+	if err != nil || stats.TotalRequests != 2 || stats.TotalTokens != 15 {
+		t.Fatalf("generation stats = %+v, err=%v", stats, err)
+	}
+
+	policy := tracker.timezonePolicy.Snapshot()
+	today := policy.BusinessDate(time.Now())
+	start, end, err := policy.DayRange(today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := &QueryOptions{StartDate: &start, EndDate: &end, UpstreamType: "subscription", RequestKinds: []string{RequestKindCompaction}}
+	tracker.setSummaryCoverage("", "", "")
+	outside, err := tracker.QueryUsageSummary(ctx, opts)
+	if err != nil || len(outside) != 1 || outside[0].RequestKind != RequestKindCompaction || outside[0].TotalInputTokens != 5 {
+		t.Fatalf("outside-cache summary = %+v, err=%v", outside, err)
+	}
+	if err := tracker.rebuildRecentUsageSummary(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	if !tracker.summaryCovers(policy.Name(), today, today) {
+		t.Fatalf("recent summary does not cover %s in %s", today, policy.Name())
+	}
+	inside, err := tracker.QueryUsageSummary(ctx, opts)
+	if err != nil || len(inside) != 1 || inside[0].RequestKind != RequestKindCompaction || inside[0].TotalInputTokens != 5 {
+		t.Fatalf("inside-cache summary = %+v, err=%v", inside, err)
+	}
+
+	for name, call := range map[string]func() error{
+		"details": func() error {
+			_, err := tracker.QueryRequestDetails(ctx, &QueryOptions{RequestKinds: []string{"invalid"}})
+			return err
+		},
+		"summary": func() error {
+			_, err := tracker.QueryUsageSummary(ctx, &QueryOptions{RequestKinds: []string{"invalid"}})
+			return err
+		},
+		"aggregate": func() error {
+			_, err := tracker.QueryAggregatedRequestStatsWithHotPool(ctx, &QueryOptions{RequestKinds: []string{"invalid"}})
+			return err
+		},
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "invalid request kind") {
+			t.Fatalf("%s invalid kind error = %v", name, err)
+		}
+	}
+}
 
 func TestQueryOperations(t *testing.T) {
 	config := &Config{

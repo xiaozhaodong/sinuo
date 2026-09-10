@@ -13,7 +13,7 @@ var requestLogTargetColumns = []string{
 	"id", "request_id", "client_ip", "user_agent", "method", "path",
 	"start_time", "end_time", "duration_ms", "first_token_ms", "completion_ms",
 	"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json",
-	"request_family", "endpoint_name", "model_name", "upstream_type",
+	"request_family", "request_source", "request_kind", "endpoint_name", "model_name", "upstream_type",
 	"upstream_source_name", "upstream_name", "upstream_id", "is_streaming",
 	"route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason",
 	"route_decision_at", "status", "http_status_code", "retry_count",
@@ -92,6 +92,16 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 		return fallback
 	}
 	switch column {
+	case "request_source":
+		if has(column) {
+			return quoteIdentifier(column)
+		}
+		return `'legacy_proxy'`
+	case "request_kind":
+		if has(column) {
+			return quoteIdentifier(column)
+		}
+		return `'legacy'`
 	case "request_family":
 		path := value("path", "''")
 		upstreamType := value("upstream_type", "''")
@@ -110,7 +120,7 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 		path := value("path", "''")
 		existing := value("upstream_type", "''")
 		return `CASE
-			WHEN ` + existing + ` IN ('endpoint', 'account') THEN ` + existing + `
+			WHEN ` + existing + ` IN ('endpoint', 'account', 'subscription') THEN ` + existing + `
 			WHEN ` + path + ` IN ('/v1/responses', '/v1/responses/compact', '/v1/alpha/search') THEN 'account'
 			WHEN ` + path + ` IN ('/v1/messages', '/v1/messages/count_tokens') OR ` + path + ` LIKE '/v1/images/%' THEN 'endpoint'
 			ELSE '' END`
@@ -130,12 +140,14 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 		return `COALESCE(NULLIF(` + value(column, "'/v1/messages'") + `, ''), '/v1/messages')`
 	case "is_streaming":
 		return `COALESCE(` + value(column, "0") + `, 0)`
-	case "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens",
-		"cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens":
+	case "retry_count":
 		return `COALESCE(` + value(column, "0") + `, 0)`
+	case "input_tokens", "output_tokens", "cache_creation_tokens",
+		"cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens":
+		return value(column, "0")
 	case "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd",
 		"cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd":
-		return `COALESCE(` + value(column, "0") + `, 0)`
+		return value(column, "0")
 	case "created_at", "updated_at":
 		return `COALESCE(` + value(column, "strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')") + `, strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))`
 	default:
@@ -160,6 +172,8 @@ func requestLogsTargetSchema(table string) string {
 		schedule_snapshot_json TEXT,
 		privacy_scan_json TEXT,
 		request_family TEXT NOT NULL DEFAULT 'other' CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
+		request_source TEXT NOT NULL DEFAULT 'legacy_proxy' CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy')),
+		request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy', 'generation', 'compaction')),
 		endpoint_name TEXT,
 		model_name TEXT,
 		upstream_type TEXT NOT NULL DEFAULT '',
@@ -233,6 +247,7 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		date TEXT NOT NULL,
 		model_name TEXT NOT NULL DEFAULT '',
 		request_family TEXT NOT NULL CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
+		request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy', 'generation', 'compaction')),
 		upstream_type TEXT NOT NULL DEFAULT '',
 		upstream_name TEXT NOT NULL DEFAULT '',
 		upstream_id INTEGER NOT NULL DEFAULT 0,
@@ -247,25 +262,31 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		avg_duration_ms REAL DEFAULT 0,
 		created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
 		updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
-		UNIQUE(date, model_name, request_family, upstream_type, upstream_name, upstream_id)
+		UNIQUE(date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id)
 	)`); err != nil {
 		return fmt.Errorf("create usage_summary target table: %w", err)
 	}
 	summaryQuery := fmt.Sprintf(`INSERT INTO usage_summary (
-		date, model_name, request_family, upstream_type, upstream_name, upstream_id,
+		date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id,
 		request_count, success_count, error_count, total_input_tokens, total_output_tokens,
 		total_cache_creation_tokens, total_cache_read_tokens, total_cost_usd, avg_duration_ms
 	) SELECT
-		COALESCE(substr(start_time, 1, 10), ''), COALESCE(model_name, ''), request_family,
+		COALESCE(substr(start_time, 1, 10), ''), COALESCE(model_name, ''), request_family, request_kind,
 		COALESCE(upstream_type, ''), COALESCE(upstream_name, ''), COALESCE(upstream_id, 0),
 		COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
 		SUM(CASE WHEN status IN (%s) THEN 1 ELSE 0 END),
-		SUM(COALESCE(input_tokens, 0)), SUM(COALESCE(output_tokens, 0)),
-		SUM(COALESCE(cache_creation_tokens, 0)), SUM(COALESCE(cache_read_tokens, 0)),
-		SUM(COALESCE(total_cost_usd, 0)),
+		CASE WHEN COUNT(input_tokens) + COUNT(output_tokens) + COUNT(cache_creation_tokens) + COUNT(cache_read_tokens) > 0
+			THEN SUM(COALESCE(input_tokens, 0)) ELSE NULL END,
+		CASE WHEN COUNT(input_tokens) + COUNT(output_tokens) + COUNT(cache_creation_tokens) + COUNT(cache_read_tokens) > 0
+			THEN SUM(COALESCE(output_tokens, 0)) ELSE NULL END,
+		CASE WHEN COUNT(input_tokens) + COUNT(output_tokens) + COUNT(cache_creation_tokens) + COUNT(cache_read_tokens) > 0
+			THEN SUM(COALESCE(cache_creation_tokens, 0)) ELSE NULL END,
+		CASE WHEN COUNT(input_tokens) + COUNT(output_tokens) + COUNT(cache_creation_tokens) + COUNT(cache_read_tokens) > 0
+			THEN SUM(COALESCE(cache_read_tokens, 0)) ELSE NULL END,
+		CASE WHEN COUNT(total_cost_usd) > 0 THEN SUM(COALESCE(total_cost_usd, 0)) ELSE NULL END,
 		AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END)
 	FROM request_logs
-	GROUP BY 1, 2, 3, 4, 5, 6`, tracking.FailedRequestStatusesSQLList)
+	GROUP BY 1, 2, 3, 4, 5, 6, 7`, tracking.FailedRequestStatusesSQLList)
 	if _, err := tx.ExecContext(ctx, summaryQuery); err != nil {
 		return fmt.Errorf("rebuild usage_summary: %w", err)
 	}
@@ -273,6 +294,7 @@ func rebuildUsageSummary(ctx context.Context, tx *sql.Tx) error {
 		`CREATE INDEX idx_usage_summary_date ON usage_summary(date)`,
 		`CREATE INDEX idx_usage_summary_model ON usage_summary(model_name)`,
 		`CREATE INDEX idx_usage_summary_family ON usage_summary(request_family)`,
+		`CREATE INDEX idx_usage_summary_kind ON usage_summary(request_kind)`,
 		`CREATE INDEX idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id)`,
 		`CREATE TRIGGER update_usage_summary_timestamp
 			AFTER UPDATE ON usage_summary FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at

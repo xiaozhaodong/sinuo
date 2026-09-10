@@ -18,6 +18,8 @@ type ActiveRequest struct {
 	Method        string    `json:"method"`
 	Path          string    `json:"path"`
 	RequestFamily string    `json:"request_family"`
+	RequestSource string    `json:"request_source"`
+	RequestKind   string    `json:"request_kind"`
 	IsStreaming   bool      `json:"is_streaming"`
 
 	// 可变状态（频繁更新）
@@ -33,9 +35,10 @@ type ActiveRequest struct {
 	FallbackReason     string `json:"fallback_reason"`      // fallback 或阻塞原因
 	RetryCount         int    `json:"retry_count"`          // 重试次数
 	HTTPStatus         int    `json:"http_status"`          // HTTP状态码
-	ModelName          string `json:"model_name"`           // 模型名称
-	FailureReason      string `json:"failure_reason"`       // 失败原因
-	CancelReason       string `json:"cancel_reason"`        // 取消原因
+	HTTPStatusKnown    bool   `json:"http_status_known"`
+	ModelName          string `json:"model_name"`     // 模型名称
+	FailureReason      string `json:"failure_reason"` // 失败原因
+	CancelReason       string `json:"cancel_reason"`  // 取消原因
 
 	// Token 累积（流式请求实时更新）
 	InputTokens           int64 `json:"input_tokens"`
@@ -44,6 +47,8 @@ type ActiveRequest struct {
 	CacheCreation5mTokens int64 `json:"cache_creation_5m_tokens"` // 5分钟缓存 (v5.0.1+)
 	CacheCreation1hTokens int64 `json:"cache_creation_1h_tokens"` // 1小时缓存 (v5.0.1+)
 	CacheReadTokens       int64 `json:"cache_read_tokens"`
+	UsageKnown            bool  `json:"usage_known"`
+	CostKnown             bool  `json:"cost_known"`
 
 	// 完成信息（只在结束时填充）
 	EndTime         *time.Time `json:"end_time,omitempty"`
@@ -242,6 +247,8 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 		Method:                req.Method,
 		Path:                  req.Path,
 		RequestFamily:         req.RequestFamily,
+		RequestSource:         req.RequestSource,
+		RequestKind:           req.RequestKind,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,
 		EndpointName:          req.EndpointName,
@@ -255,6 +262,7 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 		FallbackReason:        req.FallbackReason,
 		RetryCount:            req.RetryCount,
 		HTTPStatus:            req.HTTPStatus,
+		HTTPStatusKnown:       req.HTTPStatusKnown,
 		ModelName:             req.ModelName,
 		FailureReason:         req.FailureReason,
 		CancelReason:          req.CancelReason,
@@ -264,6 +272,8 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 		CacheCreation5mTokens: req.CacheCreation5mTokens,
 		CacheCreation1hTokens: req.CacheCreation1hTokens,
 		CacheReadTokens:       req.CacheReadTokens,
+		UsageKnown:            req.UsageKnown,
+		CostKnown:             req.CostKnown,
 		DurationMs:            req.DurationMs,
 		TotalCostUSD:          req.TotalCostUSD,
 		ScheduleSnapshotJSON:  req.ScheduleSnapshotJSON,
@@ -409,8 +419,8 @@ func (hp *HotPool) CompleteAndArchive(requestID string, finalizer func(*ActiveRe
 	return nil
 }
 
-// GetActive 获取所有活跃请求（用于 Web 界面）
-// 包括正在处理的请求 + 正在归档中的请求
+// GetActive 获取所有活跃请求的不可变快照（用于 Web 界面）。
+// 包括正在处理的请求 + 正在归档中的请求；不得把解锁后的内部可变指针暴露给读取方。
 func (hp *HotPool) GetActive() []*ActiveRequest {
 	hp.mu.RLock()
 	defer hp.mu.RUnlock()
@@ -420,12 +430,16 @@ func (hp *HotPool) GetActive() []*ActiveRequest {
 
 	// 添加活跃请求
 	for _, req := range hp.requests {
-		result = append(result, req)
+		req.mu.RLock()
+		result = append(result, cloneActiveRequest(req))
+		req.mu.RUnlock()
 	}
 
 	// 添加归档中的请求（确保过渡期不丢失）
 	for _, req := range hp.archiving {
-		result = append(result, req)
+		req.mu.RLock()
+		result = append(result, cloneActiveRequest(req))
+		req.mu.RUnlock()
 	}
 
 	return result
@@ -601,17 +615,34 @@ func NewActiveRequest(requestID, clientIP, userAgent, method, path string, isStr
 
 // NewActiveRequestWithFamily 创建带显式请求类型的活跃请求。
 func NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) *ActiveRequest {
+	return NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, RequestDimensions{
+		RequestSource: RequestSourceLegacyProxy,
+		RequestKind:   RequestKindLegacy,
+		UpstreamType:  "endpoint",
+		UsageKnown:    true,
+	})
+}
+
+// NewActiveRequestWithDimensions 创建带显式分类和 unknown usage 状态的活跃请求。
+func NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, dimensions RequestDimensions) *ActiveRequest {
 	requestFamily = normalizeRequestFamily(requestFamily)
 	return &ActiveRequest{
-		RequestID:     requestID,
-		StartTime:     time.Now(),
-		ClientIP:      clientIP,
-		UserAgent:     userAgent,
-		Method:        method,
-		Path:          path,
-		RequestFamily: requestFamily,
-		IsStreaming:   isStreaming,
-		Status:        "pending",
-		UpstreamType:  "endpoint",
+		RequestID:          requestID,
+		StartTime:          time.Now(),
+		ClientIP:           clientIP,
+		UserAgent:          userAgent,
+		Method:             method,
+		Path:               path,
+		RequestFamily:      requestFamily,
+		RequestSource:      dimensions.RequestSource,
+		RequestKind:        dimensions.RequestKind,
+		IsStreaming:        isStreaming,
+		Status:             "pending",
+		UpstreamType:       dimensions.UpstreamType,
+		UpstreamSourceName: dimensions.UpstreamSourceName,
+		UpstreamName:       dimensions.UpstreamName,
+		UpstreamID:         dimensions.UpstreamID,
+		UsageKnown:         dimensions.UsageKnown,
+		CostKnown:          dimensions.UsageKnown,
 	}
 }

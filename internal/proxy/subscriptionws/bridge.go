@@ -51,6 +51,11 @@ type MessageInterceptor interface {
 	Intercept(ctx context.Context, direction Direction, payload []byte) (InterceptResult, error)
 }
 
+// MessageForwardObserver 只报告成功写出的字节与时间，不把入队当作出站成功。
+type MessageForwardObserver interface {
+	Forwarded(direction Direction, bytes int64, at time.Time)
+}
+
 // Options 握手与桥接参数。
 type Options struct {
 	CompressionMode  websocket.CompressionMode
@@ -182,7 +187,7 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 	defer laneCancel()
 
 	writer := make(chan writerResult, 1)
-	go func() { writer <- writeLane(laneCtx, laneCancel, queue, dst, opts.WriteTimeout) }()
+	go func() { writer <- writeLane(laneCtx, laneCancel, queue, dst, direction, opts) }()
 
 	result := laneResult{direction: direction, stats: LaneStats{CloseCode: -1}}
 	stop := func(err error) {
@@ -274,7 +279,7 @@ func closeQuietly(conn *websocket.Conn) {
 }
 
 // writeLane 串行写出队列内容，保持同方向的提交顺序。
-func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQueue, dst *websocket.Conn, writeTimeout time.Duration) writerResult {
+func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQueue, dst *websocket.Conn, direction Direction, opts Options) writerResult {
 	var result writerResult
 	for {
 		msg, err := queue.pop(ctx)
@@ -282,7 +287,7 @@ func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQue
 			result.err = err
 			return result
 		}
-		writeCtx, cancelWrite := context.WithTimeout(ctx, writeTimeout)
+		writeCtx, cancelWrite := context.WithTimeout(ctx, opts.WriteTimeout)
 		err = dst.Write(writeCtx, msg.typ, msg.data)
 		cancelWrite()
 		if err != nil {
@@ -292,5 +297,8 @@ func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQue
 		}
 		result.messages++
 		result.bytes += int64(len(msg.data))
+		if observer, ok := opts.Interceptor.(MessageForwardObserver); ok {
+			observer.Forwarded(direction, int64(len(msg.data)), time.Now())
+		}
 	}
 }

@@ -7,12 +7,17 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/subscriptionws"
+	"cc-forwarder/internal/tracking"
+
+	"github.com/coder/websocket"
 )
 
 type p2aPrivacyFilter struct {
@@ -169,6 +174,16 @@ func TestSubscriptionPrivacyRevalidatesNestedJSON(t *testing.T) {
 	}
 }
 
+func TestSubscriptionPrivacyAllowsWholePlainTextReplacement(t *testing.T) {
+	original := []byte(`{"input":"{\"value\":\"SECRET\"}"}`)
+	filtered := []byte(`{"input":"[masked]"}`)
+	filter := &p2aPrivacyFilter{version: 1, result: privacy.ApplyResult{Body: filtered, Changed: true, Action: privacy.ModeRedact}}
+	out, err := applySubscriptionPrivacy(filter, nil, "/v1/responses", original)
+	if err != nil || !bytes.Equal(out, filtered) {
+		t.Fatalf("plain message was treated as tool JSON: out=%s err=%v", out, err)
+	}
+}
+
 func TestSubscriptionWSInterceptorPolicyErrorZeroForwardAndSubmissionClasses(t *testing.T) {
 	policyErr := &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed, Message: "internal detail must not escape"}
 	filter := &p2aPrivacyFilter{version: 1, err: policyErr}
@@ -308,5 +323,302 @@ func TestSubscriptionHTTPPrivacyRunsBeforeZstdOutbound(t *testing.T) {
 	plain := zstdDecompress(t, requests[0].Body)
 	if !bytes.Equal(plain, filtered) || bytes.Contains(plain, []byte("SYNTHETIC-SECRET")) {
 		t.Fatalf("privacy/compression order mismatch: %s", plain)
+	}
+}
+
+func TestSubscriptionHTTPCaptureChunkingAndTerminal(t *testing.T) {
+	for _, body := range []string{
+		"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}",
+		`{"object":"response","status":"completed","usage":{"input_tokens":3,"output_tokens":2}}`,
+		`{"object":"response.compaction","output":[],"usage":{"input_tokens":3,"output_tokens":2}}`,
+	} {
+		var terminal *ParseResult
+		capture := &subscriptionResponseCapture{httpStatus: 200, compaction: true, onResult: func(result *ParseResult) {
+			if result != nil && result.IsCompleted {
+				terminal = result
+			}
+		}}
+		for index := range len(body) {
+			if n, err := capture.Write([]byte(body[index : index+1])); n != 1 || err != nil {
+				t.Fatal(n, err)
+			}
+		}
+		capture.Finish()
+		if terminal == nil || !terminal.HasTokenUsage || terminal.TokenUsage.InputTokens != 3 || terminal.TokenUsage.OutputTokens != 2 {
+			t.Fatalf("terminal/usage lost for %q: %+v", body, terminal)
+		}
+		if capture.pending != nil || capture.parser != nil {
+			t.Fatal("capture retained response")
+		}
+	}
+}
+
+func TestSubscriptionHTTPCaptureDoesNotInventTerminal(t *testing.T) {
+	for _, body := range []string{`{}`, `{"status":"in_progress"}`, `{"type":"future.event","usage":{"input_tokens":3}}`, "not JSON"} {
+		terminal := false
+		capture := &subscriptionResponseCapture{httpStatus: 200, onResult: func(result *ParseResult) {
+			terminal = terminal || result != nil && result.IsCompleted
+		}}
+		_, _ = capture.Write([]byte(body))
+		capture.Finish()
+		if terminal {
+			t.Fatalf("invented terminal for %q", body)
+		}
+	}
+}
+
+func TestSubscriptionHTTPCaptureOversizeEventRecoversAtBoundary(t *testing.T) {
+	var terminal *ParseResult
+	warnings := 0
+	capture := &subscriptionResponseCapture{onWarning: func(string) { warnings++ }, onResult: func(result *ParseResult) {
+		if result != nil && result.IsCompleted {
+			terminal = result
+		}
+	}}
+	_, _ = capture.Write([]byte("event: response.output_text.delta\ndata: "))
+	chunk := bytes.Repeat([]byte("x"), 65536)
+	for range subscriptionCaptureLimit/len(chunk) + 1 {
+		_, _ = capture.Write(chunk)
+	}
+	_, _ = capture.Write([]byte("\n\nevent: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"))
+	capture.Finish()
+	if warnings != 1 || terminal == nil || !terminal.HasTokenUsage {
+		t.Fatalf("capture did not recover: warnings=%d terminal=%+v", warnings, terminal)
+	}
+}
+
+func TestSubscriptionHTTPTrackingEntryIntegration(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation, output, kind string
+		blocked                       bool
+		upstreamError                 bool
+	}{
+		{"generation", "responses", "event: response.completed\ndata: {\"response\":{\"id\":\"r\",\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n", "generation", false, false},
+		{"compact", "responses/compact", `{"object":"response.compaction","output":[],"usage":{"input_tokens":3,"output_tokens":2}}`, "compaction", false, false},
+		{"unknown usage", "responses", `{"status":"completed","output":[]}`, "generation", false, false},
+		{"search", "alpha/search", `{"ok":true}`, "", false, false},
+		{"privacy rejection", "responses", `{"ok":true}`, "generation", true, false},
+		{"upstream error", "responses", `{"error":{"type":"SYNTHETIC-SECRET","code":"SYNTHETIC-SECRET","message":"SYNTHETIC-SECRET"}}`, "generation", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := newLifecyclePanelTestTracker(t)
+			env := newSubscriptionTestEnv(t, func(w http.ResponseWriter, _ *http.Request) {
+				if tc.upstreamError {
+					w.WriteHeader(http.StatusBadRequest)
+				}
+				_, _ = io.WriteString(w, tc.output)
+			}, "subscription")
+			env.handler.proxy.SetUsageTracker(tracker)
+			if tc.blocked {
+				env.handler.proxy.SetPrivacyFilter(&p2aPrivacyFilter{version: 1, err: &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed, Message: "SYNTHETIC-SECRET"}})
+			}
+			resp := env.request(http.MethodPost, tc.operation, func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer synthetic-client-token")
+				r.Header.Set("Content-Type", "application/json")
+				r.Body = io.NopCloser(strings.NewReader(`{"model":"synthetic-model","input":"SYNTHETIC-SECRET"}`))
+			})
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if err := tracker.ForceFlush(); err != nil {
+				t.Fatal(err)
+			}
+			rows, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{Limit: 10})
+			// Content-Length 响应可能先被客户端读完，服务端随后才解析 JSON 终态。
+			// 持续查询直到结算可见，也覆盖列表读取与结算的真实并发。
+			for deadline := time.Now().Add(time.Second); tc.kind != "" && err == nil && time.Now().Before(deadline); {
+				if len(rows) == 1 && (rows[0].Status == "completed" || rows[0].Status == "failed" || rows[0].Status == "cancelled") {
+					break
+				}
+				time.Sleep(time.Millisecond)
+				rows, _, err = tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{Limit: 10})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.kind == "" {
+				if len(rows) != 0 {
+					t.Fatalf("auxiliary route created rows: %+v", rows)
+				}
+				return
+			}
+			if len(rows) != 1 {
+				t.Fatalf("want one row, got %+v", rows)
+			}
+			row := rows[0]
+			if row.RequestKind != tc.kind || row.RequestSource != "codex_subscription_proxy" || row.RequestFamily != "codex" || row.UpstreamType != "subscription" || row.UpstreamName != "chatgpt-subscription" || row.UpstreamID != 0 {
+				t.Fatalf("incorrect attribution: %+v", row)
+			}
+			if row.HTTPStatusCode == nil || *row.HTTPStatusCode != resp.StatusCode {
+				t.Fatalf("HTTP status lost: %+v", row)
+			}
+			if tc.blocked {
+				if env.upstreamCount() != 0 || row.Status != "failed" {
+					t.Fatalf("blocked request escaped: %+v", row)
+				}
+			} else if tc.upstreamError {
+				if row.Status != "failed" {
+					t.Fatalf("upstream error not recorded: %+v", row)
+				}
+			} else if row.Status != "completed" || (tc.name != "unknown usage" && (row.InputTokens != 3 || row.OutputTokens != 2)) {
+				t.Fatalf("terminal/usage lost: %+v", row)
+			}
+			wantKnown := !tc.blocked && !tc.upstreamError && tc.name != "unknown usage"
+			if row.UsageKnown != wantKnown || row.CostKnown != wantKnown {
+				t.Fatalf("unknown usage/cost collapsed into zero: %+v", row)
+			}
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(encoded, []byte("SYNTHETIC-SECRET")) || strings.Contains(env.logs.String(), "SYNTHETIC-SECRET") {
+				t.Fatal("sensitive value reached records/logs")
+			}
+		})
+	}
+}
+
+func TestSubscriptionWSTrackingEntryWarmupAndGeneration(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	env := newSubscriptionTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			_, payload, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var create struct {
+				Generate *bool `json:"generate"`
+			}
+			if json.Unmarshal(payload, &create) != nil {
+				return
+			}
+			id, usage := "generated", `,"usage":{"input_tokens":3,"output_tokens":2}`
+			if create.Generate != nil && !*create.Generate {
+				id, usage = "warmup", ""
+			}
+			if conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.created","response":{"id":"`+id+`","model":"synthetic-model"}}`)) != nil {
+				return
+			}
+			if conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"`+id+`"`+usage+`}}`)) != nil {
+				return
+			}
+		}
+	}, "subscription")
+	env.handler.proxy.SetUsageTracker(tracker)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(env.server.URL, "http")+"/subscription/"+subscriptionTestSecret+"/backend-api/codex/responses", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": []string{"Bearer synthetic-client-token"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	for _, payload := range []string{`{"type":"response.create","generate":false,"input":[]}`, `{"type":"response.create","model":"synthetic-model","input":[]}`} {
+		if err := conn.Write(ctx, websocket.MessageText, []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			if _, _, err := conn.Read(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "done")
+	if err := tracker.ForceFlush(); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("warmup recorded or generation duplicated: %+v", rows)
+	}
+	row := rows[0]
+	if row.HTTPStatusCode != nil || row.Status != "completed" || row.InputTokens != 3 || row.RequestKind != "generation" || row.UpstreamType != "subscription" {
+		t.Fatalf("incorrect WS record: %+v", row)
+	}
+}
+
+type subscriptionSnapshotFilter struct{ snapshot *privacy.Snapshot }
+
+func (f subscriptionSnapshotFilter) Apply(_ context.Context, req privacy.Request, body []byte) (privacy.ApplyResult, error) {
+	return f.snapshot.Apply(req, body)
+}
+func (f subscriptionSnapshotFilter) SnapshotVersion() int64 { return f.snapshot.Version }
+
+func TestSubscriptionSharedPrivacyModeMatrix(t *testing.T) {
+	rules, err := privacy.CompileRules([]privacy.Rule{{ID: 1, Enabled: true, Name: "synthetic", MatchType: privacy.MatchTypeRegex,
+		Pattern: "SYNTHETIC-SECRET", Placeholder: "[masked]", Action: privacy.ActionRedact,
+		Scope: privacy.Scope{UpstreamTypes: []string{privacy.UpstreamTypeSubscription}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []struct{ name, path, body string }{
+		{"responses", "/v1/responses", `{"input":"SYNTHETIC-SECRET","encrypted_content":"opaque-data"}`},
+		{"compact", "/v1/responses/compact", `{"input":[{"type":"function_call_output","output":"SYNTHETIC-SECRET"}],"encrypted_content":"opaque-data"}`},
+		{"search", "/v1/alpha/search", `{"commands":{"search_query":[{"q":"SYNTHETIC-SECRET"}]},"encrypted_content":"opaque-data"}`},
+		{"warmup", "/v1/responses", `{"type":"response.create","generate":false,"input":"SYNTHETIC-SECRET","encrypted_content":"opaque-data"}`},
+	} {
+		for _, mode := range []string{"disabled", "detect", "redact", "no_rules", "scan_prefix", "fail_closed"} {
+			t.Run(request.name+"/"+mode, func(t *testing.T) {
+				settings := privacy.DefaultSettings()
+				settings.Mode = mode
+				activeRules := rules
+				switch mode {
+				case "no_rules":
+					settings.Mode, activeRules = privacy.ModeRedact, nil
+				case "scan_prefix":
+					settings.Mode, settings.ScanMaxBytes = privacy.ModeRedact, 1
+				case "fail_closed":
+					settings.Mode, settings.ScanMaxBytes, settings.OverLimitAction = privacy.ModeRedact, 1, privacy.OverLimitFailClosed
+				}
+				filter := subscriptionSnapshotFilter{snapshot: &privacy.Snapshot{Version: 1, Settings: settings, Rules: activeRules}}
+				var summary privacy.ApplyResult
+				state := newSubscriptionPrivacyRequestState("synthetic-matrix", func(_ string, result privacy.ApplyResult, _ *privacy.PolicyError) { summary = result })
+				req, _ := http.NewRequest(http.MethodPost, request.path, nil)
+				req.Header.Set("Content-Type", "application/json")
+				req = withSubscriptionPrivacyState(req, state)
+				out, err := applySubscriptionPrivacy(filter, req, request.path, []byte(request.body))
+				if mode == "fail_closed" {
+					if out != nil || handlers.AsPrivacyPolicyError(err) == nil {
+						t.Fatal("fail-closed request escaped")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == "redact" {
+					if bytes.Contains(out, []byte("SYNTHETIC-SECRET")) || !bytes.Contains(out, []byte("[masked]")) {
+						t.Fatalf("redaction missing: %s", out)
+					}
+				} else if string(out) != request.body {
+					t.Fatalf("passthrough mode altered body: %s", out)
+				}
+				if !bytes.Contains(out, []byte(`"encrypted_content":"opaque-data"`)) {
+					t.Fatal("opaque field changed")
+				}
+				if mode == "scan_prefix" && !summary.Truncated {
+					t.Fatal("partial scan not disclosed")
+				}
+				if mode == "detect" && summary.HitCount == 0 {
+					t.Fatal("detect did not report hit")
+				}
+				if summary.Body != nil {
+					t.Fatal("summary retained body")
+				}
+				for _, hit := range summary.RuleHits {
+					if len(hit.Matches) != 0 {
+						t.Fatal("summary retained sensitive matches")
+					}
+				}
+			})
+		}
 	}
 }

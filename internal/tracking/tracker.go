@@ -54,6 +54,13 @@ const (
 	RequestFamilyCodex  = "codex"
 	RequestFamilyImage  = "image"
 	RequestFamilyOther  = "other"
+
+	RequestSourceLegacyProxy            = "legacy_proxy"
+	RequestSourceCodexSubscriptionProxy = "codex_subscription_proxy"
+
+	RequestKindLegacy     = "legacy"
+	RequestKindGeneration = "generation"
+	RequestKindCompaction = "compaction"
 )
 
 func normalizeRequestFamily(value string) string {
@@ -66,6 +73,30 @@ func normalizeRequestFamily(value string) string {
 		return RequestFamilyImage
 	default:
 		return RequestFamilyOther
+	}
+}
+
+func normalizeRequestSource(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", RequestSourceLegacyProxy:
+		return RequestSourceLegacyProxy, nil
+	case RequestSourceCodexSubscriptionProxy:
+		return RequestSourceCodexSubscriptionProxy, nil
+	default:
+		return "", fmt.Errorf("invalid request source %q", value)
+	}
+}
+
+func normalizeRequestKind(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", RequestKindLegacy:
+		return RequestKindLegacy, nil
+	case RequestKindGeneration:
+		return RequestKindGeneration, nil
+	case RequestKindCompaction:
+		return RequestKindCompaction, nil
+	default:
+		return "", fmt.Errorf("invalid request kind %q", value)
 	}
 }
 
@@ -102,6 +133,32 @@ type RequestStartData struct {
 	UpstreamSourceName string `json:"upstream_source_name,omitempty"` // 订阅源名或固定来源
 	UpstreamName       string `json:"upstream_name,omitempty"`        // 账号名或端点名
 	UpstreamID         int64  `json:"upstream_id,omitempty"`          // 上游ID（账号ID）
+	RequestSource      string `json:"request_source,omitempty"`
+	RequestKind        string `json:"request_kind,omitempty"`
+	UsageKnown         bool   `json:"usage_known"`
+}
+
+// RequestDimensions 是开始记录时必须原子写入的来源与分类维度。
+type RequestDimensions struct {
+	RequestSource      string
+	RequestKind        string
+	UpstreamType       string
+	UpstreamSourceName string
+	UpstreamName       string
+	UpstreamID         int64
+	UsageKnown         bool
+}
+
+// RequestSettlement 用于需要保留 unknown usage/HTTP 状态的独立结算路径。
+// TokenUsage=nil 表示上游未报告用量，数据库 token 与 cost 字段必须保持 NULL。
+type RequestSettlement struct {
+	Status        string
+	ModelName     string
+	Path          string
+	FailureReason string
+	Duration      time.Duration
+	HTTPStatus    *int
+	TokenUsage    *TokenUsage
 }
 
 // RequestUpdateData 请求更新事件数据
@@ -128,6 +185,7 @@ type RequestCompleteData struct {
 	Duration              time.Duration `json:"duration"`
 	FailureReason         string        `json:"failure_reason,omitempty"` // 可选：失败原因
 	CostOverrideUSD       *float64      `json:"cost_override_usd,omitempty"`
+	HasTokenUsage         bool          `json:"has_token_usage"`
 }
 
 // TokenUsage token使用统计
@@ -367,6 +425,9 @@ type UpdateOptions struct {
 	UpstreamSourceName *string        // 上游来源（订阅源）
 	UpstreamName       *string        // 上游名称（账号名/端点名）
 	UpstreamID         *int64         // 上游ID（账号ID）
+	RequestSource      *string        // 入口来源 legacy_proxy/codex_subscription_proxy
+	RequestKind        *string        // legacy/generation/compaction
+	IsStreaming        *bool          // 是否为流式请求
 	Status             *string        // 状态
 	RetryCount         *int           // 重试次数
 	HttpStatus         *int           // HTTP状态码
@@ -846,41 +907,85 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 
 // RecordRequestStartWithFamily 记录请求开始；请求类型必须由入口显式传入。
 func (ut *UsageTracker) RecordRequestStartWithFamily(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) {
+	_ = ut.RecordRequestStartAtWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, ut.now(), RequestDimensions{
+		RequestSource: RequestSourceLegacyProxy,
+		RequestKind:   RequestKindLegacy,
+		UpstreamType:  "endpoint",
+		UsageKnown:    true,
+	})
+}
+
+// RecordRequestStartAtWithDimensions 原子登记请求的来源、种类和实际归属。
+// 新订阅入口必须显式传 generation/compaction；非法值直接拒绝，不能降级为 legacy。
+func (ut *UsageTracker) RecordRequestStartAtWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, startedAt time.Time, dimensions RequestDimensions) error {
 	if ut.config == nil || !ut.config.Enabled {
-		return
+		return nil
 	}
 	requestFamily = normalizeRequestFamily(requestFamily)
+	requestSource, err := normalizeRequestSource(dimensions.RequestSource)
+	if err != nil {
+		return err
+	}
+	requestKind, err := normalizeRequestKind(dimensions.RequestKind)
+	if err != nil {
+		return err
+	}
+	if requestSource == RequestSourceLegacyProxy && requestKind != RequestKindLegacy {
+		return fmt.Errorf("request source %q only accepts kind %q", requestSource, RequestKindLegacy)
+	}
+	if requestSource == RequestSourceCodexSubscriptionProxy && requestKind == RequestKindLegacy {
+		return fmt.Errorf("request source %q requires generation or compaction kind", requestSource)
+	}
+	if startedAt.IsZero() {
+		startedAt = ut.now()
+	}
+	upstreamType := strings.TrimSpace(dimensions.UpstreamType)
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+	dimensions.RequestSource = requestSource
+	dimensions.RequestKind = requestKind
+	dimensions.UpstreamType = upstreamType
 
 	// 🔥 v4.1 热池模式：直接添加到内存热池
 	if ut.hotPoolEnabled && ut.hotPool != nil {
-		req := NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
+		req := NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, dimensions)
+		req.StartTime = startedAt
 		if err := ut.hotPool.Add(req); err != nil {
 			slog.Warn("🔥 热池添加请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
 			// 降级到传统模式
-			ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
+			ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, startedAt, dimensions)
 		}
-		return
+		return nil
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming)
+	ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, startedAt, dimensions)
+	return nil
 }
 
 // recordRequestStartLegacy 传统模式记录请求开始
-func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) {
+func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, startedAt time.Time, dimensions RequestDimensions) {
 	event := RequestEvent{
 		Type:      "start",
 		RequestID: requestID,
-		Timestamp: ut.now(),
+		Timestamp: startedAt,
 		Data: RequestStartData{
-			ClientIP:      clientIP,
-			UserAgent:     userAgent,
-			Method:        method,
-			Path:          path,
-			RequestFamily: requestFamily,
-			IsStreaming:   isStreaming,
+			ClientIP:           clientIP,
+			UserAgent:          userAgent,
+			Method:             method,
+			Path:               path,
+			RequestFamily:      requestFamily,
+			IsStreaming:        isStreaming,
+			UpstreamType:       dimensions.UpstreamType,
+			UpstreamSourceName: dimensions.UpstreamSourceName,
+			UpstreamName:       dimensions.UpstreamName,
+			UpstreamID:         dimensions.UpstreamID,
+			RequestSource:      dimensions.RequestSource,
+			RequestKind:        dimensions.RequestKind,
+			UsageKnown:         dimensions.UsageKnown,
 		},
 	}
 
@@ -899,6 +1004,22 @@ func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent,
 func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
+	}
+	if opts.RequestSource != nil {
+		value, err := normalizeRequestSource(*opts.RequestSource)
+		if err != nil {
+			slog.Warn("拒绝非法请求来源更新", "request_id", requestID, "error", err)
+			return
+		}
+		opts.RequestSource = &value
+	}
+	if opts.RequestKind != nil {
+		value, err := normalizeRequestKind(*opts.RequestKind)
+		if err != nil {
+			slog.Warn("拒绝非法请求种类更新", "request_id", requestID, "error", err)
+			return
+		}
+		opts.RequestKind = &value
 	}
 
 	// 🔥 v4.1 热池模式：直接更新内存（核心优化点：无数据库写入）
@@ -922,6 +1043,15 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.UpstreamID != nil {
 				req.UpstreamID = *opts.UpstreamID
+			}
+			if opts.RequestSource != nil {
+				req.RequestSource = *opts.RequestSource
+			}
+			if opts.RequestKind != nil {
+				req.RequestKind = *opts.RequestKind
+			}
+			if opts.IsStreaming != nil {
+				req.IsStreaming = *opts.IsStreaming
 			}
 			if opts.RouteMode != nil {
 				req.RouteMode = *opts.RouteMode
@@ -947,6 +1077,7 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.HttpStatus != nil {
 				req.HTTPStatus = *opts.HttpStatus
+				req.HTTPStatusKnown = true
 			}
 			if opts.ModelName != nil {
 				req.ModelName = *opts.ModelName
@@ -1060,12 +1191,19 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 		err := ut.hotPool.CompleteAndArchive(requestID, func(req *ActiveRequest) {
 			req.Status = "completed"
 			req.ModelName = modelName
-			req.InputTokens = inputTokens
-			req.OutputTokens = outputTokens
-			req.CacheCreationTokens = cacheCreationTokens
-			req.CacheCreation5mTokens = cacheCreation5mTokens // v5.0.1+
-			req.CacheCreation1hTokens = cacheCreation1hTokens // v5.0.1+
-			req.CacheReadTokens = cacheReadTokens
+			if tokens != nil {
+				req.InputTokens = inputTokens
+				req.OutputTokens = outputTokens
+				req.CacheCreationTokens = cacheCreationTokens
+				req.CacheCreation5mTokens = cacheCreation5mTokens // v5.0.1+
+				req.CacheCreation1hTokens = cacheCreation1hTokens // v5.0.1+
+				req.CacheReadTokens = cacheReadTokens
+				req.UsageKnown = true
+				req.CostKnown = true
+			}
+			if costOverrideUSD != nil {
+				req.CostKnown = true
+			}
 			req.EndTime = &now
 			req.DurationMs = duration.Milliseconds()
 			// 🔧 [方案A实现] 2025-12-20: 显式覆盖 failureReason（无论是否为空）
@@ -1079,13 +1217,13 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD)
+			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD)
+	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
@@ -1096,6 +1234,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 	duration time.Duration,
 	failureReason string,
 	costOverrideUSD *float64,
+	hasTokenUsage bool,
 ) {
 	path := ""
 	if ut.hotPoolEnabled && ut.hotPool != nil {
@@ -1123,6 +1262,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 			Duration:              duration,
 			FailureReason:         failureReason,
 			CostOverrideUSD:       costOverrideUSD,
+			HasTokenUsage:         hasTokenUsage,
 		},
 	}
 
@@ -1167,6 +1307,7 @@ func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, 
 		err := ut.hotPool.CompleteAndArchive(requestID, func(req *ActiveRequest) {
 			req.Status = status
 			req.HTTPStatus = httpStatus
+			req.HTTPStatusKnown = true
 			// 🔧 [修复] 2025-12-11: 设置模型名，否则成本计算会失败
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
@@ -1180,6 +1321,8 @@ func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, 
 				req.CacheCreation5mTokens = cacheCreation5mTokens
 				req.CacheCreation1hTokens = cacheCreation1hTokens
 				req.CacheReadTokens = cacheReadTokens
+				req.UsageKnown = true
+				req.CostKnown = true
 			}
 			req.EndTime = &now
 			req.DurationMs = duration.Milliseconds()
@@ -1198,18 +1341,18 @@ func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, 
 			slog.Debug("🔥 热池完成失败请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens)
+			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens)
+	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil)
 }
 
 // recordRequestFinalFailureLegacy 传统模式记录请求失败
 // 🔧 [修复] 2025-12-11: 添加 modelName 和 5m/1h 缓存字段参数
-func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64) {
+func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64, hasTokenUsage bool) {
 	event := RequestEvent{
 		Type:      "final_failure",
 		RequestID: requestID,
@@ -1227,6 +1370,7 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 			"cache_creation_5m_tokens": cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
 			"cache_creation_1h_tokens": cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			"cache_read_tokens":        cacheReadTokens,
+			"has_token_usage":          hasTokenUsage,
 		},
 	}
 
@@ -1236,6 +1380,69 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 	default:
 		slog.Warn("Usage tracking event buffer full, dropping final_failure event",
 			"request_id", requestID)
+	}
+}
+
+// RecordRequestSettlement 原子结算订阅入口请求，并保留 unknown usage 与 NULL HTTP 状态。
+func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement RequestSettlement) error {
+	if ut.config == nil || !ut.config.Enabled {
+		return nil
+	}
+	if settlement.Status != "completed" && settlement.Status != "failed" && settlement.Status != "cancelled" {
+		return fmt.Errorf("invalid request settlement status %q", settlement.Status)
+	}
+	if settlement.Duration < 0 {
+		settlement.Duration = 0
+	}
+
+	if ut.hotPoolEnabled && ut.hotPool != nil {
+		now := ut.now()
+		err := ut.hotPool.CompleteAndArchive(requestID, func(req *ActiveRequest) {
+			req.Status = settlement.Status
+			if settlement.ModelName != "" && settlement.ModelName != "default" {
+				req.ModelName = settlement.ModelName
+			}
+			req.FailureReason = settlement.FailureReason
+			if settlement.HTTPStatus != nil {
+				req.HTTPStatus = *settlement.HTTPStatus
+				req.HTTPStatusKnown = true
+			} else {
+				req.HTTPStatus = 0
+				req.HTTPStatusKnown = false
+			}
+			if settlement.TokenUsage != nil {
+				req.InputTokens = settlement.TokenUsage.InputTokens
+				req.OutputTokens = settlement.TokenUsage.OutputTokens
+				req.CacheCreationTokens = settlement.TokenUsage.CacheCreationTokens
+				req.CacheCreation5mTokens = settlement.TokenUsage.CacheCreation5mTokens
+				req.CacheCreation1hTokens = settlement.TokenUsage.CacheCreation1hTokens
+				req.CacheReadTokens = settlement.TokenUsage.CacheReadTokens
+				req.UsageKnown = true
+				req.CostKnown = true
+			} else {
+				req.UsageKnown = false
+				req.CostKnown = false
+			}
+			req.EndTime = &now
+			req.DurationMs = settlement.Duration.Milliseconds()
+		})
+		if err == nil {
+			return nil
+		}
+		slog.Debug("🔥 热池订阅结算失败，降级到事件队列模式", "request_id", requestID, "error", err)
+	}
+
+	event := RequestEvent{
+		Type:      "subscription_settlement",
+		RequestID: requestID,
+		Timestamp: ut.now(),
+		Data:      settlement,
+	}
+	select {
+	case ut.eventChan <- event:
+		return nil
+	default:
+		return fmt.Errorf("usage tracking event buffer full while settling %s", requestID)
 	}
 }
 
@@ -1257,6 +1464,8 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 			req.CacheCreation5mTokens = tokens.CacheCreation5mTokens
 			req.CacheCreation1hTokens = tokens.CacheCreation1hTokens
 			req.CacheReadTokens = tokens.CacheReadTokens
+			req.UsageKnown = true
+			req.CostKnown = true
 			// 更新模型名（如果有）
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
@@ -1296,6 +1505,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 			CacheReadTokens:       tokens.CacheReadTokens,
 			Duration:              duration,
 			FailureReason:         failureReason,
+			HasTokenUsage:         true,
 		},
 	}
 
@@ -1325,6 +1535,8 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 			req.CacheCreation5mTokens = tokens.CacheCreation5mTokens
 			req.CacheCreation1hTokens = tokens.CacheCreation1hTokens
 			req.CacheReadTokens = tokens.CacheReadTokens
+			req.UsageKnown = true
+			req.CostKnown = true
 			// 更新模型名（如果有）
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
@@ -1355,6 +1567,7 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 			CacheCreation1hTokens: tokens.CacheCreation1hTokens,
 			CacheReadTokens:       tokens.CacheReadTokens,
 			Duration:              0, // 不更新时间相关字段
+			HasTokenUsage:         true,
 		},
 	}
 
@@ -1696,7 +1909,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 
 	var output strings.Builder
 	writer := csv.NewWriter(&output)
-	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at"}); err != nil {
+	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known"}); err != nil {
 		return nil, err
 	}
 
@@ -1716,6 +1929,19 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 		if log.HTTPStatusCode != nil {
 			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
 		}
+		// CSV 没有 NULL 类型，用空单元格加显式 known 标记区别未知与真实零。
+		tokenText := func(value int64) string {
+			if !log.UsageKnown {
+				return ""
+			}
+			return strconv.FormatInt(value, 10)
+		}
+		costText := func(value float64) string {
+			if !log.CostKnown {
+				return ""
+			}
+			return strconv.FormatFloat(value, 'f', 6, 64)
+		}
 
 		if err := writer.Write([]string{
 			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path, log.RequestFamily,
@@ -1723,9 +1949,10 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			log.UpstreamType, log.UpstreamSourceName, log.UpstreamName, strconv.FormatInt(log.UpstreamID, 10),
 			log.RouteMode, log.RequestedEndpoint, log.EffectiveEndpoint, log.FallbackReason,
 			log.ModelName, log.Status, httpStatus, strconv.Itoa(log.RetryCount),
-			strconv.FormatInt(log.InputTokens, 10), strconv.FormatInt(log.OutputTokens, 10), strconv.FormatInt(log.CacheCreationTokens, 10), strconv.FormatInt(log.CacheReadTokens, 10),
-			strconv.FormatFloat(log.InputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.OutputCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheCreationCostUSD, 'f', 6, 64), strconv.FormatFloat(log.CacheReadCostUSD, 'f', 6, 64), strconv.FormatFloat(log.TotalCostUSD, 'f', 6, 64),
+			tokenText(log.InputTokens), tokenText(log.OutputTokens), tokenText(log.CacheCreationTokens), tokenText(log.CacheReadTokens),
+			costText(log.InputCostUSD), costText(log.OutputCostUSD), costText(log.CacheCreationCostUSD), costText(log.CacheReadCostUSD), costText(log.TotalCostUSD),
 			ut.timezonePolicy.FormatDisplay(log.CreatedAt), ut.timezonePolicy.FormatDisplay(log.UpdatedAt),
+			log.RequestSource, log.RequestKind, strconv.FormatBool(log.UsageKnown), strconv.FormatBool(log.CostKnown),
 		}); err != nil {
 			return nil, err
 		}
@@ -2020,8 +2247,18 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	if req.CompletionMs != nil {
 		completionMs = req.CompletionMs
 	}
-	if req.HTTPStatus > 0 {
+	if req.HTTPStatusKnown || (req.RequestSource == "" && req.HTTPStatus > 0) {
 		httpStatus = &req.HTTPStatus
+	}
+	usageKnown := req.UsageKnown || req.RequestSource == ""
+	costKnown := req.CostKnown || req.RequestSource == ""
+	requestSource := req.RequestSource
+	if requestSource == "" {
+		requestSource = RequestSourceLegacyProxy
+	}
+	requestKind := req.RequestKind
+	if requestKind == "" {
+		requestKind = RequestKindLegacy
 	}
 	routeMode := req.RouteMode
 	if routeMode == "" {
@@ -2030,9 +2267,9 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 
 	// 计算成本（使用公共函数消除重复代码）
 	var cost CostBreakdown
-	if req.CostOverrideUSD != nil {
+	if costKnown && req.CostOverrideUSD != nil {
 		cost.TotalCost = *req.CostOverrideUSD
-	} else if ut.pricing != nil {
+	} else if costKnown && ut.pricing != nil {
 		pricing, exists := ut.pricing[req.ModelName]
 		if !exists {
 			pricing, exists = ut.pricing["_default"]
@@ -2078,6 +2315,8 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		CompletionMs:          completionMs,
 		EndpointName:          req.EndpointName,
 		RequestFamily:         req.RequestFamily,
+		RequestSource:         requestSource,
+		RequestKind:           requestKind,
 		UpstreamType:          req.UpstreamType,
 		UpstreamSourceName:    req.UpstreamSourceName,
 		UpstreamName:          req.UpstreamName,
@@ -2101,11 +2340,13 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		CacheCreation5mTokens: req.CacheCreation5mTokens, // v5.0.1+
 		CacheCreation1hTokens: req.CacheCreation1hTokens, // v5.0.1+
 		CacheReadTokens:       req.CacheReadTokens,
+		UsageKnown:            usageKnown,
 		InputCostUSD:          cost.InputCost,
 		OutputCostUSD:         cost.OutputCost,
 		CacheCreationCostUSD:  cost.CacheCreationCost,
 		CacheReadCostUSD:      cost.CacheReadCost,
 		TotalCostUSD:          cost.TotalCost,
+		CostKnown:             costKnown,
 		CreatedAt:             req.StartTime,
 		UpdatedAt:             ut.now(),
 	}
@@ -2286,11 +2527,30 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 	if len(activeRequests) == 0 {
 		return nil
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil
+	}
+	allowedKinds := make(map[string]struct{})
+	if opts != nil {
+		for _, kind := range opts.RequestKinds {
+			normalized, _ := normalizeRequestKind(kind)
+			allowedKinds[normalized] = struct{}{}
+		}
+	}
 
 	var filtered []RequestDetail
 	for _, req := range activeRequests {
 		// 应用过滤条件
 		if opts != nil {
+			if len(allowedKinds) > 0 {
+				kind := req.RequestKind
+				if kind == "" {
+					kind = RequestKindLegacy
+				}
+				if _, ok := allowedKinds[kind]; !ok {
+					continue
+				}
+			}
 			// 状态过滤
 			if !requestStatusMatchesFilter(opts.Status, req.Status) {
 				continue
@@ -2314,6 +2574,10 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 				}
 			case requestQuerySourceEndpoint:
 				if req.UpstreamType != "endpoint" {
+					continue
+				}
+			case requestQuerySourceSubscription:
+				if req.UpstreamType != "subscription" {
 					continue
 				}
 			case requestQuerySourceRaw:

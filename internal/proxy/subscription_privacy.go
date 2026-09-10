@@ -63,7 +63,10 @@ func applySubscriptionPrivacy(filter handlers.PrivacyFilter, r *http.Request, pa
 		req.Method = r.Method
 		req.ContentType = r.Header.Get("Content-Type")
 	}
-	return handlers.ApplyPrivacyFilter(subscriptionPrivacyFilter{inner: filter}, r, req, body)
+	if _, wrapped := filter.(subscriptionPrivacyFilter); !wrapped {
+		filter = subscriptionPrivacyFilter{inner: filter}
+	}
+	return handlers.ApplyPrivacyFilter(filter, r, req, body)
 }
 
 // validateSubscriptionJSON 仅校验结构，不重编码正文，因此大整数与未命中字节保持不变。
@@ -156,6 +159,10 @@ type subscriptionPrivacyFilter struct {
 }
 
 func (f subscriptionPrivacyFilter) Apply(ctx context.Context, req privacy.Request, body []byte) (privacy.ApplyResult, error) {
+	_, poolRequest := subscriptionPoolMetadataFromContext(ctx)
+	if req.UpstreamType != privacy.UpstreamTypeSubscription && !poolRequest {
+		return f.inner.Apply(ctx, req, body)
+	}
 	result, err := f.inner.Apply(ctx, req, body)
 	result = sanitizeSubscriptionPrivacyResult(result)
 	if err == nil && !bytes.Equal(body, result.Body) {
@@ -186,7 +193,7 @@ func (f subscriptionPrivacyFilter) Apply(ctx context.Context, req privacy.Reques
 }
 
 // validateSubscriptionPrivacyReplacement 只在正文变化时复验，不重编码发送正文。
-// 原本有效的嵌套 JSON 文本必须继续有效，防止自定义替换中的引号破坏工具参数。
+// 工具回放中原本有效的嵌套 JSON 必须继续有效；普通消息/搜索文本不强制 JSON 语义。
 func validateSubscriptionPrivacyReplacement(original, rewritten []byte) error {
 	if err := validateSubscriptionJSON(rewritten); err != nil {
 		return err
@@ -202,38 +209,39 @@ func validateSubscriptionPrivacyReplacement(original, rewritten []byte) error {
 }
 
 func validateSubscriptionNestedJSON(before, after any) error {
-	switch value := before.(type) {
-	case map[string]any:
-		updated, ok := after.(map[string]any)
-		if !ok {
-			return fmt.Errorf("privacy replacement changed object structure")
+	original, _ := before.(map[string]any)
+	rewritten, _ := after.(map[string]any)
+	if wrapped, ok := original["response"].(map[string]any); ok {
+		original = wrapped
+		rewritten, _ = rewritten["response"].(map[string]any)
+	}
+	items, _ := original["input"].([]any)
+	updatedItems, _ := rewritten["input"].([]any)
+	if len(items) != len(updatedItems) {
+		return fmt.Errorf("privacy replacement changed input structure")
+	}
+	for index, item := range items {
+		entry, _ := item.(map[string]any)
+		updated, _ := updatedItems[index].(map[string]any)
+		field := ""
+		switch entry["type"] {
+		case "function_call":
+			field = "arguments"
+		case "custom_tool_call":
+			field = "input"
+		case "function_call_output", "custom_tool_call_output":
+			field = "output"
+		default:
+			continue
 		}
-		for key, child := range value {
-			if err := validateSubscriptionNestedJSON(child, updated[key]); err != nil {
-				return err
-			}
-		}
-	case []any:
-		updated, ok := after.([]any)
-		if !ok || len(updated) != len(value) {
-			return fmt.Errorf("privacy replacement changed array structure")
-		}
-		for index, child := range value {
-			if err := validateSubscriptionNestedJSON(child, updated[index]); err != nil {
-				return err
-			}
-		}
-	case string:
-		updated, ok := after.(string)
-		if !ok {
-			return fmt.Errorf("privacy replacement changed text structure")
-		}
+		value, _ := entry[field].(string)
+		replacement, _ := updated[field].(string)
 		trimmed := strings.TrimSpace(value)
-		if value == updated || len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') || !json.Valid([]byte(value)) {
-			return nil
+		if value == replacement || len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') || !json.Valid([]byte(value)) {
+			continue
 		}
-		if err := validateSubscriptionJSONDocument([]byte(updated)); err != nil {
-			return fmt.Errorf("privacy replacement invalidated nested JSON")
+		if err := validateSubscriptionJSONDocument([]byte(replacement)); err != nil {
+			return fmt.Errorf("privacy replacement invalidated nested tool JSON")
 		}
 	}
 	return nil

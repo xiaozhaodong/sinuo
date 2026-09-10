@@ -42,8 +42,6 @@ type subscriptionWSProxy struct {
 	logger      *slog.Logger
 	baseURL     string
 	registry    *subscriptionWSRegistry
-	// observer 由 P2b 显式注入；P2a 状态机本身不写数据库。
-	observer subscriptionSubmissionObserver
 }
 
 // newSubscriptionWSProxy 创建 WS 分支；出站 transport 与订阅直通共用。
@@ -116,7 +114,11 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	p.logger.Debug("🔌 [Codex 订阅代理] WS 已建立",
 		"conn_id", requestID, "mode", snapshotMode(snap), "active", p.registry.count())
 
-	submissions := newSubscriptionSubmissionState(r.Context(), requestID, p.observer)
+	observer := newSubscriptionTrackingObserver(nil, nil)
+	if p.passthrough.proxy != nil {
+		observer = newSubscriptionTrackingObserver(p.passthrough.proxy.usageTracker, p.passthrough.proxy.eventBus)
+	}
+	submissions := newSubscriptionSubmissionState(r.Context(), requestID, observer)
 	options.Interceptor = &subscriptionWSInterceptor{
 		filter:      p.passthrough.privacyFilter(),
 		logger:      p.logger,
@@ -159,9 +161,11 @@ func (p *subscriptionWSProxy) relayHandshakeFailure(w http.ResponseWriter, upstr
 // subscriptionWSInterceptor 将隐私处理与传输桥隔离：PolicyError 生成本地 error 帧，
 // 返回 nil Forward 保证被拒正文零出站，但不返回连接级 error、也不主动 close。
 type subscriptionWSInterceptor struct {
-	filter      handlers.PrivacyFilter
-	logger      *slog.Logger
-	submissions *subscriptionSubmissionState
+	filter        handlers.PrivacyFilter
+	logger        *slog.Logger
+	submissions   *subscriptionSubmissionState
+	writeMu       sync.Mutex
+	pendingWrites []*subscriptionSubmission
 }
 
 func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction subscriptionws.Direction, payload []byte) (subscriptionws.InterceptResult, error) {
@@ -199,6 +203,9 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 			return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusBadRequest,
 				subscriptionUnsupportedWSEventCode, "unsupported WebSocket client event")}, nil
 		}
+		i.writeMu.Lock()
+		i.pendingWrites = append(i.pendingWrites, submission)
+		i.writeMu.Unlock()
 		return subscriptionws.InterceptResult{Forward: filtered}, nil
 	}
 	policyErr := handlers.AsPrivacyPolicyError(err)
@@ -213,6 +220,27 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	}
 	i.warn(policyErr.Code)
 	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message)}, nil
+}
+
+func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction, size int64, at time.Time) {
+	if direction != subscriptionws.DirectionDownstreamToUpstream {
+		return
+	}
+	i.writeMu.Lock()
+	var submission *subscriptionSubmission
+	if len(i.pendingWrites) > 0 {
+		submission = i.pendingWrites[0]
+		i.pendingWrites[0] = nil
+		i.pendingWrites = i.pendingWrites[1:]
+	}
+	i.writeMu.Unlock()
+	if submission != nil {
+		if observer, ok := i.submissions.observer.(interface {
+			SubmissionOutbound(*subscriptionSubmission, int64, time.Time)
+		}); ok {
+			observer.SubmissionOutbound(submission, size, at)
+		}
+	}
 }
 
 func (i *subscriptionWSInterceptor) warn(code string) {

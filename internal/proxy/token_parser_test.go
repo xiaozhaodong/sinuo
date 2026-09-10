@@ -767,6 +767,26 @@ func TestTokenParserV2_BackwardCompatibleNoCacheCreationObject(t *testing.T) {
 	t.Log("✅ Backward compatibility test passed: old API format still works")
 }
 
+// Responses 显式取消通过 SSE/JSON 共享解析器识别，不改变旧入口错误分类。
+func TestResponsesCancellationIsExplicitAndShared(t *testing.T) {
+	for _, event := range []string{"response.cancelled", "response.canceled"} {
+		payload := `{"type":"` + event + `","response":{"id":"cancelled","usage":{"input_tokens":3,"output_tokens":0}}}`
+		jsonResult := ParseResponsesEventJSON(event, []byte(payload))
+		parser := NewTokenParser()
+		parser.ParseSSELineV2("event: " + event)
+		parser.ParseSSELineV2("data: " + payload)
+		sseResult := parser.ParseSSELineV2("")
+		for _, result := range []*ParseResult{jsonResult, sseResult} {
+			if result == nil || !result.IsCompleted || !result.IsCancelled || !result.HasTokenUsage || result.TokenUsage.InputTokens != 3 {
+				t.Fatalf("cancellation/usage lost: %+v", result)
+			}
+			if result.Status != StatusErrorAPI {
+				t.Fatal("legacy Status contract changed")
+			}
+		}
+	}
+}
+
 // TestTokenParserV2_GetFinalUsageWithCacheCreation 测试 GetFinalUsage 包含 5m/1h 缓存
 func TestTokenParserV2_GetFinalUsageWithCacheCreation(t *testing.T) {
 	parser := NewTokenParserWithRequestID("test-req-final-usage")

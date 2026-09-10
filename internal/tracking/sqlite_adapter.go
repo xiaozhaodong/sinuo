@@ -199,6 +199,18 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "request_source",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_source TEXT NOT NULL DEFAULT 'legacy_proxy' CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy'))",
+			description: "请求入口来源字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "request_kind",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy', 'generation', 'compaction'))",
+			description: "请求种类字段",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "cache_creation_5m_tokens",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_5m_tokens INTEGER DEFAULT 0",
 			description: "5分钟缓存创建tokens字段",
@@ -447,6 +459,9 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			s.logger.Info(fmt.Sprintf("✅ [数据库迁移] %s 添加成功", m.description))
 		}
 	}
+	if err := s.ensureUsageSummaryRequestKind(ctx); err != nil {
+		return err
+	}
 
 	// v8：endpoint_runtime_states 运行态表（幂等；旧库升级路径）
 	runtimeStateSQL := `CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
@@ -494,6 +509,121 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ensureUsageSummaryRequestKind 事务化重建 summary 唯一键。
+// 旧 usage_summary 仅用于发现曾使用过的时区；所有计数、用量与成本必须从 request_logs 回算。
+func (s *SQLiteAdapter) ensureUsageSummaryRequestKind(ctx context.Context) error {
+	hasKind, err := s.columnExists(ctx, "usage_summary", "request_kind")
+	if err != nil {
+		return fmt.Errorf("inspect usage_summary request_kind: %w", err)
+	}
+	var schema string
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='usage_summary'`).Scan(&schema); err != nil {
+		return fmt.Errorf("inspect usage_summary schema: %w", err)
+	}
+	if hasKind && strings.Contains(strings.ToLower(schema), "request_family, request_kind, upstream_type") {
+		return nil
+	}
+	hasTimezone, err := s.columnExists(ctx, "usage_summary", "timezone_name")
+	if err != nil {
+		return fmt.Errorf("inspect usage_summary timezone: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS update_usage_summary_timestamp`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE usage_summary RENAME TO usage_summary_legacy_kind`); err != nil {
+		return fmt.Errorf("rename legacy usage_summary: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE usage_summary (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timezone_name TEXT NOT NULL, date TEXT NOT NULL, model_name TEXT NOT NULL,
+		request_family TEXT NOT NULL CHECK (request_family IN ('claude','codex','image','other')),
+		request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy','generation','compaction')),
+		upstream_type TEXT NOT NULL DEFAULT '', upstream_name TEXT NOT NULL DEFAULT '', upstream_id INTEGER NOT NULL DEFAULT 0,
+		request_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
+		total_input_tokens INTEGER DEFAULT 0, total_output_tokens INTEGER DEFAULT 0,
+		total_cache_creation_tokens INTEGER DEFAULT 0, total_cache_read_tokens INTEGER DEFAULT 0,
+		total_cost_usd REAL DEFAULT 0, avg_duration_ms REAL DEFAULT 0,
+		created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+		updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
+		UNIQUE(timezone_name, date, model_name, request_family, request_kind, upstream_type, upstream_name, upstream_id)
+	)`); err != nil {
+		return fmt.Errorf("create classified usage_summary: %w", err)
+	}
+	timezoneNames := make([]string, 0, 1)
+	if hasTimezone {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT timezone_name FROM usage_summary_legacy_kind WHERE trim(timezone_name) <> '' ORDER BY timezone_name`)
+		if err != nil {
+			return fmt.Errorf("read legacy usage_summary timezones: %w", err)
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			timezoneNames = append(timezoneNames, name)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	if len(timezoneNames) == 0 {
+		timezoneNames = append(timezoneNames, "UTC")
+	}
+
+	var firstRaw, lastRaw sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT CAST(MIN(start_time) AS TEXT), CAST(MAX(start_time) AS TEXT) FROM request_logs`).Scan(&firstRaw, &lastRaw); err != nil {
+		return fmt.Errorf("read request history range: %w", err)
+	}
+	if firstRaw.Valid && lastRaw.Valid {
+		first, err := timezonepolicy.ParseStorage(firstRaw.String)
+		if err != nil {
+			return fmt.Errorf("parse first request time: %w", err)
+		}
+		last, err := timezonepolicy.ParseStorage(lastRaw.String)
+		if err != nil {
+			return fmt.Errorf("parse last request time: %w", err)
+		}
+		end := last.Add(time.Microsecond)
+		for _, name := range timezoneNames {
+			policy, err := timezonepolicy.New(name)
+			if err != nil {
+				return fmt.Errorf("load usage_summary timezone %q: %w", name, err)
+			}
+			summaries, err := AggregateUsageSummaryWithQuerier(ctx, tx, first, end, nil, policy)
+			if err != nil {
+				return fmt.Errorf("recalculate usage_summary for %q: %w", name, err)
+			}
+			if err := insertUsageSummaries(ctx, tx, summaries); err != nil {
+				return fmt.Errorf("insert recalculated usage_summary for %q: %w", name, err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE usage_summary_legacy_kind`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE INDEX idx_usage_summary_date ON usage_summary(date)`,
+		`CREATE INDEX idx_usage_summary_timezone_date ON usage_summary(timezone_name, date)`,
+		`CREATE INDEX idx_usage_summary_model ON usage_summary(model_name)`,
+		`CREATE INDEX idx_usage_summary_family ON usage_summary(request_family)`,
+		`CREATE INDEX idx_usage_summary_kind ON usage_summary(request_kind)`,
+		`CREATE INDEX idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id)`,
+		`CREATE TRIGGER update_usage_summary_timestamp AFTER UPDATE ON usage_summary FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at BEGIN UPDATE usage_summary SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id; END`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ensureModelRoutingSchema 为未经过全量 schema.sql 的旧数据库补齐模型路由表。
@@ -986,10 +1116,10 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 			conflictColumns = append(conflictColumns, "request_id")
 		}
 	case "usage_summary":
-		if containsColumn("date") && containsColumn("model_name") &&
-			containsColumn("request_family") && containsColumn("upstream_type") &&
+		if containsColumn("timezone_name") && containsColumn("date") && containsColumn("model_name") &&
+			containsColumn("request_family") && containsColumn("request_kind") && containsColumn("upstream_type") &&
 			containsColumn("upstream_name") && containsColumn("upstream_id") {
-			conflictColumns = append(conflictColumns, "date", "model_name", "request_family", "upstream_type", "upstream_name", "upstream_id")
+			conflictColumns = append(conflictColumns, "timezone_name", "date", "model_name", "request_family", "request_kind", "upstream_type", "upstream_name", "upstream_id")
 		}
 	default:
 		if containsColumn("request_id") {

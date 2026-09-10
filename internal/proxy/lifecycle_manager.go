@@ -54,6 +54,8 @@ type RequestLifecycleManager struct {
 	stateMu               sync.RWMutex                  // 保护生命周期状态字段
 	modelName             string                        // 模型名称
 	requestFamily         string                        // 请求类型 claude/codex/image/other
+	requestSource         string                        // 入口来源 legacy_proxy/codex_subscription_proxy
+	requestKind           string                        // legacy/generation/compaction
 	endpointName          string                        // 端点名称
 	endpointRevision      int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
 	upstreamType          string                        // 上游类型：endpoint/account
@@ -85,6 +87,8 @@ type RequestLifecycleManager struct {
 
 type lifecycleStateSnapshot struct {
 	requestFamily      string
+	requestSource      string
+	requestKind        string
 	endpointName       string
 	endpointRevision   int64
 	upstreamType       string
@@ -108,6 +112,8 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 
 	return lifecycleStateSnapshot{
 		requestFamily:      rlm.requestFamily,
+		requestSource:      rlm.requestSource,
+		requestKind:        rlm.requestKind,
 		endpointName:       rlm.endpointName,
 		endpointRevision:   rlm.endpointRevision,
 		upstreamType:       rlm.upstreamType,
@@ -137,6 +143,8 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 		startTime:            time.Now(),
 		lastStatus:           "pending",
 		requestFamily:        tracking.RequestFamilyOther,
+		requestSource:        tracking.RequestSourceLegacyProxy,
+		requestKind:          tracking.RequestKindLegacy,
 		upstreamType:         "endpoint",
 	}
 	manager.firstTokenStartTime = manager.startTime
@@ -150,7 +158,14 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 
 	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestStartWithFamily(rlm.requestID, clientIP, userAgent, method, path, state.requestFamily, isStreaming)
+		if err := rlm.usageTracker.RecordRequestStartAtWithDimensions(rlm.requestID, clientIP, userAgent, method, path, state.requestFamily, isStreaming, rlm.startTime, tracking.RequestDimensions{
+			RequestSource: state.requestSource, RequestKind: state.requestKind,
+			UpstreamType: state.upstreamType, UpstreamSourceName: state.upstreamSourceName,
+			UpstreamName: state.upstreamName, UpstreamID: state.upstreamID,
+			UsageKnown: state.requestSource == tracking.RequestSourceLegacyProxy,
+		}); err != nil {
+			slog.Error("请求分类非法，拒绝写入追踪记录", "request_id", rlm.requestID, "error", err)
+		}
 		slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
 	}
 
@@ -167,6 +182,8 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 				"method":               method,
 				"path":                 path,
 				"request_family":       state.requestFamily,
+				"request_source":       state.requestSource,
+				"request_kind":         state.requestKind,
 				"is_streaming":         isStreaming,
 				"upstream_type":        state.upstreamType,
 				"upstream_source_name": state.upstreamSourceName,
@@ -188,6 +205,8 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 			UpstreamSourceName: &upstreamSourceName,
 			UpstreamName:       &upstreamName,
 			UpstreamID:         &upstreamID,
+			RequestSource:      &state.requestSource,
+			RequestKind:        &state.requestKind,
 		})
 	}
 }
@@ -266,6 +285,8 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 	rlm.lastStatus = status
 	state := lifecycleStateSnapshot{
 		requestFamily:      rlm.requestFamily,
+		requestSource:      rlm.requestSource,
+		requestKind:        rlm.requestKind,
 		endpointName:       rlm.endpointName,
 		upstreamType:       rlm.upstreamType,
 		upstreamSourceName: rlm.upstreamSourceName,
@@ -306,6 +327,8 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount
 			Data: map[string]interface{}{
 				"request_id":           rlm.requestID,
 				"request_family":       state.requestFamily,
+				"request_source":       state.requestSource,
+				"request_kind":         state.requestKind,
 				"endpoint_name":        state.endpointName,
 				"upstream_type":        state.upstreamType,
 				"upstream_source_name": state.upstreamSourceName,
@@ -598,6 +621,20 @@ func (rlm *RequestLifecycleManager) setEndpoint(endpointName string, revision in
 func (rlm *RequestLifecycleManager) SetRequestFamily(requestFamily string) {
 	rlm.stateMu.Lock()
 	rlm.requestFamily = requestFamily
+	rlm.stateMu.Unlock()
+}
+
+// SetRequestSource 在开始记录前设置入口来源。
+func (rlm *RequestLifecycleManager) SetRequestSource(requestSource string) {
+	rlm.stateMu.Lock()
+	rlm.requestSource = requestSource
+	rlm.stateMu.Unlock()
+}
+
+// SetRequestKind 在开始记录前设置真实生成或独立压缩分类。
+func (rlm *RequestLifecycleManager) SetRequestKind(requestKind string) {
+	rlm.stateMu.Lock()
+	rlm.requestKind = requestKind
 	rlm.stateMu.Unlock()
 }
 
