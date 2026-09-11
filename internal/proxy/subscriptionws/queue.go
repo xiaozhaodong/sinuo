@@ -7,6 +7,7 @@ package subscriptionws
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -29,7 +30,10 @@ type messageQueue struct {
 	mu       sync.Mutex
 	used     int64
 	maxBytes int64
+	closed   bool
 }
+
+var errQueueClosed = errors.New("message queue drained or closed")
 
 func newMessageQueue(maxMessages int, maxBytes int64) *messageQueue {
 	if maxMessages < 1 {
@@ -40,7 +44,7 @@ func newMessageQueue(maxMessages int, maxBytes int64) *messageQueue {
 	}
 	return &messageQueue{
 		messages: make(chan message, maxMessages),
-		notify:   make(chan struct{}, 1),
+		notify:   make(chan struct{}),
 		maxBytes: maxBytes,
 	}
 }
@@ -48,61 +52,74 @@ func newMessageQueue(maxMessages int, maxBytes int64) *messageQueue {
 // push 入队；条数或字节预算不足时阻塞等待，ctx 结束时返回 ctx 错误。
 func (q *messageQueue) push(ctx context.Context, msg message) error {
 	size := int64(len(msg.data))
-	if err := q.reserve(ctx, size); err != nil {
-		return err
-	}
-	select {
-	case q.messages <- msg:
-		return nil
-	case <-ctx.Done():
-		q.release(size)
-		return ctx.Err()
+	for {
+		q.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			q.mu.Unlock()
+			return err
+		}
+		if q.closed {
+			q.mu.Unlock()
+			return errQueueClosed
+		}
+		if len(q.messages) < cap(q.messages) && (q.used+size <= q.maxBytes || q.used == 0) {
+			q.messages <- msg
+			q.used += size
+			q.signalLocked()
+			q.mu.Unlock()
+			return nil
+		}
+		notify := q.notify
+		q.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-notify:
+		}
 	}
 }
 
 // pop 出队；队列为空时阻塞等待，ctx 结束时返回 ctx 错误。
 func (q *messageQueue) pop(ctx context.Context) (message, error) {
-	select {
-	case msg := <-q.messages:
-		q.release(int64(len(msg.data)))
-		return msg, nil
-	case <-ctx.Done():
-		return message{}, ctx.Err()
-	}
-}
-
-// reserve 申请字节预算。
-func (q *messageQueue) reserve(ctx context.Context, size int64) error {
 	for {
 		q.mu.Lock()
-		if q.used+size <= q.maxBytes || q.used == 0 {
-			q.used += size
+		if err := ctx.Err(); err != nil {
 			q.mu.Unlock()
-			return nil
+			return message{}, err
 		}
+		if len(q.messages) > 0 {
+			msg := <-q.messages
+			q.used -= int64(len(msg.data))
+			q.signalLocked()
+			q.mu.Unlock()
+			return msg, nil
+		}
+		if q.closed {
+			q.mu.Unlock()
+			return message{}, errQueueClosed
+		}
+		notify := q.notify
 		q.mu.Unlock()
-
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-q.notify:
+			return message{}, ctx.Err()
+		case <-notify:
 		}
 	}
 }
 
-// release 归还字节预算并唤醒等待者。
-func (q *messageQueue) release(size int64) {
+// seal 原子停止两个方向的生产者；已接受的消息仍由 writer 按顺序排空。
+func (q *messageQueue) seal() {
 	q.mu.Lock()
-	q.used -= size
-	if q.used < 0 {
-		q.used = 0
-	}
+	q.closed = true
+	q.signalLocked()
 	q.mu.Unlock()
+}
 
-	select {
-	case q.notify <- struct{}{}:
-	default:
-	}
+// signalLocked 广播状态变化，让等待条数、字节或封口的所有生产者重新检查。
+func (q *messageQueue) signalLocked() {
+	close(q.notify)
+	q.notify = make(chan struct{})
 }
 
 // depth 返回当前排队条数（用于统计与测试）。

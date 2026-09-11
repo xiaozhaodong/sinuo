@@ -141,7 +141,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// 1. 准备核心数据库，并在任何运行时写入组件启动前完成一次性迁移。
 	if err := a.prepareCoreDatabaseAndMigration(ctx); err != nil {
-		migrationStatus := a.GetMigrationStatus()
+		migrationStatus := a.failStartup(err)
 		a.logger.Error("❌ 启动迁移失败，应用进入只读恢复模式", "error", err,
 			"backup_dir", migrationStatus.BackupDir, "phase", migrationStatus.Phase)
 		return
@@ -245,6 +245,7 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	a.logger.Info("✅ AI Switchboard 启动完成",
 		"proxy_port", a.config.Server.Port)
 	a.scheduleStartupConnectivityChecks()
+	a.completeStartup()
 }
 
 // setupModelRoutingService 初始化模型路由服务并把其接入端点调度器。

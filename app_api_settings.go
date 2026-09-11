@@ -149,6 +149,11 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 
 	result := make([]SettingInfo, 0, len(records))
 	for _, r := range records {
+		// 受保护分类（Codex 订阅代理）由专用设置页独占：通用列表不返回，
+		// 既不让它混进通用表单，也不让单行 JSON 配置走普通读取路径。
+		if service.IsProtectedSettingsCategory(r.Category) {
+			continue
+		}
 		result = append(result, a.settingRecordToInfo(r))
 	}
 

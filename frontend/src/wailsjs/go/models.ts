@@ -431,6 +431,114 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class CodexSubscriptionProxyConfigInfo {
+	    initialized: boolean;
+	    enabled: boolean;
+	    mode: string;
+	    listen_host: string;
+	    listen_port: number;
+	    ws_compression: string;
+	    revision: number;
+	    access_configured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodexSubscriptionProxyConfigInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.initialized = source["initialized"];
+	        this.enabled = source["enabled"];
+	        this.mode = source["mode"];
+	        this.listen_host = source["listen_host"];
+	        this.listen_port = source["listen_port"];
+	        this.ws_compression = source["ws_compression"];
+	        this.revision = source["revision"];
+	        this.access_configured = source["access_configured"];
+	    }
+	}
+	export class CodexSubscriptionProxyConfigInput {
+	    enabled: boolean;
+	    mode: string;
+	    listen_host: string;
+	    listen_port: number;
+	    ws_compression: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodexSubscriptionProxyConfigInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.mode = source["mode"];
+	        this.listen_host = source["listen_host"];
+	        this.listen_port = source["listen_port"];
+	        this.ws_compression = source["ws_compression"];
+	    }
+	}
+	export class CodexSubscriptionProxySaveResultInfo {
+	    config: CodexSubscriptionProxyConfigInfo;
+	    access_secret?: string;
+	    access_url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodexSubscriptionProxySaveResultInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.config = this.convertValues(source["config"], CodexSubscriptionProxyConfigInfo);
+	        this.access_secret = source["access_secret"];
+	        this.access_url = source["access_url"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CodexSubscriptionProxyStatusInfo {
+	    state: string;
+	    enabled: boolean;
+	    mode: string;
+	    revision: number;
+	    listen_addr: string;
+	    active_requests: number;
+	    active_websockets: number;
+	    last_error: string;
+	    access_configured: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodexSubscriptionProxyStatusInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.enabled = source["enabled"];
+	        this.mode = source["mode"];
+	        this.revision = source["revision"];
+	        this.listen_addr = source["listen_addr"];
+	        this.active_requests = source["active_requests"];
+	        this.active_websockets = source["active_websockets"];
+	        this.last_error = source["last_error"];
+	        this.access_configured = source["access_configured"];
+	    }
+	}
 	export class ConfigInfo {
 	    timezone: string;
 	    server_host: string;
@@ -1828,10 +1936,16 @@ export namespace main {
 	    endpoint: string;
 	    model: string;
 	    status: string;
-	    http_status: number;
+	    http_status?: number;
 	    retry_count: number;
 	    failure_reason?: string;
 	    cancel_reason?: string;
+	    path: string;
+	    method: string;
+	    request_source: string;
+	    request_kind: string;
+	    usage_known: boolean;
+	    cost_known: boolean;
 	    upstream_type: string;
 	    upstream_source_name: string;
 	    upstream_name: string;
@@ -1870,6 +1984,12 @@ export namespace main {
 	        this.retry_count = source["retry_count"];
 	        this.failure_reason = source["failure_reason"];
 	        this.cancel_reason = source["cancel_reason"];
+	        this.path = source["path"];
+	        this.method = source["method"];
+	        this.request_source = source["request_source"];
+	        this.request_kind = source["request_kind"];
+	        this.usage_known = source["usage_known"];
+	        this.cost_known = source["cost_known"];
 	        this.upstream_type = source["upstream_type"];
 	        this.upstream_source_name = source["upstream_source_name"];
 	        this.upstream_name = source["upstream_name"];
@@ -1978,6 +2098,7 @@ export namespace main {
 	    request_family: string;
 	    upstream_name: string;
 	    source_view: string;
+	    include_compaction?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestQueryParams(source);
@@ -1994,6 +2115,7 @@ export namespace main {
 	        this.request_family = source["request_family"];
 	        this.upstream_name = source["upstream_name"];
 	        this.source_view = source["source_view"];
+	        this.include_compaction = source["include_compaction"];
 	    }
 	}
 	
@@ -2436,6 +2558,7 @@ export namespace main {
 	    request_family: string;
 	    upstream_name: string;
 	    source_view: string;
+	    include_compaction?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UsageStatsQueryParams(source);
@@ -2451,6 +2574,7 @@ export namespace main {
 	        this.request_family = source["request_family"];
 	        this.upstream_name = source["upstream_name"];
 	        this.source_view = source["source_view"];
+	        this.include_compaction = source["include_compaction"];
 	    }
 	}
 	export class UsageSummary {

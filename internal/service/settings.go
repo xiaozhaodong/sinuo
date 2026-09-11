@@ -40,9 +40,16 @@ var protectedSettingsCategories = map[string]struct{}{
 	CategoryCodexSubscriptionProxy: {},
 }
 
+// IsProtectedSettingsCategory 判断分类是否由专用服务独占：
+// 通用写入/重置/删除拒绝，通用列表读取也不返回（避免专用配置混进普通表单）。
+func IsProtectedSettingsCategory(category string) bool {
+	_, protected := protectedSettingsCategories[category]
+	return protected
+}
+
 // assertSettingsCategoryWritable 在任何通用写入之前检查分类是否受保护。
 func assertSettingsCategoryWritable(category string) error {
-	if _, protected := protectedSettingsCategories[category]; protected {
+	if IsProtectedSettingsCategory(category) {
 		return fmt.Errorf("%w: %s", ErrProtectedSettingsCategory, category)
 	}
 	return nil

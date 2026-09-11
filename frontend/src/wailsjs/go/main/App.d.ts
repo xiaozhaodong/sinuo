@@ -62,6 +62,10 @@ export function GetClaudeRoutingState():Promise<main.ClaudeRoutingState>;
 
 export function GetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
+export function GetCodexSubscriptionProxyConfig():Promise<main.CodexSubscriptionProxyConfigInfo>;
+
+export function GetCodexSubscriptionProxyStatus():Promise<main.CodexSubscriptionProxyStatusInfo>;
+
 export function GetConfig():Promise<main.ConfigInfo>;
 
 export function GetConnectionActivityChart(arg1:number):Promise<Array<main.ChartDataPoint>>;
@@ -170,9 +174,15 @@ export function ResetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
 export function RetryStartupMigration():Promise<migration.Status>;
 
+export function RotateCodexSubscriptionProxyAccess(arg1:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;
+
 export function SaveCodexModelCatalog(arg1:main.SaveCodexModelCatalogInput):Promise<main.CodexModelCatalogInfo>;
 
+export function SaveCodexSubscriptionProxyConfig(arg1:main.CodexSubscriptionProxyConfigInput,arg2:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;
+
 export function SetClaudeRoutingOverride(arg1:main.SetClaudeRoutingOverrideInput):Promise<main.ClaudeRoutingState>;
+
+export function SetCodexSubscriptionProxyEnabled(arg1:boolean,arg2:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 

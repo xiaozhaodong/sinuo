@@ -250,6 +250,7 @@ func TestSubscriptionHandlerStripsCapabilityPathAndMovesHeaders(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer client-token")
 		r.Header.Set("chatgpt-account-id", "acct-1")
 		r.Header.Set("OpenAI-Beta", "responses_websockets=2026-02-06")
+		r.Header.Set("OpenAI-Alpha", "quicksilver=v2")
 		r.Header.Set("originator", "Codex Desktop")
 		r.Header.Set(subscriptionCodexHeader, "turn-state")
 		r.Header.Set("Cookie", "session=secret")
@@ -281,7 +282,7 @@ func TestSubscriptionHandlerStripsCapabilityPathAndMovesHeaders(t *testing.T) {
 			t.Fatalf("应透传的请求头缺失: %s", key)
 		}
 	}
-	for _, key := range []string{"Cookie", "X-Api-Key", "X-Forwarded-For", "Proxy-Authorization", "X-Unknown-Metadata"} {
+	for _, key := range []string{"Cookie", "X-Api-Key", "X-Forwarded-For", "Proxy-Authorization", "X-Unknown-Metadata", "OpenAI-Alpha"} {
 		if value := got.Header.Get(key); value != "" {
 			t.Fatalf("不应出站的请求头 %s: %q", key, value)
 		}

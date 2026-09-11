@@ -6,3 +6,4 @@
 export { default as SettingItem } from './SettingItem.jsx';
 export { default as SettingsSection } from './SettingsSection.jsx';
 export { default as PortInfo } from './PortInfo.jsx';
+export { default as CodexSubscriptionProxyCard } from './CodexSubscriptionProxyCard.jsx';

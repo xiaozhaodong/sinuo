@@ -122,18 +122,7 @@ func (a *App) prepareCoreDatabaseAndMigration(ctx context.Context) error {
 		DataDir: utils.GetDataDir(), DatabaseExisted: databaseExisted, Logger: tempLogger,
 	}
 	a.setMigrationCoordinator(coordinator)
-	status, err := coordinator.Run(ctx)
-	a.setMigrationStatus(status)
-	if err != nil {
-		return err
-	}
-	if err := a.loadRuntimeConfig(databasePath); err != nil {
-		return err
-	}
-	if err := core.InitSchema(); err != nil {
-		return err
-	}
-	return nil
+	return a.prepareMigratedRuntime(ctx, coordinator)
 }
 
 func (a *App) loadRuntimeConfig(databasePath string) error {

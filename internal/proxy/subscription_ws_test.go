@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +21,110 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+func TestSubscriptionWSHandshakeFailurePreservesCompleteBody(t *testing.T) {
+	for _, size := range []int{2053, 96 << 10} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			body := strings.Repeat("x", size)
+			env := newSubscriptionTestEnv(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+				w.Header().Set("X-Codex-Turn-State", "synthetic-turn")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, body[:1025])
+				w.(http.Flusher).Flush()
+				// 后半段必须在 Dial 返回后继续读取，不能提前取消握手上下文。
+				time.Sleep(10 * time.Millisecond)
+				_, _ = io.WriteString(w, body[1025:])
+			}, "subscription")
+			resp := env.request(http.MethodGet, "responses", func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer synthetic-client-token")
+				r.Header.Set("Connection", "Upgrade")
+				r.Header.Set("Upgrade", "websocket")
+				r.Header.Set("Sec-WebSocket-Version", "13")
+				r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			})
+			defer resp.Body.Close()
+			got, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != http.StatusTooManyRequests || string(got) != body {
+				t.Fatalf("status=%d length=%d want=%d err=%v", resp.StatusCode, len(got), len(body), err)
+			}
+			if resp.ContentLength >= 0 && resp.ContentLength != int64(len(got)) {
+				t.Fatalf("Content-Length=%d actual=%d", resp.ContentLength, len(got))
+			}
+			if resp.Header.Get("X-Codex-Turn-State") != "synthetic-turn" || env.upstreamCount() != 1 {
+				t.Fatalf("response header or handshake count changed: header=%v requests=%d", resp.Header, env.upstreamCount())
+			}
+		})
+	}
+}
+
+type subscriptionWSObservedBody struct {
+	io.ReadCloser
+	closed chan struct{}
+}
+
+func (b *subscriptionWSObservedBody) Close() error {
+	err := b.ReadCloser.Close()
+	select {
+	case b.closed <- struct{}{}:
+	default:
+	}
+	return err
+}
+
+func TestSubscriptionWSHandshakeFailureReadErrorsAbortAndReleaseBody(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(fmt.Sprintf("timeout=%t", timeout), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "8192")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, strings.Repeat("x", 4096))
+				w.(http.Flusher).Flush()
+				if timeout {
+					<-r.Context().Done()
+				}
+			}))
+			defer upstream.Close()
+			closed := make(chan struct{}, 1)
+			client := upstream.Client()
+			base := client.Transport
+			client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				resp, err := base.RoundTrip(r)
+				if resp != nil {
+					resp.Body = &subscriptionWSObservedBody{ReadCloser: resp.Body, closed: closed}
+				}
+				return resp, err
+			})
+			proxy := &subscriptionWSProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx, cancel := context.WithTimeout(r.Context(), 200*time.Millisecond)
+				defer cancel()
+				_, resp, err := dialSubscriptionWebSocket(ctx, upstream.URL, nil, client, subscriptionws.Options{})
+				proxy.relayHandshakeFailure(w, resp, "synthetic-incomplete", err)
+			}))
+			defer server.Close()
+			downstream := server.Client()
+			downstream.Timeout = 2 * time.Second
+			resp, err := downstream.Get(server.URL)
+			if err == nil {
+				_, err = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusTooManyRequests {
+					t.Fatalf("upstream rejection status changed: %d", resp.StatusCode)
+				}
+			}
+			if err == nil {
+				t.Fatal("incomplete response appeared complete")
+			}
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("upstream response body was not released")
+			}
+		})
+	}
+}
 
 type p2aPrivacyFilter struct {
 	mu       sync.Mutex

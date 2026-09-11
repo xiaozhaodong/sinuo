@@ -1145,6 +1145,13 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		return nil
 	}
 
+	// 复用入口已写入 lifecycle 的分类；生成响应缺少 usage 不等于上报零用量。
+	state := lifecycleManager.snapshotState()
+	if state.requestSource == tracking.RequestSourceCodexSubscriptionProxy &&
+		(state.requestKind == tracking.RequestKindGeneration || state.requestKind == tracking.RequestKindCompaction) {
+		lifecycleManager.CompleteRequest(nil)
+		return nil
+	}
 	lifecycleManager.HandleNonTokenResponse(string(responseBytes))
 	return nil
 }

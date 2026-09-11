@@ -132,7 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_usage_summary_date ON usage_summary(date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_timezone_date ON usage_summary(timezone_name, date);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_family ON usage_summary(request_family);
-CREATE INDEX IF NOT EXISTS idx_usage_summary_kind ON usage_summary(request_kind);
+-- idx_usage_summary_kind 在 migrateSchema 补齐旧表 request_kind 后创建。
 CREATE INDEX IF NOT EXISTS idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id);
 
 -- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式，微秒精度）

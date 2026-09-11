@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -70,6 +71,11 @@ func TestCodexSubscriptionProxyConfigFirstSaveReturnsSecretOnce(t *testing.T) {
 	}
 	if !strings.Contains(saved.AccessURL, "/backend-api/codex") {
 		t.Fatalf("接入地址应保留 provider 后缀: %q", saved.AccessURL)
+	}
+	// 前端在“改监听地址但不轮换”时会用同一格式本地重建地址，这里把格式钉死。
+	wantURL := fmt.Sprintf("http://127.0.0.1:%d/subscription/%s/backend-api/codex", port, saved.AccessSecret)
+	if saved.AccessURL != wantURL {
+		t.Fatalf("接入地址格式不符:\n got %q\nwant %q", saved.AccessURL, wantURL)
 	}
 	if saved.Config.Revision != 1 || !saved.Config.Initialized || !saved.Config.AccessConfigured {
 		t.Fatalf("保存结果不符: %+v", saved.Config)
@@ -223,6 +229,32 @@ func TestCodexSubscriptionProxySaveRejectsListenChangeWhileRunning(t *testing.T)
 	}
 	if stopped.Config.ListenPort != port+1 || stopped.Config.Enabled {
 		t.Fatalf("配置不符: %+v", stopped.Config)
+	}
+}
+
+func TestCodexSubscriptionProxyConfigStaysOutOfGenericSettingsReads(t *testing.T) {
+	app := newSubscriptionProxyTestApp(t)
+
+	if _, err := app.SaveCodexSubscriptionProxyConfig(subscriptionProxyInput(false, freeAppLoopbackPort(t)), 0); err != nil {
+		t.Fatalf("初始化配置失败: %v", err)
+	}
+
+	all, err := app.GetAllSettings()
+	if err != nil {
+		t.Fatalf("读取设置列表失败: %v", err)
+	}
+	for _, item := range all {
+		if item.Category == service.CategoryCodexSubscriptionProxy {
+			t.Fatalf("受保护分类不应出现在通用设置列表: %+v", item)
+		}
+	}
+
+	// 通用写入入口对该分类仍然明确拒绝，不会出现“列表看不到但能改”。
+	if err := app.settingsService.Set(context.Background(), service.CategoryCodexSubscriptionProxy, service.CodexSubscriptionProxyConfigKey, "{}"); !errors.Is(err, service.ErrProtectedSettingsCategory) {
+		t.Fatalf("通用写入应被拒绝: %v", err)
+	}
+	if err := app.settingsService.ResetCategory(context.Background(), service.CategoryCodexSubscriptionProxy); !errors.Is(err, service.ErrProtectedSettingsCategory) {
+		t.Fatalf("通用重置应被拒绝: %v", err)
 	}
 }
 

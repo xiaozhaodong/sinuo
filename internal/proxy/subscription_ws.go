@@ -30,9 +30,7 @@ import (
 
 const (
 	// subscriptionWSHandshakeTimeout 上游握手超时；长连接寿命不套用该超时。
-	subscriptionWSHandshakeTimeout = 30 * time.Second
-	// subscriptionWSFailureBodyLimit 回传上游握手失败正文的上限。
-	subscriptionWSFailureBodyLimit     = 64 << 10
+	subscriptionWSHandshakeTimeout     = 30 * time.Second
 	subscriptionUnsupportedWSEventCode = "codex_subscription_ws_event_unsupported"
 )
 
@@ -84,12 +82,19 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	}
 
 	handshakeCtx, cancelHandshake := context.WithTimeout(r.Context(), subscriptionWSHandshakeTimeout)
-	upstream, upstreamResp, err := subscriptionws.DialUpstream(handshakeCtx, targetURL, headers, client, options)
-	cancelHandshake()
+	defer cancelHandshake()
+	upstream, upstreamResp, err := dialSubscriptionWebSocket(handshakeCtx, targetURL, headers, client, options)
 	if err != nil {
+		// 失败正文仍依赖握手请求的上下文；读完或中断后才能取消。
+		controller := http.NewResponseController(w)
+		if deadline, ok := handshakeCtx.Deadline(); ok {
+			_ = controller.SetWriteDeadline(deadline)
+			defer controller.SetWriteDeadline(time.Time{})
+		}
 		p.relayHandshakeFailure(w, upstreamResp, requestID, err)
 		return
 	}
+	cancelHandshake()
 
 	// 101 之前的响应头：只补上游的 x-codex-* / x-models-etag 等提示信息；
 	// Sec-WebSocket-* 由库按两侧各自协商结果设置，不能复制。
@@ -124,17 +129,108 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 		logger:      p.logger,
 		submissions: submissions,
 	}
+	bridgeStarted := time.Now()
 	stats := subscriptionws.Bridge(r.Context(), downstream, upstream, options)
 	submissions.close("connection_closed")
-	p.logger.Debug("🔌 [Codex 订阅代理] WS 已结束",
-		"conn_id", requestID,
-		"upstream_messages", stats.DownstreamToUpstream.Messages,
-		"downstream_messages", stats.UpstreamToDownstream.Messages,
-		"downstream_close_code", int(stats.UpstreamToDownstream.CloseCode))
+	p.registry.mu.Lock()
+	proxyStopping := p.registry.closed
+	p.registry.mu.Unlock()
+	p.logBridgeEnd(requestID, stats, time.Since(bridgeStarted), options, proxyStopping)
+}
+
+// logBridgeEnd 拆成一条起因摘要和两条方向摘要，避免 SimpleHandler 默认 500 字节截断。
+// request_id 通过结算日志中的 conn_id 关联；所有字段均不含原始错误正文。
+func (p *subscriptionWSProxy) logBridgeEnd(connectionID string, stats subscriptionws.BridgeStats, duration time.Duration, options subscriptionws.Options, proxyStopping bool) {
+	level := slog.LevelWarn
+	if proxyStopping || stats.FirstObserved.Error.Kind == "normal_close" || stats.ParentContextError == "context_canceled" {
+		level = slog.LevelInfo
+	}
+	p.logger.Log(context.Background(), level, "🔌 [Codex 订阅代理] WS 已结束",
+		"conn_id", connectionID, "duration_ms", duration.Milliseconds(), "proxy_stopping", proxyStopping,
+		"parent_context_error", stats.ParentContextError,
+		"first_observed_at", stats.FirstObserved.At,
+		"first_direction", string(stats.FirstObserved.Direction),
+		subscriptionWSEndLog("first_observed", stats.FirstObserved))
+	for _, lane := range []struct {
+		direction string
+		stats     subscriptionws.LaneStats
+	}{
+		{"client_to_upstream", stats.DownstreamToUpstream},
+		{"upstream_to_client", stats.UpstreamToDownstream},
+	} {
+		p.logger.Log(context.Background(), level, "🔌 [Codex 订阅代理] WS 方向已结束",
+			"conn_id", connectionID, "direction", lane.direction,
+			"messages", lane.stats.Messages, "bytes", lane.stats.Bytes,
+			"compression_mode", int(options.CompressionMode), "read_limit", options.ReadLimit,
+			"write_timeout_ms", options.WriteTimeout.Milliseconds(),
+			subscriptionWSEndLog("read_end", lane.stats.ReadEnd),
+			subscriptionWSEndLog("write_end", lane.stats.WriteEnd))
+	}
+}
+
+func subscriptionWSEndLog(key string, end subscriptionws.IOEnd) slog.Attr {
+	if end.Error.Kind == "" {
+		return slog.Group(key, "error_kind", "none")
+	}
+	return slog.Group(key, "phase", end.Phase, "error_kind", end.Error.Kind, "root_error_type", end.Error.RootType,
+		"close_code", int(end.Error.CloseCode))
+}
+
+// subscriptionWSHandshakeTransport 独占一次拨号的失败响应体，避免 websocket 库
+// 为调试读取并关闭原始正文（库只保留前 1024 字节）。成功 101 的双向 Body 原样交给库。
+type subscriptionWSHandshakeTransport struct {
+	base     http.RoundTripper
+	response *http.Response
+}
+
+func (t *subscriptionWSHandshakeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// http.Client 跟随重定向时，前一个响应不再需要转发。
+	t.closeResponse()
+	resp, err := t.base.RoundTrip(r)
+	if err != nil || resp.StatusCode == http.StatusSwitchingProtocols {
+		return resp, err
+	}
+	t.response = resp
+	stub := *resp
+	stub.Body = http.NoBody
+	return &stub, nil
+}
+
+func (t *subscriptionWSHandshakeTransport) closeResponse() {
+	if t.response != nil {
+		_ = t.response.Body.Close()
+		t.response = nil
+	}
+}
+
+func dialSubscriptionWebSocket(ctx context.Context, targetURL string, headers http.Header, client *http.Client, options subscriptionws.Options) (*websocket.Conn, *http.Response, error) {
+	transport := &subscriptionWSHandshakeTransport{base: client.Transport}
+	if transport.base == nil {
+		transport.base = http.DefaultTransport
+	}
+	defer transport.closeResponse()
+	handshakeClient := *client
+	handshakeClient.Transport = transport
+	conn, resp, err := subscriptionws.DialUpstream(ctx, targetURL, headers, &handshakeClient, options)
+	if err != nil && resp != nil && transport.response != nil {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		resp = transport.response
+		transport.response = nil // 所有权移交给 relayHandshakeFailure。
+	}
+	return conn, resp, err
 }
 
 // relayHandshakeFailure 把上游握手失败的真实状态与正文回传下游；网络层失败用 502/504。
 func (p *subscriptionWSProxy) relayHandshakeFailure(w http.ResponseWriter, upstreamResp *http.Response, requestID string, err error) {
+	if upstreamResp != nil && upstreamResp.StatusCode == http.StatusSwitchingProtocols {
+		// 非法 101（例如缺少 Upgrade 头）不能被回传成成功升级。
+		if upstreamResp.Body != nil {
+			_ = upstreamResp.Body.Close()
+		}
+		upstreamResp = nil
+	}
 	if upstreamResp == nil {
 		status := http.StatusBadGateway
 		code := "codex_subscription_upstream_unreachable"
@@ -144,16 +240,24 @@ func (p *subscriptionWSProxy) relayHandshakeFailure(w http.ResponseWriter, upstr
 			code = "codex_subscription_upstream_timeout"
 			message = "the Codex subscription upstream did not complete the WebSocket handshake in time"
 		}
+		diagnostic := subscriptionws.DescribeError(err)
 		p.logger.Warn(fmt.Sprintf("⚠️ [Codex 订阅代理] [%s] WS 握手失败: %s", requestID, code),
-			"conn_id", requestID)
+			"conn_id", requestID, "error_kind", diagnostic.Kind, "root_error_type", diagnostic.RootType)
 		writeAccountPipelineError(w, status, code, message)
 		return
 	}
 
 	defer upstreamResp.Body.Close()
 	copySubscriptionResponseHeaders(w.Header(), upstreamResp.Header)
+	// 由 net/http 按实际写出内容定帧，不能沿用可能被上游错误声明的长度。
+	w.Header().Del("Content-Length")
 	w.WriteHeader(upstreamResp.StatusCode)
-	_, _ = io.CopyN(w, upstreamResp.Body, subscriptionWSFailureBodyLimit)
+	if _, copyErr := io.Copy(w, upstreamResp.Body); copyErr != nil {
+		p.logger.Warn("⚠️ [Codex 订阅代理] WS 握手失败正文传输中断",
+			"conn_id", requestID, "status_code", upstreamResp.StatusCode, "code", "subscription_ws_failure_body_incomplete")
+		// 状态已经写出，禁止正常结束分块响应而把残缺正文呈现为完整响应。
+		panic(http.ErrAbortHandler)
+	}
 	p.logger.Debug("⚠️ [Codex 订阅代理] 上游拒绝 WS 握手",
 		"conn_id", requestID, "status_code", upstreamResp.StatusCode)
 }

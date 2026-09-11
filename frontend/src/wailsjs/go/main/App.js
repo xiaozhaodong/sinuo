@@ -118,6 +118,14 @@ export function GetCodexModelCatalog() {
   return window['go']['main']['App']['GetCodexModelCatalog']();
 }
 
+export function GetCodexSubscriptionProxyConfig() {
+  return window['go']['main']['App']['GetCodexSubscriptionProxyConfig']();
+}
+
+export function GetCodexSubscriptionProxyStatus() {
+  return window['go']['main']['App']['GetCodexSubscriptionProxyStatus']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -334,12 +342,24 @@ export function RetryStartupMigration() {
   return window['go']['main']['App']['RetryStartupMigration']();
 }
 
+export function RotateCodexSubscriptionProxyAccess(arg1) {
+  return window['go']['main']['App']['RotateCodexSubscriptionProxyAccess'](arg1);
+}
+
 export function SaveCodexModelCatalog(arg1) {
   return window['go']['main']['App']['SaveCodexModelCatalog'](arg1);
 }
 
+export function SaveCodexSubscriptionProxyConfig(arg1, arg2) {
+  return window['go']['main']['App']['SaveCodexSubscriptionProxyConfig'](arg1, arg2);
+}
+
 export function SetClaudeRoutingOverride(arg1) {
   return window['go']['main']['App']['SetClaudeRoutingOverride'](arg1);
+}
+
+export function SetCodexSubscriptionProxyEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetCodexSubscriptionProxyEnabled'](arg1, arg2);
 }
 
 export function SetDefaultModelPricing(arg1) {

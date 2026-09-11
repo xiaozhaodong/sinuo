@@ -160,7 +160,7 @@ func resolveSubscriptionRoute(method, operation string, upgrade bool) (*subscrip
 	case "images/edits":
 		return postOnly(method, &subscriptionRoute{Kind: subscriptionRouteImagesEdits, Operation: operation, InternalPath: "/v1/images/edits", Timeout: subscriptionRouteTimeoutImages, ExtraHeaders: subscriptionImagesExtraHeaders})
 	case "realtime/calls":
-		return postOnly(method, &subscriptionRoute{Kind: subscriptionRouteRealtimeCalls, Operation: operation, InternalPath: "/v1/realtime/calls", Timeout: subscriptionRouteTimeoutRealtimeCall})
+		return postOnly(method, &subscriptionRoute{Kind: subscriptionRouteRealtimeCalls, Operation: operation, InternalPath: "/v1/realtime/calls", Timeout: subscriptionRouteTimeoutRealtimeCall, ExtraHeaders: subscriptionRealtimeExtraHeaders})
 	}
 	if name, ok := strings.CutPrefix(operation, "alpha/history/v2/"); ok {
 		if _, allowed := subscriptionHistoryOperations[name]; allowed {
@@ -214,6 +214,8 @@ var (
 	subscriptionModelsExtraHeaders       = canonicalHeaderKeys([]string{"If-None-Match", "If-Modified-Since"})
 	subscriptionImagesExtraHeaders       = canonicalHeaderKeys([]string{"x-codex-image-turn-id"})
 	subscriptionHistoryNotesExtraHeaders = canonicalHeaderKeys([]string{"x-openai-tool-output-truncation-policy", "x-openai-encrypted-tool-arguments"})
+	// 语音协议版本由客户端声明，必须原样透传；不能由代理固定或补默认值。
+	subscriptionRealtimeExtraHeaders = canonicalHeaderKeys([]string{"OpenAI-Alpha"})
 )
 
 // subscriptionPoolAllowedHeaders 池模式进池前唯一允许保留的客户端头；其余由所选账号 helper 重新生成。

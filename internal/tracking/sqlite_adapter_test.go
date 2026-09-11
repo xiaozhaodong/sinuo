@@ -2,6 +2,7 @@ package tracking
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +10,61 @@ import (
 
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
+
+func TestInitSchemaUpgradesPreP2Database(t *testing.T) {
+	legacySchema, err := os.ReadFile("../../tests/testdata/pre_p2_tracking_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	if _, err := adapter.db.Exec(string(legacySchema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.db.Exec(`INSERT INTO request_logs (
+		request_id, start_time, path, request_family, upstream_type, upstream_name, model_name,
+		status, input_tokens, output_tokens, total_cost_usd
+	) VALUES ('old-row', '2026-09-10T00:00:00.000000Z', '/v1/responses', 'codex',
+		'account', 'synthetic', 'synthetic-model', 'completed', 12, 3, 0.25)`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		// 必须走真实启动入口，而非直接调用 migrateSchema/ensureUsageSummaryRequestKind。
+		if err := adapter.InitSchema(); err != nil {
+			t.Fatalf("upgrade from pre-P2 schema: %v", err)
+		}
+		var source, kind string
+		var input, output int
+		var cost float64
+		if err := adapter.db.QueryRow(`SELECT request_source, request_kind, input_tokens,
+			output_tokens, total_cost_usd FROM request_logs WHERE request_id='old-row'`).Scan(
+			&source, &kind, &input, &output, &cost); err != nil {
+			t.Fatal(err)
+		}
+		if source != "legacy_proxy" || kind != "legacy" || input != 12 || output != 3 || cost != 0.25 {
+			t.Fatalf("historical row changed: %s %s %d %d %f", source, kind, input, output, cost)
+		}
+		if err := adapter.db.QueryRow(`SELECT request_kind, total_input_tokens, total_output_tokens,
+			total_cost_usd FROM usage_summary WHERE model_name='synthetic-model'`).Scan(
+			&kind, &input, &output, &cost); err != nil {
+			t.Fatal(err)
+		}
+		if kind != "legacy" || input != 12 || output != 3 || cost != 0.25 {
+			t.Fatalf("summary changed: %s %d %d %f", kind, input, output, cost)
+		}
+		var indexes int
+		if err := adapter.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+			WHERE type='index' AND name='idx_usage_summary_kind'`).Scan(&indexes); err != nil || indexes != 1 {
+			t.Fatalf("kind index missing: count=%d err=%v", indexes, err)
+		}
+	}
+}
 
 func TestRequestClassificationUpgradePreservesEveryHistoricalColumn(t *testing.T) {
 	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})

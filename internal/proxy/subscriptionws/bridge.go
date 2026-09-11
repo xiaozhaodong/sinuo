@@ -65,6 +65,7 @@ type Options struct {
 	MaxQueueMessages int
 	MaxQueueBytes    int64
 	Interceptor      MessageInterceptor
+	diagnostics      *bridgeDiagnostics
 }
 
 func (o Options) withDefaults() Options {
@@ -91,12 +92,16 @@ type LaneStats struct {
 	Messages  int64
 	Bytes     int64
 	CloseCode websocket.StatusCode
+	ReadEnd   IOEnd
+	WriteEnd  IOEnd
 }
 
 // BridgeStats 双向转发统计；CloseCode 为 -1 表示该方向没有收到关闭帧。
 type BridgeStats struct {
 	DownstreamToUpstream LaneStats
 	UpstreamToDownstream LaneStats
+	FirstObserved        IOEnd
+	ParentContextError   string
 }
 
 // DialUpstream 按已完成白名单重建的请求头拨通上游；失败时返回真实 HTTP 响应。
@@ -130,7 +135,7 @@ func AcceptDownstream(w http.ResponseWriter, r *http.Request, opts Options) (*we
 }
 
 // Bridge 在两条连接之间双向转发，直到任意一侧结束。
-// 任一方向结束时，用收到的关闭码关闭对端；上下文取消时直接断开两端。
+// 正常关闭先排空已入队消息再传播关闭码；上下文取消时直接断开两端。
 func Bridge(ctx context.Context, downstream, upstream *websocket.Conn, opts Options) BridgeStats {
 	var stats BridgeStats
 	if downstream == nil || upstream == nil {
@@ -138,22 +143,42 @@ func Bridge(ctx context.Context, downstream, upstream *websocket.Conn, opts Opti
 	}
 	opts = opts.withDefaults()
 
+	parentCtx := ctx
+	opts.diagnostics = &bridgeDiagnostics{}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	results := make(chan laneResult, 2)
 	downstreamQueue := newMessageQueue(opts.MaxQueueMessages, opts.MaxQueueBytes)
 	upstreamQueue := newMessageQueue(opts.MaxQueueMessages, opts.MaxQueueBytes)
+	downstreamRead, upstreamRead := newLaneReadState(), newLaneReadState()
 	go func() {
-		results <- runLane(ctx, DirectionDownstreamToUpstream, downstream, upstream, upstreamQueue, downstreamQueue, opts)
+		results <- runLane(ctx, DirectionDownstreamToUpstream, downstream, upstream, upstreamQueue, downstreamQueue, downstreamRead, upstreamRead, opts)
 	}()
 	go func() {
-		results <- runLane(ctx, DirectionUpstreamToDownstream, upstream, downstream, downstreamQueue, upstreamQueue, opts)
+		results <- runLane(ctx, DirectionUpstreamToDownstream, upstream, downstream, downstreamQueue, upstreamQueue, upstreamRead, downstreamRead, opts)
 	}()
 
 	first := <-results
+	var second laneResult
+	if first.waitForPeer && ctx.Err() == nil {
+		// 对端正常关闭也可能先表现为反向写失败。让该连接的读取方向
+		// 完成关闭分类和尾帧排空，避免先返回的 writer 抢先取消它。
+		timer := time.NewTimer(opts.WriteTimeout)
+		select {
+		case second = <-results:
+		case <-timer.C:
+			cancel()
+			second = <-results
+		case <-ctx.Done():
+			second = <-results
+		}
+		timer.Stop()
+	} else {
+		cancel()
+		second = <-results
+	}
 	cancel()
-	second := <-results
 
 	for _, result := range []laneResult{first, second} {
 		switch result.direction {
@@ -166,59 +191,109 @@ func Bridge(ctx context.Context, downstream, upstream *websocket.Conn, opts Opti
 	// 两端都已被各自的 lane 关闭；这里兜底解除可能残留的底层 I/O。
 	closeQuietly(downstream)
 	closeQuietly(upstream)
+	stats.FirstObserved = opts.diagnostics.first
+	stats.ParentContextError = DescribeError(parentCtx.Err()).Kind
 	return stats
 }
 
 type laneResult struct {
-	direction Direction
-	stats     LaneStats
-	err       error
+	direction   Direction
+	stats       LaneStats
+	err         error
+	waitForPeer bool
 }
 
 type writerResult struct {
 	messages int64
 	bytes    int64
 	err      error
+	end      IOEnd
+}
+
+// laneReadState 在关闭 done 后发布读取结果，供反向 writer 区分正常关闭与写故障。
+type laneReadState struct {
+	done chan struct{}
+	err  error
+}
+
+func newLaneReadState() *laneReadState {
+	return &laneReadState{done: make(chan struct{})}
+}
+
+// stopFailedWriter 保留正常关闭的反方向排空，其他写故障则结束 src 读取。
+func stopFailedWriter(ctx context.Context, cancel context.CancelFunc, src, dst *websocket.Conn, peerRead *laneReadState, timeout time.Duration) {
+	// 不能立即取消 src.Read：coder/websocket 会连同 src 一起关闭，
+	// 从而截断反方向正在向 src 排空的尾帧。
+	closeQuietly(dst)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-peerRead.done:
+		if websocket.CloseStatus(peerRead.err) == websocket.StatusNormalClosure {
+			return
+		}
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	cancel()
+	closeQuietly(src)
 }
 
 // runLane 运行一个方向的读取 → 队列 → 写入；返回时对端连接已按需关闭。
-func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn, queue, reverseQueue *messageQueue, opts Options) laneResult {
+func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn, queue, reverseQueue *messageQueue, readState, peerRead *laneReadState, opts Options) laneResult {
 	laneCtx, laneCancel := context.WithCancel(ctx)
 	defer laneCancel()
 
 	writer := make(chan writerResult, 1)
-	go func() { writer <- writeLane(laneCtx, laneCancel, queue, dst, direction, opts) }()
+	writeFailed := func() {
+		stopFailedWriter(laneCtx, laneCancel, src, dst, peerRead, opts.WriteTimeout)
+	}
+	go func() { writer <- writeLane(laneCtx, writeFailed, queue, dst, direction, opts) }()
 
 	result := laneResult{direction: direction, stats: LaneStats{CloseCode: -1}}
-	stop := func(err error) {
+	stop := func(phase string, err error) {
+		result.stats.ReadEnd = opts.observeEnd(direction, phase, err)
+		readState.err = err
+		close(readState.done)
 		if result.err == nil {
 			result.err = err
 		}
-		laneCancel()
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			queue.seal()
+			// 限制整段排空时间；单条写入的超时仍由 writeLane 控制。
+			timer := time.AfterFunc(opts.WriteTimeout, laneCancel)
+			defer timer.Stop()
+			result.waitForPeer = true
+		} else {
+			laneCancel()
+			result.waitForPeer = errors.Is(err, errQueueClosed)
+		}
 		written := <-writer
 		result.stats.Messages = written.messages
 		result.stats.Bytes = written.bytes
-		if result.err == nil || errors.Is(result.err, context.Canceled) {
+		result.stats.WriteEnd = written.end
+		if written.err != nil && (result.err == nil || errors.Is(result.err, context.Canceled) || websocket.CloseStatus(result.err) == websocket.StatusNormalClosure) {
 			result.err = written.err
+			result.waitForPeer = !errors.Is(written.err, context.Canceled) && !errors.Is(written.err, context.DeadlineExceeded)
 		}
 	}
 
 	for {
-		typ, payload, err := src.Read(laneCtx)
+		typ, payload, err := src.Read(ctx)
 		if err != nil {
-			stop(err)
+			stop("read", err)
 			break
 		}
 		if opts.Interceptor != nil {
 			intercepted, interceptErr := opts.Interceptor.Intercept(laneCtx, direction, payload)
 			err = interceptErr
 			if err != nil {
-				stop(err)
+				stop("intercept", err)
 				break
 			}
 			if intercepted.Reply != nil {
 				if err := reverseQueue.push(laneCtx, message{typ: websocket.MessageText, data: intercepted.Reply}); err != nil {
-					stop(err)
+					stop("reply_enqueue", err)
 					break
 				}
 			}
@@ -228,7 +303,7 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 			}
 		}
 		if err := queue.push(laneCtx, message{typ: typ, data: payload}); err != nil {
-			stop(err)
+			stop("enqueue", err)
 			break
 		}
 	}
@@ -279,12 +354,15 @@ func closeQuietly(conn *websocket.Conn) {
 }
 
 // writeLane 串行写出队列内容，保持同方向的提交顺序。
-func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQueue, dst *websocket.Conn, direction Direction, opts Options) writerResult {
+func writeLane(ctx context.Context, onWriteError func(), queue *messageQueue, dst *websocket.Conn, direction Direction, opts Options) writerResult {
 	var result writerResult
 	for {
 		msg, err := queue.pop(ctx)
 		if err != nil {
-			result.err = err
+			if !errors.Is(err, errQueueClosed) {
+				result.err = err
+				result.end = opts.observeEnd(direction, "dequeue", err)
+			}
 			return result
 		}
 		writeCtx, cancelWrite := context.WithTimeout(ctx, opts.WriteTimeout)
@@ -292,7 +370,8 @@ func writeLane(ctx context.Context, cancel context.CancelFunc, queue *messageQue
 		cancelWrite()
 		if err != nil {
 			result.err = err
-			cancel()
+			result.end = opts.observeEnd(direction, "write", err)
+			onWriteError()
 			return result
 		}
 		result.messages++

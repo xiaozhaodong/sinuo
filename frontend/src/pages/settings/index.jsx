@@ -21,7 +21,8 @@ import {
   ImageIcon
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
-import { SettingItem, SettingsSection, PortInfo } from './components';
+import { SettingItem, SettingsSection, PortInfo, CodexSubscriptionProxyCard } from './components';
+import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from './utils/subscriptionProxyViewModel.js';
 import {
   isWailsEnvironment,
   getSettingCategories,
@@ -91,7 +92,9 @@ const SettingsPage = () => {
       }
 
       setCategories(categoriesData || []);
-      setSettings(settingsData || []);
+      // Codex 订阅代理是受保护分类（revision CAS + 一次性密钥），只走专用卡片，
+      // 不能进入通用表单，否则会被当成普通设置项展示或随批量保存下发。
+      setSettings((settingsData || []).filter((item) => item.category !== SUBSCRIPTION_PROXY_CONFIG_CATEGORY));
       setPortInfo(portData);
       setChanges({});
     } catch (err) {
@@ -212,20 +215,6 @@ const SettingsPage = () => {
   // 判断是否有未保存的变更
   const hasChanges = Object.keys(changes).length > 0;
 
-  if (error) {
-    return (
-      <ErrorMessage
-        title="设置加载失败"
-        message={error}
-        onRetry={loadSettings}
-      />
-    );
-  }
-
-  if (loading) {
-    return <LoadingSpinner text="加载设置..." />;
-  }
-
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
       {/* 页面标题 */}
@@ -248,7 +237,7 @@ const SettingsPage = () => {
             icon={RefreshCw}
             variant="secondary"
             onClick={loadSettings}
-            disabled={saving}
+            disabled={saving || loading}
           >
             刷新
           </Button>
@@ -256,7 +245,7 @@ const SettingsPage = () => {
             icon={Save}
             variant="primary"
             onClick={handleSave}
-            disabled={saving || !hasChanges}
+            disabled={saving || loading || !hasChanges}
             loading={saving}
           >
             {hasChanges ? `保存 (${Object.keys(changes).length})` : '保存'}
@@ -286,60 +275,75 @@ const SettingsPage = () => {
         </div>
       )}
 
-      {/* 端口信息 (服务端口分类的特殊处理) */}
-      {categories.find(c => c.name === 'server') && (
-        <SettingsSection
-          title="服务端口"
-          icon={Server}
-          description="API 服务端口配置"
-          onReset={() => handleResetCategory('server')}
-          resetDisabled={saving}
-        >
-          <PortInfo portInfo={portInfo} loading={loading} />
-          <div className="mt-4 pt-4 border-t border-line-soft">
-            {settingsByCategory['server']?.map(setting => (
-              <SettingItem
-                key={`${setting.category}.${setting.key}`}
-                setting={setting}
-                value={getCurrentValue(setting)}
-                onChange={handleSettingChange}
-                disabled={saving}
-              />
-            ))}
-          </div>
-        </SettingsSection>
-      )}
+      {/*
+        Codex 订阅代理：受保护分类，只走专用卡片，不参与上面的通用保存与重置。
+        位置固定在通用区块之前：通用设置的加载/失败/刷新/重置都不会重建它，
+        否则尚未复制的一次性接入地址与未保存输入会随重挂载一起丢失。
+      */}
+      <CodexSubscriptionProxyCard />
 
-      {/* 其他设置分类 (两列布局) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {categories
-          .filter(c => c.name !== 'server')
-          .map(category => (
-            <SettingsSection
-              key={category.name}
-              title={category.label}
-              icon={CATEGORY_ICONS[category.name] || Settings}
-              description={category.description}
-              onReset={() => handleResetCategory(category.name)}
-              resetDisabled={saving}
-            >
-              {settingsByCategory[category.name]?.map(setting => (
-                <SettingItem
-                  key={`${setting.category}.${setting.key}`}
-                  setting={setting}
-                  value={getCurrentValue(setting)}
-                  onChange={handleSettingChange}
-                  disabled={saving}
-                />
-              ))}
-              {(!settingsByCategory[category.name] || settingsByCategory[category.name].length === 0) && (
-                <div className="text-sm text-fg-subtle text-center py-4">
-                  暂无设置项
-                </div>
+      {error
+        ? <ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} />
+        : loading
+          ? <LoadingSpinner text="加载设置..." />
+          : (
+            <>
+              {/* 端口信息 (服务端口分类的特殊处理) */}
+              {categories.find(c => c.name === 'server') && (
+                <SettingsSection
+                  title="服务端口"
+                  icon={Server}
+                  description="API 服务端口配置"
+                  onReset={() => handleResetCategory('server')}
+                  resetDisabled={saving}
+                >
+                  <PortInfo portInfo={portInfo} loading={loading} />
+                  <div className="mt-4 pt-4 border-t border-line-soft">
+                    {settingsByCategory['server']?.map(setting => (
+                      <SettingItem
+                        key={`${setting.category}.${setting.key}`}
+                        setting={setting}
+                        value={getCurrentValue(setting)}
+                        onChange={handleSettingChange}
+                        disabled={saving}
+                      />
+                    ))}
+                  </div>
+                </SettingsSection>
               )}
-            </SettingsSection>
-          ))}
-      </div>
+
+              {/* 其他设置分类 (两列布局) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {categories
+                  .filter(c => c.name !== 'server')
+                  .map(category => (
+                    <SettingsSection
+                      key={category.name}
+                      title={category.label}
+                      icon={CATEGORY_ICONS[category.name] || Settings}
+                      description={category.description}
+                      onReset={() => handleResetCategory(category.name)}
+                      resetDisabled={saving}
+                    >
+                      {settingsByCategory[category.name]?.map(setting => (
+                        <SettingItem
+                          key={`${setting.category}.${setting.key}`}
+                          setting={setting}
+                          value={getCurrentValue(setting)}
+                          onChange={handleSettingChange}
+                          disabled={saving}
+                        />
+                      ))}
+                      {(!settingsByCategory[category.name] || settingsByCategory[category.name].length === 0) && (
+                        <div className="text-sm text-fg-subtle text-center py-4">
+                          暂无设置项
+                        </div>
+                      )}
+                    </SettingsSection>
+                  ))}
+              </div>
+            </>
+          )}
     </div>
   );
 };

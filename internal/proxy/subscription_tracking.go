@@ -19,14 +19,15 @@ const (
 
 // SubscriptionHTTPStart 是订阅 HTTP 入口与追踪器之间的正文无关契约。
 type SubscriptionHTTPStart struct {
-	RequestID   string
-	StartedAt   time.Time
-	ClientIP    string
-	UserAgent   string
-	Method      string
-	Path        string
-	RequestKind string
-	IsStreaming bool
+	RequestID    string
+	ConnectionID string
+	StartedAt    time.Time
+	ClientIP     string
+	UserAgent    string
+	Method       string
+	Path         string
+	RequestKind  string
+	IsStreaming  bool
 }
 
 type subscriptionTrackingObserver struct {
@@ -46,7 +47,7 @@ func newSubscriptionTrackingObserver(tracker *tracking.UsageTracker, eventBus ev
 
 // StartHTTP 只为 generation/compaction 建记录；空 kind 是合法辅助请求。
 func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *subscriptionRequestTracking {
-	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, startedAt: start.StartedAt, path: start.Path}
+	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, connectionID: start.ConnectionID, startedAt: start.StartedAt, path: start.Path}
 	if start.RequestKind == "" || o == nil || o.tracker == nil || start.RequestID == "" {
 		return handle
 	}
@@ -101,6 +102,7 @@ type subscriptionRequestTracking struct {
 	settled  bool
 
 	requestID     string
+	connectionID  string
 	startedAt     time.Time
 	path          string
 	model         string
@@ -299,6 +301,10 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 	logArgs := []interface{}{
 		"request_id", requestID, "status", status, "request_bytes", requestBytes,
 		"response_bytes", responseBytes, "duration_ms", duration.Milliseconds(), "usage_known", usage != nil,
+		"failure_reason", failureCode,
+	}
+	if t.connectionID != "" {
+		logArgs = append(logArgs, "conn_id", t.connectionID)
 	}
 	if status == "completed" {
 		slog.Debug("订阅请求追踪结算完成", logArgs...)
@@ -361,7 +367,8 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	}
 	handle := o.StartHTTP(SubscriptionHTTPStart{
 		RequestID: submission.RequestID, StartedAt: submission.StartedAt,
-		Method: "POST", Path: "/v1/responses", RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
+		ConnectionID: submission.ConnectionID,
+		Method:       "POST", Path: "/v1/responses", RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
 	})
 	handle.SetModel(submission.Model)
 	o.mu.Lock()

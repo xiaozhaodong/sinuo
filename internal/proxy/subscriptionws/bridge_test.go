@@ -3,6 +3,7 @@ package subscriptionws
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -504,5 +505,225 @@ func TestBridgeInterceptorErrorStillTerminatesConnection(t *testing.T) {
 	defer cancel()
 	if _, _, err := conn.Read(readCtx); err == nil {
 		t.Fatal("connection-level interceptor error must terminate the bridge")
+	}
+}
+
+// lanePair 返回一对真实 WS 连接，测试可直接控制桥接侧的读写和队列。
+func lanePair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
+	t.Helper()
+	accepted := make(chan *websocket.Conn, 1)
+	stop := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		accepted <- conn
+		<-stop
+	}))
+	ctx := testContext(t)
+	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var peer *websocket.Conn
+	select {
+	case peer = <-accepted:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	t.Cleanup(func() {
+		close(stop)
+		_ = client.CloseNow()
+		_ = peer.CloseNow()
+		server.Close()
+	})
+	return client, peer
+}
+
+type drainWriteGate struct {
+	first   chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (g *drainWriteGate) Intercept(_ context.Context, _ Direction, body []byte) (InterceptResult, error) {
+	return InterceptResult{Forward: body}, nil
+}
+
+func (g *drainWriteGate) Forwarded(_ Direction, _ int64, _ time.Time) {
+	g.once.Do(func() {
+		close(g.first)
+		<-g.release
+	})
+}
+
+func waitQueueSealed(t *testing.T, ctx context.Context, queue *messageQueue) {
+	t.Helper()
+	for {
+		queue.mu.Lock()
+		sealed, notify := queue.closed, queue.notify
+		queue.mu.Unlock()
+		if sealed {
+			return
+		}
+		select {
+		case <-notify:
+		case <-ctx.Done():
+			t.Fatal("正常关闭未进入队列排空阶段")
+		}
+	}
+}
+
+func TestRunLaneNormalCloseDrainsQueuedTailBeforeClose(t *testing.T) {
+	ctx := testContext(t)
+	sender, src := lanePair(t)
+	receiver, dst := lanePair(t)
+	queue := newMessageQueue(8, 1<<20)
+	gate := &drainWriteGate{first: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+	t.Cleanup(release)
+	opts := Options{Interceptor: gate}.withDefaults()
+	done := make(chan laneResult, 1)
+	readState := newLaneReadState()
+	go func() {
+		done <- runLane(ctx, DirectionUpstreamToDownstream, src, dst, queue, newMessageQueue(8, 1<<20), readState, newLaneReadState(), opts)
+	}()
+	payloads := []string{"delta-1", "delta-2", `{"type":"response.completed"}`}
+	for i, payload := range payloads {
+		if err := sender.Write(ctx, websocket.MessageText, []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			select {
+			case <-gate.first:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- sender.Close(websocket.StatusNormalClosure, "done") }()
+	waitQueueSealed(t, ctx, queue)
+	if got := queue.depth(); got != len(payloads)-1 {
+		t.Fatalf("测试必须在尾帧仍排队时触发关闭，实际队列长度 %d", got)
+	}
+	// 此时上游已经关闭，模拟恰好到来的反向请求写失败。
+	// 使用实际 Write 和生产中的失败处理，验证它不会关闭仍在排空的下游。
+	if err := src.Write(ctx, websocket.MessageText, []byte("late-request")); err == nil {
+		t.Fatal("已关闭的上游不应接受反向写入")
+	}
+	reverseCtx, reverseCancel := context.WithCancel(ctx)
+	defer reverseCancel()
+	stopFailedWriter(reverseCtx, reverseCancel, dst, src, readState, opts.WriteTimeout)
+	if reverseCtx.Err() != nil {
+		t.Fatal("上游正常关闭导致的反向写失败不应取消下游 reader")
+	}
+	release()
+	for _, want := range payloads {
+		_, body, err := receiver.Read(ctx)
+		if err != nil || string(body) != want {
+			t.Fatalf("尾帧未按顺序写出: want=%q got=%q err=%v", want, body, err)
+		}
+	}
+	if _, _, err := receiver.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Fatalf("排空后未传播正常关闭码: %v", err)
+	}
+	select {
+	case result := <-done:
+		if result.stats.Messages != int64(len(payloads)) || result.stats.CloseCode != websocket.StatusNormalClosure {
+			t.Fatalf("转发统计不符: %+v", result)
+		}
+	case <-ctx.Done():
+		t.Fatal("lane 未结束")
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunLaneDrainStopsOnCancelOrWriteTimeout(t *testing.T) {
+	for _, cancelDrain := range []bool{true, false} {
+		name := "write_timeout"
+		if cancelDrain {
+			name = "context_cancel"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(testContext(t))
+			defer cancel()
+			sender, src := lanePair(t)
+			_, dst := lanePair(t)
+			// 持有真实连接的写锁，确保排空中的 Write 无法自行完成。
+			lockedWriter, err := dst.Writer(ctx, websocket.MessageText)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lockedWriter.Close()
+			queue := newMessageQueue(4, 1024)
+			opts := Options{WriteTimeout: 300 * time.Millisecond}.withDefaults()
+			if cancelDrain {
+				opts.WriteTimeout = 5 * time.Second
+			}
+			done := make(chan laneResult, 1)
+			go func() {
+				done <- runLane(ctx, DirectionUpstreamToDownstream, src, dst, queue, newMessageQueue(4, 1024), newLaneReadState(), newLaneReadState(), opts)
+			}()
+			if err := sender.Write(ctx, websocket.MessageText, []byte("tail")); err != nil {
+				t.Fatal(err)
+			}
+			closed := make(chan error, 1)
+			go func() { closed <- sender.Close(websocket.StatusNormalClosure, "done") }()
+			waitQueueSealed(t, ctx, queue)
+			if cancelDrain {
+				cancel()
+			}
+			select {
+			case result := <-done:
+				if result.stats.Messages != 0 || result.err == nil || result.stats.CloseCode == websocket.StatusNormalClosure {
+					t.Fatalf("未写出的尾帧不应报告成功排空: %+v", result)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("取消或写超时后排空仍挂起")
+			}
+			if err := <-closed; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCloseCodeOfDoesNotTreatEOFAsNormal(t *testing.T) {
+	if code, ok := closeCodeOf(io.EOF); ok {
+		t.Fatalf("裸 EOF 不应作为正常关闭传播: %d", code)
+	}
+}
+
+func TestMessageQueueSealPreservesAcceptedMessagesAndWakesProducers(t *testing.T) {
+	queue := newMessageQueue(1, 1)
+	ctx := testContext(t)
+	if err := queue.push(ctx, testMessage("first")); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { blocked <- queue.push(ctx, testMessage("reply")) }()
+	}
+	queue.seal()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-blocked:
+			if !errors.Is(err, errQueueClosed) {
+				t.Fatalf("封口后应拒绝新的正向或 Reply 入队: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatal("封口未唤醒生产者")
+		}
+	}
+	if msg, err := queue.pop(ctx); err != nil || string(msg.data) != "first" {
+		t.Fatalf("封口丢失已接受消息: %q %v", msg.data, err)
+	}
+	if _, err := queue.pop(ctx); !errors.Is(err, errQueueClosed) || queue.bytesInFlight() != 0 {
+		t.Fatalf("队列未在排空后结束或释放预算: %v", err)
 	}
 }

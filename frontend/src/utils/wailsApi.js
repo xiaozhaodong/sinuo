@@ -2351,3 +2351,84 @@ export const getPrivacyRuntimeStats = async () => {
     rule_stats: Array.isArray(result?.rule_stats) ? result.rule_stats : []
   };
 };
+
+// ============================================
+// Codex 订阅代理专用配置（专用设置页独占，不走通用设置保存/重置）
+//
+// 访问密钥明文只在初始化与轮换的返回结果里出现一次，其余读取只返回是否已配置；
+// 这里只做字段归一化，不做任何本地持久化。
+// ============================================
+
+const normalizeCodexSubscriptionProxyConfig = (config = {}) => ({
+  initialized: config.initialized === true,
+  enabled: config.enabled === true,
+  mode: config.mode || 'subscription',
+  listenHost: config.listen_host || '127.0.0.1',
+  listenPort: Number(config.listen_port ?? 18089),
+  wsCompression: config.ws_compression || 'auto',
+  revision: Number(config.revision ?? 0),
+  accessConfigured: config.access_configured === true
+});
+
+const normalizeCodexSubscriptionProxySaveResult = (result = {}) => ({
+  config: normalizeCodexSubscriptionProxyConfig(result.config),
+  accessSecret: result.access_secret || '',
+  accessUrl: result.access_url || ''
+});
+
+export const normalizeCodexSubscriptionProxyStatus = (status = {}) => ({
+  state: status.state || 'stopped',
+  enabled: status.enabled === true,
+  mode: status.mode || '',
+  revision: Number(status.revision ?? 0),
+  listenAddr: status.listen_addr || '',
+  activeRequests: Number(status.active_requests ?? 0),
+  activeWebSockets: Number(status.active_websockets ?? 0),
+  lastError: status.last_error || '',
+  accessConfigured: status.access_configured === true
+});
+
+export const getCodexSubscriptionProxyConfig = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeCodexSubscriptionProxyConfig(await WailsApp.GetCodexSubscriptionProxyConfig());
+};
+
+export const saveCodexSubscriptionProxyConfig = async (input = {}, expectedRevision = 0) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const result = await WailsApp.SaveCodexSubscriptionProxyConfig({
+    enabled: input.enabled === true,
+    mode: String(input.mode ?? 'subscription'),
+    listen_host: String(input.listen_host ?? input.listenHost ?? '127.0.0.1'),
+    listen_port: Number(input.listen_port ?? input.listenPort ?? 18089),
+    ws_compression: String(input.ws_compression ?? input.wsCompression ?? 'auto')
+  }, Number(expectedRevision ?? 0));
+  return normalizeCodexSubscriptionProxySaveResult(result);
+};
+
+export const setCodexSubscriptionProxyEnabled = async (enabled, expectedRevision = 0) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const result = await WailsApp.SetCodexSubscriptionProxyEnabled(enabled === true, Number(expectedRevision ?? 0));
+  return normalizeCodexSubscriptionProxySaveResult(result);
+};
+
+export const rotateCodexSubscriptionProxyAccess = async (expectedRevision = 0) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeCodexSubscriptionProxySaveResult(
+    await WailsApp.RotateCodexSubscriptionProxyAccess(Number(expectedRevision ?? 0))
+  );
+};
+
+export const getCodexSubscriptionProxyStatus = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeCodexSubscriptionProxyStatus(await WailsApp.GetCodexSubscriptionProxyStatus());
+};

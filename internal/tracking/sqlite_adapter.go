@@ -481,6 +481,8 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 
 	// 索引迁移（幂等）
 	indexSQLs := []string{
+		// 必须在 ensureUsageSummaryRequestKind 之后；旧库执行基础 schema 时尚无此列。
+		"CREATE INDEX IF NOT EXISTS idx_usage_summary_kind ON usage_summary(request_kind)",
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type ON request_logs(upstream_type)",
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_name ON request_logs(upstream_name)",
 		"CREATE INDEX IF NOT EXISTS idx_upstream_accounts_group_key ON upstream_accounts(group_key)",
@@ -615,7 +617,6 @@ func (s *SQLiteAdapter) ensureUsageSummaryRequestKind(ctx context.Context) error
 		`CREATE INDEX idx_usage_summary_timezone_date ON usage_summary(timezone_name, date)`,
 		`CREATE INDEX idx_usage_summary_model ON usage_summary(model_name)`,
 		`CREATE INDEX idx_usage_summary_family ON usage_summary(request_family)`,
-		`CREATE INDEX idx_usage_summary_kind ON usage_summary(request_kind)`,
 		`CREATE INDEX idx_usage_summary_upstream ON usage_summary(upstream_type, upstream_name, upstream_id)`,
 		`CREATE TRIGGER update_usage_summary_timestamp AFTER UPDATE ON usage_summary FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at BEGIN UPDATE usage_summary SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id; END`,
 	} {
