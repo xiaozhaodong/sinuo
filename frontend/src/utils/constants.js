@@ -36,6 +36,7 @@ export const REQUEST_STATUS = {
   FAILED: 'failed',
   ERROR: 'error',
   CANCELLED: 'cancelled',
+  INTERRUPTED: 'interrupted',
   TIMEOUT: 'timeout'
 };
 
@@ -86,6 +87,11 @@ export const STATUS_CONFIG = {
     icon: 'Ban',
     color: 'tone-slate'
   },
+  [REQUEST_STATUS.INTERRUPTED]: {
+    label: '已中断',
+    icon: 'Ban',
+    color: 'tone-slate'
+  },
   [REQUEST_STATUS.TIMEOUT]: {
     label: '已超时',
     icon: 'Timer',
@@ -103,7 +109,8 @@ export const FILTER_STATUS_OPTIONS = [
   { value: 'suspended', label: '已挂起' },
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '已失败' },
-  { value: 'cancelled', label: '已取消' }
+  { value: 'cancelled', label: '已取消' },
+  { value: 'interrupted', label: '已中断' }
 ];
 
 // 分页配置

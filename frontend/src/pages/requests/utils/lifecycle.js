@@ -7,6 +7,7 @@
 // ============================================
 
 import { parseTimestamp } from '../../../utils/timezone.js';
+import { getRequestPresentation } from './requestPresentation.js';
 
 // 收尾残差超过该阈值才单独显示「收尾」微段，否则并入末段。
 export const TAIL_THRESHOLD_MS = 80;
@@ -134,6 +135,9 @@ export const summarizeTerminalReason = (reason) => {
 // terminalSegment 终态标注段：failed/cancelled 时返回，否则 null。
 // label 只放短标签，原始全文经 detail 供 tooltip 展示（完整错误另见详情页错误卡片）。
 const terminalSegment = (request = {}, ms = 0) => {
+  if (getRequestPresentation(request).isInterrupted) {
+    return { key: 'cancelled', label: '已中断', ms, detail: '客户端连接断开，未收到完整结束事件' };
+  }
   const status = String(request.status || '').toLowerCase();
   if (status === 'failed' || status === 'error') {
     const detail = request.failureReason || '';

@@ -1,5 +1,5 @@
 // ============================================
-// Codex 订阅代理设置页纯逻辑（2026-09-10）
+// Codex 客户端接入与请求追踪共用的展示逻辑
 //
 // 只做展示映射、前置校验与文案组装，不持有访问密钥：
 // 明文密钥仅由卡片的组件内存状态承载，不落 localStorage、不进日志。
@@ -108,6 +108,7 @@ export const subscriptionProxyPrivacyWarning = (privacy) =>
 // 保存成功不等于启动成功：这里一律按独立读回的运行态组装提示。
 export const buildSubscriptionProxyNotice = ({
   intent,
+  config,
   status,
   modeChanged = false,
   listenChanged = false
@@ -144,13 +145,22 @@ export const buildSubscriptionProxyNotice = ({
     return { type: 'success', text: '访问密钥已轮换：旧接入地址立即失效，请把新地址重新填入 Codex 配置。' };
   }
 
+  if (!SUBSCRIPTION_PROXY_STATE_META[state]) {
+    return { type: 'info', text: '配置已保存，尚未读到有效运行态；请刷新确认。', action: 'refresh' };
+  }
+  if (modeChanged && state !== 'failed' && (
+    state !== 'running' || (config && (status.mode !== config.mode || status.revision !== config.revision))
+  )) {
+    return { type: 'info', text: '模式配置已保存，但运行态尚未确认应用此模式；请刷新确认。已有 WS 在重连后生效。', action: 'refresh' };
+  }
+
   const parts = [];
   if (listenChanged) {
     parts.push(state === 'running' ? '监听地址已保存并重新监听。' : '监听地址已保存。');
   }
   if (modeChanged) {
     parts.push(wsCount > 0
-      ? `模式已保存。${MODE_EFFECT_NOTICE}当前仍有 ${wsCount} 条已建立的订阅 WS 保持原行为。`
+      ? `模式已保存。${MODE_EFFECT_NOTICE}当前底层 WS 连接数为 ${wsCount}（包含上下游两侧）。`
       : `模式已保存。${MODE_EFFECT_NOTICE}`);
   }
   if (state === 'failed') {

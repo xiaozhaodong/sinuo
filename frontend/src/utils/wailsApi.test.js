@@ -8,11 +8,27 @@ import {
   buildEndpointRecordPayload,
   buildUpstreamAccountPayload,
   mapEndpointRecord,
+  mapUsageStats,
   normalizeUpstreamAccount
 } from './wailsApi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
+
+test('请求统计保留独立中断计数，不从总请求数猜测缺失字段', () => {
+  const mapped = mapUsageStats({
+    total_requests: 5, failed_requests: 2, interrupted_requests: 1, success_rate: 20
+  }, '1d');
+  assert.equal(mapped.period, '1d');
+  assert.equal(mapped.total_requests, 5);
+  assert.equal(mapped.failed_requests, 2);
+  assert.equal(mapped.interrupted_requests, 1);
+  assert.equal(mapped.success_rate, 20);
+  assert.equal(mapUsageStats({ interrupted_requests: 0 }).interrupted_requests, 0);
+  for (const value of [undefined, null, '1', NaN]) {
+    assert.equal(mapUsageStats({ total_requests: 100, interrupted_requests: value }).interrupted_requests, null);
+  }
+});
 
 test('Codex metadata payload preserves optional booleans across aliases and repeated normalization', () => {
   const aliases = ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata'];

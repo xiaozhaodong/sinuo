@@ -494,13 +494,14 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 
 // UsageStatsData 使用统计数据（与 HTTP API /api/v1/usage/stats 格式一致）
 type UsageStatsData struct {
-	Period        string  `json:"period"`
-	TotalRequests int     `json:"total_requests"`
-	SuccessRate   float64 `json:"success_rate"`
-	AvgDurationMs float64 `json:"avg_duration_ms"`
-	TotalCostUSD  float64 `json:"total_cost_usd"`
-	TotalTokens   int64   `json:"total_tokens"`
-	FailedCount   int     `json:"failed_requests"`
+	Period           string  `json:"period"`
+	TotalRequests    int     `json:"total_requests"`
+	SuccessRate      float64 `json:"success_rate"`
+	AvgDurationMs    float64 `json:"avg_duration_ms"`
+	TotalCostUSD     float64 `json:"total_cost_usd"`
+	TotalTokens      int64   `json:"total_tokens"`
+	FailedCount      int     `json:"failed_requests"`
+	InterruptedCount int     `json:"interrupted_requests"`
 }
 
 // UsageStatsQueryParams 使用统计查询参数
@@ -636,6 +637,7 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 
 		result.TotalRequests = int(generationStats.TotalRequests)
 		result.FailedCount = int(generationStats.FailedRequests)
+		result.InterruptedCount = int(generationStats.InterruptedRequests)
 		if generationStats.TotalRequests > 0 {
 			result.SuccessRate = float64(generationStats.SuccessRequests) / float64(generationStats.TotalRequests) * 100
 		}

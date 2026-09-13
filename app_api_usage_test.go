@@ -335,6 +335,41 @@ func explicitUsageWindow() (string, string) {
 		now.Add(1 * time.Hour).Format("2006-01-02T15:04:05-07:00")
 }
 
+func TestGetUsageStatsSeparatesClientInterruption(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	for _, row := range []struct{ id, status, reason string }{
+		{"done", "completed", ""},
+		{"client-close", "cancelled", tracking.SubscriptionClientDisconnected},
+		{"user-cancel", "cancelled", "subscription_cancelled"},
+		{"upstream-error", "failed", "subscription_response_failed"},
+		{"old-interruption", "failed", "subscription_interrupted"},
+	} {
+		insertRequestLogRow(t, app, seededRequestLog{
+			ID: row.id, Kind: tracking.RequestKindGeneration, Source: tracking.RequestSourceCodexSubscriptionProxy,
+			UpstreamType: "subscription", UpstreamName: "chatgpt-subscription", Model: "synthetic", Status: row.status,
+		})
+		if _, err := app.usageTracker.GetWriteDB().Exec("UPDATE request_logs SET failure_reason=? WHERE request_id=?", row.reason, row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, end := explicitUsageWindow()
+	for _, tc := range []struct {
+		status                     string
+		total, failed, interrupted int
+		successRate                float64
+	}{
+		{"", 5, 2, 1, 20}, {"interrupted", 1, 0, 1, 0}, {"cancelled", 1, 0, 0, 0}, {"failed", 2, 2, 0, 0},
+	} {
+		result, err := app.GetUsageStats(UsageStatsQueryParams{SourceView: "subscription", StartDate: start, EndDate: end, Status: tc.status})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.TotalRequests != tc.total || result.FailedCount != tc.failed || result.InterruptedCount != tc.interrupted || result.SuccessRate != tc.successRate {
+			t.Fatalf("筛选 %q 的统计映射不符: %+v", tc.status, result)
+		}
+	}
+}
+
 func TestGetUsageStats_SplitsCountsAndUsageByRequestKind(t *testing.T) {
 	app := newUsageStatsTestApp(t)
 	insertRequestLogRow(t, app, seededRequestLog{

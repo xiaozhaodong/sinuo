@@ -313,7 +313,9 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 	}
 	priority := events.PriorityNormal
 	changeType := "request_completed"
-	if status != "completed" {
+	if status == "cancelled" {
+		changeType = "request_cancelled"
+	} else if status != "completed" {
 		priority = events.PriorityHigh
 		changeType = "request_failed"
 	}
@@ -403,8 +405,12 @@ func (o *subscriptionTrackingObserver) SubmissionRejected(submission *subscripti
 	}
 }
 
-func (o *subscriptionTrackingObserver) SubmissionInterrupted(submission *subscriptionSubmission, _ string) {
+func (o *subscriptionTrackingObserver) SubmissionInterrupted(submission *subscriptionSubmission, reason string) {
 	if handle := o.submissionHandle(submission, true); handle != nil {
+		if reason == tracking.SubscriptionClientDisconnected {
+			handle.settle("cancelled", reason, nil, nil)
+			return
+		}
 		handle.Complete(nil, "subscription_interrupted")
 	}
 }

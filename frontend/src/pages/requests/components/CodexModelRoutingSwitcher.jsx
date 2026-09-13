@@ -27,7 +27,7 @@ const memberState = (binding, id, account) => {
   return accountState(account);
 };
 
-const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, loading = false }) => {
+const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, loading = false, embedded = false }) => {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const ref = useRef(null);
@@ -60,7 +60,7 @@ const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, load
 
   return (
     <div ref={ref} className="relative">
-      <button
+      {!embedded && <button
         type="button"
         disabled={loading}
         onClick={() => setOpen((value) => !value)}
@@ -70,11 +70,11 @@ const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, load
         <UserRound className="h-3.5 w-3.5 shrink-0 text-accent" />
         <span className="min-w-0 flex-1 truncate text-left">Codex: 模型路由 · {sorted.length} 模型</span>
         {manualCount > 0 && <span className="shrink-0 text-[10px] text-fg-subtle">{manualCount} 手动</span>}
-      </button>
+      </button>}
 
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-[540px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline">
-          <div className="flex max-h-[380px]">
+      {(embedded || open) && (
+        <div className={embedded ? 'overflow-x-auto' : 'absolute left-0 top-full z-50 mt-2 w-[540px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline'}>
+          <div className={`flex max-h-[380px] ${embedded ? 'min-w-[520px]' : ''}`}>
             <div className="w-[220px] shrink-0 overflow-y-auto border-r border-line-soft py-1">
               {sorted.map((binding) => {
                 const badge = modeLabel(binding);

@@ -56,7 +56,7 @@ const formatPercent = (value) => `${value.toFixed(1)}%`;
  * （平均耗时会在 ms / s 之间切换单位，滚动过程中单位跳变很难看，
  *  改成值变化时用 key 重挂载触发一次短高亮）。
  */
-const KpiCard = ({ label, value, format, fallback, staticText, icon: Icon, tone }) => {
+const KpiCard = ({ label, value, format, fallback, staticText, note, icon: Icon, tone }) => {
   const animatedValue = useCountUp(value);
   const isStatic = staticText !== undefined;
   const hasValue = Number.isFinite(animatedValue);
@@ -78,6 +78,7 @@ const KpiCard = ({ label, value, format, fallback, staticText, icon: Icon, tone 
           {display}
         </span>
       </div>
+      {note && <div className="mt-2 text-xs text-fg-muted">{note}</div>}
     </div>
   );
 };
@@ -98,6 +99,7 @@ const StatsOverview = ({ stats, total = 0, isBlurred = false }) => {
   const totalCost = parseFloat(stats.total_cost_usd);
   const totalTokens = Number(stats.total_tokens) || 0;
   const failedRequests = stats.failed_requests || 0;
+  const interruptedRequests = stats.interrupted_requests;
 
   const kpis = [
     { label: '总请求数', value: totalRequests, format: formatCount, icon: Zap, tone: 'tone-orange' },
@@ -105,7 +107,10 @@ const StatsOverview = ({ stats, total = 0, isBlurred = false }) => {
     { label: '平均耗时', staticText: avgDuration, icon: Clock, tone: 'tone-amber' },
     { label: '总成本', value: Number.isFinite(totalCost) ? totalCost : 0, format: formatCost, icon: DollarSign, tone: 'tone-blue' },
     { label: '总Token数 (M)', value: totalTokens, format: formatTokens, icon: FileText, tone: 'tone-indigo' },
-    { label: '失败请求', value: failedRequests, format: formatCount, icon: XCircle, tone: 'tone-rose' }
+    {
+      label: '失败请求', value: failedRequests, format: formatCount, icon: XCircle, tone: 'tone-rose',
+      note: Number.isFinite(interruptedRequests) ? `另有 ${formatCount(interruptedRequests)} 次中断 · 不计为成功或失败` : null
+    }
   ];
 
   return (

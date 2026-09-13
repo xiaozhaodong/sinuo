@@ -144,8 +144,10 @@ func appendRequestStatusFilter(query string, args []interface{}, status string) 
 		query += " AND status = ?"
 		args = append(args, "processing")
 	case "cancelled":
-		query += " AND status = ?"
+		query += " AND status = ? AND NOT " + clientInterruptionSQL
 		args = append(args, "cancelled")
+	case "interrupted":
+		query += " AND " + clientInterruptionSQL
 	case "suspended":
 		query += " AND status = ?"
 		args = append(args, "suspended")
@@ -518,19 +520,21 @@ type UsageStats struct {
 
 // AggregatedRequestStats 表示带筛选条件的请求聚合统计。
 type AggregatedRequestStats struct {
-	TotalRequests   int64
-	SuccessRequests int64
-	FailedRequests  int64
-	TotalTokens     int64
-	TotalCostUSD    float64
-	TotalDurationMs int64
-	DurationCount   int64
+	TotalRequests       int64
+	SuccessRequests     int64
+	FailedRequests      int64
+	InterruptedRequests int64
+	TotalTokens         int64
+	TotalCostUSD        float64
+	TotalDurationMs     int64
+	DurationCount       int64
 }
 
 const aggregatedRequestStatsSelectBase = `SELECT
 	COUNT(*) as total_requests,
 	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
 	COALESCE(SUM(CASE WHEN status IN (` + FailedRequestStatusesSQLList + `) THEN 1 ELSE 0 END), 0) as failed_requests,
+	COALESCE(SUM(CASE WHEN ` + clientInterruptionSQL + ` THEN 1 ELSE 0 END), 0) as interrupted_requests,
 	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
@@ -545,6 +549,7 @@ func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
 	stats.TotalRequests += other.TotalRequests
 	stats.SuccessRequests += other.SuccessRequests
 	stats.FailedRequests += other.FailedRequests
+	stats.InterruptedRequests += other.InterruptedRequests
 	stats.TotalTokens += other.TotalTokens
 	stats.TotalCostUSD += other.TotalCostUSD
 	stats.TotalDurationMs += other.TotalDurationMs
@@ -555,6 +560,7 @@ func (stats *AggregatedRequestStats) subtract(other AggregatedRequestStats) {
 	stats.TotalRequests -= other.TotalRequests
 	stats.SuccessRequests -= other.SuccessRequests
 	stats.FailedRequests -= other.FailedRequests
+	stats.InterruptedRequests -= other.InterruptedRequests
 	stats.TotalTokens -= other.TotalTokens
 	stats.TotalCostUSD -= other.TotalCostUSD
 	stats.TotalDurationMs -= other.TotalDurationMs
@@ -568,6 +574,9 @@ func (stats *AggregatedRequestStats) subtract(other AggregatedRequestStats) {
 	}
 	if stats.FailedRequests < 0 {
 		stats.FailedRequests = 0
+	}
+	if stats.InterruptedRequests < 0 {
+		stats.InterruptedRequests = 0
 	}
 	if stats.TotalTokens < 0 {
 		stats.TotalTokens = 0
@@ -587,6 +596,9 @@ func aggregatedStatsFromRequestDetails(details []RequestDetail) AggregatedReques
 	var stats AggregatedRequestStats
 	for _, req := range details {
 		stats.TotalRequests++
+		if isClientInterruption(req.Status, req.RequestSource, req.FailureReason) {
+			stats.InterruptedRequests++
+		}
 		switch req.Status {
 		case "completed", "processing":
 			stats.SuccessRequests++
@@ -613,6 +625,7 @@ func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context,
 		&stats.TotalRequests,
 		&stats.SuccessRequests,
 		&stats.FailedRequests,
+		&stats.InterruptedRequests,
 		&stats.TotalTokens,
 		&stats.TotalCostUSD,
 		&stats.TotalDurationMs,
@@ -639,6 +652,7 @@ func (ut *UsageTracker) queryAggregatedRequestStatsBySourceAndRequestIDs(ctx con
 		&stats.TotalRequests,
 		&stats.SuccessRequests,
 		&stats.FailedRequests,
+		&stats.InterruptedRequests,
 		&stats.TotalTokens,
 		&stats.TotalCostUSD,
 		&stats.TotalDurationMs,

@@ -2552,7 +2552,7 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 				}
 			}
 			// 状态过滤
-			if !requestStatusMatchesFilter(opts.Status, req.Status) {
+			if !requestStatusMatchesFilter(opts.Status, requestDisplayStatus(req.Status, req.RequestSource, req.FailureReason)) {
 				continue
 			}
 			// 模型过滤

@@ -272,8 +272,11 @@ test('轨道退出可访问性树 —— 状态不能被读屏念两遍', () => 
   assert.doesNotMatch(RAIL_CODE, /role="img"/, 'aria-hidden 之后 role 已无意义，留着会误导');
   assert.doesNotMatch(RAIL_CODE, /aria-label/, '可访问名由旁边的可见文字承担');
 
-  // 名称的唯一来源，删掉状态就只剩颜色编码了
-  assert.match(RAIL_CODE, /getStatusConfig\(request\.status\)\.label/,
+  // 名称的唯一来源，使用与轨道一致的展示分类，删掉文字就只剩颜色编码了
+  const traceCell = RAIL_CODE.slice(RAIL_CODE.indexOf('export const RequestTraceCell'));
+  assert.match(traceCell, /getRequestPresentation\(request\)/,
+    'RequestTraceCell 必须使用统一的展示分类');
+  assert.match(traceCell, /getStatusConfig\(status\)\.label/,
     'RequestTraceCell 必须保留可见状态文字');
 });
 

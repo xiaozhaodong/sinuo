@@ -115,7 +115,8 @@ const AccountPoolSwitcher = ({
   onSwitch,
   onSwitchAuto,
   loading = false,
-  modelRoutingEnabled = false
+  modelRoutingEnabled = false,
+  embedded = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -228,7 +229,7 @@ const AccountPoolSwitcher = ({
 
   return (
     <div className="relative" ref={containerRef}>
-      <button
+      {!embedded && <button
         onClick={() => {
           if (isOpen) {
             closePanel();
@@ -262,12 +263,12 @@ const AccountPoolSwitcher = ({
         </div>
 
         <ArrowLeftRight className={`w-3.5 h-3.5 ml-1 text-fg-subtle transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      </button>}
 
-      {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-[360px] bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+      {(embedded || isOpen) && (
+        <div className={embedded ? 'min-w-0' : 'absolute top-full left-0 mt-2 w-[360px] bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200'}>
           <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
-            <div className="text-xs font-semibold text-fg-muted uppercase tracking-wider">Codex 模式</div>
+            <div className="text-xs font-semibold text-fg-muted uppercase tracking-wider">账号池调度策略</div>
             <div className="text-[10px] text-fg-subtle mt-0.5">可固定具体账号，也可切回 Auto 按编排调度</div>
           </div>
 

@@ -4,6 +4,7 @@
 // ============================================
 
 import { useCallback, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
 import {
@@ -79,7 +80,7 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
   return `${label}失败，失败 ${failedCount} 个${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}`;
 };
 
-const AccountPoolPage = () => {
+const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null }) => {
   const { timezone } = useTimezone();
   const { notice, showNotice, closeNotice } = useNotice();
   const { accounts, loading, error, loadData } = useAccountPoolAccounts();
@@ -414,18 +415,23 @@ const AccountPoolPage = () => {
     return <LoadingSpinner text="加载账号数据..." />;
   }
 
+  const header = (
+    <PageHeader
+      embedded={embedded}
+      loading={busyKey === 'reload'}
+      onCreate={openCreateAccount}
+      onRefresh={handleRefreshAll}
+      onOpenScheduler={() => setSchedulerDrawerOpen(true)}
+      onOpenCodexModels={() => setCodexModelsOpen(true)}
+      onOpenCodexModelRouting={() => setCodexModelRoutingOpen(true)}
+    />
+  );
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      <PageHeader
-        loading={busyKey === 'reload'}
-        onCreate={openCreateAccount}
-        onRefresh={handleRefreshAll}
-        onOpenScheduler={() => setSchedulerDrawerOpen(true)}
-        onOpenCodexModels={() => setCodexModelsOpen(true)}
-        onOpenCodexModelRouting={() => setCodexModelRoutingOpen(true)}
-      />
+      {headerTarget ? (active && createPortal(header, headerTarget)) : (!embedded && header)}
 
-      <NoticeToast notice={notice} onClose={closeNotice} />
+      <NoticeToast notice={active ? notice : null} onClose={closeNotice} />
 
       <AccountInventorySection
         inventory={dashboardModel.inventory}
@@ -443,7 +449,7 @@ const AccountPoolPage = () => {
       />
 
       <AccountDetailsDrawer
-        open={Boolean(sharedDrawerRow)}
+        open={active && Boolean(sharedDrawerRow)}
         row={sharedDrawerRow}
         busyKey={busyKey}
         onClose={closeSharedDrawer}
@@ -457,7 +463,7 @@ const AccountPoolPage = () => {
       />
 
       <SchedulerDrawer
-        open={schedulerDrawerOpen}
+        open={active && schedulerDrawerOpen}
         onClose={() => setSchedulerDrawerOpen(false)}
         scheduler={dashboardModel.scheduler}
         latestScheduleSnapshot={latestScheduleSnapshot}
@@ -471,20 +477,20 @@ const AccountPoolPage = () => {
       />
 
       <CodexModelsPanel
-        open={codexModelsOpen}
+        open={active && codexModelsOpen}
         onClose={() => setCodexModelsOpen(false)}
         showNotice={showNotice}
       />
 
       <CodexModelRoutingDrawer
-        open={codexModelRoutingOpen}
+        open={active && codexModelRoutingOpen}
         onClose={() => setCodexModelRoutingOpen(false)}
         accounts={accounts}
         showNotice={showNotice}
       />
 
       <AccountFormDialog
-        open={accountModalOpen}
+        open={active && accountModalOpen}
         editingAccount={editingAccount}
         accountSubmitting={accountSubmitting}
         accountCredentialLoading={accountCredentialLoading}
@@ -506,7 +512,7 @@ const AccountPoolPage = () => {
       />
 
       <DeleteAccountDialog
-        deleteTarget={deleteTarget}
+        deleteTarget={active ? deleteTarget : null}
         busyKey={busyKey}
         onClose={closeDeleteDialog}
         onSubmit={handleConfirmDeleteAccount}

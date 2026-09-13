@@ -24,8 +24,8 @@ const SettingsPage = lazy(() => import('@pages/settings/index.jsx'));
 const ConfigPage = lazy(() => import('@pages/config/index.jsx'));
 // v5.1: 系统日志页面
 const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
-// v6.0: 账号池页面
-const AccountPoolPage = lazy(() => import('@pages/account-pool/index.jsx'));
+// Codex 管理页面（账号池 + 客户端接入）
+const CodexPage = lazy(() => import('@pages/codex/index.jsx'));
 // v6.1: 隐私保护页面
 const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index.jsx'));
 const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index.jsx'));
@@ -36,6 +36,7 @@ const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index
 
 const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [activeCodexTab, setActiveCodexTab] = useState('accounts');
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
   // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
@@ -68,6 +69,11 @@ const AppRoutes = () => {
 
   // SSE 连接状态（用于全局状态指示）
   const { connectionStatus } = useSSE(handleRealtimeEvent, { events: 'status,notification' });
+
+  const navigateToCodexAccess = useCallback(() => {
+    setActiveCodexTab('client-access');
+    setActiveTab('account-pool');
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,9 +111,9 @@ const AppRoutes = () => {
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,
-      'account-pool': <AccountPoolPage />,
+      'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} />,
       // v5.1: 设置页面（可编辑）
-      settings: <SettingsPage />,
+      settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} />,
       // 保留只读配置页面
       config: <ConfigPage />,
       // v5.1: 系统日志页面

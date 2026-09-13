@@ -2,12 +2,96 @@ package tracking
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
+
+func TestClientInterruptionFiltersAndStatsAcrossDatabaseAndHotPool(t *testing.T) {
+	tracker, err := NewUsageTracker(&Config{
+		Enabled: true, DatabasePath: filepath.Join(t.TempDir(), "usage.db"),
+		BufferSize: 100, BatchSize: 10, FlushInterval: time.Hour,
+		CleanupInterval: 24 * time.Hour, RetentionDays: 30,
+		HotPool: &HotPoolSettings{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+	now := time.Now()
+	for _, row := range []struct{ name, status, source, reason string }{
+		{"interrupted", "cancelled", RequestSourceCodexSubscriptionProxy, SubscriptionClientDisconnected},
+		{"cancelled", "cancelled", RequestSourceCodexSubscriptionProxy, "subscription_cancelled"},
+		{"legacy_source", "cancelled", RequestSourceLegacyProxy, SubscriptionClientDisconnected},
+		{"legacy_unknown", "failed", RequestSourceCodexSubscriptionProxy, "subscription_interrupted"},
+		{"upstream_error", "failed", RequestSourceCodexSubscriptionProxy, "subscription_response_failed"},
+		{"completed", "completed", RequestSourceCodexSubscriptionProxy, ""},
+	} {
+		kind, upstream := RequestKindGeneration, "subscription"
+		if row.source == RequestSourceLegacyProxy {
+			kind, upstream = RequestKindLegacy, "endpoint"
+		}
+		for _, location := range []string{"db", "hot", "overlap"} {
+			id := fmt.Sprintf("%s-%s", row.name, location)
+			if location != "hot" {
+				_, err := tracker.GetWriteDB().Exec(`INSERT INTO request_logs
+					(request_id, start_time, status, request_family, request_source, request_kind, upstream_type, failure_reason)
+					VALUES (?, ?, ?, 'codex', ?, ?, ?, ?)`,
+					id, timezonepolicy.FormatStorage(now), row.status, row.source, kind, upstream, row.reason)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if location != "db" {
+				err := tracker.RecordRequestStartAtWithDimensions(id, "127.0.0.1", "synthetic", "POST", "/v1/responses", RequestFamilyCodex, true, now, RequestDimensions{
+					RequestSource: row.source, RequestKind: kind, UpstreamType: upstream,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := tracker.hotPool.Update(id, func(req *ActiveRequest) {
+					req.Status, req.FailureReason = row.status, row.reason
+				}); err != nil {
+					t.Fatal(err)
+				}
+				defer tracker.hotPool.Remove(id)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		filter                              string
+		total, failed, interrupted, success int64
+	}{
+		{"", 18, 6, 3, 3}, {"interrupted", 3, 0, 3, 0},
+		{"cancelled", 6, 0, 0, 0}, {"failed", 6, 6, 0, 0}, {"completed", 3, 0, 0, 3},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			opts := &QueryOptions{Status: tc.filter, UpstreamType: "all", Limit: 2}
+			rows, count, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != tc.total || len(rows) != 2 {
+				t.Fatalf("筛选和分页不一致: count=%d rows=%d want=%d", count, len(rows), tc.total)
+			}
+			for _, row := range rows {
+				if tc.filter == "interrupted" && !isClientInterruption(row.Status, row.RequestSource, row.FailureReason) {
+					t.Fatalf("其他来源或原因被误判为中断: %+v", row)
+				}
+			}
+			stats, err := tracker.QueryAggregatedRequestStatsWithHotPool(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stats.TotalRequests != tc.total || stats.FailedRequests != tc.failed || stats.InterruptedRequests != tc.interrupted || stats.SuccessRequests != tc.success {
+				t.Fatalf("数据库、热池及重叠去重的统计不一致: %+v", stats)
+			}
+		})
+	}
+}
 
 func TestQueryAggregatedRequestStatsWithHotPool(t *testing.T) {
 	tempDir := t.TempDir()

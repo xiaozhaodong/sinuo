@@ -31,6 +31,7 @@ import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { getRequestPresentation } from '../utils/requestPresentation.js';
 
 /**
  * 信息行组件
@@ -146,6 +147,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   // 未知用量与成本显示占位符：终态但没收到 usage 时，0 是「还不知道」而不是「用了 0 个」。
   const usageKnown = request.usageKnown !== false;
   const costKnown = request.costKnown !== false;
+  const presentation = getRequestPresentation(request);
 
   // 计算 Token 总数
   const totalTokens = (request.inputTokens || 0) + (request.outputTokens || 0);
@@ -241,7 +243,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                     <span className="text-sm font-medium">请求状态</span>
                     <Activity className="w-4 h-4" />
                   </div>
-                  <RequestStatusBadge status={request.status} />
+                  <RequestStatusBadge status={presentation.status} />
                 </div>
 
                 <div className="tone-orange rounded-xl p-4 border">
@@ -294,27 +296,39 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                 </div>
               </div>
 
-              {/* 错误信息（如果有） */}
+              {/* 取消和中断用中性的结束原因；明确失败仍保留错误提示。 */}
               {(['failed', 'error', 'cancelled', 'timeout'].includes(request.status) ||
-                request.failure_reason || request.cancel_reason) && (
-                <div className="bg-danger-soft rounded-xl border border-danger-line overflow-hidden">
-                  <div className="px-4 py-3 bg-danger-line/30 border-b border-danger-line">
-                    <h3 className="text-sm font-semibold text-danger flex items-center gap-2">
+                presentation.failureReason || presentation.cancelReason) && (
+                <div className={`rounded-xl border overflow-hidden ${presentation.isNeutral ? 'bg-surface-sub border-line' : 'bg-danger-soft border-danger-line'}`}>
+                  <div className={`px-4 py-3 border-b ${presentation.isNeutral ? 'border-line' : 'bg-danger-line/30 border-danger-line'}`}>
+                    <h3 className={`text-sm font-semibold flex items-center gap-2 ${presentation.isNeutral ? 'text-fg-muted' : 'text-danger'}`}>
                       <AlertCircle className="w-4 h-4" />
-                      错误信息
+                      {presentation.heading}
                     </h3>
                   </div>
                   <div className="p-4 space-y-2">
-                    {request.failure_reason && (
+                    {presentation.isInterrupted ? (
+                      <>
+                        <p className="text-sm font-medium text-fg-body">客户端连接断开</p>
+                        <p className="text-sm leading-relaxed text-fg-muted">{presentation.description}</p>
+                        <details className="pt-2 text-xs text-fg-muted">
+                          <summary className="cursor-pointer select-none">诊断信息</summary>
+                          <dl className="mt-2 space-y-1 break-all">
+                            <div><dt className="inline">请求 ID：</dt><dd className="inline font-mono">{request.requestId}</dd></div>
+                            <div><dt className="inline">原因代码：</dt><dd className="inline font-mono">{presentation.failureReason}</dd></div>
+                          </dl>
+                        </details>
+                      </>
+                    ) : presentation.failureReason && (
                       <div className="text-sm">
-                        <span className="font-medium text-fg-muted">失败原因：</span>
-                        <span className="text-danger">{request.failure_reason}</span>
+                        <span className="font-medium text-fg-muted">{presentation.isNeutral ? '原因：' : '失败原因：'}</span>
+                        <span className={presentation.isNeutral ? 'text-fg-body' : 'text-danger'}>{presentation.failureReason}</span>
                       </div>
                     )}
-                    {request.cancel_reason && (
+                    {presentation.cancelReason && (
                       <div className="text-sm">
                         <span className="font-medium text-fg-muted">取消原因：</span>
-                        <span className="text-danger">{request.cancel_reason}</span>
+                        <span className={presentation.isNeutral ? 'text-fg-body' : 'text-danger'}>{presentation.cancelReason}</span>
                       </div>
                     )}
                   </div>

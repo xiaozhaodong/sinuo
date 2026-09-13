@@ -24,6 +24,7 @@ import (
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/subscriptionws"
 	svc "cc-forwarder/internal/service"
+	"cc-forwarder/internal/tracking"
 
 	"github.com/coder/websocket"
 )
@@ -131,11 +132,34 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	}
 	bridgeStarted := time.Now()
 	stats := subscriptionws.Bridge(r.Context(), downstream, upstream, options)
-	submissions.close("connection_closed")
 	p.registry.mu.Lock()
 	proxyStopping := p.registry.closed
 	p.registry.mu.Unlock()
+	submissions.close(subscriptionWSInterruptionReason(stats, proxyStopping))
 	p.logBridgeEnd(requestID, stats, time.Since(bridgeStarted), options, proxyStopping)
+}
+
+// subscriptionWSInterruptionReason 只影响追踪呈现，不改变连接关闭和转发行为。
+// EOF 只能证明客户端连接结束；协议错误、超时等仍按失败处理，不能推断正常续接。
+func subscriptionWSInterruptionReason(stats subscriptionws.BridgeStats, proxyStopping bool) string {
+	first := stats.FirstObserved
+	if proxyStopping || stats.ParentContextError != "none" ||
+		first.Direction != subscriptionws.DirectionDownstreamToUpstream || first.Phase != "read" ||
+		(first.Error.Kind != "eof" && first.Error.Kind != "normal_close") {
+		return "connection_closed"
+	}
+	for _, end := range []subscriptionws.IOEnd{
+		stats.DownstreamToUpstream.ReadEnd, stats.DownstreamToUpstream.WriteEnd,
+		stats.UpstreamToDownstream.ReadEnd, stats.UpstreamToDownstream.WriteEnd,
+	} {
+		switch end.Error.Kind {
+		case "", "none", "eof", "normal_close", "context_canceled", "connection_closed", "queue_closed":
+			// 允许同一次关闭过程中的正常清理结果；有独立错误时保留失败。
+		default:
+			return "connection_closed"
+		}
+	}
+	return tracking.SubscriptionClientDisconnected
 }
 
 // logBridgeEnd 拆成一条起因摘要和两条方向摘要，避免 SimpleHandler 默认 500 字节截断。

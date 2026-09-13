@@ -1084,14 +1084,20 @@ export const getUsageStats = async (params = {}) => {
   const data = await WailsApp.GetUsageStats(queryParams);
 
   // 返回与 HTTP API 一致的格式
+  return mapUsageStats(data, queryParams.period);
+};
+
+// 统计展示映射独立校验：旧后端缺少中断计数时保持未知，不能伪造为零。
+export const mapUsageStats = (data, period = '30d') => {
   return {
-    period: data.period || queryParams.period,
+    period: data.period || period,
     total_requests: data.total_requests || 0,
     success_rate: data.success_rate || 0,
     avg_duration_ms: data.avg_duration_ms || 0,
     total_cost_usd: data.total_cost_usd || 0,
     total_tokens: data.total_tokens || 0,
-    failed_requests: data.failed_requests || 0
+    failed_requests: data.failed_requests || 0,
+    interrupted_requests: Number.isFinite(data.interrupted_requests) ? data.interrupted_requests : null
   };
 };
 

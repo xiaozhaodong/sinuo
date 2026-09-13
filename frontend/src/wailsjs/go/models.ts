@@ -2533,6 +2533,7 @@ export namespace main {
 	    total_cost_usd: number;
 	    total_tokens: number;
 	    failed_requests: number;
+	    interrupted_requests: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new UsageStatsData(source);
@@ -2547,6 +2548,7 @@ export namespace main {
 	        this.total_cost_usd = source["total_cost_usd"];
 	        this.total_tokens = source["total_tokens"];
 	        this.failed_requests = source["failed_requests"];
+	        this.interrupted_requests = source["interrupted_requests"];
 	    }
 	}
 	export class UsageStatsQueryParams {

@@ -1,5 +1,5 @@
 // ============================================
-// CodexSubscriptionProxyCard - Codex 订阅代理独立入口设置卡
+// CodexSubscriptionProxyCard - Codex 管理页的客户端接入配置卡
 // 2026-09-10
 //
 // 交互边界：
@@ -44,7 +44,8 @@ import {
   subscriptionProxyPrivacyWarning,
   subscriptionProxyStateMeta,
   validateSubscriptionProxyForm
-} from '../utils/subscriptionProxyViewModel.js';
+} from './subscriptionProxyViewModel.js';
+import { subscriptionProxyConfigInput } from './subscriptionProxyOperations.js';
 
 const TONE_CLASSES = {
   neutral: 'bg-surface-mut text-fg-muted',
@@ -211,7 +212,7 @@ const CodexSubscriptionProxyCard = () => {
       });
     }
     const nextStatus = await refreshRuntime();
-    setNotice(buildSubscriptionProxyNotice({ intent, status: nextStatus, ...flags }));
+    setNotice(buildSubscriptionProxyNotice({ intent, config: result.config, status: nextStatus, ...flags }));
   }, [refreshRuntime]);
 
   // 普通保存不回传明文，但监听地址可能已变：用内存中的密钥按新地址重建，
@@ -278,13 +279,12 @@ const CodexSubscriptionProxyCard = () => {
       return;
     }
     const current = config;
-    const nextInput = {
-      enabled: current.enabled,
+    const nextInput = subscriptionProxyConfigInput({
+      ...current,
       mode: form.mode,
-      listen_host: form.listenHost,
-      listen_port: Number(form.listenPort),
-      ws_compression: current.wsCompression
-    };
+      listenHost: form.listenHost,
+      listenPort: Number(form.listenPort)
+    });
     runAction(
       () => saveCodexSubscriptionProxyConfig(nextInput, current.revision),
       'save',
@@ -318,7 +318,7 @@ const CodexSubscriptionProxyCard = () => {
     return (
       <div className="bg-surface rounded-2xl border border-line shadow-sm p-6">
         <ErrorMessage
-          title="Codex 订阅代理配置读取失败"
+          title="Codex 客户端接入配置读取失败"
           message={loadError}
           onRetry={load}
         />
@@ -329,7 +329,7 @@ const CodexSubscriptionProxyCard = () => {
   if (loading) {
     return (
       <div className="bg-surface rounded-2xl border border-line shadow-sm p-6">
-        <LoadingSpinner text="加载 Codex 订阅代理..." />
+        <LoadingSpinner text="加载 Codex 客户端接入..." />
       </div>
     );
   }
@@ -350,11 +350,11 @@ const CodexSubscriptionProxyCard = () => {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-fg">Codex 订阅代理</h3>
+              <h3 className="font-semibold text-fg">Codex 客户端接入</h3>
               <StateBadge state={status?.state} />
             </div>
             <p className="text-xs text-fg-subtle mt-0.5">
-              独立回环入口，让 Codex 原生客户端接入：Responses 可用客户端订阅，也可切到账号池
+              配置客户端接入、运行状态与凭据；日常模式切换也可在请求追踪页完成
             </p>
           </div>
         </div>
@@ -426,7 +426,7 @@ const CodexSubscriptionProxyCard = () => {
             type="button"
             role="switch"
             aria-checked={config?.enabled === true}
-            aria-label="启用 Codex 订阅代理"
+            aria-label="启用 Codex 客户端接入"
             disabled={busy || !config?.initialized}
             onClick={handleToggleEnabled}
             className={`
@@ -555,7 +555,7 @@ const CodexSubscriptionProxyCard = () => {
                   </div>
                   <p className="text-xs text-fg-subtle">
                     写入用户级 ~/.codex/config.toml；项目级同名配置不能覆盖。请保留 /backend-api/codex 后缀，
-                    改完完整退出并重启 Codex 后再使用。日常切换模式在本页完成。
+                    改完完整退出并重启 Codex 后再使用。日常切换模式可在本页或请求追踪页完成。
                   </p>
                 </div>
                 <button
@@ -602,7 +602,7 @@ const CodexSubscriptionProxyCard = () => {
 
         {statusRunning && (status?.activeWebSockets ?? 0) > 0 && (
           <p className="text-xs text-fg-subtle">
-            当前有 {status.activeWebSockets} 条已建立的订阅 WS 仍在按原模式工作，重连后才读取新设置。
+            当前底层 WS 连接数为 {status.activeWebSockets}（包含上下游两侧）；已建立连接在重连后读取新模式。
           </p>
         )}
       </div>

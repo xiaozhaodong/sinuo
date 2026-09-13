@@ -26,7 +26,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   const tabs = [
     { name: 'overview', label: '概览' },
     { name: 'endpoints', label: 'Claude 端点' },
-    { name: 'account-pool', label: 'Codex 账号' },
+    { name: 'account-pool', label: 'Codex 管理' },
     { name: 'requests', label: '请求追踪' },
     // v6.1: 隐私保护
     { name: 'privacy-protection', label: '隐私保护' },

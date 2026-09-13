@@ -12,6 +12,7 @@ import { getStatusConfig } from '@utils/constants.js';
 import { IN_FLIGHT_STATUSES } from '../utils/constants.js';
 import { buildLifecycleSegments, railSegmentColors } from '../utils/lifecycle.js';
 import { formatTimingBadge } from '../utils/timing.js';
+import { getRequestPresentation } from '../utils/requestPresentation.js';
 
 // 轨道视觉只有 7 档，比状态机少：error 与 failed 同形、timeout 归入 failed
 // （都是「没跑完」）。这两组的差异交给状态文字与详情面板，轨道不承担。
@@ -25,7 +26,8 @@ const RAIL_VARIANT = {
   failed: 'failed',
   error: 'failed',
   timeout: 'failed',
-  cancelled: 'cancelled'
+  cancelled: 'cancelled',
+  interrupted: 'cancelled'
 };
 
 // 轨道末端符号。刻意用裸符号而非 RequestStatusBadge 的 CheckCircle2 / XCircle：
@@ -60,7 +62,7 @@ const SETTLE_MS = 600;
  *
  * 首屏与翻页拿到的终态行是历史数据，全表一起闪一遍毫无意义，
  * 所以判据不是「现在是终态」而是「上一帧还在跑、这一帧跑完了」。
- * cancelled 不在此列：取消是用户自己发起的，不需要被通知。
+ * cancelled 档位包括取消和客户端中断，使用静态中性样式，不播放失败提醒动效。
  *
  * 走 ref 直接改 class 而不是 setState：落位是纯视觉的一次性效果，
  * 让它进渲染状态会为每条完成的请求多推两次重渲染（一次点亮一次熄灭），
@@ -105,7 +107,7 @@ const useSettleOnFinish = (status, variant) => {
  * React 就会重建节点，流光动画随之跳回起点，看着像卡顿。
  */
 const TraceRail = ({ request }) => {
-  const status = request.status;
+  const status = getRequestPresentation(request).status;
   const variant = RAIL_VARIANT[status] || 'pending';
   const inFlight = IN_FLIGHT_STATUSES.has(status);
   const CapIcon = CAP_ICON[variant];
@@ -166,13 +168,16 @@ const TraceRail = ({ request }) => {
  * 更硬的理由是 getStatusConfig 的兜底会把未知状态的 label 退化成后端原始串，
  * 那种时候没有上限就会把整列撑开 —— truncate 负责把它截住。
  */
-export const RequestTraceCell = ({ request }) => (
-  <span className="inline-flex w-[124px] items-center">
-    <TraceRail request={request} />
-    <span className={`ml-2.5 min-w-0 truncate text-xs font-medium ${LABEL_CLASS[request.status] || 'text-fg-muted'}`}>
-      {getStatusConfig(request.status).label}
+export const RequestTraceCell = ({ request }) => {
+  const { status, description } = getRequestPresentation(request);
+  return (
+    <span className="inline-flex w-[124px] items-center" title={description || undefined}>
+      <TraceRail request={request} />
+      <span className={`ml-2.5 min-w-0 truncate text-xs font-medium ${LABEL_CLASS[status] || 'text-fg-muted'}`}>
+        {getStatusConfig(status).label}
+      </span>
     </span>
-  </span>
-);
+  );
+};
 
 export default TraceRail;

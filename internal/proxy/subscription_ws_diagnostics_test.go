@@ -12,10 +12,97 @@ import (
 	"testing"
 	"time"
 
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/proxy/subscriptionws"
+	"cc-forwarder/internal/tracking"
 
 	"github.com/coder/websocket"
 )
+
+type subscriptionPresentationEventBus struct {
+	events.EventBus
+	published []events.Event
+}
+
+func (b *subscriptionPresentationEventBus) Publish(event events.Event) {
+	b.published = append(b.published, event)
+}
+
+func TestSubscriptionWSClientInterruptionPresentation(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	for _, tc := range []struct {
+		name          string
+		direction     subscriptionws.Direction
+		phase, kind   string
+		parent, other string
+		stopping      bool
+		interrupted   bool
+	}{
+		{"client_eof", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "context_canceled", false, true},
+		{"client_normal_close", subscriptionws.DirectionDownstreamToUpstream, "read", "normal_close", "none", "connection_closed", false, true},
+		{"upstream_eof", subscriptionws.DirectionUpstreamToDownstream, "read", "eof", "none", "", false, false},
+		{"upstream_normal_close_without_terminal", subscriptionws.DirectionUpstreamToDownstream, "read", "normal_close", "none", "", false, false},
+		{"write_eof", subscriptionws.DirectionUpstreamToDownstream, "write", "eof", "none", "", false, false},
+		{"truncated_frame", subscriptionws.DirectionDownstreamToUpstream, "read", "unexpected_eof", "none", "", false, false},
+		{"client_reset", subscriptionws.DirectionDownstreamToUpstream, "read", "connection_reset", "none", "", false, false},
+		{"abnormal_close", subscriptionws.DirectionDownstreamToUpstream, "read", "peer_close", "none", "", false, false},
+		{"parent_cancel", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "context_canceled", "", false, false},
+		{"proxy_stop", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "", true, false},
+		{"write_timeout", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "deadline_exceeded", false, false},
+		{"compression_error", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "invalid_compressed_data", false, false},
+		{"protocol_error", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "websocket_protocol_error", false, false},
+		{"message_limit", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "message_too_big", false, false},
+		{"unknown_error", subscriptionws.DirectionDownstreamToUpstream, "read", "eof", "none", "other", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := subscriptionws.BridgeStats{
+				ParentContextError:   tc.parent,
+				FirstObserved:        subscriptionws.IOEnd{Direction: tc.direction, Phase: tc.phase, Error: subscriptionws.ErrorDiagnostic{Kind: tc.kind}},
+				UpstreamToDownstream: subscriptionws.LaneStats{WriteEnd: subscriptionws.IOEnd{Error: subscriptionws.ErrorDiagnostic{Kind: tc.other}}},
+			}
+			bus := &subscriptionPresentationEventBus{}
+			observer := newSubscriptionTrackingObserver(tracker, bus)
+			state := newSubscriptionSubmissionState(context.Background(), "conn-"+tc.name, observer)
+			submission, _ := state.beginCreate([]byte(`{"type":"response.create","model":"synthetic-model"}`))
+			state.close(subscriptionWSInterruptionReason(stats, tc.stopping))
+			row := waitSubscriptionDetail(t, tracker, submission.RequestID)
+			wantStatus, wantReason, wantChange := "failed", "subscription_interrupted", "request_failed"
+			wantPriority := events.PriorityHigh
+			if tc.interrupted {
+				wantStatus, wantReason, wantChange = "cancelled", tracking.SubscriptionClientDisconnected, "request_cancelled"
+				wantPriority = events.PriorityNormal
+			}
+			if row.Status != wantStatus || row.FailureReason != wantReason {
+				t.Fatalf("结算分类不符: status=%s reason=%s", row.Status, row.FailureReason)
+			}
+			if row.UsageKnown || row.CostKnown || row.HTTPStatusCode != nil {
+				t.Fatalf("中断不得伪造用量、成本或 HTTP 成功状态: %+v", row)
+			}
+			last := bus.published[len(bus.published)-1]
+			if last.Type != events.EventRequestCompleted || last.Priority != wantPriority || last.Data["change_type"] != wantChange {
+				t.Fatalf("实时展示的终态与分类不一致: %+v", last)
+			}
+		})
+	}
+}
+
+func TestSubscriptionWSClientClosePreservesTerminalResult(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	for _, terminal := range []string{"completed", "failed", "cancelled"} {
+		t.Run(terminal, func(t *testing.T) {
+			observer := newSubscriptionTrackingObserver(tracker, nil)
+			state := newSubscriptionSubmissionState(context.Background(), "terminal-"+terminal, observer)
+			submission, _ := state.beginCreate([]byte(`{"type":"response.create","model":"synthetic-model"}`))
+			state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-synthetic"}}`))
+			state.handleUpstream([]byte(fmt.Sprintf(`{"type":"response.%s","response":{"id":"resp-synthetic","usage":{"input_tokens":2,"output_tokens":1}}}`, terminal)))
+			state.close(tracking.SubscriptionClientDisconnected)
+			row := waitSubscriptionDetail(t, tracker, submission.RequestID)
+			if row.Status != terminal || row.FailureReason == tracking.SubscriptionClientDisconnected || !row.UsageKnown {
+				t.Fatalf("连接关闭覆盖了已有终态或用量: %+v", row)
+			}
+		})
+	}
+}
 
 // 追踪器会异步写日志，测试读取时也要持锁。
 type subscriptionDiagnosticBuffer struct {

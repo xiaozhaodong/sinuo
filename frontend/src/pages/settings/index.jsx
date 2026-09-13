@@ -18,11 +18,13 @@ import {
   Lock,
   Hash,
   Archive,
-  ImageIcon
+  ImageIcon,
+  ArrowRight,
+  TerminalSquare
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
-import { SettingItem, SettingsSection, PortInfo, CodexSubscriptionProxyCard } from './components';
-import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from './utils/subscriptionProxyViewModel.js';
+import { SettingItem, SettingsSection, PortInfo } from './components';
+import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
 import {
   isWailsEnvironment,
   getSettingCategories,
@@ -56,7 +58,7 @@ const CATEGORY_ICONS = {
 // Settings 页面主组件
 // ============================================
 
-const SettingsPage = () => {
+const SettingsPage = ({ onNavigateToCodexAccess }) => {
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState([]);
   const [portInfo, setPortInfo] = useState(null);
@@ -275,12 +277,29 @@ const SettingsPage = () => {
         </div>
       )}
 
-      {/*
-        Codex 订阅代理：受保护分类，只走专用卡片，不参与上面的通用保存与重置。
-        位置固定在通用区块之前：通用设置的加载/失败/刷新/重置都不会重建它，
-        否则尚未复制的一次性接入地址与未保存输入会随重挂载一起丢失。
-      */}
-      <CodexSubscriptionProxyCard />
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="rounded-lg bg-accent-soft p-2 text-accent">
+            <TerminalSquare size={18} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-fg">Codex 客户端接入</h2>
+            <p className="mt-1 text-xs text-fg-muted">
+              订阅代理的启停、模式、监听地址与一次性接入密钥已移至 Codex 管理。
+            </p>
+          </div>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={ArrowRight}
+          onClick={onNavigateToCodexAccess}
+          disabled={!onNavigateToCodexAccess}
+          className="shrink-0"
+        >
+          前往客户端接入
+        </Button>
+      </div>
 
       {error
         ? <ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} />

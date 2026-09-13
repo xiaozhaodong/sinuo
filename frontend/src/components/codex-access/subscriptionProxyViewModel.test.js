@@ -68,7 +68,8 @@ test('模式切换只说 HTTP 下一请求与 WS 重连生效，并带出仍在�
   assert.equal(notice.type, 'success');
   assert.match(notice.text, /HTTP 从下一请求生效/);
   assert.match(notice.text, /WS 在重连后生效/);
-  assert.match(notice.text, /3 条/);
+  assert.match(notice.text, /WS 连接数为 3/);
+  assert.match(notice.text, /上下游两侧/);
   // 不能承诺“下一轮必定切换”
   assert.doesNotMatch(notice.text, /下一轮必定/);
   assert.doesNotMatch(notice.text, /立即/);
@@ -99,6 +100,16 @@ test('运行态没读到就不能确认已停用', () => {
     status: null
   });
   assert.doesNotMatch(saved.text, /重新监听/);
+  assert.equal(saved.type, 'info');
+});
+
+test('模式配置保存后只有相同版本运行态才可确认应用', () => {
+  const config = { mode: 'pool', revision: 8 };
+  for (const status of [null, { state: 'stopped' }, { state: 'running', mode: 'pool', revision: 7 }, { state: 'running', mode: 'subscription', revision: 8 }]) {
+    const notice = buildSubscriptionProxyNotice({ intent: 'save', modeChanged: true, config, status });
+    assert.equal(notice.type, 'info');
+    assert.match(notice.text, /刷新/);
+  }
 });
 
 test('隐私关闭、仅检测、无规则各自显示真实状态，不统一说成已脱敏', () => {

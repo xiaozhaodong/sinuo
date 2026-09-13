@@ -13,7 +13,8 @@ export const STATUS_OPTIONS = {
   suspended: '已挂起',
   completed: '已完成',
   failed: '已失败',
-  cancelled: '已取消'
+  cancelled: '已取消',
+  interrupted: '已中断'
 };
 
 // 「进行中」的状态集合，与上面的 STATUS_OPTIONS 状态机对齐。
