@@ -1,6 +1,6 @@
 // Codex 接入模式操作：后端配置是唯一事实来源，控制器只持有当前页面的读回快照。
 import { resolveErrorMessage } from '../../utils/errors.js';
-import { buildSubscriptionProxyNotice, isRevisionConflict } from './subscriptionProxyViewModel.js';
+import { buildSubscriptionProxyNotice, isRevisionConflict, isSubscriptionProxyStoppedByUser, resolveSubscriptionProxyDisplayState } from './subscriptionProxyViewModel.js';
 
 const MODES = new Set(['subscription', 'pool']);
 
@@ -14,7 +14,7 @@ export const readSubscriptionProxyState = async (api) => {
   };
 };
 
-export const modeSwitchBlockReason = ({ config, status, configError, statusError }) => {
+export const modeSwitchBlockReason = ({ config, status, configError, statusError, fallbackRouteLabel = '' }) => {
   if (configError) return `配置读取失败：${configError}`;
   if (!config) return '尚未读到接入配置，请刷新。';
   if (!config.initialized || !config.accessConfigured || config.revision < 1) {
@@ -22,10 +22,19 @@ export const modeSwitchBlockReason = ({ config, status, configError, statusError
   }
   if (statusError) return `运行态读取失败：${statusError}`;
   if (!status) return '尚未读到运行态，请刷新。';
-  if (!config.enabled || status.state !== 'running' || !status.enabled) {
-    return '独立入口未运行，请到 Codex 管理 → 客户端接入检查并启用。';
+  // 只有配置已停用且运行态已停稳，才是正常终态；停用中/停用失败仍要保留真实状态。
+  if (isSubscriptionProxyStoppedByUser({ config, status })) {
+    const route = fallbackRouteLabel ? `（原有入口策略：${fallbackRouteLabel}）` : '';
+    return `独立入口已停用${route}。仍指向独立入口的 Codex 客户端将无法连接；如需使用原有入口，请先修改客户端接入配置。要重新使用独立入口，请到 Codex 管理 → 客户端接入启用。`;
   }
-  if (!MODES.has(config.mode) || config.mode !== status.mode || config.revision !== status.revision) {
+  if (!config.enabled && status.state === 'running') {
+    return '停用意图已保存，但独立入口仍在运行；请刷新运行态确认停用完成。';
+  }
+  if (status.state !== 'running') {
+    const { label } = resolveSubscriptionProxyDisplayState({ config, status });
+    return `独立入口${label}，暂不能切换模式，请到 Codex 管理 → 客户端接入检查运行状态。`;
+  }
+  if (!config.enabled || !status.enabled || !MODES.has(config.mode) || config.mode !== status.mode || config.revision !== status.revision) {
     return '配置与运行态尚未一致，请刷新后重新选择。';
   }
   return '';

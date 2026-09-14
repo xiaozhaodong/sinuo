@@ -8,6 +8,8 @@ import {
   describePrivacyForSubscription,
   isListenLocked,
   isRevisionConflict,
+  isSubscriptionProxyStoppedByUser,
+  resolveSubscriptionProxyDisplayState,
   subscriptionProxyPrivacyWarning,
   subscriptionProxyStateMeta,
   validateSubscriptionProxyForm
@@ -164,4 +166,37 @@ test('改监听地址后用内存密钥重建接入地址，格式与后端一�
 test('未知运行态不冒充运行中', () => {
   assert.equal(subscriptionProxyStateMeta('weird').label, '状态未知');
   assert.equal(subscriptionProxyStateMeta('running').label, '运行中');
+});
+
+test('只有主动停用才算“已停用”，过渡与故障态不算', () => {
+  const disabled = { enabled: false };
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: disabled, status: { state: 'stopped' } }), true);
+  // 意图启用却没起来不是“主动停用”
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: { enabled: true }, status: { state: 'stopped' } }), false);
+  // 停用过程中、停用失败、启动失败都不算“已停稳的主动停用”
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: disabled, status: { state: 'draining' } }), false);
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: disabled, status: { state: 'failed' } }), false);
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: disabled, status: { state: 'starting' } }), false);
+  // 配置或运行态没读到时不冒充
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: null, status: { state: 'stopped' } }), false);
+  assert.equal(isSubscriptionProxyStoppedByUser({ config: disabled, status: null }), false);
+  assert.equal(isSubscriptionProxyStoppedByUser(), false);
+});
+
+test('主动停用是正常终态，不与“未运行”混同', () => {
+  const disabled = { enabled: false, mode: 'subscription' };
+  // 用户主动关闭（enabled=false）后已停稳：说“已停用”，不能说成“未运行”
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: { state: 'stopped' } }).label, '已停用');
+  // 意图启用却没起来才是“未运行”
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: { enabled: true }, status: { state: 'stopped' } }).label, '未运行');
+  // 过渡与失败态各有准确文案，不能被“已停用”吞掉
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: { state: 'starting' } }).label, '启动中');
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: { state: 'draining' } }).label, '停用中');
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: { state: 'failed' } }).label, '启动失败');
+  // 运行中仍按运行态呈现
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: { enabled: true }, status: { state: 'running' } }).label, '运行中');
+  // 配置或运行态没读到时不冒充“已停用”
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: null, status: { state: 'stopped' } }).label, '未运行');
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: null }).label, '状态未知');
+  assert.equal(resolveSubscriptionProxyDisplayState({ config: disabled, status: { state: 'weird' } }).label, '状态未知');
 });

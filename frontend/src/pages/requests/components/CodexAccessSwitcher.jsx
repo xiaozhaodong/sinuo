@@ -6,8 +6,10 @@ import { modeSwitchBlockReason } from '@components/codex-access/subscriptionProx
 import {
   SUBSCRIPTION_PROXY_MODE_HINTS,
   SUBSCRIPTION_PROXY_MODE_OPTIONS,
-  subscriptionProxyStateMeta
+  isSubscriptionProxyStoppedByUser,
+  resolveSubscriptionProxyDisplayState
 } from '@components/codex-access/subscriptionProxyViewModel.js';
+import { resolveFallbackRouteLabel } from '../utils/accountSwitcherState.js';
 import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
 import CodexModelRoutingSwitcher from './CodexModelRoutingSwitcher.jsx';
 import CodexModeConfirmDialog from './CodexModeConfirmDialog.jsx';
@@ -27,12 +29,22 @@ const CodexAccessSwitcher = ({
   const panelRef = useRef(null);
   const menuId = useId();
 
-  const blockReason = modeSwitchBlockReason({ config, status, configError, statusError });
+  // 独立入口主动停用后不会自动改写 Codex 客户端配置；按钮要明确显示停用状态。
+  const fallbackRouteLabel = resolveFallbackRouteLabel({ modelRoutingEnabled: codexModelRoutingEnabled, activeAccount });
+  const blockReason = modeSwitchBlockReason({ config, status, configError, statusError, fallbackRouteLabel });
   const ready = !blockReason;
   const modeLabel = SUBSCRIPTION_PROXY_MODE_OPTIONS.find((option) => option.value === config?.mode)?.label || '未知模式';
-  const stateLabel = subscriptionProxyStateMeta(status?.state).label;
-  const displayLabel = loading ? '读取中' : configError ? '配置读取失败' : !config?.initialized ? '未初始化' : statusError ? '状态未知' : status?.state !== 'running' ? stateLabel : !ready ? '状态待确认' : modeLabel;
+  const accessStateLabel = resolveSubscriptionProxyDisplayState({ config, status }).label;
+  const displayLabel = loading ? '读取中' : configError ? '配置读取失败' : !config?.initialized ? '未初始化' : statusError ? '状态未知' : status?.state === 'running' ? (ready ? modeLabel : '状态待确认') : accessStateLabel;
   const stale = Boolean(pending && (!ready || loading || config?.revision !== pending.config.revision || config?.mode !== pending.config.mode));
+
+  // 主动停用后不会自动切换客户端配置：面板展示原有入口策略，但明确要求用户自行切回。
+  // 刻意不看 loading：打开面板会触发一次刷新，跟着 loading 切换会让视图闪回再闪走。
+  const fallbackPanel = !configError && !statusError && isSubscriptionProxyStoppedByUser({ config, status });
+  // 原有入口策略面板供两个视图共用：停用时的默认视图、接入模式视图里的“账号池策略”页。
+  const poolPanel = codexModelRoutingEnabled
+    ? <CodexModelRoutingSwitcher embedded bindings={bindings} accounts={accounts} onPatch={onPatch} loading={modelRoutePatching} />
+    : <AccountPoolSwitcher embedded accounts={accounts} activeAccount={activeAccount} recentSelectedAccountId={recentSelectedAccountId} onSwitch={onSwitch} onSwitchAuto={onSwitchAuto} loading={accountSwitching} modelRoutingEnabled={false} />;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -93,7 +105,7 @@ const CodexAccessSwitcher = ({
 
   return (
     <>
-      <button ref={triggerRef} type="button" aria-expanded={open} aria-controls={menuId} aria-label={`Codex 接入与账号池策略：${displayLabel}`} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} title={`独立入口：${displayLabel}；点击切换接入模式或调整账号池策略`} className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]">
+      <button ref={triggerRef} type="button" aria-expanded={open} aria-controls={menuId} aria-label={`Codex 接入与路由：${displayLabel}`} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} title={`Codex 接入状态：${displayLabel}；点击切换接入模式或调整账号池策略`} className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]">
         {loading || busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${ready ? 'text-accent' : 'text-fg-subtle'}`} />}
         <span className="min-w-0 flex-1 truncate text-left">Codex: {displayLabel}</span>
         <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -102,18 +114,25 @@ const CodexAccessSwitcher = ({
       {open && position && createPortal(
         <div ref={panelRef} id={menuId} style={position} className="fixed z-50 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-surface-sub px-4 py-3">
-            <div><h2 className="text-sm font-semibold text-fg">Codex 接入与路由</h2><p className="mt-0.5 text-[11px] text-fg-subtle">独立入口全局模式 · 账号池调度策略</p></div>
+            <div><h2 className="text-sm font-semibold text-fg">Codex 接入与路由</h2><p className="mt-0.5 text-[11px] text-fg-subtle">{fallbackPanel ? `独立入口已停用 · 原有入口策略：${fallbackRouteLabel}` : '独立入口全局模式 · 账号池调度策略'}</p></div>
             <button type="button" onClick={refresh} disabled={loading || busy} title="重新读取配置与运行态" aria-label="刷新 Codex 接入状态" className="rounded-lg border border-line p-1.5 text-fg-muted hover:bg-surface disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
           </div>
-          <div className="flex gap-1 border-b border-line-soft p-2">
-            {[{ id: 'access', label: '接入模式' }, { id: 'pool', label: '账号池策略' }].map((item) => <button key={item.id} type="button" aria-pressed={tab === item.id} onClick={() => setTab(item.id)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ${tab === item.id ? 'bg-accent-soft text-accent-fg' : 'text-fg-muted hover:bg-surface-sub'}`}>{item.label}</button>)}
-          </div>
+          {!fallbackPanel && (
+            <div className="flex gap-1 border-b border-line-soft p-2">
+              {[{ id: 'access', label: '接入模式' }, { id: 'pool', label: '账号池策略' }].map((item) => <button key={item.id} type="button" aria-pressed={tab === item.id} onClick={() => setTab(item.id)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ${tab === item.id ? 'bg-accent-soft text-accent-fg' : 'text-fg-muted hover:bg-surface-sub'}`}>{item.label}</button>)}
+            </div>
+          )}
 
           {notice && !pending && <div role="status" className={`mx-3 mt-3 rounded-lg border px-3 py-2 text-xs ${notice.type === 'success' ? 'border-success-line bg-success-soft text-success' : notice.type === 'error' ? 'border-danger-line bg-danger-soft text-danger' : 'border-warn-line bg-warn-soft text-warn'}`}>{notice.text}</div>}
 
-          {tab === 'access' ? (
+          {fallbackPanel ? (
+            <div>
+              <p className="border-b border-line-soft px-4 py-3 text-[11px] leading-relaxed text-fg-muted">下面的策略仅对原有入口的请求生效。停用不会切换客户端接入地址；仍指向独立入口的客户端将无法连接。如需使用原有入口，请先修改客户端接入配置；重新启用独立入口请到 Codex 管理 → 客户端接入。</p>
+              {poolPanel}
+            </div>
+          ) : tab === 'access' ? (
             <div className="space-y-3 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-muted"><span>独立入口：<span className={ready ? 'text-success' : 'text-warn'}>{displayLabel}</span></span>{config?.initialized && <span>已保存：{modeLabel}</span>}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-muted"><span>独立入口：<span className={ready ? 'text-success' : 'text-warn'}>{accessStateLabel}</span></span>{config?.initialized && <span>已保存：{modeLabel}</span>}</div>
               {(configError || statusError) && <p role="alert" className="flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft p-3 text-xs text-danger"><AlertCircle size={15} className="shrink-0" /><span>{configError ? `配置读取失败：${configError}` : `运行态读取失败：${statusError}`}。请刷新重试。</span></p>}
               {!ready && !loading && !configError && !statusError && <p className="rounded-lg border border-warn-line bg-warn-soft p-3 text-xs leading-relaxed text-warn">{blockReason}{status?.lastError && ` 最近一次运行错误：${status.lastError}`}</p>}
               <div className="grid grid-cols-2 gap-2">
@@ -125,7 +144,7 @@ const CodexAccessSwitcher = ({
           ) : (
             <div>
               <p className="border-b border-line-soft px-4 py-3 text-[11px] leading-relaxed text-fg-muted">池策略供原有入口和独立入口的账号池模式使用；独立入口订阅直通时，原有入口仍可使用账号池。</p>
-              {codexModelRoutingEnabled ? <CodexModelRoutingSwitcher embedded bindings={bindings} accounts={accounts} onPatch={onPatch} loading={modelRoutePatching} /> : <AccountPoolSwitcher embedded accounts={accounts} activeAccount={activeAccount} recentSelectedAccountId={recentSelectedAccountId} onSwitch={onSwitch} onSwitchAuto={onSwitchAuto} loading={accountSwitching} modelRoutingEnabled={false} />}
+              {poolPanel}
             </div>
           )}
         </div>, document.body

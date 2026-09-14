@@ -30,6 +30,20 @@ export const SUBSCRIPTION_PROXY_STATE_META = {
 export const subscriptionProxyStateMeta = (state) =>
   SUBSCRIPTION_PROXY_STATE_META[state] || { label: '状态未知', tone: 'neutral' };
 
+// 只有配置已停用且运行态已停稳，才是正常停用终态；这不代表客户端接入地址已改变。
+export const isSubscriptionProxyStoppedByUser = ({ config, status } = {}) =>
+  config?.enabled === false && status?.state === 'stopped';
+
+// 展示态：stopped 只说明“没有在跑”，但来源有两类——用户主动停用是正常终态，
+// “意图启用却没起来”才是异常，两者不能共用“未运行”的说法。
+// draining / failed / starting 各有准确文案，不能被“已停用”吞掉；配置没读到时不冒充“已停用”。
+export const resolveSubscriptionProxyDisplayState = ({ config, status } = {}) => {
+  if (isSubscriptionProxyStoppedByUser({ config, status })) {
+    return { label: '已停用', tone: 'neutral' };
+  }
+  return subscriptionProxyStateMeta(status?.state);
+};
+
 // 与后端 NormalizeCodexSubscriptionProxyInput 同口径：只允许回环 IP 字面量。
 const LOOPBACK_IPV4 = /^127(\.\d{1,3}){3}$/;
 

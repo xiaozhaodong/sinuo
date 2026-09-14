@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
 import { SettingItem, SettingsSection, PortInfo } from './components';
+import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
 import {
   isWailsEnvironment,
@@ -61,6 +62,7 @@ const CATEGORY_ICONS = {
 const SettingsPage = ({ onNavigateToCodexAccess }) => {
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState([]);
+  const { confirm, confirmDialog } = useConfirm();
   const [portInfo, setPortInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -191,7 +193,7 @@ const SettingsPage = ({ onNavigateToCodexAccess }) => {
 
   // 重置分类设置
   const handleResetCategory = useCallback(async (category) => {
-    if (!window.confirm(`确定要将「${category}」分类的设置重置为默认值吗？`)) {
+    if (!(await confirm({ title: '重置分类设置', message: `确定要将「${category}」分类的设置重置为默认值吗？`, confirmText: '确认重置', danger: true }))) {
       return;
     }
 
@@ -212,7 +214,7 @@ const SettingsPage = ({ onNavigateToCodexAccess }) => {
     } finally {
       setSaving(false);
     }
-  }, [isWails, loadSettings]);
+  }, [confirm, isWails, loadSettings]);
 
   // 判断是否有未保存的变更
   const hasChanges = Object.keys(changes).length > 0;
@@ -363,6 +365,7 @@ const SettingsPage = ({ onNavigateToCodexAccess }) => {
               </div>
             </>
           )}
+      {confirmDialog}
     </div>
   );
 };

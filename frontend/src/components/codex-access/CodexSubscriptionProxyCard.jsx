@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import { resolveErrorMessage } from '@utils/errors.js';
+import useConfirm from '@hooks/useConfirm.js';
 import {
   getCodexSubscriptionProxyConfig,
   getCodexSubscriptionProxyStatus,
@@ -41,6 +42,7 @@ import {
   describePrivacyForSubscription,
   isListenLocked,
   isRevisionConflict,
+  resolveSubscriptionProxyDisplayState,
   subscriptionProxyPrivacyWarning,
   subscriptionProxyStateMeta,
   validateSubscriptionProxyForm
@@ -71,8 +73,8 @@ const formFromConfig = (config) => ({
 // 判断一次性接入地址是否还对应当前监听地址；只用于比对，不用于拼 URL。
 const listenAddressKey = (config) => `${config?.listenHost ?? ''}:${config?.listenPort ?? ''}`;
 
-const StateBadge = ({ state }) => {
-  const meta = subscriptionProxyStateMeta(state);
+const StateBadge = ({ config, status }) => {
+  const meta = resolveSubscriptionProxyDisplayState({ config, status });
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${TONE_CLASSES[meta.tone]}`}>
       {meta.label}
@@ -110,6 +112,7 @@ const ModeSegmented = ({ value, disabled, onChange }) => (
 const CodexSubscriptionProxyCard = () => {
   const [config, setConfig] = useState(null);
   const [status, setStatus] = useState(null);
+  const { confirm, confirmDialog } = useConfirm();
   const [privacy, setPrivacy] = useState(null);
   const [form, setForm] = useState(DEFAULT_FORM);
   const [loading, setLoading] = useState(true);
@@ -295,14 +298,18 @@ const CodexSubscriptionProxyCard = () => {
     );
   }, [config, busy, form, runAction]);
 
-  const handleRotate = useCallback(() => {
+  const handleRotate = useCallback(async () => {
     if (!config || busy) return;
-    if (!window.confirm('轮换后旧接入地址立即失效，已配置该地址的 Codex 需要重新填写新地址。确定轮换吗？')) {
-      return;
-    }
+    const ok = await confirm({
+      title: '轮换接入地址',
+      message: '轮换后旧接入地址立即失效，已配置该地址的 Codex 需要重新填写新地址。确定轮换吗？',
+      confirmText: '确认轮换',
+      danger: true
+    });
+    if (!ok) return;
     const current = config;
     runAction(() => rotateCodexSubscriptionProxyAccess(current.revision), 'rotate');
-  }, [config, busy, runAction]);
+  }, [config, busy, confirm, runAction]);
 
   const handleCopy = useCallback(async (key, text) => {
     try {
@@ -351,7 +358,7 @@ const CodexSubscriptionProxyCard = () => {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold text-fg">Codex 客户端接入</h3>
-              <StateBadge state={status?.state} />
+              <StateBadge config={config} status={status} />
             </div>
             <p className="text-xs text-fg-subtle mt-0.5">
               配置客户端接入、运行状态与凭据；日常模式切换也可在请求追踪页完成
@@ -606,6 +613,7 @@ const CodexSubscriptionProxyCard = () => {
           </p>
         )}
       </div>
+      {confirmDialog}
     </div>
   );
 };

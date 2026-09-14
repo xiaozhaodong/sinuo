@@ -47,9 +47,20 @@ const resolveDisplayedActiveAccount = ({
   return list.find(isAccountSchedulable) || list[0] || null;
 };
 
+// 原有入口的已配置策略，不代表客户端当前请求去向。
+// 模型路由优先于固定账号，最后才是自动调度。
+const resolveFallbackRouteLabel = ({ modelRoutingEnabled = false, activeAccount = null } = {}) => {
+  if (modelRoutingEnabled) {
+    return '模型路由';
+  }
+  const name = String(activeAccount?.account_name ?? activeAccount?.accountName ?? '').trim();
+  return name || 'Auto';
+};
+
 export {
   canPinAccountSelection,
   isSamePinnedAccount,
   isRuntimeActiveSelection,
-  resolveDisplayedActiveAccount
+  resolveDisplayedActiveAccount,
+  resolveFallbackRouteLabel
 };

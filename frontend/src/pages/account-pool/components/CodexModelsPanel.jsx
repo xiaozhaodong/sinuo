@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Database, Plus, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import useConfirm from '@hooks/useConfirm.js';
 import {
   getCodexModelCatalog,
   isWailsEnvironment,
@@ -36,6 +37,7 @@ const countEnabledModels = (models = []) => models.filter(model => model.enabled
 const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
   const [catalog, setCatalog] = useState(EMPTY_CATALOG);
   const [savedCatalog, setSavedCatalog] = useState(EMPTY_CATALOG);
+  const { confirm, confirmDialog } = useConfirm();
   const [newModelId, setNewModelId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -87,11 +89,11 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
     });
   }, []);
 
-  const handleRequestClose = useCallback(() => {
+  const handleRequestClose = useCallback(async () => {
     if (saving) return;
-    if (dirty && !window.confirm('Codex 模型目录有未保存修改，确定关闭吗？')) return;
+    if (dirty && !(await confirm({ title: '放弃未保存修改', message: 'Codex 模型目录有未保存修改，确定关闭吗？', confirmText: '放弃并关闭', danger: true }))) return;
     onClose?.();
-  }, [dirty, onClose, saving]);
+  }, [confirm, dirty, onClose, saving]);
 
   const closeButtonRef = useRef(null);
 
@@ -174,7 +176,7 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
   }, [showNotice]);
 
   const handleResetDefaults = useCallback(async () => {
-    if (!window.confirm('确定恢复官方预设模型目录吗？自定义模型会被清除。')) return;
+    if (!(await confirm({ title: '恢复预设目录', message: '确定恢复官方预设模型目录吗？自定义模型会被清除。', confirmText: '恢复预设', danger: true }))) return;
 
     try {
       setSaving(true);
@@ -187,7 +189,7 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
     } finally {
       setSaving(false);
     }
-  }, [showNotice]);
+  }, [confirm, showNotice]);
 
   if (!open) return null;
 
@@ -412,6 +414,7 @@ const CodexModelsPanel = ({ open = false, onClose, showNotice }) => {
           </>
         )}
       </aside>
+      {confirmDialog}
     </div>,
     document.body
   );

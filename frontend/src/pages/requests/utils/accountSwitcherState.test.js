@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
   canPinAccountSelection,
   isSamePinnedAccount,
-  resolveDisplayedActiveAccount
+  resolveDisplayedActiveAccount,
+  resolveFallbackRouteLabel
 } from './accountSwitcherState.js';
 
 test('resolveDisplayedActiveAccount prefers runtime active selection over primary tier first account', () => {
@@ -65,6 +66,27 @@ test('isSamePinnedAccount only short-circuits when the displayed account is an a
     }),
     true
   );
+});
+
+test('resolveFallbackRouteLabel 说明独立入口未运行时请求实际走哪条路', () => {
+  // 模型路由优先：原有入口开着模型路由时，固定账号不参与决策
+  assert.equal(
+    resolveFallbackRouteLabel({ modelRoutingEnabled: true, activeAccount: { account_name: 'primary-a' } }),
+    '模型路由'
+  );
+  // 未开模型路由时显示固定账号名，没有固定账号则回退自动调度
+  assert.equal(
+    resolveFallbackRouteLabel({ modelRoutingEnabled: false, activeAccount: { account_name: 'primary-a' } }),
+    'primary-a'
+  );
+  assert.equal(
+    resolveFallbackRouteLabel({ modelRoutingEnabled: false, activeAccount: { accountName: 'camel-a' } }),
+    'camel-a'
+  );
+  assert.equal(resolveFallbackRouteLabel({ modelRoutingEnabled: false, activeAccount: null }), 'Auto');
+  assert.equal(resolveFallbackRouteLabel(), 'Auto');
+  // 账号名为空串不能当标签用
+  assert.equal(resolveFallbackRouteLabel({ activeAccount: { account_name: '   ' } }), 'Auto');
 });
 
 test('canPinAccountSelection still allows temporarily unavailable accounts to be pinned', () => {

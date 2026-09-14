@@ -18,6 +18,7 @@ import {
 } from '@utils/api.js';
 import { subscribeToEvent } from '@utils/wailsApi.js';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import useConfirm from '@hooks/useConfirm.js';
 import { patchBindingPayload } from '../../utils/modelRouting.js';
 import ModelBindingDialog from './ModelBindingDialog.jsx';
 import ModelBindingRow from './ModelBindingRow.jsx';
@@ -28,6 +29,7 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
   const [settings, setSettings] = useState(null);
   const [bindings, setBindings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { confirm, confirmDialog } = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dialogTarget, setDialogTarget] = useState(null);
@@ -83,19 +85,25 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
   const patchBinding = (binding, patch) =>
     run(() => updateModelRouteBinding(binding.assignment_id, patchBindingPayload(binding, patch)));
 
-  const removeBinding = (binding) => {
-    if (!window.confirm(`确定删除模型「${binding.model}」的映射吗？删除后该模型的请求会返回未分配错误。`)) return;
+  const removeBinding = async (binding) => {
+    const ok = await confirm({
+      title: '删除模型映射',
+      message: `确定删除模型「${binding.model}」的映射吗？删除后该模型的请求会返回未分配错误。`,
+      confirmText: '确认删除',
+      danger: true
+    });
+    if (!ok) return;
     run(() => deleteModelRouteBinding(binding.assignment_id));
   };
 
-  const toggleRouting = (nextEnabled) => {
+  const toggleRouting = async (nextEnabled) => {
     // 后端只把启用中的映射放进匹配表，全部停用等价于没有映射，同样要提醒。
     const enabledCount = bindings.filter((binding) => binding.enabled).length;
     if (nextEnabled && enabledCount === 0) {
       const hint = bindings.length > 0
         ? `当前 ${bindings.length} 条映射全部处于停用状态，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？`
         : '还没有任何模型映射，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？';
-      if (!window.confirm(hint)) return;
+      if (!(await confirm({ title: '开启模型路由', message: hint, confirmText: '仍要开启' }))) return;
     }
     run(() => updateModelRoutingSettings({ claude_enabled: nextEnabled }));
   };
@@ -226,6 +234,7 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
           onClose={() => setDialogTarget(null)}
         />
       )}
+      {confirmDialog}
     </div>,
     document.body
   );

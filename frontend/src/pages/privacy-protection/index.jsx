@@ -16,6 +16,7 @@ import {
 import { Button, CustomSelect, ErrorMessage, Input, LoadingSpinner } from '@components/ui';
 import { fetchEndpoints, fetchUpstreamAccounts, exportPrivacyRules } from '@utils/api.js';
 import usePrivacyProtection from './hooks/usePrivacyProtection.js';
+import useConfirm from '@hooks/useConfirm.js';
 import PrivacyRulesTable from './components/PrivacyRulesTable.jsx';
 import PrivacyRulesToolbar from './components/PrivacyRulesToolbar.jsx';
 import PrivacyRuleDrawer from './components/PrivacyRuleDrawer.jsx';
@@ -219,6 +220,7 @@ const PrivacyProtectionPage = () => {
   const [drawerRule, setDrawerRule] = useState(null);
   const [drawerSession, setDrawerSession] = useState(0);
   const [presetOpen, setPresetOpen] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
   const [testDrawerOpen, setTestDrawerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -270,8 +272,8 @@ const PrivacyProtectionPage = () => {
       await reorderRules(buildReorderPayload(next));
     }
   });
-  const handleDelete = (rule) => {
-    if (!window.confirm(`确定删除规则「${rule.name}」？删除后立即生效。`)) return;
+  const handleDelete = async (rule) => {
+    if (!(await confirm({ title: '删除隐私规则', message: `确定删除规则「${rule.name}」？删除后立即生效。`, confirmText: '确认删除', danger: true }))) return;
     runAction(() => removeRule(rule.id));
   };
 
@@ -451,6 +453,7 @@ const PrivacyProtectionPage = () => {
         onTest={runTest}
         onClose={() => setTestDrawerOpen(false)}
       />
+      {confirmDialog}
     </div>
   );
 };

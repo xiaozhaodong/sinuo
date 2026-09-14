@@ -81,7 +81,10 @@ test('保存前检查之后的并发写入交给后端 revision 校验，不重�
 });
 
 test('未初始化、停用或启动失败的入口不执行快捷保存', async () => {
-  for (const variant of ['uninitialized', 'disabled', 'failed', 'draining']) {
+  for (const [variant, expected] of [
+    ['uninitialized', /初始化/], ['disabled', /停用意图.*仍在运行/],
+    ['failed', /启动失败/], ['draining', /停用中/]
+  ]) {
     const { data, api } = fixture();
     if (variant === 'uninitialized') data.config = { ...data.config, initialized: false, revision: 0 };
     if (variant === 'disabled') data.config.enabled = false;
@@ -90,8 +93,63 @@ test('未初始化、停用或启动失败的入口不执行快捷保存', async
     const result = await controller.switchMode('pool', { ...data.config });
     assert.equal(result.saved, false, variant);
     assert.equal(data.writes.length, 0, variant);
-    assert.match(result.notice.text, /初始化|未运行/);
+    assert.match(result.notice.text, expected, variant);
   }
+});
+
+test('主动停用与意图启用但未运行给出不同提示', () => {
+  const base = { initialized: true, enabled: false, mode: 'subscription', revision: 3, accessConfigured: true };
+  // 主动停用：说明原有入口策略和客户端配置边界，不宣称请求已自动切换。
+  const stoppedByUser = modeSwitchBlockReason({
+    config: base,
+    status: { state: 'stopped', enabled: false },
+    fallbackRouteLabel: '模型路由'
+  });
+  assert.match(stoppedByUser, /已停用/);
+  assert.match(stoppedByUser, /模型路由/);
+  assert.match(stoppedByUser, /启用/);
+  assert.match(stoppedByUser, /仍指向独立入口.*无法连接/);
+  assert.match(stoppedByUser, /修改客户端接入配置/);
+  assert.doesNotMatch(stoppedByUser, /请求当前走原有入口/);
+  assert.doesNotMatch(stoppedByUser, /未运行/);
+
+  // 拿不到回退标签时不留下空括号
+  const withoutRoute = modeSwitchBlockReason({ config: base, status: { state: 'stopped', enabled: false } });
+  assert.match(withoutRoute, /已停用/);
+  assert.doesNotMatch(withoutRoute, /（）/);
+
+  // 意图启用却没起来：仍然按异常提示检查并启用
+  const notRunning = modeSwitchBlockReason({
+    config: { ...base, enabled: true },
+    status: { state: 'stopped', enabled: false }
+  });
+  assert.match(notRunning, /未运行/);
+  assert.doesNotMatch(notRunning, /已停用/);
+});
+
+test('保存停用意图后，过渡、失败和未知运行态仍阻止切换且不冒充已停用', async () => {
+  for (const [state, expected] of [
+    ['starting', /启动中/], ['draining', /停用中/], ['failed', /启动失败/],
+    ['running', /停用意图.*仍在运行/], ['unknown', /状态未知/]
+  ]) {
+    const { data, api } = fixture();
+    data.config.enabled = false;
+    data.status.state = state;
+    const result = await createSubscriptionProxyController(api).switchMode('pool', { ...data.config });
+    assert.equal(result.saved, false, state);
+    assert.equal(data.writes.length, 0, state);
+    assert.match(result.notice.text, expected, state);
+    assert.doesNotMatch(result.notice.text, /已停用|当前走原有入口/, state);
+  }
+});
+
+test('运行态未启用时不能仅凭 running 放行模式切换', async () => {
+  const { data, api } = fixture();
+  data.status.enabled = false;
+  const result = await createSubscriptionProxyController(api).switchMode('pool', { ...data.config });
+  assert.equal(result.saved, false);
+  assert.equal(data.writes.length, 0);
+  assert.match(result.notice.text, /配置与运行态尚未一致/);
 });
 
 test('读取失败不以默认订阅状态代替，也不写配置', async () => {
