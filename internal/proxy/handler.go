@@ -57,7 +57,8 @@ type Handler struct {
 	failoverNotifierMu  sync.RWMutex
 	onFailoverTriggered func(FailoverEvent)
 	// §9.2 规则 5：endpoint+scope 非阻塞 429 重试 gate，同一时刻只放行一个延迟重试
-	rateLimitRetryGates sync.Map
+	rateLimitRetryGates   sync.Map
+	endpointDispatchPacer *endpointDispatchPacer
 }
 
 type CodexModelListProvider interface {
@@ -92,11 +93,12 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 	forwarder := handlers.NewForwarder(cfg, endpointManager)
 
 	h := &Handler{
-		endpointManager:     endpointManager,
-		config:              cfg,
-		responseProcessor:   response.NewProcessor(),
-		forwarder:           forwarder,
-		refreshTokenManager: accountauth.NewOpenAIRefreshTokenManager(cfg),
+		endpointManager:       endpointManager,
+		config:                cfg,
+		responseProcessor:     response.NewProcessor(),
+		forwarder:             forwarder,
+		refreshTokenManager:   accountauth.NewOpenAIRefreshTokenManager(cfg),
+		endpointDispatchPacer: newEndpointDispatchPacer(temporaryVenlacyMinDispatchInterval),
 	}
 
 	// 初始化 token analyzer

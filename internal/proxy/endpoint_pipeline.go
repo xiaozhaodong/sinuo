@@ -152,6 +152,19 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		default:
 		}
 
+		// 临时 Venlacy 平滑限速必须发生在 admission 之前：排队不能占住 lease，
+		// 到达发送时隙后仍由下方现有准入逻辑重新校验删除、停用与配置 revision。
+		queuedFor, paceErr := h.waitForEndpointDispatch(ctx, plan.EndpointName)
+		if paceErr != nil {
+			lifecycleManager.CancelRequest("client disconnected while waiting for endpoint dispatch", nil)
+			h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeCancelled, "client disconnected while waiting for endpoint dispatch")
+			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
+			return
+		}
+		if queuedFor >= time.Millisecond {
+			slog.Info("⏱️ [Venlacy临时限速] 请求已按出站间隔放行", "request_id", connID, "endpoint", plan.EndpointName, "wait", queuedFor)
+		}
+
 		// §14.2：attempt 前原子重校验（删除 / pending gate / hard disable / config revision）
 		var acquireErr error
 		admission, acquireErr = h.endpointManager.AcquireEndpointAttempt(plan)
@@ -204,7 +217,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 		// §9.2 普通 429 同端点短重试（最多 1 次；gate 未取得或等待超限则跳过）
 		if decision.Action == EndpointForwardRateLimited {
-			if delay, ok := h.rateLimitRetryDelay(decision.RetryAfter); ok && !hasCommitted() && ctx.Err() == nil {
+			if delay, ok := h.rateLimitRetryDelay(ep.Config.Name, decision.RetryAfter); ok && !hasCommitted() && ctx.Err() == nil {
 				if release := h.tryAcquireRateLimitRetryGate(ep.Config.Name, r.URL.Path); release != nil {
 					closeEndpointResponse(resp)
 					releaseUpstream()
@@ -212,26 +225,29 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 					admission.Release()
 					admission = nil
 					if sleepWithContext(ctx, delay) {
-						retryAdmission, retryAcquireErr := h.endpointManager.AcquireEndpointAttempt(plan)
-						if retryAcquireErr == nil {
-							admission = retryAdmission
-							target = admission.Target
-							ep = &endpoint.Endpoint{Config: target.Config()}
-							slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay))
-							resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
-								ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
-							releaseUpstream = func() {
-								if upstreamCancel != nil {
-									upstreamCancel()
-									upstreamCancel = nil
+						pacedWait, paceErr := h.waitForEndpointDispatch(ctx, plan.EndpointName)
+						if paceErr == nil {
+							retryAdmission, retryAcquireErr := h.endpointManager.AcquireEndpointAttempt(plan)
+							if retryAcquireErr == nil {
+								admission = retryAdmission
+								target = admission.Target
+								ep = &endpoint.Endpoint{Config: target.Config()}
+								slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay+pacedWait))
+								resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
+									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
+								releaseUpstream = func() {
+									if upstreamCancel != nil {
+										upstreamCancel()
+										upstreamCancel = nil
+									}
 								}
+								bodySample = ""
+								if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
+									bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
+								}
+								decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
+								lifecycleManager.IncrementAttempt()
 							}
-							bodySample = ""
-							if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
-								bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
-							}
-							decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
-							lifecycleManager.IncrementAttempt()
 						}
 					}
 					release()
@@ -451,9 +467,14 @@ func (h *Handler) recordEndpointAttemptSoftFailure(name string, revision int64, 
 	return count, tripped
 }
 
-func (h *Handler) rateLimitRetryDelay(retryAfter time.Duration) (time.Duration, bool) {
+func (h *Handler) rateLimitRetryDelay(endpointName string, retryAfter time.Duration) (time.Duration, bool) {
 	if !h.config.Failover.RateLimitRetryEnabled() {
 		return 0, false
+	}
+	// Venlacy 的无 Retry-After 429 不再追加 250-750ms 随机等待；统一回到
+	// 9 秒出站节奏，避免短重试本身继续冲击每分钟 7 请求的上游限制。
+	if isTemporaryPacedEndpoint(endpointName) && retryAfter <= 0 {
+		return 0, true
 	}
 	maxWait := h.config.Failover.RateLimitRetry.MaxWait
 	if maxWait <= 0 {
