@@ -1,4 +1,5 @@
 import { normalizeSoftFailurePolicyPayload } from './softFailurePolicy.js';
+import { toError } from './errors.js';
 
 // ============================================
 // Wails API 适配层
@@ -15,13 +16,37 @@ export const isWailsEnvironment = () => {
 let WailsApp = null;
 let WailsRuntime = null;
 
+// wrapWailsBinding 把单个绑定函数的 reject 值归一化成 Error 实例。
+// Wails 的 reject 有三种形态（Error / { message } / 字符串），页面层几乎都写
+// `err.message || 兜底`，字符串形态会把后端说明的原因静默丢掉；在这里统一收口后
+// 上层不必逐处防御。
+const wrapWailsBinding = (method) => async (...args) => {
+  try {
+    return await method(...args);
+  } catch (err) {
+    throw toError(err);
+  }
+};
+
+// wrapWailsBindings 把绑定模块（或 window.go.main.App 这类运行时对象）里的
+// 全部函数包一层错误归一化；非函数成员原样保留。
+export const wrapWailsBindings = (bindings) => {
+  if (!bindings || typeof bindings !== 'object') return bindings;
+  const wrapped = {};
+  for (const name of Object.keys(bindings)) {
+    const member = bindings[name];
+    wrapped[name] = typeof member === 'function' ? wrapWailsBinding(member) : member;
+  }
+  return wrapped;
+};
+
 const loadWailsBindings = async () => {
   if (!isWailsEnvironment()) {
     return false;
   }
 
   try {
-    WailsApp = await import('@wailsjs/go/main/App');
+    WailsApp = wrapWailsBindings(await import('@wailsjs/go/main/App'));
     WailsRuntime = await import('@wailsjs/runtime/runtime');
     return true;
   } catch (error) {
@@ -53,7 +78,7 @@ const getWailsMethod = (methodName, { optional = false } = {}) => {
   }
   const runtimeMethod = typeof window !== 'undefined' ? window?.go?.main?.App?.[methodName] : null;
   if (typeof runtimeMethod === 'function') {
-    return (...args) => runtimeMethod(...args);
+    return wrapWailsBinding(runtimeMethod);
   }
   if (optional) {
     return null;

@@ -9,7 +9,8 @@ import {
   buildUpstreamAccountPayload,
   mapEndpointRecord,
   mapUsageStats,
-  normalizeUpstreamAccount
+  normalizeUpstreamAccount,
+  wrapWailsBindings
 } from './wailsApi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -439,4 +440,25 @@ test('账号策略归一化清除内部表单字段与旧别名', () => {
   assert.equal(result.soft_failure_window_minutes, 2);
   assert.equal(result.soft_failure_threshold, 1);
   for (const key of ['softFailureCustom', 'SoftFailureWindowMinutes', 'SoftFailureThreshold']) assert.equal(key in result, false);
+});
+
+test('绑定层把 Wails 三种 reject 形态统一归一化成 Error，同步抛错与非函数成员也照顾到', async () => {
+  const wrapped = wrapWailsBindings({
+    rejectString: async () => { throw 'error parsing arguments: invalid ID'; },
+    rejectObject: async () => { throw { message: '账号仍被模型路由使用' }; },
+    rejectError: async () => { throw new Error('网络超时'); },
+    throwSync: () => { throw 'sync failure'; },
+    ok: async (a, b) => a + b,
+    version: '1.0'
+  });
+
+  await assert.rejects(wrapped.rejectString(), (err) => err instanceof Error && err.message === 'error parsing arguments: invalid ID');
+  await assert.rejects(wrapped.rejectObject(), (err) => err instanceof Error && err.message === '账号仍被模型路由使用');
+  const original = new Error('网络超时');
+  const passthrough = wrapWailsBindings({ f: async () => { throw original; } });
+  await assert.rejects(passthrough.f(), (err) => err === original);
+  await assert.rejects(wrapped.throwSync(), (err) => err instanceof Error && err.message === 'sync failure');
+  assert.equal(await wrapped.ok(1, 2), 3);
+  assert.equal(wrapped.version, '1.0');
+  assert.equal(wrapWailsBindings(null), null);
 });

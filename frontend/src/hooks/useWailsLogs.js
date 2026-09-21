@@ -2,6 +2,7 @@
 // 提供实时日志查看功能
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { EventsOn, EventsOff } from '@wailsjs/runtime';
+import { resolveErrorMessage } from '../utils/errors.js';
 import {
   GetRecentLogs,
   StartLogStream,
@@ -56,7 +57,7 @@ export function useWailsLogs(options = {}) {
     } catch (err) {
       console.error('❌ 加载历史日志失败:', err);
       if (isMountedRef.current) {
-        setError(err.message || '加载失败');
+        setError(resolveErrorMessage(err, '加载失败'));
       }
     } finally {
       if (isMountedRef.current) {
@@ -115,7 +116,7 @@ export function useWailsLogs(options = {}) {
     } catch (err) {
       console.error('❌ 启动日志流失败:', err);
       if (isMountedRef.current) {
-        setError(err.message || '启动失败');
+        setError(resolveErrorMessage(err, '启动失败'));
       }
     } finally {
       isStartingRef.current = false;
