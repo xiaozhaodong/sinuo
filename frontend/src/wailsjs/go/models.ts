@@ -1191,6 +1191,7 @@ export namespace main {
 	}
 	export class ModelRouteBindingInfo {
 	    assignment_id: number;
+	    kind: string;
 	    model: string;
 	    endpoints: ModelRoutingMemberInfo[];
 	    route_mode: string;
@@ -1210,6 +1211,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.assignment_id = source["assignment_id"];
+	        this.kind = source["kind"];
 	        this.model = source["model"];
 	        this.endpoints = this.convertValues(source["endpoints"], ModelRoutingMemberInfo);
 	        this.route_mode = source["route_mode"];
@@ -1242,6 +1244,7 @@ export namespace main {
 		}
 	}
 	export class ModelRouteBindingInput {
+	    kind: string;
 	    model: string;
 	    endpoints: string[];
 	    route_mode: string;
@@ -1255,6 +1258,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
 	        this.model = source["model"];
 	        this.endpoints = source["endpoints"];
 	        this.route_mode = source["route_mode"];

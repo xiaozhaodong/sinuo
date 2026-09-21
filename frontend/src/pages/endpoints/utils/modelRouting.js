@@ -5,6 +5,19 @@
 //
 // 一条映射 = 一个模型 + 一组端点。上游组是后端的实现细节，前端不呈现该概念。
 
+// 映射种类：按模型名匹配，或匹配携带 web_search / web_fetch 工具的联网请求。
+// 联网映射优先于模型映射，全局只能有一条；后端用保留键存储，前端只认 kind。
+export const BINDING_KINDS = [
+  { value: 'model', label: '模型名', hint: '按请求 model 精确匹配，大小写不敏感' },
+  { value: 'web_tools', label: '联网工具', hint: '请求 tools 里带 web_search / web_fetch 时优先命中，不看模型名' }
+];
+
+export const WEB_TOOLS_LABEL = '联网工具（web_search / web_fetch）';
+
+export const isWebToolsBinding = (binding) => (binding?.kind || 'model') === 'web_tools';
+
+export const bindingDisplayName = (binding) => (isWebToolsBinding(binding) ? WEB_TOOLS_LABEL : binding?.model || '');
+
 export const ROUTE_MODES = [
   { value: 'auto', label: '自动', hint: '在所选端点里按优先级与健康状态自动挑选' },
   { value: 'manual_preferred', label: '优选', hint: '优先用指定端点，不可用时回落到其余所选端点' },
@@ -37,7 +50,8 @@ export const endpointNames = (binding) => (binding?.endpoints || []).map((item) 
 
 export const createBindingDraft = (binding) => ({
   assignmentId: binding?.assignment_id ?? null,
-  model: binding?.model || '',
+  kind: binding?.kind || 'model',
+  model: isWebToolsBinding(binding) ? '' : binding?.model || '',
   endpoints: endpointNames(binding),
   routeMode: binding?.route_mode || 'auto',
   routeTarget: binding?.route_target || '',
@@ -68,16 +82,22 @@ const MODEL_NAME_MAX = 128;
 // 与后端 modelrouting.ValidateAssignment / ValidateGroup 同口径的前置校验，
 // 目的是在点保存之前就把错误显示在字段旁，而不是等一次失败的往返。
 export const validateBindingDraft = (draft, existingBindings = []) => {
-  const model = (draft.model || '').trim();
-  if (!model) return '请输入模型名';
-  if (model.length > MODEL_NAME_MAX) return `模型名不能超过 ${MODEL_NAME_MAX} 个字符`;
-  // 与后端一致：拒空白与控制字符，但连字符、点号是模型名的正常组成部分。
-  if (/[\s\p{Cc}]/u.test(model)) return '模型名不能包含空格或控制字符';
+  const others = existingBindings.filter((item) => item.assignment_id !== draft.assignmentId);
+  if (draft.kind === 'web_tools') {
+    if (others.some(isWebToolsBinding)) return '联网工具映射已经存在，只能配置一条';
+  } else {
+    const model = (draft.model || '').trim();
+    if (!model) return '请输入模型名';
+    if (model.length > MODEL_NAME_MAX) return `模型名不能超过 ${MODEL_NAME_MAX} 个字符`;
+    // 与后端一致：拒空白与控制字符，但连字符、点号是模型名的正常组成部分。
+    if (/[\s\p{Cc}]/u.test(model)) return '模型名不能包含空格或控制字符';
+    if (model.toLowerCase().startsWith('server_tool:')) return '模型名不能以保留前缀 server_tool: 开头';
 
-  const duplicated = existingBindings.some(
-    (item) => item.assignment_id !== draft.assignmentId && item.model.trim().toLowerCase() === model.toLowerCase()
-  );
-  if (duplicated) return `模型「${model}」已经配置过上游端点`;
+    const duplicated = others.some(
+      (item) => !isWebToolsBinding(item) && item.model.trim().toLowerCase() === model.toLowerCase()
+    );
+    if (duplicated) return `模型「${model}」已经配置过上游端点`;
+  }
 
   if (draft.endpoints.length === 0) return '至少选择 1 个上游端点';
   if (draft.routeMode !== 'auto' && !draft.routeTarget) return '优选 / 固定模式需要指定一个目标端点';
@@ -87,7 +107,8 @@ export const validateBindingDraft = (draft, existingBindings = []) => {
 };
 
 export const bindingPayload = (draft) => ({
-  model: (draft.model || '').trim(),
+  kind: draft.kind || 'model',
+  model: draft.kind === 'web_tools' ? '' : (draft.model || '').trim(),
   endpoints: draft.endpoints,
   route_mode: draft.routeMode,
   route_target: draft.routeMode === 'auto' ? '' : draft.routeTarget,

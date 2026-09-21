@@ -40,7 +40,7 @@ import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
-import { patchBindingPayload } from '../endpoints/utils/modelRouting.js';
+import { bindingDisplayName, isWebToolsBinding, patchBindingPayload } from '../endpoints/utils/modelRouting.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
@@ -407,7 +407,8 @@ const RequestsPage = () => {
       const list = await fetchModelRouteBindings();
       setModelRouteBindings(Array.isArray(list) ? list : []);
       const mode = patch.route_mode === 'auto' ? '自动调度' : `${patch.route_mode === 'manual_fixed' ? '固定' : '优选'} ${patch.route_target}`;
-      showNotice('success', `模型「${binding.model}」已切换为${mode}`);
+      const subject = isWebToolsBinding(binding) ? '联网工具映射' : `模型「${bindingDisplayName(binding)}」`;
+      showNotice('success', `${subject}已切换为${mode}`);
     } catch (err) {
       showNotice('error', err?.message || '切换模型路由策略失败');
     } finally {

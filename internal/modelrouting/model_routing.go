@@ -14,6 +14,35 @@ import (
 // MatchExact 本期唯一放行的匹配方式。match_type 列保留是为了后续扩展不重建表。
 const MatchExact = "exact"
 
+// WebToolsKey 是「联网工具」映射在 model_routing_assignments.model_name 里的保留键。
+// 请求 tools[] 里出现 web_search / web_fetch 类 server tool 时优先命中它，再回落到模型映射。
+// 用保留键而不是新列，是为了不重建带 CHECK 约束的表；用户手输的模型名禁止使用该前缀。
+const (
+	WebToolsKey         = "server_tool:web"
+	ReservedKeyPrefix   = "server_tool:"
+	BindingKindModel    = "model"
+	BindingKindWebTools = "web_tools"
+)
+
+// IsWebToolsKey 判断分配键是否为联网工具保留键。
+func IsWebToolsKey(model string) bool {
+	return NormalizeModelName(model) == WebToolsKey
+}
+
+// IsReservedKey 判断模型名是否落在保留前缀内（含联网工具保留键本身）。
+// 用户手输的模型名一律不允许使用保留前缀，联网映射只能通过 kind=web_tools 建立。
+func IsReservedKey(model string) bool {
+	return strings.HasPrefix(NormalizeModelName(model), ReservedKeyPrefix)
+}
+
+// BindingKind 把分配键映射为对外的映射种类。
+func BindingKind(model string) string {
+	if IsWebToolsKey(model) {
+		return BindingKindWebTools
+	}
+	return BindingKindModel
+}
+
 // FamilyClaude 与 FamilyCodex 是模型路由支持的协议族。
 const FamilyClaude = "claude"
 const FamilyCodex = "codex"
@@ -74,12 +103,14 @@ type Snapshot struct {
 	loadFailed bool
 	groups     map[int64]*Group
 	byModel    map[string]*Assignment
+	byWebTools *Assignment
 }
 
-// Resolution 一次归组结果。
+// Resolution 一次归组结果。MatchedKey 说明命中的是模型键还是联网工具保留键。
 type Resolution struct {
 	Assignment *Assignment
 	Group      *Group
+	MatchedKey string
 }
 
 // Compile 校验并编译出只读快照。任一分配指向不存在的组即报错——
@@ -124,9 +155,14 @@ func Compile(settings Settings, groups []Group, assignments []Assignment) (*Snap
 			return nil, fmt.Errorf("模型 %q 存在重复分配", assignment.ModelName)
 		}
 		seenModels[key] = struct{}{}
-		if assignment.Enabled {
-			snapshot.byModel[key] = assignment
+		if !assignment.Enabled {
+			continue
 		}
+		if key == WebToolsKey {
+			snapshot.byWebTools = assignment
+			continue
+		}
+		snapshot.byModel[key] = assignment
 	}
 
 	return snapshot, nil
@@ -182,7 +218,11 @@ func (s *Snapshot) Counts() (groups int, assignments int) {
 	if s == nil {
 		return 0, 0
 	}
-	return len(s.groups), len(s.byModel)
+	assignments = len(s.byModel)
+	if s.byWebTools != nil {
+		assignments++
+	}
+	return len(s.groups), assignments
 }
 
 // Resolve 按请求原始模型名归组。model 为空或未命中时 ok=false。
@@ -194,15 +234,32 @@ func (s *Snapshot) Resolve(model string) (Resolution, bool) {
 	if key == "" {
 		return Resolution{}, false
 	}
-	assignment, ok := s.byModel[key]
-	if !ok {
+	return s.resolveAssignment(key, s.byModel[key])
+}
+
+// ResolveRequest 是带请求特征的归组：携带联网工具且存在联网映射时优先命中它，
+// 否则退回按模型名归组。联网映射是覆盖而不是门禁——没配就当普通请求处理。
+func (s *Snapshot) ResolveRequest(model string, webTools bool) (Resolution, bool) {
+	if s == nil {
+		return Resolution{}, false
+	}
+	if webTools && s.byWebTools != nil {
+		if resolution, ok := s.resolveAssignment(WebToolsKey, s.byWebTools); ok {
+			return resolution, true
+		}
+	}
+	return s.Resolve(model)
+}
+
+func (s *Snapshot) resolveAssignment(key string, assignment *Assignment) (Resolution, bool) {
+	if assignment == nil {
 		return Resolution{}, false
 	}
 	group, ok := s.groups[assignment.GroupID]
 	if !ok {
 		return Resolution{}, false
 	}
-	return Resolution{Assignment: cloneAssignment(*assignment), Group: cloneGroup(*group)}, true
+	return Resolution{Assignment: cloneAssignment(*assignment), Group: cloneGroup(*group), MatchedKey: key}, true
 }
 
 // Group 按 ID 取组（供 retained revision 校验：组已删除时返回 false）。
@@ -235,9 +292,12 @@ func (s *Snapshot) Assignments() []Assignment {
 	if s == nil {
 		return nil
 	}
-	assignments := make([]Assignment, 0, len(s.byModel))
+	assignments := make([]Assignment, 0, len(s.byModel)+1)
 	for _, assignment := range s.byModel {
 		assignments = append(assignments, *cloneAssignment(*assignment))
+	}
+	if s.byWebTools != nil {
+		assignments = append(assignments, *cloneAssignment(*s.byWebTools))
 	}
 	sort.Slice(assignments, func(i, j int) bool {
 		return NormalizeModelName(assignments[i].ModelName) < NormalizeModelName(assignments[j].ModelName)
@@ -355,8 +415,14 @@ func ValidateAssignment(assignment Assignment, matchType string, siblings []Assi
 	}
 
 	normalized := NormalizeModelName(model)
+	if strings.HasPrefix(normalized, ReservedKeyPrefix) && normalized != WebToolsKey {
+		return fmt.Errorf("模型名不能以保留前缀 %q 开头", ReservedKeyPrefix)
+	}
 	for _, sibling := range siblings {
 		if sibling.ID != assignment.ID && NormalizeModelName(sibling.ModelName) == normalized {
+			if normalized == WebToolsKey {
+				return fmt.Errorf("联网工具映射已经存在，只能配置一条")
+			}
 			return fmt.Errorf("模型 %q 已经分配过上游组", model)
 		}
 	}

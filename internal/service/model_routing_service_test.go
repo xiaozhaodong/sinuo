@@ -65,14 +65,14 @@ func TestModelRoutingService_InitializeCreateAndResolve(t *testing.T) {
 	if !ok || resolved.Group.Name != "primary" {
 		t.Fatalf("resolution failed: %#v, %v", resolved, ok)
 	}
-	scope, ok := service.ResolveScope("claude-sonnet")
+	scope, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok || scope.Kind != endpoint.RouteScopeUpstreamGroup || scope.Target != "endpoint-a" || scope.SnapshotVersion == 0 {
 		t.Fatalf("unexpected route scope: %#v, %v", scope, ok)
 	}
 	if !service.ScopeStillValid(scope) {
 		t.Fatal("fresh route scope should remain valid")
 	}
-	unassigned, ok := service.ResolveScope("unknown-model")
+	unassigned, ok := service.ResolveScope("unknown-model", false)
 	if !ok || unassigned.Kind != endpoint.RouteScopeUnassigned || unassigned.UnassignedReason != "model_routing_unassigned" {
 		t.Fatalf("unexpected unassigned scope: %#v, %v", unassigned, ok)
 	}
@@ -122,7 +122,7 @@ func TestModelRoutingService_LoadFailureWhileDisabledStaysOpen(t *testing.T) {
 	if service.CurrentSnapshot().Enabled() {
 		t.Fatal("routing was never enabled: the failure snapshot must stay disabled")
 	}
-	if _, ok := service.ResolveScope("claude-sonnet"); ok {
+	if _, ok := service.ResolveScope("claude-sonnet", false); ok {
 		t.Fatal("model routing was never enabled: requests must keep using global routing")
 	}
 }
@@ -175,7 +175,7 @@ func TestModelRoutingService_BindingLoadFailureIsFailClosed(t *testing.T) {
 	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
-	if scope, ok := service.ResolveScope("claude-sonnet"); !ok || scope.Kind != endpoint.RouteScopeUpstreamGroup {
+	if scope, ok := service.ResolveScope("claude-sonnet", false); !ok || scope.Kind != endpoint.RouteScopeUpstreamGroup {
 		t.Fatalf("expected group scope before failure, got %#v ok=%v", scope, ok)
 	}
 
@@ -190,7 +190,7 @@ func TestModelRoutingService_BindingLoadFailureIsFailClosed(t *testing.T) {
 		t.Fatalf("expected load_failed status, got %s", service.Status())
 	}
 
-	scope, ok := service.ResolveScope("claude-sonnet")
+	scope, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok {
 		t.Fatal("fail-closed: model routing must stay authoritative after a load failure")
 	}
@@ -231,7 +231,7 @@ func TestModelRoutingServices_SettingsReadFailureFallsBackAndRecovers(t *testing
 				}
 				initialize = svc.Initialize
 				enabled = func() bool { return svc.CurrentSnapshot().Enabled() }
-				resolve = func() (string, bool) { scope, ok := svc.ResolveScope("test-model"); return scope.Kind, ok }
+				resolve = func() (string, bool) { scope, ok := svc.ResolveScope("test-model", false); return scope.Kind, ok }
 				enable = func(ctx context.Context) error {
 					_, err := svc.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true), CodexEnabled: boolPtr(true)})
 					return err
@@ -302,7 +302,7 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	}
 
 	// 请求 1：在改派前解析出的作用域，正常写入组 A 运行态。
-	inFlight, ok := service.ResolveScope("claude-sonnet")
+	inFlight, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok || inFlight.GroupID != groupA.ID {
 		t.Fatalf("expected scope on group a, got %#v", inFlight)
 	}
@@ -326,7 +326,7 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	}
 
 	// 组内策略变更 bump RouteRevision：同组、同快照之前拿到的作用域同样失效。
-	current, ok := service.ResolveScope("claude-sonnet")
+	current, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok || current.GroupID != groupB.ID {
 		t.Fatalf("expected scope on group b, got %#v", current)
 	}
@@ -340,7 +340,7 @@ func TestModelRoutingService_StaleScopeCannotWriteRuntime(t *testing.T) {
 	}
 
 	// 关闭路由后，任何组作用域都不再有效。
-	fresh, ok := service.ResolveScope("claude-sonnet")
+	fresh, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok || fresh.Kind != endpoint.RouteScopeUpstreamGroup {
 		t.Fatalf("expected group scope before disabling, got %#v", fresh)
 	}
@@ -374,7 +374,7 @@ func TestModelRoutingService_RuntimeFencingIsAtomicWithPublish(t *testing.T) {
 	if _, err := service.UpdateSettings(ctx, store.ModelRoutingSettingsPatch{ClaudeEnabled: boolPtr(true)}); err != nil {
 		t.Fatalf("enable model routing failed: %v", err)
 	}
-	scope, ok := service.ResolveScope("claude-sonnet")
+	scope, ok := service.ResolveScope("claude-sonnet", false)
 	if !ok || !service.ScopeStillValid(scope) {
 		t.Fatalf("expected a valid in-flight scope, got %#v", scope)
 	}

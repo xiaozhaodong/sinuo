@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, LockKeyhole, RotateCcw, Route } from 'lucide-react';
-import { ENDPOINT_STATUS_LABELS, routeModeLabel } from '../../endpoints/utils/modelRouting.js';
+import { ENDPOINT_STATUS_LABELS, bindingDisplayName, isWebToolsBinding, routeModeLabel } from '../../endpoints/utils/modelRouting.js';
 
 const dotTone = (endpoint) => {
   if (endpoint.status === 'ok') return 'bg-success-solid';
@@ -25,10 +25,17 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
   const [selectedId, setSelectedId] = useState(null);
   const ref = useRef(null);
 
+  // 联网工具映射是覆盖规则、优先于模型映射，置顶展示；其余按启用状态与模型名排序。
   const sorted = useMemo(
-    () => [...bindings].sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.model.localeCompare(b.model)),
+    () => [...bindings].sort(
+      (a, b) => Number(isWebToolsBinding(b)) - Number(isWebToolsBinding(a))
+        || Number(b.enabled) - Number(a.enabled)
+        || bindingDisplayName(a).localeCompare(bindingDisplayName(b))
+    ),
     [bindings]
   );
+  const modelCount = sorted.filter((b) => !isWebToolsBinding(b)).length;
+  const hasWebTools = sorted.some(isWebToolsBinding);
   const manualCount = sorted.filter((b) => b.enabled && b.route_mode !== 'auto').length;
   const selected = sorted.find((b) => b.assignment_id === selectedId) || sorted[0] || null;
 
@@ -52,7 +59,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
         className="flex w-[220px] items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50"
       >
         <Route className="h-3.5 w-3.5 shrink-0 text-accent" />
-        <span className="min-w-0 flex-1 truncate text-left">Claude: 模型路由 · {sorted.length} 模型</span>
+        <span className="min-w-0 flex-1 truncate text-left">Claude: 模型路由 · {modelCount} 模型{hasWebTools ? ' + 联网' : ''}</span>
         {manualCount > 0 && <span className="shrink-0 text-[10px] text-fg-subtle">{manualCount} 手动</span>}
       </button>
 
@@ -77,7 +84,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
                       className={`flex w-full items-center gap-2 px-3 py-2 text-left ${active ? 'bg-accent-soft' : 'hover:bg-surface-sub'}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className={`truncate font-mono text-xs ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={binding.model}>{binding.model}</div>
+                        <div className={`truncate text-xs ${isWebToolsBinding(binding) ? '' : 'font-mono'} ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={bindingDisplayName(binding)}>{bindingDisplayName(binding)}</div>
                         <div className="truncate text-[10px] text-fg-subtle">
                           {binding.enabled ? routeModeLabel(binding.route_mode, binding.route_target) : '已停用'}
                           {binding.enabled && binding.last_effective_endpoint ? ` · 最近 ${binding.last_effective_endpoint}` : ''}

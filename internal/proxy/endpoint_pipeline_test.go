@@ -110,7 +110,7 @@ type pipelineRouteScopePolicy struct {
 	scope endpoint.RouteScope
 }
 
-func (p pipelineRouteScopePolicy) ResolveScope(string) (endpoint.RouteScope, bool) {
+func (p pipelineRouteScopePolicy) ResolveScope(string, bool) (endpoint.RouteScope, bool) {
 	return p.scope, true
 }
 

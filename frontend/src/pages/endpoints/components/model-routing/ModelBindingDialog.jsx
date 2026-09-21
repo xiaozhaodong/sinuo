@@ -9,7 +9,9 @@ import { AlertTriangle, Copy, X } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import {
+  BINDING_KINDS,
   ROUTE_MODES,
+  bindingDisplayName,
   bindingPayload,
   createBindingDraft,
   endpointNames,
@@ -36,6 +38,10 @@ const ModelBindingDialog = ({ binding, bindings = [], endpoints = [], busy = fal
 
   useModalLifecycle({ open: true, onClose, initialFocusRef: modelInputRef });
 
+  const isWebTools = draft.kind === 'web_tools';
+  // 联网映射全局只有一条：已存在（且不是正在编辑的这条）时不再提供该选项。
+  const webToolsTaken = bindings.some((item) => item.kind === 'web_tools' && item.assignment_id !== draft.assignmentId);
+  const kindOptions = BINDING_KINDS.filter((kind) => kind.value !== 'web_tools' || isWebTools || !webToolsTaken);
   const availableNames = useMemo(() => new Set(endpoints.map((endpoint) => endpoint.name)), [endpoints]);
   const copySources = useMemo(
     () => bindings.filter((item) => item.assignment_id !== draft.assignmentId && item.endpoints.length > 0),
@@ -88,7 +94,9 @@ const ModelBindingDialog = ({ binding, bindings = [], endpoints = [], busy = fal
         <div className="flex items-center justify-between border-b border-line-soft px-5 py-4">
           <div>
             <h3 className="font-semibold text-fg">{draft.assignmentId ? '编辑模型映射' : '新建模型映射'}</h3>
-            <p className="mt-0.5 text-xs text-fg-muted">该模型的 Claude 请求只会在这里选中的端点之间调度。</p>
+            <p className="mt-0.5 text-xs text-fg-muted">
+              {isWebTools ? '带 web_search / web_fetch 工具的 Claude 请求只会在这里选中的端点之间调度，优先于模型映射。' : '该模型的 Claude 请求只会在这里选中的端点之间调度。'}
+            </p>
           </div>
           <button
             type="button"
@@ -101,15 +109,30 @@ const ModelBindingDialog = ({ binding, bindings = [], endpoints = [], busy = fal
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
+          <div className="grid gap-3 sm:grid-cols-[140px_1fr_200px]">
             <div>
-              <label className={labelClass} htmlFor="model-binding-name">模型名（精确匹配，大小写不敏感）</label>
+              <div className={labelClass}>匹配方式</div>
+              <CustomSelect
+                options={kindOptions}
+                value={draft.kind}
+                // 编辑已有映射时不允许改种类：那等于删一条建一条，后端也是按键去重的。
+                disabled={busy || Boolean(draft.assignmentId)}
+                size="md"
+                className="mt-1 w-full"
+                onChange={(kind) => patch({ ...draft, kind, model: kind === 'web_tools' ? '' : draft.model })}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="model-binding-name">
+                {isWebTools ? '匹配条件' : '模型名（精确匹配，大小写不敏感）'}
+              </label>
               <input
                 id="model-binding-name"
                 ref={modelInputRef}
                 className={`${fieldClass} mt-1 font-mono`}
-                value={draft.model}
-                disabled={busy}
+                value={isWebTools ? 'tools[].type = web_search_* / web_fetch_*' : draft.model}
+                disabled={busy || isWebTools}
+                readOnly={isWebTools}
                 onChange={(event) => patch({ ...draft, model: event.target.value })}
                 placeholder="claude-opus-4-5"
               />
@@ -120,7 +143,7 @@ const ModelBindingDialog = ({ binding, bindings = [], endpoints = [], busy = fal
               <CustomSelect
                 options={copySources.map((item) => ({
                   value: item.assignment_id,
-                  label: `${item.model}（${item.endpoints.length} 个端点）`
+                  label: `${bindingDisplayName(item)}（${item.endpoints.length} 个端点）`
                 }))}
                 value=""
                 disabled={busy || copySources.length === 0}
@@ -184,6 +207,11 @@ const ModelBindingDialog = ({ binding, bindings = [], endpoints = [], busy = fal
           <p className="text-[11px] text-fg-subtle">
             {ROUTE_MODES.find((mode) => mode.value === draft.routeMode)?.hint}
           </p>
+          {isWebTools && (
+            <p className="text-[11px] text-fg-subtle">
+              {BINDING_KINDS.find((kind) => kind.value === 'web_tools')?.hint}；没有这条映射时联网请求按模型映射正常调度。
+            </p>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div>

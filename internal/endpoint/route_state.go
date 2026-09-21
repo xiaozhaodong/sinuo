@@ -28,6 +28,11 @@ type RouteRequestProfile struct {
 	BodySize      int
 	SchemaFields  []string
 	IsCountTokens bool
+	// ServerToolTypes 是 tools[] 中所有带 type 的 server tool 类型（如 web_search_20260209），
+	// 供日志诊断请求到底带了什么工具；WebTools 由其中 web_search_ / web_fetch_ 前缀推出，
+	// 模型路由据此优先命中「联网工具」映射。
+	ServerToolTypes []string
+	WebTools        bool
 }
 
 type RouteBlock struct {
@@ -92,9 +97,57 @@ func BuildRouteRequestProfile(path string, bodyBytes []byte) RouteRequestProfile
 			profile.Model = strings.TrimSpace(model)
 		}
 		profile.SchemaFields = extractSchemaFields(payload)
+		profile.ServerToolTypes = extractServerToolTypes(payload)
+		profile.WebTools = hasWebServerTools(profile.ServerToolTypes)
 	}
 
 	return profile
+}
+
+// webServerToolTypePrefixes 覆盖 web_search_20250305 / web_search_20260209 /
+// web_fetch_20250910 / web_fetch_20260209 等所有日期后缀变体；只认 type，不认可改的 name。
+var webServerToolTypePrefixes = []string{"web_search_", "web_fetch_"}
+
+// extractServerToolTypes 收集 tools[] 里带 type 的工具类型（去重、小写）。
+// 普通函数工具没有 type 或 type=custom，不计入。
+func extractServerToolTypes(payload map[string]interface{}) []string {
+	tools, ok := payload["tools"].([]interface{})
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	types := make([]string, 0)
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		toolType, ok := tool["type"].(string)
+		if !ok {
+			continue
+		}
+		toolType = strings.ToLower(strings.TrimSpace(toolType))
+		if toolType == "" || toolType == "custom" {
+			continue
+		}
+		if _, duplicated := seen[toolType]; duplicated {
+			continue
+		}
+		seen[toolType] = struct{}{}
+		types = append(types, toolType)
+	}
+	return types
+}
+
+func hasWebServerTools(serverToolTypes []string) bool {
+	for _, toolType := range serverToolTypes {
+		for _, prefix := range webServerToolTypePrefixes {
+			if strings.HasPrefix(toolType, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractSchemaFields(payload map[string]interface{}) []string {

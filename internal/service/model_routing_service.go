@@ -117,7 +117,7 @@ func (s *ModelRoutingService) publishSnapshotLocked(snapshot *modelrouting.Snaps
 }
 
 // ResolveScope 实现 endpoint.RouteScopePolicy。
-func (s *ModelRoutingService) ResolveScope(model string) (endpoint.RouteScope, bool) {
+func (s *ModelRoutingService) ResolveScope(model string, webTools bool) (endpoint.RouteScope, bool) {
 	snapshot := s.CurrentSnapshot()
 	if snapshot == nil || !snapshot.Enabled() {
 		return endpoint.RouteScope{}, false
@@ -141,11 +141,12 @@ func (s *ModelRoutingService) ResolveScope(model string) (endpoint.RouteScope, b
 		scope.UnassignedReason = "model_routing_missing_model"
 		return scope, true
 	}
-	resolution, ok := snapshot.Resolve(model)
+	resolution, ok := snapshot.ResolveRequest(model, webTools)
 	if !ok || resolution.Group == nil {
 		return scope, true
 	}
 	group := resolution.Group
+	scope.MatchedKey = resolution.MatchedKey
 	scope.Kind = endpoint.RouteScopeUpstreamGroup
 	scope.GroupID = group.ID
 	scope.GroupName = group.Name
@@ -244,7 +245,7 @@ func (s *ModelRoutingService) ModelsUsingEndpoint(ctx context.Context, name stri
 	for _, binding := range bindings {
 		for _, endpointName := range binding.Endpoints {
 			if strings.TrimSpace(endpointName) == name {
-				models = append(models, binding.Model)
+				models = append(models, bindingDisplayName(binding))
 				break
 			}
 		}

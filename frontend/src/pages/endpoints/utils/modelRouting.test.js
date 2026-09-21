@@ -8,6 +8,8 @@ import {
   filterEndpoints,
   normalizeDraftTarget,
   patchBindingPayload,
+  bindingDisplayName,
+  isWebToolsBinding,
   routeModeLabel,
   setDraftRouteMode,
   toggleDraftEndpoint,
@@ -31,6 +33,7 @@ test('draft is built from the binding view without leaking group concepts', () =
   });
   assert.deepEqual(draft, {
     assignmentId: 7,
+    kind: 'model',
     model: 'claude-opus-4-5',
     endpoints: ['relay-a', 'relay-b'],
     routeMode: 'manual_fixed',
@@ -39,7 +42,7 @@ test('draft is built from the binding view without leaking group concepts', () =
     note: '主力'
   });
   assert.deepEqual(createBindingDraft(), {
-    assignmentId: null, model: '', endpoints: [], routeMode: 'auto', routeTarget: '', enabled: true, note: ''
+    assignmentId: null, kind: 'model', model: '', endpoints: [], routeMode: 'auto', routeTarget: '', enabled: true, note: ''
   });
 });
 
@@ -125,10 +128,37 @@ test('patchBindingPayload keeps the endpoint set and normalizes the target', () 
     note: '主力'
   };
   assert.deepEqual(patchBindingPayload(binding, { route_mode: 'auto' }), {
-    model: 'claude-opus-4-5', endpoints: ['relay-a', 'relay-b'], route_mode: 'auto', route_target: '', enabled: true, note: '主力'
+    kind: 'model', model: 'claude-opus-4-5', endpoints: ['relay-a', 'relay-b'], route_mode: 'auto', route_target: '', enabled: true, note: '主力'
   });
   assert.equal(patchBindingPayload(binding, { route_mode: 'manual_preferred', route_target: 'relay-a' }).route_target, 'relay-a');
   assert.equal(patchBindingPayload(binding, { route_mode: 'manual_preferred' }).route_target, '');
   assert.equal(patchBindingPayload({ ...binding, endpoints: [{ name: 'relay-a' }], route_mode: 'auto', route_target: '' }, { route_mode: 'manual_fixed' }).route_target, 'relay-a');
   assert.equal(patchBindingPayload(binding, { enabled: false }).enabled, false);
+});
+
+test('web tools binding: draft, validation, payload and labels', () => {
+  const webBinding = { assignment_id: 5, kind: 'web_tools', model: 'server_tool:web', endpoints: [{ name: 'relay-web' }] };
+  assert.equal(isWebToolsBinding(webBinding), true);
+  assert.equal(isWebToolsBinding({ model: 'claude-opus-4-5' }), false);
+  assert.equal(bindingDisplayName(webBinding), '联网工具（web_search / web_fetch）');
+  assert.equal(bindingDisplayName({ model: 'claude-opus-4-5' }), 'claude-opus-4-5');
+
+  // 保留键不进入草稿的模型输入框。
+  const draft = createBindingDraft(webBinding);
+  assert.equal(draft.kind, 'web_tools');
+  assert.equal(draft.model, '');
+  assert.equal(validateBindingDraft(draft, [webBinding]), '');
+
+  // 同时只能有一条联网映射；与模型映射互不算重复。
+  const another = { ...draft, assignmentId: null };
+  assert.equal(validateBindingDraft(another, [webBinding]), '联网工具映射已经存在，只能配置一条');
+  assert.equal(validateBindingDraft(another, [{ assignment_id: 1, model: 'claude-opus-4-5' }]), '');
+  assert.equal(validateBindingDraft({ ...draftOf(), assignmentId: null }, [webBinding]), '');
+  assert.equal(validateBindingDraft({ ...draftOf(), model: 'server_tool:web' }), '模型名不能以保留前缀 server_tool: 开头');
+
+  const payload = bindingPayload({ ...draft, model: 'should-be-dropped' });
+  assert.equal(payload.kind, 'web_tools');
+  assert.equal(payload.model, '');
+  assert.deepEqual(payload.endpoints, ['relay-web']);
+  assert.equal(patchBindingPayload(webBinding, { enabled: false }).kind, 'web_tools');
 });

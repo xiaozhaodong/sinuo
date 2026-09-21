@@ -19,6 +19,7 @@
   - 配置加载失败按 fail-closed 处理：开关处于打开状态时所有 Claude 请求返回 422（`model_routing_load_failed`），不静默回落到全局端点路由；开关从未打开过则保持全局路由
   - `/v1/messages/count_tokens` 的 422 契约取决于「Token 计数」开关：开启时由 `CountTokensHandler` 拦截，未分配模型一律降级为本地估算、不返回 422；关闭时 count_tokens 是普通透传路径，与 `/v1/messages` 同样 fail-closed 返回 422（错误信息会提示开启 Token 计数）
   - 模型路由只作用于精确的 `/v1/messages` 与 `/v1/messages/count_tokens`，其他进入端点管线的路径即便 body 带 `model` 也保持全局路由
+  - 联网工具映射：`/v1/messages` 请求 `tools[].type` 以 `web_search_` / `web_fetch_` 开头（只认 type，不认 name，不区分日期后缀）时优先命中「联网工具」映射，没配或停用则回落到模型映射；`count_tokens` 不参与联网覆盖，始终按模型映射归组；全局仅一条，存为 `model_routing_assignments.model_name = server_tool:web` 保留键（不改表结构），用户模型名禁止 `server_tool:` 前缀；前端以 `kind = model / web_tools` 区分，不接触保留键
 - 桌面端启动完成后异步执行端点与账号池批量连通性检查
 - 请求生命周期追踪、Token/成本统计、SQLite 持久化
 - 数据库时间统一 UTC：真实时间点以固定微秒精度 UTC 文本存储，前端按顶层 IANA `timezone` 显示并生成业务日期范围（DST 日按真实 23/25 小时计算）

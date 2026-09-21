@@ -352,6 +352,7 @@ const normalizeRoutingEndpoint = (member = {}) => ({
 
 const normalizeModelRouteBinding = (binding = {}) => ({
   assignment_id: parseEntityId(binding.assignment_id ?? binding.assignmentId),
+  kind: binding.kind || binding.Kind || 'model',
   model: binding.model || binding.Model || '',
   endpoints: (binding.endpoints || binding.Endpoints || []).map(normalizeRoutingEndpoint),
   route_mode: binding.route_mode || binding.routeMode || 'auto',
@@ -366,6 +367,7 @@ const normalizeModelRouteBinding = (binding = {}) => ({
 });
 
 const toModelRouteBindingPayload = (input = {}) => ({
+  kind: input.kind || 'model',
   model: (input.model || '').trim(),
   endpoints: (input.endpoints || []).map((name) => String(name).trim()).filter(Boolean),
   route_mode: input.route_mode || input.routeMode || 'auto',

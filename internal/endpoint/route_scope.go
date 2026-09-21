@@ -41,6 +41,8 @@ type RouteScope struct {
 	FallbackEnabled  bool
 	UnassignedReason string
 	Model            string
+	// MatchedKey 是命中的分配键：模型名或联网工具保留键；global / unassigned 为空。
+	MatchedKey string
 }
 
 // Key 是 retained 等运行态的作用域键。
@@ -67,7 +69,8 @@ func (s RouteScope) Clone() RouteScope {
 // NoteDecision / SettleDecision 接收完整作用域：实现方必须先做 fencing（快照版本 + 组 revision），
 // 在途请求期间被改派或关闭路由的旧作用域不得再写入组运行态。
 type RouteScopePolicy interface {
-	ResolveScope(model string) (RouteScope, bool)
+	// ResolveScope 按请求模型与是否携带联网工具解析作用域。
+	ResolveScope(model string, webTools bool) (RouteScope, bool)
 	NoteDecision(scope RouteScope, effectiveEndpoint string)
 	SettleDecision(scope RouteScope, effectiveEndpoint, outcome string)
 	ScopeStillValid(scope RouteScope) bool
@@ -143,7 +146,10 @@ func (m *Manager) ResolveRouteScope(profile RouteRequestProfile) RouteScope {
 	if policy == nil || !m.IsClaudeRoutingReady() || !modelRoutingAppliesTo(profile.Path) {
 		return global
 	}
-	if scope, ok := policy.ResolveScope(profile.Model); ok {
+	// 联网工具覆盖只作用于 /v1/messages：count_tokens 是纯计数请求，带 web_search /
+	// web_fetch 定义时仍按模型映射归组，避免联网映射固定到不支持计数的端点后把
+	// 同一条请求的 count_tokens 打成 422。
+	if scope, ok := policy.ResolveScope(profile.Model, profile.WebTools && !profile.IsCountTokens); ok {
 		return scope.Clone()
 	}
 	return global

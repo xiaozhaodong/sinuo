@@ -10,9 +10,9 @@ type testRouteScopePolicy struct {
 	scope RouteScope
 }
 
-func (p testRouteScopePolicy) ResolveScope(string) (RouteScope, bool)  { return p.scope, true }
-func (testRouteScopePolicy) NoteDecision(RouteScope, string)           {}
-func (testRouteScopePolicy) SettleDecision(RouteScope, string, string) {}
+func (p testRouteScopePolicy) ResolveScope(string, bool) (RouteScope, bool) { return p.scope, true }
+func (testRouteScopePolicy) NoteDecision(RouteScope, string)                {}
+func (testRouteScopePolicy) SettleDecision(RouteScope, string, string)      {}
 func (p testRouteScopePolicy) ScopeStillValid(scope RouteScope) bool {
 	return scope.Key() == p.scope.Key()
 }

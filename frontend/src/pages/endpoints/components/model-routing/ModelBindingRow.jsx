@@ -3,10 +3,10 @@
 // 2026-09-03
 // ============================================
 
-import { AlertTriangle, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, Globe, Pencil, Trash2 } from 'lucide-react';
 import { CustomSelect } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import { ENDPOINT_STATUS_LABELS, ROUTE_MODES, endpointStatusTone } from '../../utils/modelRouting.js';
+import { ENDPOINT_STATUS_LABELS, ROUTE_MODES, endpointStatusTone, isWebToolsBinding } from '../../utils/modelRouting.js';
 import ToggleSwitch from '../ToggleSwitch.jsx';
 
 const outcomeLabels = {
@@ -24,14 +24,26 @@ const ModelBindingRow = ({ binding, busy, onEdit, onDelete, onPatch }) => {
   const { formatTimestamp } = useTimezone();
   const blocked = binding.endpoints.filter((endpoint) => endpoint.status !== 'ok');
   const targetOptions = binding.endpoints.map((endpoint) => ({ value: endpoint.name, label: endpoint.name }));
+  const webTools = isWebToolsBinding(binding);
 
   return (
     <div className={`px-4 py-3 transition-colors ${binding.enabled ? '' : 'bg-surface-sub/50'}`}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <div className="min-w-[180px] flex-1">
-          <div className={`truncate font-mono text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={binding.model}>
-            {binding.model}
-          </div>
+          {webTools ? (
+            <div
+              className={`flex items-center gap-1.5 text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`}
+              title="请求 tools 里带 web_search / web_fetch 时优先命中，不看模型名"
+            >
+              <Globe size={13} className="shrink-0 text-accent" />
+              <span className="truncate">联网工具</span>
+              <span className="shrink-0 rounded-md border border-line px-1 py-px font-mono text-[10px] text-fg-subtle">web_search / web_fetch</span>
+            </div>
+          ) : (
+            <div className={`truncate font-mono text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={binding.model}>
+              {binding.model}
+            </div>
+          )}
           {binding.note && (
             <div className="mt-0.5 truncate text-[11px] text-fg-subtle" title={binding.note}>{binding.note}</div>
           )}

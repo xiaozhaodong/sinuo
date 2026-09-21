@@ -16,12 +16,14 @@ import (
 type ModelRouteBinding struct {
 	AssignmentID int64
 	GroupID      int64
-	Model        string
-	Endpoints    []string
-	RouteMode    string
-	RouteTarget  string
-	Enabled      bool
-	Note         string
+	// Kind 区分模型映射与联网工具映射；后者 Model 为保留键，前端不直接展示。
+	Kind        string
+	Model       string
+	Endpoints   []string
+	RouteMode   string
+	RouteTarget string
+	Enabled     bool
+	Note        string
 	// SharedModels 是与本条共用同一个组的其它模型。1 模型 1 组语义下恒为空，
 	// 非空只可能来自更早版本手工编排的共享组，编辑本条时会自动分裂掉。
 	SharedModels []string
@@ -32,6 +34,8 @@ type ModelRouteBinding struct {
 
 // ModelRouteBindingInput 是一次映射写入的完整意图，组与分配的字段合成一份。
 type ModelRouteBindingInput struct {
+	// Kind 为空或 model 时按 Model 字段匹配；为 web_tools 时忽略 Model，写入联网工具保留键。
+	Kind        string
 	Model       string
 	Endpoints   []string
 	RouteMode   string
@@ -138,10 +142,40 @@ func buildBinding(record *store.ModelRoutingAssignmentRecord, group *store.Model
 	}
 	return ModelRouteBinding{
 		AssignmentID: record.ID, GroupID: group.ID, Model: record.ModelName,
+		Kind:      modelrouting.BindingKind(record.ModelName),
 		Endpoints: members, RouteMode: group.RouteMode, RouteTarget: group.RouteTarget,
 		Enabled: record.Enabled, Note: record.Note, SharedModels: shared,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
+}
+
+// bindingDisplayName 给端点删除守卫等提示用：联网工具映射不暴露保留键。
+func bindingDisplayName(binding ModelRouteBinding) string {
+	if binding.Kind == modelrouting.BindingKindWebTools {
+		return "联网工具"
+	}
+	return binding.Model
+}
+
+// normalizeBindingInput 把映射种类折算成分配键：联网工具映射统一写保留键，
+// 模型映射保持用户输入；未知种类直接拒绝，避免前端拼错字段静默落成模型映射。
+func normalizeBindingInput(input ModelRouteBindingInput) (ModelRouteBindingInput, error) {
+	switch strings.TrimSpace(input.Kind) {
+	case "", modelrouting.BindingKindModel:
+		input.Kind = modelrouting.BindingKindModel
+		input.Model = strings.TrimSpace(input.Model)
+		// 下层校验放行 server_tool:web 本身以便联网映射入库，所以普通模型入口必须
+		// 自己拒掉整个保留前缀，否则 kind=model 能绕过前端造出联网映射。
+		if modelrouting.IsReservedKey(input.Model) {
+			return input, fmt.Errorf("模型名不能以保留前缀 %q 开头，联网工具映射请选择「联网工具」类型", modelrouting.ReservedKeyPrefix)
+		}
+	case modelrouting.BindingKindWebTools:
+		input.Kind = modelrouting.BindingKindWebTools
+		input.Model = modelrouting.WebToolsKey
+	default:
+		return input, fmt.Errorf("不支持的映射类型 %q", input.Kind)
+	}
+	return input, nil
 }
 
 // CreateBinding 在一个事务内建立专属组与分配，返回新分配 ID。
@@ -149,11 +183,15 @@ func (s *ModelRoutingService) CreateBinding(ctx context.Context, input ModelRout
 	if err := s.checkStore(); err != nil {
 		return 0, err
 	}
+	input, err := normalizeBindingInput(input)
+	if err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	assignmentID := int64(0)
-	err := s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
+	err = s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
 		state, stateErr := loadBindingState(ctx, st)
 		if stateErr != nil {
 			return stateErr
@@ -186,10 +224,14 @@ func (s *ModelRoutingService) UpdateBinding(ctx context.Context, assignmentID in
 	if err := s.checkStore(); err != nil {
 		return err
 	}
+	input, err := normalizeBindingInput(input)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
+	err = s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
 		existing, loadErr := loadClaudeAssignment(ctx, st, assignmentID)
 		if loadErr != nil {
 			return loadErr

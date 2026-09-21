@@ -19,7 +19,7 @@ import {
 import { subscribeToEvent } from '@utils/wailsApi.js';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import useConfirm from '@hooks/useConfirm.js';
-import { patchBindingPayload } from '../../utils/modelRouting.js';
+import { isWebToolsBinding, patchBindingPayload } from '../../utils/modelRouting.js';
 import ModelBindingDialog from './ModelBindingDialog.jsx';
 import ModelBindingRow from './ModelBindingRow.jsx';
 import RouteTestBox from './RouteTestBox.jsx';
@@ -87,8 +87,10 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
 
   const removeBinding = async (binding) => {
     const ok = await confirm({
-      title: '删除模型映射',
-      message: `确定删除模型「${binding.model}」的映射吗？删除后该模型的请求会返回未分配错误。`,
+      title: isWebToolsBinding(binding) ? '删除联网工具映射' : '删除模型映射',
+      message: isWebToolsBinding(binding)
+        ? '确定删除联网工具映射吗？删除后带 web_search / web_fetch 的请求会改按模型映射调度。'
+        : `确定删除模型「${binding.model}」的映射吗？删除后该模型的请求会返回未分配错误。`,
       confirmText: '确认删除',
       danger: true
     });
@@ -114,7 +116,9 @@ const ModelRoutingDrawer = ({ open, onClose, endpoints = [] }) => {
   const topOffset = nav ? nav.getBoundingClientRect().bottom : 0;
   const summary = useMemo(() => {
     const active = bindings.filter((binding) => binding.enabled).length;
-    return `${bindings.length} 个模型${bindings.length > active ? ` · ${bindings.length - active} 个已停用` : ''}`;
+    const models = bindings.filter((binding) => !isWebToolsBinding(binding)).length;
+    const webTools = bindings.length - models;
+    return `${models} 个模型${webTools > 0 ? ' · 联网工具' : ''}${bindings.length > active ? ` · ${bindings.length - active} 个已停用` : ''}`;
   }, [bindings]);
 
   if (!open) return null;

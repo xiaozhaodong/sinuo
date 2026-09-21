@@ -77,6 +77,7 @@ type ModelRoutingMemberInfo struct {
 // 底层的上游组是该模型的专属实现细节，不作为独立概念暴露给 UI。
 type ModelRouteBindingInfo struct {
 	AssignmentID   int64                    `json:"assignment_id"`
+	Kind           string                   `json:"kind"`
 	Model          string                   `json:"model"`
 	Endpoints      []ModelRoutingMemberInfo `json:"endpoints"`
 	RouteMode      string                   `json:"route_mode"`
@@ -91,6 +92,7 @@ type ModelRouteBindingInfo struct {
 }
 
 type ModelRouteBindingInput struct {
+	Kind        string   `json:"kind"`
 	Model       string   `json:"model"`
 	Endpoints   []string `json:"endpoints"`
 	RouteMode   string   `json:"route_mode"`
@@ -240,7 +242,7 @@ func (a *App) ListModelRouteBindings() ([]ModelRouteBindingInfo, error) {
 			endpoints = append(endpoints, modelRoutingMemberInfo(svc.EndpointMember(name)))
 		}
 		result = append(result, ModelRouteBindingInfo{
-			AssignmentID: binding.AssignmentID, Model: binding.Model, Endpoints: endpoints,
+			AssignmentID: binding.AssignmentID, Kind: binding.Kind, Model: binding.Model, Endpoints: endpoints,
 			RouteMode: binding.RouteMode, RouteTarget: binding.RouteTarget,
 			Enabled: binding.Enabled, Note: binding.Note, SharedModels: binding.SharedModels,
 			LastEffective: binding.Runtime.LastEffectiveEndpoint, LastDecisionAt: formatTime(binding.Runtime.LastDecisionAt),
@@ -384,6 +386,7 @@ func (a *App) UpdateCodexModelRouteBinding(assignmentID int64, input CodexModelR
 
 func modelRouteBindingInput(input ModelRouteBindingInput) service.ModelRouteBindingInput {
 	return service.ModelRouteBindingInput{
+		Kind:        input.Kind,
 		Model:       input.Model,
 		Endpoints:   append([]string(nil), input.Endpoints...),
 		RouteMode:   input.RouteMode,
@@ -426,7 +429,7 @@ func (a *App) TestModelRouting(input ModelRoutingTestInput) (ModelRoutingTestRes
 		return ModelRoutingTestResult{}, err
 	}
 	model := strings.TrimSpace(input.Model)
-	scope, ok := svc.ResolveScope(model)
+	scope, ok := svc.ResolveScope(model, false)
 	if !ok {
 		// 模型路由未启用：请求会按全局端点策略走，试算面板如实反映这一点。
 		scope = endpoint.RouteScope{Kind: endpoint.RouteScopeGlobal}

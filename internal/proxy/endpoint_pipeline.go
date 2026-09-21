@@ -50,9 +50,10 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	scope := h.endpointManager.ResolveRouteScope(profile)
 	switch scope.Kind {
 	case endpoint.RouteScopeUpstreamGroup:
-		slog.Debug(fmt.Sprintf("🧭 [模型路由] [%s] model=%s -> 上游组 %s mode=%s target=%s", connID, scope.Model, scope.GroupName, scope.Mode, scope.Target))
+		slog.Debug(fmt.Sprintf("🧭 [模型路由] [%s] model=%s key=%s web_tools=%v server_tools=%v -> 上游组 %s mode=%s target=%s",
+			connID, scope.Model, scope.MatchedKey, profile.WebTools, profile.ServerToolTypes, scope.GroupName, scope.Mode, scope.Target))
 	case endpoint.RouteScopeUnassigned:
-		slog.Warn(fmt.Sprintf("🧭 [模型路由] [%s] model=%s 未分配上游组，返回 422", connID, scope.Model))
+		slog.Warn(fmt.Sprintf("🧭 [模型路由] [%s] model=%s web_tools=%v server_tools=%v 未分配上游组，返回 422", connID, scope.Model, profile.WebTools, profile.ServerToolTypes))
 	}
 
 	// reject 模式前置检查（保留现状语义）
