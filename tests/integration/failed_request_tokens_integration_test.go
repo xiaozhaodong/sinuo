@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -180,8 +181,11 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 	numManagers := 5
 	tokensPerManager := 10
 
+	var wg sync.WaitGroup
 	for i := 0; i < numManagers; i++ {
+		wg.Add(1)
 		go func(managerID int) {
+			defer wg.Done()
 			rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware,
 				"req-concurrent-"+string(rune('A'+managerID)), nil)
 
@@ -198,17 +202,18 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 	}
 
 	// 等待所有goroutine完成
-	time.Sleep(1 * time.Second)
+	wg.Wait()
 
-	// 验证并发处理结果
-	metrics := monitoringMiddleware.GetMetrics()
+	// 验证并发处理结果。GetMetrics 返回的是活对象，读字段必须走加锁方法，
+	// 直接读 metrics.TotalTokenUsage 会与 RecordTokenUsage 的写形成数据竞争。
+	tokenStats := monitoringMiddleware.GetMetrics().GetTotalTokenStats()
 
 	// 计算期望的总Token数
 	// 每个manager: 10次调用，每次(10+j)+(5+j) = 15+2j
 	// j从0到9，总计每个manager: 15*10 + 2*(0+1+...+9) = 150 + 2*45 = 240
 	expectedTotal := int64(numManagers * 240) // 5 * 240 = 1200
 
-	actualTotal := metrics.TotalTokenUsage.InputTokens + metrics.TotalTokenUsage.OutputTokens
+	actualTotal := tokenStats.InputTokens + tokenStats.OutputTokens
 	if actualTotal != expectedTotal {
 		t.Errorf("并发测试Token统计不正确：期望 %d，实际 %d", expectedTotal, actualTotal)
 	}
