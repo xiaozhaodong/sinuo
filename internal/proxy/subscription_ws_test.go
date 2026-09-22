@@ -522,7 +522,7 @@ func TestSubscriptionHTTPTrackingEntryIntegration(t *testing.T) {
 			resp := env.request(http.MethodPost, tc.operation, func(r *http.Request) {
 				r.Header.Set("Authorization", "Bearer synthetic-client-token")
 				r.Header.Set("Content-Type", "application/json")
-				r.Body = io.NopCloser(strings.NewReader(`{"model":"synthetic-model","input":"SYNTHETIC-SECRET"}`))
+				r.Body = io.NopCloser(strings.NewReader(`{"model":"synthetic-model","reasoning":{"effort":"high"},"input":"SYNTHETIC-SECRET"}`))
 			})
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
@@ -572,6 +572,10 @@ func TestSubscriptionHTTPTrackingEntryIntegration(t *testing.T) {
 			wantKnown := !tc.blocked && !tc.upstreamError && tc.name != "unknown usage"
 			if row.UsageKnown != wantKnown || row.CostKnown != wantKnown {
 				t.Fatalf("unknown usage/cost collapsed into zero: %+v", row)
+			}
+			// v6.3：HTTP 入口在 start 之后读到请求体，请求侧两项必须补写进同一行
+			if row.RequestModel != "synthetic-model" || row.RequestReasoning != "effort:high" {
+				t.Fatalf("request profile lost: model=%q reasoning=%q", row.RequestModel, row.RequestReasoning)
 			}
 			encoded, err := json.Marshal(row)
 			if err != nil {

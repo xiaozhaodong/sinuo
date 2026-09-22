@@ -56,6 +56,11 @@
   - 前端支持多条精确匹配规则，默认关闭，不按渠道自动生成规则
   - 固定作用于 `/v1/messages` 与 `/v1/messages/count_tokens`；故障转移时每个候选端点都从原始请求体重新应用自己的规则
 - Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
+- 请求追踪记录请求 / 上游 / 响应模型与思考等级，一致性由前端派生（v6.3）：
+  - `request_logs` 新增 5 列 `request_model / upstream_model / response_model / request_reasoning / response_reasoning`（TEXT DEFAULT ''），`model_name` 仍是计费模型、所有计费口径不变
+  - 请求两项在 `handler.go` 入口同步解析（`reasoning.ParseRequest`）并随 start 事件原子写入；上游模型每 attempt 覆盖（改写目标或空串 = 与请求相同）；响应两项与终态事件（`ResponseDiagnostics`）同一事件落库
+  - 思考串文法：空格分隔 `key:value`，key ∈ `thinking / budget / effort / reasoning_tokens`；Claude 响应只能观测有无思考块，不做默认值推断；Codex 响应按字段合并 `created` 的 effort 与 `completed` 的 reasoning_tokens
+  - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
@@ -92,6 +97,9 @@
 - `internal/service/account_pool_profile.go`：账号画像与 quota 刷新
 - `internal/store/account_pool.go`：`upstream_accounts` 存储层
 - `internal/modelrewrite/`：Codex 账号池与 Claude 端点共用的模型改写解析、校验与匹配引擎
+- `internal/reasoning/`：请求 / 响应模型与思考配置提取的纯引擎（归一化 token 串、按字段合并的 `ResponseState`）
+- `internal/proxy/lifecycle_manager_diagnostics.go` / `pipeline_response_diagnostics.go` / `token_parser_reasoning.go`：模型一致性诊断字段在生命周期管理器、两条管线与 TokenParser 的接入点
+- `internal/tracking/response_diagnostics.go`：终态随 success / final_failure / settlement 原子落库的 `ResponseDiagnostics` 与共用 SQL 片段
 - `internal/modelrouting/`：Claude 模型到端点集合的精确匹配编译与校验引擎
 - `internal/endpoint/route_scope.go`：全局、模型端点集合与未分配请求的统一路由作用域契约
 - `internal/service/model_routing_service.go` / `app_api_model_routing.go`：模型路由配置、运行态和 Wails API
@@ -119,6 +127,7 @@
 - `frontend/src/utils/errors.js`：错误归一化（Error / `{message}` / 字符串三态），错误提示取文案统一走 `resolveErrorMessage`，勿直接写 `err.message ||`
 - `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
+- `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
 
 ## 关键数据流
@@ -236,6 +245,8 @@ cd frontend && npm run build
 - `frontend/src/pages/privacy-protection/*`：`node --test frontend/src/pages/privacy-protection/utils/privacyRules.test.js`
 - `internal/service/model_routing_bindings.go` / `internal/store/model_routing.go` / `app_api_model_routing.go`：`go test ./internal/service ./internal/store .`
 - `frontend/src/pages/endpoints/components/model-routing/*`：`node --test frontend/src/pages/endpoints/utils/modelRouting.test.js`
+- `internal/reasoning/*` / 模型一致性链路（`lifecycle_manager_diagnostics.go` / `pipeline_response_diagnostics.go` / `token_parser_reasoning.go` / `tracking/response_diagnostics.go`）：`go test ./internal/reasoning ./internal/proxy ./internal/proxy/handlers ./internal/tracking ./internal/migration .`
+- `frontend/src/pages/requests/utils/modelConsistency.js` / `ModelTag.jsx` / `RequestDetailModal.jsx`：`node --test frontend/src/pages/requests/utils/*.test.js`
 - `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
 
 ## 调试提示

@@ -104,6 +104,11 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(fallback_reason, '') as fallback_reason,
 	CAST(route_decision_at AS TEXT),
 	COALESCE(model_name, '') as model_name,
+	COALESCE(request_model, '') as request_model,
+	COALESCE(upstream_model, '') as upstream_model,
+	COALESCE(response_model, '') as response_model,
+	COALESCE(request_reasoning, '') as request_reasoning,
+	COALESCE(response_reasoning, '') as response_reasoning,
 	COALESCE(is_streaming, false) as is_streaming,
 	status, http_status_code, retry_count,
 	COALESCE(failure_reason, '') as failure_reason,
@@ -268,7 +273,10 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.RequestFamily, &detail.RequestSource, &detail.RequestKind, &detail.EndpointName,
 			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
 			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &routeDecisionAt,
-			&detail.ModelName, &detail.IsStreaming,
+			&detail.ModelName,
+			&detail.RequestModel, &detail.UpstreamModel, &detail.ResponseModel,
+			&detail.RequestReasoning, &detail.ResponseReasoning,
+			&detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
 			&input, &output,
@@ -479,7 +487,12 @@ type RequestDetail struct {
 	FallbackReason     string     `json:"fallback_reason"`
 	RouteDecisionAt    *time.Time `json:"route_decision_at"`
 	ModelName          string     `json:"model_name"`
-	IsStreaming        bool       `json:"is_streaming"` // 是否为流式请求
+	RequestModel       string     `json:"request_model"`      // v6.3: 客户端原始请求模型
+	UpstreamModel      string     `json:"upstream_model"`     // v6.3: 最终 attempt 实际上游模型（空 = 与请求相同）
+	ResponseModel      string     `json:"response_model"`     // v6.3: 仅由响应解析写入
+	RequestReasoning   string     `json:"request_reasoning"`  // v6.3: 请求思考配置（归一化串）
+	ResponseReasoning  string     `json:"response_reasoning"` // v6.3: 响应思考信息（归一化串）
+	IsStreaming        bool       `json:"is_streaming"`       // 是否为流式请求
 
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code"`

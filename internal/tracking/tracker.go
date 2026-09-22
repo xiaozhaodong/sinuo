@@ -136,6 +136,8 @@ type RequestStartData struct {
 	RequestSource      string `json:"request_source,omitempty"`
 	RequestKind        string `json:"request_kind,omitempty"`
 	UsageKnown         bool   `json:"usage_known"`
+	RequestModel       string `json:"request_model,omitempty"`     // v6.3: 客户端原始请求模型
+	RequestReasoning   string `json:"request_reasoning,omitempty"` // v6.3: 客户端请求思考配置（归一化串）
 }
 
 // RequestDimensions 是开始记录时必须原子写入的来源与分类维度。
@@ -147,6 +149,8 @@ type RequestDimensions struct {
 	UpstreamName       string
 	UpstreamID         int64
 	UsageKnown         bool
+	RequestModel       string // v6.3: 客户端原始请求模型，随 start 原子写入
+	RequestReasoning   string // v6.3: 客户端请求思考配置（归一化串），随 start 原子写入
 }
 
 // RequestSettlement 用于需要保留 unknown usage/HTTP 状态的独立结算路径。
@@ -158,6 +162,7 @@ type RequestSettlement struct {
 	FailureReason string
 	Duration      time.Duration
 	HTTPStatus    *int
+	Diagnostics   *ResponseDiagnostics // v6.3: 上游/响应模型与思考诊断，随结算原子落库
 	TokenUsage    *TokenUsage
 }
 
@@ -174,18 +179,19 @@ type RequestUpdateData struct {
 
 // RequestCompleteData 请求完成事件数据
 type RequestCompleteData struct {
-	ModelName             string        `json:"model_name"`
-	Path                  string        `json:"path,omitempty"`
-	InputTokens           int64         `json:"input_tokens"`
-	OutputTokens          int64         `json:"output_tokens"`
-	CacheCreationTokens   int64         `json:"cache_creation_tokens"`
-	CacheCreation5mTokens int64         `json:"cache_creation_5m_tokens"` // v5.0.1+
-	CacheCreation1hTokens int64         `json:"cache_creation_1h_tokens"` // v5.0.1+
-	CacheReadTokens       int64         `json:"cache_read_tokens"`
-	Duration              time.Duration `json:"duration"`
-	FailureReason         string        `json:"failure_reason,omitempty"` // 可选：失败原因
-	CostOverrideUSD       *float64      `json:"cost_override_usd,omitempty"`
-	HasTokenUsage         bool          `json:"has_token_usage"`
+	ModelName             string               `json:"model_name"`
+	Path                  string               `json:"path,omitempty"`
+	InputTokens           int64                `json:"input_tokens"`
+	OutputTokens          int64                `json:"output_tokens"`
+	CacheCreationTokens   int64                `json:"cache_creation_tokens"`
+	CacheCreation5mTokens int64                `json:"cache_creation_5m_tokens"` // v5.0.1+
+	CacheCreation1hTokens int64                `json:"cache_creation_1h_tokens"` // v5.0.1+
+	CacheReadTokens       int64                `json:"cache_read_tokens"`
+	Duration              time.Duration        `json:"duration"`
+	FailureReason         string               `json:"failure_reason,omitempty"` // 可选：失败原因
+	CostOverrideUSD       *float64             `json:"cost_override_usd,omitempty"`
+	HasTokenUsage         bool                 `json:"has_token_usage"`
+	Diagnostics           *ResponseDiagnostics `json:"diagnostics,omitempty"` // v6.3
 }
 
 // TokenUsage token使用统计
@@ -447,6 +453,14 @@ type UpdateOptions struct {
 	UpstreamWriteMs      *int64  // 上游请求写完相对 start_time 的偏移（毫秒），write-once
 	ScheduleSnapshotJSON *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
 	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写
+
+	// v6.3 模型一致性（中间态尽力挂载；终态由 ResponseDiagnostics 原子落库）
+	UpstreamModel     *string // 最终 attempt 实际发给上游的模型；允许写空串
+	ResponseModel     *string // 响应模型，非空才写
+	ResponseReasoning *string // 响应思考信息，非空才写
+	// 请求侧两项通常随 start 写入；订阅 HTTP 入口在 start 之后才读到请求体，用此补写（非空才写）
+	RequestModel     *string
+	RequestReasoning *string
 }
 
 // UsageTracker 使用跟踪器
@@ -986,6 +1000,8 @@ func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent,
 			RequestSource:      dimensions.RequestSource,
 			RequestKind:        dimensions.RequestKind,
 			UsageKnown:         dimensions.UsageKnown,
+			RequestModel:       dimensions.RequestModel,
+			RequestReasoning:   dimensions.RequestReasoning,
 		},
 	}
 
@@ -1103,6 +1119,21 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			if opts.PrivacyScanJSON != nil {
 				req.PrivacyScanJSON = *opts.PrivacyScanJSON
 			}
+			if opts.UpstreamModel != nil {
+				req.UpstreamModel = strings.TrimSpace(*opts.UpstreamModel)
+			}
+			if opts.ResponseModel != nil && strings.TrimSpace(*opts.ResponseModel) != "" {
+				req.ResponseModel = strings.TrimSpace(*opts.ResponseModel)
+			}
+			if opts.ResponseReasoning != nil && strings.TrimSpace(*opts.ResponseReasoning) != "" {
+				req.ResponseReasoning = strings.TrimSpace(*opts.ResponseReasoning)
+			}
+			if opts.RequestModel != nil && strings.TrimSpace(*opts.RequestModel) != "" {
+				req.RequestModel = strings.TrimSpace(*opts.RequestModel)
+			}
+			if opts.RequestReasoning != nil && strings.TrimSpace(*opts.RequestReasoning) != "" {
+				req.RequestReasoning = strings.TrimSpace(*opts.RequestReasoning)
+			}
 		})
 		if err != nil {
 			// 请求可能不在热池中（已归档或从未记录），降级到传统模式
@@ -1146,19 +1177,30 @@ func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens
 // 🔧 [方案A实现] 2025-12-20: 原子操作，在 CompleteAndArchive 中一次性设置所有字段包括 failureReason
 // 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token、成本信息和可选的 failure_reason
 func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string) {
-	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, tokens, duration, failureReason, nil)
+	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, tokens, duration, failureReason, nil, nil)
+}
+
+// RecordRequestSuccessWithDiagnostics 与 RecordRequestSuccessWithQuality 相同，
+// 但把上游/响应模型与思考诊断字段随同一 success 事件原子落库（v6.3）。
+func (ut *UsageTracker) RecordRequestSuccessWithDiagnostics(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string, diag *ResponseDiagnostics) {
+	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, tokens, duration, failureReason, nil, diag)
 }
 
 // RecordRequestSuccessWithCost 以调用方提供的固定成本完成请求。
 // 用于图像生成等不按 Token 计价的请求。
 func (ut *UsageTracker) RecordRequestSuccessWithCost(requestID, modelName string, duration time.Duration, costUSD float64) {
+	ut.RecordRequestSuccessWithCostAndDiagnostics(requestID, modelName, duration, costUSD, nil)
+}
+
+// RecordRequestSuccessWithCostAndDiagnostics 固定成本完成并携带诊断字段（v6.3）。
+func (ut *UsageTracker) RecordRequestSuccessWithCostAndDiagnostics(requestID, modelName string, duration time.Duration, costUSD float64, diag *ResponseDiagnostics) {
 	if costUSD < 0 {
 		costUSD = 0
 	}
-	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, nil, duration, "", &costUSD)
+	ut.recordRequestSuccessWithQualityAndCost(requestID, modelName, nil, duration, "", &costUSD, diag)
 }
 
-func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string, costOverrideUSD *float64) {
+func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string, costOverrideUSD *float64, diag *ResponseDiagnostics) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -1210,6 +1252,7 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 			// 避免之前中途错误设置的旧值残留，导致"成功但带失败原因"的误标
 			req.FailureReason = failureReason
 			req.CostOverrideUSD = costOverrideUSD
+			diag.applyTo(req)
 			// 成本在归档时计算
 		})
 		if err != nil {
@@ -1217,13 +1260,13 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil)
+			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil, diag)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil)
+	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil, diag)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
@@ -1235,6 +1278,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 	failureReason string,
 	costOverrideUSD *float64,
 	hasTokenUsage bool,
+	diag *ResponseDiagnostics,
 ) {
 	path := ""
 	if ut.hotPoolEnabled && ut.hotPool != nil {
@@ -1263,6 +1307,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 			FailureReason:         failureReason,
 			CostOverrideUSD:       costOverrideUSD,
 			HasTokenUsage:         hasTokenUsage,
+			Diagnostics:           diag,
 		},
 	}
 
@@ -1279,6 +1324,12 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 // 一次性更新所有失败/取消相关字段：status, end_time, duration_ms, failure_reason/cancel_reason, http_status_code, 可选Token
 // 🔧 [修复] 2025-12-11: 添加 modelName 参数，确保取消/失败请求能正确计算成本
 func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, tokens *TokenUsage) {
+	ut.RecordRequestFinalFailureWithDiagnostics(requestID, modelName, status, reason, errorDetail, duration, httpStatus, tokens, nil)
+}
+
+// RecordRequestFinalFailureWithDiagnostics 与 RecordRequestFinalFailure 相同，
+// 但把上游/响应模型与思考诊断字段随同一 final_failure 事件原子落库（v6.3）。
+func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, tokens *TokenUsage, diag *ResponseDiagnostics) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -1335,24 +1386,25 @@ func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, 
 					req.FailureReason = reason + ": " + errorDetail
 				}
 			}
+			diag.applyTo(req)
 		})
 		if err != nil {
 			// 请求可能不在热池中，降级到传统模式
 			slog.Debug("🔥 热池完成失败请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil)
+			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil, diag)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil)
+	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil, diag)
 }
 
 // recordRequestFinalFailureLegacy 传统模式记录请求失败
 // 🔧 [修复] 2025-12-11: 添加 modelName 和 5m/1h 缓存字段参数
-func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64, hasTokenUsage bool) {
+func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64, hasTokenUsage bool, diag *ResponseDiagnostics) {
 	event := RequestEvent{
 		Type:      "final_failure",
 		RequestID: requestID,
@@ -1371,6 +1423,7 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 			"cache_creation_1h_tokens": cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			"cache_read_tokens":        cacheReadTokens,
 			"has_token_usage":          hasTokenUsage,
+			"response_diagnostics":     diag, // v6.3: *ResponseDiagnostics，可为 nil
 		},
 	}
 
@@ -1425,6 +1478,7 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 			}
 			req.EndTime = &now
 			req.DurationMs = settlement.Duration.Milliseconds()
+			settlement.Diagnostics.applyTo(req)
 		})
 		if err == nil {
 			return nil
@@ -1909,7 +1963,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 
 	var output strings.Builder
 	writer := csv.NewWriter(&output)
-	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known"}); err != nil {
+	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning"}); err != nil {
 		return nil, err
 	}
 
@@ -1953,6 +2007,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			costText(log.InputCostUSD), costText(log.OutputCostUSD), costText(log.CacheCreationCostUSD), costText(log.CacheReadCostUSD), costText(log.TotalCostUSD),
 			ut.timezonePolicy.FormatDisplay(log.CreatedAt), ut.timezonePolicy.FormatDisplay(log.UpdatedAt),
 			log.RequestSource, log.RequestKind, strconv.FormatBool(log.UsageKnown), strconv.FormatBool(log.CostKnown),
+			log.RequestModel, log.UpstreamModel, log.ResponseModel, log.RequestReasoning, log.ResponseReasoning,
 		}); err != nil {
 			return nil, err
 		}
@@ -2327,6 +2382,11 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		FallbackReason:        req.FallbackReason,
 		RouteDecisionAt:       req.RouteDecisionAt,
 		ModelName:             req.ModelName,
+		RequestModel:          req.RequestModel,
+		UpstreamModel:         req.UpstreamModel,
+		ResponseModel:         req.ResponseModel,
+		RequestReasoning:      req.RequestReasoning,
+		ResponseReasoning:     req.ResponseReasoning,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,
 		HTTPStatusCode:        httpStatus,

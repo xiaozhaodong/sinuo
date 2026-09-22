@@ -36,7 +36,12 @@ CREATE TABLE IF NOT EXISTS request_logs (
     request_family TEXT NOT NULL DEFAULT 'other'
         CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
     endpoint_name TEXT,                     -- Claude 生命周期兼容字段
-    model_name TEXT,
+    model_name TEXT,                        -- 计费模型：有响应模型用响应模型，否则回退请求模型
+    request_model TEXT DEFAULT '',          -- v6.3: 客户端原始请求模型（随 start 事件写入）
+    upstream_model TEXT DEFAULT '',         -- v6.3: 最终 attempt 实际发给上游的模型；空 = 与 request_model 相同
+    response_model TEXT DEFAULT '',         -- v6.3: 仅由响应解析写入的模型；无响应模型时恒空
+    request_reasoning TEXT DEFAULT '',      -- v6.3: 客户端请求的思考配置（归一化 token 串）
+    response_reasoning TEXT DEFAULT '',     -- v6.3: 上游响应可观测的思考信息（归一化 token 串）
     upstream_type TEXT NOT NULL DEFAULT '', -- 内部来源形态: endpoint/account
     upstream_source_name TEXT NOT NULL DEFAULT '',
     upstream_name TEXT NOT NULL DEFAULT '', -- 用户可见的实际上游

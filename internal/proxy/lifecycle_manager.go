@@ -52,7 +52,12 @@ type RequestLifecycleManager struct {
 	startTime             time.Time                     // 请求开始时间
 	modelMu               sync.RWMutex                  // 保护模型字段的读写锁
 	stateMu               sync.RWMutex                  // 保护生命周期状态字段
-	modelName             string                        // 模型名称
+	modelName             string                        // 模型名称（计费模型）
+	requestModel          string                        // v6.3 客户端原始请求模型
+	requestReasoning      string                        // v6.3 客户端请求思考配置（归一化串）
+	upstreamModel         string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
+	responseModel         string                        // v6.3 仅由响应解析写入的模型
+	responseReasoning     string                        // v6.3 响应侧思考信息（归一化串）
 	requestFamily         string                        // 请求类型 claude/codex/image/other
 	requestSource         string                        // 入口来源 legacy_proxy/codex_subscription_proxy
 	requestKind           string                        // legacy/generation/compaction
@@ -155,6 +160,7 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 // 调用 RecordRequestStart 记录请求开始，并发布请求开始事件
 func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
 	state := rlm.snapshotState()
+	requestModel, requestReasoning := rlm.requestProfile()
 
 	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
@@ -162,7 +168,8 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 			RequestSource: state.requestSource, RequestKind: state.requestKind,
 			UpstreamType: state.upstreamType, UpstreamSourceName: state.upstreamSourceName,
 			UpstreamName: state.upstreamName, UpstreamID: state.upstreamID,
-			UsageKnown: state.requestSource == tracking.RequestSourceLegacyProxy,
+			UsageKnown:   state.requestSource == tracking.RequestSourceLegacyProxy,
+			RequestModel: requestModel, RequestReasoning: requestReasoning,
 		}); err != nil {
 			slog.Error("请求分类非法，拒绝写入追踪记录", "request_id", rlm.requestID, "error", err)
 		}
@@ -252,6 +259,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				ModelName:          &currentModel,
 			}
 			rlm.attachRouteDiagnostics(&opts, state)
+			rlm.attachResponseDiagnostics(&opts)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		} else {
 			// 正常状态更新（模型已更新过或尚未就绪）
@@ -267,6 +275,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, http
 				HttpStatus:         &httpStatus,
 			}
 			rlm.attachRouteDiagnostics(&opts, state)
+			rlm.attachResponseDiagnostics(&opts)
 			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 		}
 	}
@@ -421,7 +430,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 				rlm.requestID, state.endpointName, modelName, duration.Milliseconds()))
 		}
 		// 记录请求成功完成到使用跟踪器（包括状态、耗时、Token、成本）
-		rlm.usageTracker.RecordRequestSuccess(rlm.requestID, modelName, tokens, duration)
+		rlm.usageTracker.RecordRequestSuccessWithDiagnostics(rlm.requestID, modelName, tokens, duration, "", rlm.responseDiagnostics())
 		slog.Info(fmt.Sprintf("✅ Request completed [%s]", rlm.requestID))
 	}
 
@@ -438,7 +447,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 		modelName = "unknown"
 	}
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestSuccessWithCost(rlm.requestID, modelName, duration, costUSD)
+		rlm.usageTracker.RecordRequestSuccessWithCostAndDiagnostics(rlm.requestID, modelName, duration, costUSD, rlm.responseDiagnostics())
 		slog.Info("✅ [固定成本请求完成]",
 			"request_id", rlm.requestID,
 			"endpoint", state.endpointName,
@@ -492,7 +501,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 
 		// 🔧 [方案A核心] 使用 RecordRequestSuccessWithQuality 一次性完成所有字段设置
 		// 包括 status、tokens、duration 和 failureReason，避免两次独立操作的时序问题
-		rlm.usageTracker.RecordRequestSuccessWithQuality(rlm.requestID, modelName, tokens, duration, failureReason)
+		rlm.usageTracker.RecordRequestSuccessWithDiagnostics(rlm.requestID, modelName, tokens, duration, failureReason, rlm.responseDiagnostics())
 
 		if failureReason != "" {
 			slog.Warn(fmt.Sprintf("⚠️ [数据质量标记] [%s] failure_reason=%s", rlm.requestID, failureReason))
@@ -1033,7 +1042,7 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
 	if rlm.usageTracker != nil {
-		rlm.usageTracker.RecordRequestFinalFailure(rlm.requestID, modelName, "failed", failureReason, errorDetail, duration, httpStatus, nil)
+		rlm.usageTracker.RecordRequestFinalFailureWithDiagnostics(rlm.requestID, modelName, "failed", failureReason, errorDetail, duration, httpStatus, nil, rlm.responseDiagnostics())
 	}
 
 	logMessage := fmt.Sprintf("❌ [请求最终失败] [%s] 端点: %s, 原因: %s, 状态码: %d, 耗时: %dms",
@@ -1069,7 +1078,7 @@ func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *t
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
 	if rlm.usageTracker != nil {
-		rlm.usageTracker.RecordRequestFinalFailure(rlm.requestID, modelName, "cancelled", cancelReason, "", duration, 499, tokens)
+		rlm.usageTracker.RecordRequestFinalFailureWithDiagnostics(rlm.requestID, modelName, "cancelled", cancelReason, "", duration, 499, tokens, rlm.responseDiagnostics())
 	}
 
 	if tokens != nil {

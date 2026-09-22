@@ -1970,6 +1970,11 @@ export namespace main {
 	    completion_ms?: number;
 	    is_streaming: boolean;
 	    cost: number;
+	    request_model?: string;
+	    upstream_model?: string;
+	    response_model?: string;
+	    request_reasoning?: string;
+	    response_reasoning?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestRecord(source);
@@ -2014,6 +2019,11 @@ export namespace main {
 	        this.completion_ms = source["completion_ms"];
 	        this.is_streaming = source["is_streaming"];
 	        this.cost = source["cost"];
+	        this.request_model = source["request_model"];
+	        this.upstream_model = source["upstream_model"];
+	        this.response_model = source["response_model"];
+	        this.request_reasoning = source["request_reasoning"];
+	        this.response_reasoning = source["response_reasoning"];
 	    }
 	}
 	export class RequestLifecycleDetail {

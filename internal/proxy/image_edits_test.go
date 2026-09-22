@@ -85,6 +85,10 @@ func TestImageEdit_ForwardsMultipartWithDefaultModelAndTracksRequest(t *testing.
 	}
 
 	assertTrackedImageEdit(t, tracker, "req-image-edit", 0.35)
+	detail := waitRequestDetail(t, tracker, "req-image-edit", func(d tracking.RequestDetail) bool { return d.Status == "completed" })
+	if detail.RequestModel != "" || detail.UpstreamModel != "gpt-image-2" {
+		t.Fatalf("default-model injection must keep request_model empty: request=%q upstream=%q", detail.RequestModel, detail.UpstreamModel)
+	}
 }
 
 func TestImageEdit_ForwardsJSONReferences(t *testing.T) {
@@ -133,6 +137,51 @@ func TestPrepareImageEditMultipart_ExplicitModelPreservesBody(t *testing.T) {
 	}
 	if prepared.Model != "custom-image-model" || !bytes.Equal(prepared.Body, body) {
 		t.Fatalf("explicit-model multipart body must remain byte-identical, model=%q", prepared.Model)
+	}
+	if got := imageEditRequestModel(body, contentType, ""); got != "custom-image-model" {
+		t.Fatalf("imageEditRequestModel multipart = %q", got)
+	}
+	if got := imageEditRequestModel([]byte(`{"model":"json-model"}`), "application/json", "json-model"); got != "json-model" {
+		t.Fatalf("imageEditRequestModel json = %q", got)
+	}
+}
+
+// multipart 显式 model 时 request_model 必须落库，否则详情会把显式模型误标为「默认模型」。
+func TestImageEdit_MultipartExplicitModelRecordsRequestModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"ZWRpdGVk"}]}`))
+	}))
+	defer upstream.Close()
+
+	tracker := newImageGenerationTestTracker(t)
+	defer tracker.Close()
+	endpointManager := endpoint.NewManager(&config.Config{})
+	handler := NewHandler(endpointManager, &config.Config{})
+	handler.SetMonitoringMiddleware(middleware.NewMonitoringMiddleware(endpointManager))
+	handler.SetUsageTracker(tracker)
+	handler.SetImageGenerationConfigProvider(staticImageGenerationConfigProvider{config: ImageGenerationConfig{
+		Enabled: true, EndpointURL: upstream.URL + openAIImagesGenerationsPath, APIKey: "secret-key",
+		Model: "gpt-image-2", FixedPriceUSD: 0.35, Timeout: 5 * time.Second,
+	}})
+
+	body, contentType := buildImageEditMultipartBody(t, map[string]string{
+		"model":  "custom-image-model",
+		"prompt": "explicit model",
+	}, []imageEditTestFile{{Field: "image[]", Filename: "source.png", Content: []byte("source")}})
+	const requestID = "req-image-edit-explicit-model"
+	req := httptest.NewRequest(http.MethodPost, openAIImagesEditsPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	req = req.WithContext(context.WithValue(req.Context(), "conn_id", requestID))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	detail := waitRequestDetail(t, tracker, requestID, func(d tracking.RequestDetail) bool { return d.Status == "completed" })
+	if detail.RequestModel != "custom-image-model" || detail.UpstreamModel != "custom-image-model" || detail.ModelName != "custom-image-model" {
+		t.Fatalf("explicit multipart model not recorded: request=%q upstream=%q billing=%q", detail.RequestModel, detail.UpstreamModel, detail.ModelName)
 	}
 }
 

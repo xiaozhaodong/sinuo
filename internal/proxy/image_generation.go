@@ -89,6 +89,8 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	lifecycleManager.SetModel(prepared.Model)
+	// 注入默认模型视为一次「改写」：上游模型固定记录为实际发出的模型
+	lifecycleManager.SetUpstreamModel(prepared.Model)
 	isStreaming := imageAPIRequestStreamEnabled(r, prepared.Body)
 
 	prepared.Body, err = h.applyImageAPIPrivacyFilter(r, prepared, providerName)

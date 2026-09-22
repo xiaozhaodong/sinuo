@@ -89,6 +89,19 @@ func validateJSONImageEditReferences(bodyBytes []byte) error {
 	return nil
 }
 
+// imageEditRequestModel 返回客户端显式给出的原始模型：multipart 读表单 model 字段，其他情况沿用 JSON 解析结果。
+// multipart 解析失败时返回空串，具体错误由后续 prepareImageEditRequestBody 统一报出。
+func imageEditRequestModel(bodyBytes []byte, contentType, jsonModel string) string {
+	if !isMultipartImageEditContentType(contentType) {
+		return jsonModel
+	}
+	metadata, err := inspectImageEditMultipartBody(bodyBytes, contentType)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.Model)
+}
+
 func isMultipartImageEditContentType(contentType string) bool {
 	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
 	return err == nil && strings.EqualFold(mediaType, "multipart/form-data")

@@ -20,10 +20,10 @@ import {
   AlertCircle,
   TrendingUp,
   TrendingDown,
-  Zap
+  Zap,
+  Brain
 } from 'lucide-react';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
-import ModelTag from './ModelTag.jsx';
 import LifecyclePanel from './LifecyclePanel.jsx';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
@@ -32,6 +32,7 @@ import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { getRequestPresentation } from '../utils/requestPresentation.js';
+import { assessModel, assessReasoning, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 
 /**
  * 信息行组件
@@ -109,6 +110,105 @@ const TokenCard = ({ icon: Icon, label, value, tone }) => (
   </div>
 );
 
+// 模型与思考卡片：档位 pill（§1.3 颜色）
+const CONSISTENCY_PILLS = {
+  consistent: { dot: 'bg-success-solid', text: 'text-success', label: '一致', solid: true },
+  alias: { dot: 'border-line', text: 'text-fg-subtle', label: '别名展开', solid: false },
+  hint: { dot: 'border-line', text: 'text-fg-subtle', label: '提示', solid: false },
+  unverifiable: { dot: 'border-line', text: 'text-fg-subtle', label: '等级无法校验', solid: false },
+  mismatch: { dot: 'bg-warn-solid', text: 'text-warn', label: '不一致', solid: true, icon: AlertCircle },
+  no_response: { text: 'text-fg-subtle', label: '无响应模型' },
+  legacy: { text: 'text-fg-subtle', label: '旧数据' },
+  none: null
+};
+
+const ConsistencyPill = ({ level, label }) => {
+  const pill = CONSISTENCY_PILLS[level];
+  if (!pill) {
+    return null;
+  }
+  const Icon = pill.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs ${pill.text}`}>
+      {Icon ? (
+        <Icon className="h-3.5 w-3.5" />
+      ) : pill.dot ? (
+        <span className={`inline-block h-2 w-2 rounded-full ${pill.solid ? pill.dot : `border ${pill.dot}`}`} />
+      ) : null}
+      {label || pill.label}
+    </span>
+  );
+};
+
+const ConsistencyRow = ({ label, value, pill, tag }) => (
+  <div className="flex items-center justify-between gap-3 py-2">
+    <span className="text-sm font-medium text-fg-muted">{label}</span>
+    <span className="flex min-w-0 items-center gap-2 text-right">
+      <span className="truncate text-sm font-mono text-fg">{value}</span>
+      {tag && <span className="rounded border border-line bg-surface-sub px-1.5 py-0.5 text-[11px] text-fg-muted">{tag}</span>}
+      {pill}
+    </span>
+  </div>
+);
+
+/**
+ * 「模型与思考」卡片：一致性只用 responseModel 判定；model 是计费模型，不参与判定。
+ */
+const ModelConsistencyCard = ({ request }) => {
+  const model = assessModel(request);
+  const reasoning = assessReasoning(request);
+  const requestModel = (request.requestModel || '').trim();
+  const upstreamModel = (request.upstreamModel || '').trim();
+  const responseModel = (request.responseModel || '').trim();
+  const isLegacy = model.level === MODEL_LEVELS.LEGACY;
+  // 上游模型行：改写后显示「已改写」；图像请求省略 model 时后端注入默认模型，显示「默认模型」
+  const showUpstream = upstreamModel !== '' && upstreamModel.toLowerCase() !== requestModel.toLowerCase();
+  const upstreamTag = requestModel === '' ? '默认模型' : '已改写';
+  const responsePill = model.level === MODEL_LEVELS.NO_RESPONSE || isLegacy
+    ? <span className="text-xs text-fg-subtle">{CONSISTENCY_PILLS[model.level].label}</span>
+    : <ConsistencyPill level={model.level} />;
+  const reasoningNoteLevel = reasoning.level === REASONING_LEVELS.CONSISTENT && reasoning.note ? 'unverifiable' : reasoning.level;
+  const reasoningPill = reasoning.level === REASONING_LEVELS.NONE
+    ? null
+    : <ConsistencyPill level={reasoningNoteLevel} label={reasoning.level === REASONING_LEVELS.HINT || reasoning.level === REASONING_LEVELS.UNVERIFIABLE ? reasoning.note || undefined : undefined} />;
+
+  return (
+    <div className="bg-surface rounded-xl border border-line overflow-hidden">
+      <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
+        <h3 className="text-sm font-semibold text-fg">模型与思考</h3>
+      </div>
+      <div className="p-4 divide-y divide-line-soft">
+        <ConsistencyRow label="请求模型" value={requestModel || '—'} pill={isLegacy ? <span className="text-xs text-fg-subtle">旧数据</span> : null} />
+        {showUpstream && (
+          <ConsistencyRow label="上游模型" value={upstreamModel} tag={upstreamTag} />
+        )}
+        <ConsistencyRow label="响应模型" value={responseModel || '—'} pill={responsePill} />
+        <ConsistencyRow label="请求思考" value={reasoning.requestLabel} />
+        <ConsistencyRow label="响应思考" value={reasoning.responseLabel} pill={reasoningPill} />
+        {reasoning.level === REASONING_LEVELS.CONSISTENT && reasoning.note && (
+          <div className="pt-2 text-xs text-fg-subtle">{reasoning.note}：Claude 响应不回显 effort，只能校验是否出现思考块。</div>
+        )}
+        {model.level === MODEL_LEVELS.MISMATCH && (
+          <div className="flex items-start gap-2 pt-3 text-xs text-warn">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              {model.rewritten
+                ? '上游返回的模型与改写后实际发出的模型不一致，请检查该上游。'
+                : '上游返回的模型与实际请求的模型不一致，本次未应用模型改写规则，请检查该端点。'}
+            </span>
+          </div>
+        )}
+        {reasoning.level === REASONING_LEVELS.MISMATCH && model.level !== MODEL_LEVELS.MISMATCH && (
+          <div className="flex items-start gap-2 pt-3 text-xs text-warn">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>上游返回的思考等级与请求不一致。</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // 请求种类展示：legacy 是历史与旧入口记录，不额外占一行。
 const REQUEST_KIND_LABELS = {
   generation: '生成',
@@ -159,6 +259,10 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   const streamLabel = request.isStreaming ? '流式请求' : '常规请求';
   const streamColor = request.isStreaming ? 'tone-blue' : 'tone-slate';
   const family = getRequestFamilyMeta(request.requestFamily);
+  // Codex 响应回显的推理 token（来自 response_reasoning 串，非 usage）
+  const reasoningTokens = request.requestFamily === 'codex'
+    ? parseReasoning(request.responseReasoning).reasoning_tokens
+    : undefined;
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-[15vh] px-4">
@@ -283,18 +387,8 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                 </div>
               </div>
 
-              {/* 模型信息 */}
-              <div className="bg-surface rounded-xl border border-line overflow-hidden">
-                <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
-                  <h3 className="text-sm font-semibold text-fg">模型信息</h3>
-                </div>
-                <div className="p-4">
-                  <div className="flex items-center justify-between py-3">
-                    <span className="text-sm font-medium text-fg-muted">模型名称</span>
-                    <ModelTag model={request.model} />
-                  </div>
-                </div>
-              </div>
+              {/* 模型与思考（替换原「模型信息」卡片；一致性只看 response_model，不看计费模型） */}
+              <ModelConsistencyCard request={request} />
 
               {/* 取消和中断用中性的结束原因；明确失败仍保留错误提示。 */}
               {(['failed', 'error', 'cancelled', 'timeout'].includes(request.status) ||
@@ -383,6 +477,18 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
                   tone="tone-slate"
                 />
               </div>
+
+              {/* 推理 Token（Codex 且上游回显 reasoning_tokens 时） */}
+              {reasoningTokens !== undefined && (
+                <div className="grid grid-cols-2 gap-4">
+                  <TokenCard
+                    icon={Brain}
+                    label="推理 Token（含在输出 Token 内）"
+                    value={Number(reasoningTokens) || 0}
+                    tone="tone-violet"
+                  />
+                </div>
+              )}
 
               {/* Token 总计 */}
               <div className="tone-indigo rounded-xl p-6 border">

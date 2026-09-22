@@ -36,7 +36,7 @@ func (o *recordingSubmissionObserver) append(kind string, s *subscriptionSubmiss
 func (o *recordingSubmissionObserver) SubmissionStarted(s *subscriptionSubmission) {
 	o.append("started", s, "")
 }
-func (o *recordingSubmissionObserver) SubmissionBound(s *subscriptionSubmission) {
+func (o *recordingSubmissionObserver) SubmissionBound(s *subscriptionSubmission, _ *ParseResult) {
 	o.append("bound", s, "")
 }
 func (o *recordingSubmissionObserver) SubmissionTerminal(s *subscriptionSubmission, result *ParseResult) {

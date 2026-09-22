@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { AlertTriangle } from 'lucide-react';
 import { getModelColorClasses } from '../utils/modelTag.js';
 
 const ModelTooltip = ({ anchorRect, children, tooltipId }) => {
@@ -36,15 +37,20 @@ const ModelTooltip = ({ anchorRect, children, tooltipId }) => {
  * @param {Object} props
  * @param {string} props.model - 模型名称
  * @param {boolean} props.compact - 是否限制宽度并省略尾部内容
+ * @param {{ level: string, lines: string[] } | null} [props.alert] - 模型一致性告警（仅 compact 生效；
+ *   level === 'mismatch' 时加琥珀描边 + 图标，tooltip 逐行显示 lines）
  */
-const ModelTag = ({ model, compact = false }) => {
+const ModelTag = ({ model, compact = false, alert = null }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
   const [isOverflowing, setIsOverflowing] = React.useState(false);
   const textRef = React.useRef(null);
   const tooltipId = React.useId();
-  const colorClasses = getModelColorClasses(model);
   const displayName = (!model || model === 'unknown') ? '-' : model;
-  const hasTooltip = compact && displayName !== '-' && isOverflowing;
+  // 非 compact（详情弹窗）不显示 alert，由卡片自己表达
+  const isMismatch = compact && alert?.level === 'mismatch';
+  const colorClasses = isMismatch ? 'tone-amber' : getModelColorClasses(model);
+  const alertLines = isMismatch ? (alert.lines || []) : [];
+  const hasTooltip = compact && ((displayName !== '-' && isOverflowing) || alertLines.length > 0);
 
   React.useLayoutEffect(() => {
     const textElement = textRef.current;
@@ -84,19 +90,23 @@ const ModelTag = ({ model, compact = false }) => {
   return (
     <>
       <span
-        className={`inline-flex min-w-0 items-center rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${colorClasses}`}
+        className={`inline-flex min-w-0 items-center gap-1 rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${isMismatch ? 'ring-1 ring-warn-line' : ''} ${colorClasses}`}
         tabIndex={hasTooltip ? 0 : undefined}
+        data-model-alert={isMismatch ? 'mismatch' : undefined}
         aria-describedby={tooltipAnchor ? tooltipId : undefined}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
       >
+        {isMismatch && <AlertTriangle className="h-3 w-3 flex-shrink-0" aria-label="模型或思考等级与请求不一致" />}
         <span ref={textRef} className={compact ? 'min-w-0 truncate' : ''}>{displayName}</span>
       </span>
       {hasTooltip && (
         <ModelTooltip anchorRect={tooltipAnchor} tooltipId={tooltipId}>
-          {displayName}
+          {alertLines.length > 0
+            ? alertLines.map((line, index) => <span key={index} className="block whitespace-pre">{line}</span>)
+            : displayName}
         </ModelTooltip>
       )}
     </>

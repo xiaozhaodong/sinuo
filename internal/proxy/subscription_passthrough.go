@@ -27,8 +27,11 @@ import (
 	"cc-forwarder/config"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
+	"cc-forwarder/internal/reasoning"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
+
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -92,14 +95,11 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
 		return
 	}
-	var metadata struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if json.Unmarshal(body.normalizedBody, &metadata) == nil {
-		track.SetModel(metadata.Model)
-		track.SetStreaming(metadata.Stream || strings.Contains(r.Header.Get("Accept"), "text/event-stream"))
-	}
+	// v6.3：请求模型与思考串在 start 之后才可得，补写进同一行；stream 标记与之前一致
+	requestModel, requestReasoning := reasoning.ParseRequest(route.InternalPath, body.normalizedBody)
+	track.SetModel(requestModel)
+	track.SetRequestProfile(requestModel, requestReasoning)
+	track.SetStreaming(gjson.GetBytes(body.normalizedBody, "stream").Bool() || strings.Contains(r.Header.Get("Accept"), "text/event-stream"))
 	privacyState := newSubscriptionPrivacyRequestState(requestID, func(_ string, result privacy.ApplyResult, policyErr *privacy.PolicyError) {
 		track.RecordPrivacy(result, policyErr)
 	})

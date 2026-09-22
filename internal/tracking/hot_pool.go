@@ -3,6 +3,7 @@ package tracking
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,6 +65,13 @@ type ActiveRequest struct {
 	UpstreamWriteMs      *int64 `json:"upstream_write_ms,omitempty"`
 	ScheduleSnapshotJSON string `json:"schedule_snapshot_json,omitempty"`
 	PrivacyScanJSON      string `json:"privacy_scan_json,omitempty"`
+
+	// v6.3 模型一致性字段（请求两项随 start 写入；其余三项终态 finalizer 合并）
+	RequestModel      string `json:"request_model,omitempty"`
+	UpstreamModel     string `json:"upstream_model,omitempty"`
+	ResponseModel     string `json:"response_model,omitempty"`
+	RequestReasoning  string `json:"request_reasoning,omitempty"`
+	ResponseReasoning string `json:"response_reasoning,omitempty"`
 
 	// 内部字段
 	mu               sync.RWMutex `json:"-"` // 保护单个请求的并发访问
@@ -278,6 +286,11 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 		TotalCostUSD:          req.TotalCostUSD,
 		ScheduleSnapshotJSON:  req.ScheduleSnapshotJSON,
 		PrivacyScanJSON:       req.PrivacyScanJSON,
+		RequestModel:          req.RequestModel,
+		UpstreamModel:         req.UpstreamModel,
+		ResponseModel:         req.ResponseModel,
+		RequestReasoning:      req.RequestReasoning,
+		ResponseReasoning:     req.ResponseReasoning,
 	}
 	if req.EndTime != nil {
 		value := *req.EndTime
@@ -644,5 +657,7 @@ func NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path
 		UpstreamID:         dimensions.UpstreamID,
 		UsageKnown:         dimensions.UsageKnown,
 		CostKnown:          dimensions.UsageKnown,
+		RequestModel:       strings.TrimSpace(dimensions.RequestModel),
+		RequestReasoning:   strings.TrimSpace(dimensions.RequestReasoning),
 	}
 }

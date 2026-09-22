@@ -30,6 +30,12 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   id: pick(request, ['request_id', 'requestId', 'id'], ''),
   timestamp: pick(request, ['start_time', 'timestamp'], ''),
   model: pick(request, ['model_name', 'model'], 'unknown'),
+  // v6.3 模型一致性监控：一致性只用 responseModel 判定，model 仍是计费模型
+  requestModel: pick(request, ['request_model', 'requestModel'], ''),
+  upstreamModel: pick(request, ['upstream_model', 'upstreamModel'], ''),
+  responseModel: pick(request, ['response_model', 'responseModel'], ''),
+  requestReasoning: pick(request, ['request_reasoning', 'requestReasoning'], ''),
+  responseReasoning: pick(request, ['response_reasoning', 'responseReasoning'], ''),
   endpoint: pick(request, ['upstream_name', 'upstreamName', 'endpoint_name', 'endpoint'], 'unknown'),
   duration: pick(request, ['duration_ms', 'duration', 'response_time'], 0),
   statusCode: pick(request, ['status_code', 'statusCode', 'http_status'], null),

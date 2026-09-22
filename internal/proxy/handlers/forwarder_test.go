@@ -240,9 +240,9 @@ func TestForwarder_PrepareBodyForEndpointPreservesBodyWithoutRewriteRule(t *test
 	}`)
 
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "relay-proxy"}}
-	got := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
-	if !bytes.Equal(got, bodyBytes) {
-		t.Fatalf("body compatibility transforms must be removed, got %s", string(got))
+	got, upstreamModel := prepareBodyForEndpoint("/v1/messages", bodyBytes, ep)
+	if !bytes.Equal(got, bodyBytes) || upstreamModel != "" {
+		t.Fatalf("body compatibility transforms must be removed, got %s (upstream=%q)", string(got), upstreamModel)
 	}
 }
 
@@ -252,7 +252,10 @@ func TestForwarder_PrepareBodyForEndpoint_RewritesConfiguredClaudeModel(t *testi
 	ep := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "rewrite-endpoint", ModelRewriteRules: rules}}
 
 	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
-		got := prepareBodyForEndpoint(path, bodyBytes, ep)
+		got, upstreamModel := prepareBodyForEndpoint(path, bodyBytes, ep)
+		if upstreamModel != "provider-sonnet" {
+			t.Fatalf("path %s expected upstream model provider-sonnet, got %q", path, upstreamModel)
+		}
 		var payload map[string]any
 		if err := json.Unmarshal(got, &payload); err != nil {
 			t.Fatalf("unmarshal rewritten body failed: %v", err)
@@ -262,20 +265,20 @@ func TestForwarder_PrepareBodyForEndpoint_RewritesConfiguredClaudeModel(t *testi
 		}
 	}
 
-	if got := prepareBodyForEndpoint("/v1/responses", bodyBytes, ep); !bytes.Equal(got, bodyBytes) {
+	if got, upstreamModel := prepareBodyForEndpoint("/v1/responses", bodyBytes, ep); !bytes.Equal(got, bodyBytes) || upstreamModel != "" {
 		t.Fatalf("non-Claude path must stay unchanged, got %s", string(got))
 	}
-	if got := prepareBodyForEndpoint("/v1/messages", []byte(`{"model":"claude-sonnet-4-5-latest"}`), ep); string(got) != `{"model":"claude-sonnet-4-5-latest"}` {
+	if got, upstreamModel := prepareBodyForEndpoint("/v1/messages", []byte(`{"model":"claude-sonnet-4-5-latest"}`), ep); string(got) != `{"model":"claude-sonnet-4-5-latest"}` || upstreamModel != "" {
 		t.Fatalf("exact rule must not match suffix model, got %s", string(got))
 	}
 
 	invalidRuleEndpoint := &endpoint.Endpoint{Config: config.EndpointConfig{Name: "invalid-rules", ModelRewriteRules: `{"from":`}}
-	if got := prepareBodyForEndpoint("/v1/messages", bodyBytes, invalidRuleEndpoint); !bytes.Equal(got, bodyBytes) {
+	if got, upstreamModel := prepareBodyForEndpoint("/v1/messages", bodyBytes, invalidRuleEndpoint); !bytes.Equal(got, bodyBytes) || upstreamModel != "" {
 		t.Fatalf("invalid saved rules must preserve request body, got %s", string(got))
 	}
 
 	trailingJSONBody := []byte(`{"model":"claude-sonnet-4-5"}{"messages":[]}`)
-	if got := prepareBodyForEndpoint("/v1/messages", trailingJSONBody, ep); !bytes.Equal(got, trailingJSONBody) {
+	if got, upstreamModel := prepareBodyForEndpoint("/v1/messages", trailingJSONBody, ep); !bytes.Equal(got, trailingJSONBody) || upstreamModel != "" {
 		t.Fatalf("body with trailing JSON must stay unchanged, got %s", string(got))
 	}
 }

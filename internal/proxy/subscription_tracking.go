@@ -9,6 +9,7 @@ import (
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
+	"cc-forwarder/internal/reasoning"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -28,6 +29,9 @@ type SubscriptionHTTPStart struct {
 	Path         string
 	RequestKind  string
 	IsStreaming  bool
+	// v6.3 请求侧模型与思考串，随 start 事件原子写入
+	RequestModel     string
+	RequestReasoning string
 }
 
 type subscriptionTrackingObserver struct {
@@ -69,6 +73,8 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 			UpstreamName:       subscriptionTrackingUpstreamName,
 			UpstreamID:         0,
 			UsageKnown:         false,
+			RequestModel:       safeSubscriptionModel(start.RequestModel),
+			RequestReasoning:   strings.TrimSpace(start.RequestReasoning),
 		},
 	)
 	if err != nil {
@@ -106,6 +112,8 @@ type subscriptionRequestTracking struct {
 	startedAt     time.Time
 	path          string
 	model         string
+	responseModel string                  // v6.3 仅由响应解析写入
+	responseState reasoning.ResponseState // v6.3 响应思考按字段累计（created 的 effort + completed 的 reasoning_tokens）
 	httpStatus    *int
 	outboundAt    time.Time
 	firstOutputAt time.Time
@@ -127,6 +135,29 @@ func (t *subscriptionRequestTracking) SetModel(model string) {
 	t.model = model
 	t.mu.Unlock()
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{ModelName: &model})
+}
+
+// SetRequestProfile 补写请求侧模型与思考串（订阅 HTTP 入口在 start 之后才读到请求体）。非空才写。
+func (t *subscriptionRequestTracking) SetRequestProfile(model, reasoning string) {
+	model = safeSubscriptionModel(model)
+	reasoning = strings.TrimSpace(reasoning)
+	if model == "" && reasoning == "" {
+		return
+	}
+	t.mu.Lock()
+	if !t.active || t.settled {
+		t.mu.Unlock()
+		return
+	}
+	t.mu.Unlock()
+	opts := tracking.UpdateOptions{}
+	if model != "" {
+		opts.RequestModel = &model
+	}
+	if reasoning != "" {
+		opts.RequestReasoning = &reasoning
+	}
+	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 }
 
 func (t *subscriptionRequestTracking) RecordPrivacy(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
@@ -227,11 +258,31 @@ func (t *subscriptionRequestTracking) MarkResponseBytes(responseBytes int64) {
 	t.mu.Unlock()
 }
 
+// MergeResponseFields 合并单个 Responses 事件的响应模型与思考字段：模型非空才覆盖，
+// 思考字段按字段合并（缺失不覆盖），终态随结算原子落库。
+// 订阅链路走无状态 ParseResponsesEventJSON，累计状态由本 handle 持有。
+func (t *subscriptionRequestTracking) MergeResponseFields(model string, fields reasoning.CodexFields) {
+	model = safeSubscriptionModel(model)
+	if model == "" && fields.IsEmpty() {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.active || t.settled {
+		return
+	}
+	if model != "" {
+		t.responseModel = model
+	}
+	t.responseState.MergeCodexFields(fields)
+}
+
 func (t *subscriptionRequestTracking) ApplyParseResult(result *ParseResult) {
 	if result == nil {
 		return
 	}
 	t.SetModel(result.ModelName)
+	t.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
 	if !result.IsCompleted {
 		return
 	}
@@ -276,6 +327,7 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 		httpStatus = &value
 	}
 	model := t.model
+	diagnostics := &tracking.ResponseDiagnostics{ResponseModel: t.responseModel, ResponseReasoning: t.responseState.String()}
 	responseBytes := t.responseBytes
 	requestBytes := t.requestBytes
 	settledAt := time.Now()
@@ -294,7 +346,7 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 	}
 	if err := t.observer.tracker.RecordRequestSettlement(requestID, tracking.RequestSettlement{
 		Status: status, ModelName: model, Path: path, FailureReason: failureCode,
-		Duration: duration, HTTPStatus: httpStatus, TokenUsage: usage,
+		Duration: duration, HTTPStatus: httpStatus, TokenUsage: usage, Diagnostics: diagnostics,
 	}); err != nil {
 		slog.Warn("订阅请求追踪结算失败", "request_id", requestID, "code", "subscription_tracking_settlement_failed")
 	}
@@ -367,11 +419,18 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	if submission == nil || !submission.Generate {
 		return
 	}
-	handle := o.StartHTTP(SubscriptionHTTPStart{
+	start := SubscriptionHTTPStart{
 		RequestID: submission.RequestID, StartedAt: submission.StartedAt,
 		ConnectionID: submission.ConnectionID,
 		Method:       "POST", Path: "/v1/responses", RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
-	})
+	}
+	// 服务端主动 successor 没有客户端 create，submission.Model 来自响应；
+	// 请求侧保持未知，否则前端会把同源的请求/响应模型误判为「一致」。
+	if !submission.ServerInitiated {
+		start.RequestModel = submission.Model
+		start.RequestReasoning = submission.Reasoning
+	}
+	handle := o.StartHTTP(start)
 	handle.SetModel(submission.Model)
 	o.mu.Lock()
 	o.submissions[submission] = handle
@@ -383,9 +442,14 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	}
 }
 
-func (o *subscriptionTrackingObserver) SubmissionBound(submission *subscriptionSubmission) {
-	if handle := o.submissionHandle(submission, false); handle != nil {
-		handle.SetModel(submission.Model)
+func (o *subscriptionTrackingObserver) SubmissionBound(submission *subscriptionSubmission, result *ParseResult) {
+	handle := o.submissionHandle(submission, false)
+	if handle == nil {
+		return
+	}
+	handle.SetModel(submission.Model)
+	if result != nil {
+		handle.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
 	}
 }
 

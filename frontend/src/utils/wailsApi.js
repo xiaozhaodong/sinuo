@@ -1244,6 +1244,12 @@ export const getRequests = async (params = {}) => {
     endpoint: r.endpoint || r.upstream_name || '',
     model_name: r.model,
     model: r.model,
+    // v6.3 模型一致性监控原始列（一致性由前端 modelConsistency.js 派生）
+    request_model: r.request_model || '',
+    upstream_model: r.upstream_model || '',
+    response_model: r.response_model || '',
+    request_reasoning: r.request_reasoning || '',
+    response_reasoning: r.response_reasoning || '',
     status: r.status,
     status_code: r.http_status,
     http_status_code: r.http_status,  // 添加 http_status_code 映射

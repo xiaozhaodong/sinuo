@@ -55,7 +55,13 @@ const DETAIL_ONLY_FIELDS = [
   'path',
   'requestKind',
   'usageKnown',
-  'costKnown'
+  'costKnown',
+  // v6.3 模型一致性：列表 ModelTag 警告与详情「模型与思考」卡片都读这 5 项
+  'requestModel',
+  'upstreamModel',
+  'responseModel',
+  'requestReasoning',
+  'responseReasoning'
 ];
 
 // 参与比对的字段 = 行对象在 UI 任何位置被读到的字段，而不只是被渲染的字段。

@@ -17,6 +17,7 @@ import ModelTag from './ModelTag.jsx';
 import Pagination from './Pagination.jsx';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import {
@@ -207,7 +208,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
     case 'status':
       return <RequestTraceCell request={request} />;
     case 'model':
-      return <ModelTag model={request.model} compact />;
+      return <ModelTag model={request.model} alert={buildModelAlert(request)} compact />;
     case 'requestFamily': {
       const family = getRequestFamilyMeta(request.requestFamily);
       return <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold ${family.className}`}>{family.label}</span>;

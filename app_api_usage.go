@@ -275,6 +275,13 @@ type RequestRecord struct {
 	CompletionMs          *int64  `json:"completion_ms"` // 首个有效流式响应到流式完成耗时（毫秒）
 	IsStreaming           bool    `json:"is_streaming"`
 	Cost                  float64 `json:"cost"`
+
+	// v6.3 模型一致性监控：一致性判定由前端派生，后端只透传原始列
+	RequestModel      string `json:"request_model,omitempty"`      // 客户端原始请求模型
+	UpstreamModel     string `json:"upstream_model,omitempty"`     // 最终 attempt 实际上游模型（空 = 与请求相同）
+	ResponseModel     string `json:"response_model,omitempty"`     // 仅由响应解析写入
+	RequestReasoning  string `json:"request_reasoning,omitempty"`  // 请求思考配置（归一化串）
+	ResponseReasoning string `json:"response_reasoning,omitempty"` // 响应思考信息（归一化串）
 }
 
 // RequestListResult 请求列表结果
@@ -433,6 +440,11 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		CacheReadTokens:       r.CacheReadTokens,
 		IsStreaming:           r.IsStreaming,
 		Cost:                  r.TotalCostUSD,
+		RequestModel:          r.RequestModel,
+		UpstreamModel:         r.UpstreamModel,
+		ResponseModel:         r.ResponseModel,
+		RequestReasoning:      r.RequestReasoning,
+		ResponseReasoning:     r.ResponseReasoning,
 	}
 
 	// 处理指针字段

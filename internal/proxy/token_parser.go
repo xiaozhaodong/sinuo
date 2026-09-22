@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/monitor"
+	"cc-forwarder/internal/reasoning"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -35,6 +36,12 @@ type ParseResult struct {
 	HasStreamOutput   bool
 	HasVisibleText    bool
 	HasFallbackOutput bool
+
+	// v6.3 模型一致性：经 TokenParser 产出时为解析器当前累计状态（非单事件）；
+	// ParseResponsesEventJSON 无状态产出时 ResponseReasoning 为空，仅 ResponseReasoningFields 携带本事件字段。
+	ResponseModel           string
+	ResponseReasoning       string
+	ResponseReasoningFields reasoning.CodexFields
 }
 
 // ErrorInfo 错误信息结构体
@@ -105,8 +112,11 @@ type MessageDelta struct {
 }
 
 type contentBlockEvent struct {
-	Type  string `json:"type"`
-	Index *int   `json:"index"`
+	Type         string `json:"type"`
+	Index        *int   `json:"index"`
+	ContentBlock struct {
+		Type string `json:"type"`
+	} `json:"content_block"`
 }
 
 // SSEErrorData 表示SSE流中error事件的结构
@@ -165,6 +175,8 @@ type TokenParser struct {
 	responseTerminalEvent     string
 	// 是否已经上报过“无Token响应”（避免 message_delta 高频重复日志）
 	nonTokenResponseReported bool
+	// v6.3 响应侧思考信息累计状态（按字段合并，读取时序列化）
+	responseState reasoning.ResponseState
 }
 
 // fixMalformedEventType 修复格式错误的事件类型
@@ -264,7 +276,7 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 		case "message_start":
 			// message_start 代表已收到首个流式业务事件，可用于记录首响。
 			tp.parseMessageStart()
-			return &ParseResult{HasStreamOutput: true}
+			return &ParseResult{HasStreamOutput: true, ResponseModel: tp.GetResponseModel()}
 		case "message_delta", "content_block_delta":
 			// 使用新的V2方法解析message_delta/content_block_delta
 			return tp.parseMessageDeltaV2()
@@ -437,6 +449,9 @@ func (tp *TokenParser) parseContentBlockBoundary(eventType string) {
 		tp.markContentBlockProtocolError(fmt.Sprintf("%s 事件不是有效 JSON", eventType))
 		return
 	}
+	if eventType == "content_block_start" && reasoning.IsThinkingBlockType(event.ContentBlock.Type) {
+		tp.responseState.MarkThinkingBlock()
+	}
 	if event.Index == nil || *event.Index < 0 {
 		tp.markContentBlockProtocolError(fmt.Sprintf("%s 事件缺少有效 index", eventType))
 		return
@@ -512,6 +527,7 @@ func (tp *TokenParser) trackMessageDelta() {
 
 func (tp *TokenParser) trackMessageStop() {
 	tp.hasMessageStop = true
+	tp.responseState.MarkComplete()
 	for index, closed := range tp.contentBlockStates {
 		if !closed {
 			tp.markContentBlockProtocolError(fmt.Sprintf("message_stop 到达时 content block(index=%d) 尚未结束", index))
@@ -535,6 +551,27 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal(jsonData, &payload); err != nil {
+		result := parseResponsesEventRawJSON(eventType, jsonData)
+		attachResponsesReasoning(result, reasoning.ExtractCodexFieldsFromRaw(string(jsonData)))
+		return result
+	}
+	result := parseResponsesEventPayload(eventType, payload)
+	attachResponsesReasoning(result, reasoning.ExtractCodexFields(payload))
+	return result
+}
+
+// attachResponsesReasoning 把单事件思考字段与响应模型挂到无状态解析结果上。
+func attachResponsesReasoning(result *ParseResult, fields reasoning.CodexFields) {
+	if result == nil {
+		return
+	}
+	result.ResponseReasoningFields = fields
+	result.ResponseModel = filterResponseModel(result.ModelName)
+}
+
+// parseResponsesEventRawJSON 处理 payload 不是合法 JSON 的降级分支（正则兜底）。
+func parseResponsesEventRawJSON(eventType string, jsonData []byte) *ParseResult {
+	{
 		modelName := extractResponsesModelFromRawJSON(string(jsonData))
 		if modelName == "" {
 			modelName = "default"
@@ -569,7 +606,10 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 			return &ParseResult{ModelName: modelName, HasStreamOutput: true}
 		}
 	}
+}
 
+// parseResponsesEventPayload 处理已解码的事件 payload。
+func parseResponsesEventPayload(eventType string, payload map[string]interface{}) *ParseResult {
 	modelName := extractResponsesModel(payload)
 	if modelName == "" {
 		modelName = "default"
@@ -712,6 +752,10 @@ func (tp *TokenParser) applyResponsesParseResult(eventType string, result *Parse
 		tp.hasResponseCompletedUsage = true
 		tp.finalUsage = result.TokenUsage
 	}
+	// v6.3：按字段合并思考信息，结果回填为累计状态
+	tp.responseState.MergeCodexFields(result.ResponseReasoningFields)
+	result.ResponseReasoning = tp.responseState.String()
+	result.ResponseModel = tp.GetResponseModel()
 }
 
 // captureResponsesModel 从 /v1/responses 事件中提取模型名称
@@ -1001,6 +1045,7 @@ func (tp *TokenParser) RecoverResponsesUsageFromRawTail(raw string) bool {
 	if modelName := extractResponsesModelFromRawJSON(raw); modelName != "" {
 		tp.modelName = modelName
 	}
+	tp.responseState.MergeCodexFields(reasoning.ExtractCodexFieldsFromRaw(raw))
 
 	tp.finalUsage = usage
 	tp.hasResponseCompleted = true
@@ -1393,6 +1438,7 @@ func (tp *TokenParser) Reset() {
 	tp.hasResponseCompleted = false
 	tp.hasResponseCompletedUsage = false
 	tp.nonTokenResponseReported = false
+	tp.responseState = reasoning.ResponseState{}
 }
 
 // parseErrorEventV2 新版本的错误事件解析方法

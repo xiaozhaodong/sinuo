@@ -19,6 +19,26 @@ type UpstreamTraceState struct {
 	wroteHeaders     bool
 	wroteRequest     bool
 	wroteRequestErr  error
+	upstreamModel    string // v6.3 本 attempt 改写后实际发出的模型；未改写为空
+}
+
+func (s *UpstreamTraceState) setUpstreamModel(model string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.upstreamModel = model
+	s.mu.Unlock()
+}
+
+// UpstreamModel 返回本 attempt 实际发给上游的模型；未发生改写时为空串（= 与请求相同）。
+func (s *UpstreamTraceState) UpstreamModel() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upstreamModel
 }
 
 func (s *UpstreamTraceState) markGotConn() {

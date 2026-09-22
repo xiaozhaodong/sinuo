@@ -102,7 +102,8 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokens(ctx context.Context, responseBo
 	default:
 		// ⚠️ 格式未知，启用防护性回退机制
 		slog.DebugContext(ctx, fmt.Sprintf("❓ [未知格式] [%s] 格式检测失败，启用回退机制", connID))
-		tokenUsage, modelName := a.parseWithFallback(responseBody, connID, endpointName)
+		analysis := a.parseWithFallback(responseBody, connID, endpointName)
+		tokenUsage, modelName := analysis.TokenUsage, analysis.ModelName
 		if tokenUsage != nil {
 			// 回退机制成功找到Token信息
 			slog.InfoContext(ctx, fmt.Sprintf("✅ [回退成功] [%s] 模型: %s, Token信息已解析", connID, modelName))
@@ -235,7 +236,8 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 		slog.DebugContext(ctx, fmt.Sprintf("🔍 [JSON路由] [%s] 检测为JSON格式，使用JSON解析器", connID))
 
 		// 使用统一的JSON解析方法
-		tokenUsage, modelName := a.parseJSONForTokens(responseBody, connID, endpointName)
+		analysis := a.parseJSONForTokens(responseBody, connID, endpointName)
+		tokenUsage, modelName := analysis.TokenUsage, analysis.ModelName
 		if tokenUsage != nil {
 			// Record token usage to monitoring middleware
 			if mm, ok := a.monitoringMiddleware.(interface {
@@ -271,7 +273,8 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 		a.ParseSSETokens(ctx, responseBody, endpointName, connID)
 
 		// 使用统一的SSE解析方法
-		tokenUsage, modelName := a.parseSSEForTokens(responseBody, connID, endpointName)
+		analysis := a.parseSSEForTokens(responseBody, connID, endpointName)
+		tokenUsage, modelName := analysis.TokenUsage, analysis.ModelName
 		if tokenUsage != nil {
 			slog.InfoContext(ctx, fmt.Sprintf("💾 [SSEToken解析] [%s] 模型: %s, Token信息已解析完成", connID, modelName))
 		}
@@ -280,7 +283,8 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 	default:
 		// ⚠️ [第三层] 格式未知，启用防护性回退机制
 		slog.DebugContext(ctx, fmt.Sprintf("❓ [未知格式] [%s] 格式检测失败，启用回退机制", connID))
-		tokenUsage, modelName := a.parseWithFallback(responseBody, connID, endpointName)
+		analysis := a.parseWithFallback(responseBody, connID, endpointName)
+		tokenUsage, modelName := analysis.TokenUsage, analysis.ModelName
 		if tokenUsage != nil {
 			// 回退机制成功找到Token信息
 			slog.InfoContext(ctx, fmt.Sprintf("✅ [回退成功] [%s] 模型: %s, Token信息已解析", connID, modelName))
@@ -291,12 +295,43 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 	}
 }
 
+// ResponseAnalysis 是非流式响应的统一解析结果（v6.3）。
+// TokenUsage 为 nil 表示无 Token 信息；ResponseModel / ResponseReasoning 与 usage 相互独立，
+// 无 usage 时仍可能非空。ModelName 保持旧语义（含 unknown / default / error_response 等占位）。
+type ResponseAnalysis struct {
+	TokenUsage        *tracking.TokenUsage
+	ModelName         string
+	ResponseModel     string
+	ResponseReasoning string
+}
+
+// reasoningAwareParser 是 TokenParser 的可选扩展：具备响应模型 / 思考信息累计能力。
+type reasoningAwareParser interface {
+	GetResponseModel() string
+	GetResponseReasoning() string
+	MergeResponseReasoningFromJSON(payload map[string]interface{})
+}
+
+func readParserDiagnostics(parser TokenParser) (model, reasoning string) {
+	if aware, ok := parser.(reasoningAwareParser); ok {
+		return aware.GetResponseModel(), aware.GetResponseReasoning()
+	}
+	return "", ""
+}
+
 // AnalyzeResponseForTokensUnified 简化版本的Token分析（用于统一接口）
 // 返回值: (tokenUsage, modelName) - tokenUsage为nil表示无Token信息
-// 🆕 [Pike方案] 使用三层防护的格式检测系统
+// 旧签名薄包装；新调用方请用 AnalyzeResponseUnified。
 func (a *TokenAnalyzer) AnalyzeResponseForTokensUnified(responseBytes []byte, connID, endpointName string) (*tracking.TokenUsage, string) {
+	analysis := a.AnalyzeResponseUnified(responseBytes, connID, endpointName)
+	return analysis.TokenUsage, analysis.ModelName
+}
+
+// AnalyzeResponseUnified 全量消费响应，模型 / 思考 / usage 三者独立提取。
+// 🆕 [Pike方案] 使用三层防护的格式检测系统
+func (a *TokenAnalyzer) AnalyzeResponseUnified(responseBytes []byte, connID, endpointName string) ResponseAnalysis {
 	if len(responseBytes) == 0 {
-		return nil, "empty_response"
+		return ResponseAnalysis{ModelName: "empty_response"}
 	}
 
 	responseStr := string(responseBytes)
@@ -309,12 +344,10 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensUnified(responseBytes []byte, co
 	// 🆕 [第二层] 基于检测结果进行智能路由
 	switch format {
 	case FormatJSON:
-		// ✅ 明确是JSON，直接使用JSON解析器
 		slog.Debug(fmt.Sprintf("🔍 [JSON路由] [%s] 检测为JSON格式，使用JSON解析器", connID))
 		return a.parseJSONForTokens(responseStr, connID, endpointName)
 
 	case FormatSSE:
-		// ✅ 明确是SSE，使用SSE解析器
 		slog.Debug(fmt.Sprintf("🌊 [SSE路由] [%s] 检测为SSE格式，使用SSE解析器", connID))
 		return a.parseSSEForTokens(responseStr, connID, endpointName)
 
@@ -326,54 +359,54 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensUnified(responseBytes []byte, co
 }
 
 // parseSSEForTokens 解析SSE格式响应获取Token信息（不直接记录）
-func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+// v6.3：消费全部行，usage 出现后继续解析 content_block_start / message_stop 等事件；
+// usage 取 GetFinalUsage()（累计值，与改动前一致），模型 / 思考从解析器终态读取。
+func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName string) ResponseAnalysis {
 	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
 	lines := strings.Split(responseStr, "\n")
 
-	var foundTokenUsage *tracking.TokenUsage
-	var modelName string = "unknown"
-	hasErrorEvent := false
-
-	// 检查是否包含错误事件
-	if strings.Contains(responseStr, "event:error") || strings.Contains(responseStr, "event: error") {
-		hasErrorEvent = true
+	hasErrorEvent := strings.Contains(responseStr, "event:error") || strings.Contains(responseStr, "event: error")
+	if hasErrorEvent {
 		slog.Info(fmt.Sprintf("❌ [SSE错误检测] [%s] 端点: %s - 检测到error事件", connID, endpointName))
 	}
 
-	// 解析每一行
+	var firstUsage *monitor.TokenUsage
 	for _, line := range lines {
-		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil {
-			// 获取模型名称
-			if tp, ok := tokenParser.(interface{ GetModelName() string }); ok {
-				modelName = tp.GetModelName()
-			}
-
-			// v5.0+: 使用 GetFinalUsage 获取完整的 TokenUsage（包含 5m/1h 缓存字段）
-			foundTokenUsage = tokenParser.GetFinalUsage()
-			if foundTokenUsage == nil {
-				// 回退：如果 GetFinalUsage 为空，使用返回的 tokenUsage
-				foundTokenUsage = &tracking.TokenUsage{
-					InputTokens:         tokenUsage.InputTokens,
-					OutputTokens:        tokenUsage.OutputTokens,
-					CacheCreationTokens: tokenUsage.CacheCreationTokens,
-					CacheReadTokens:     tokenUsage.CacheReadTokens,
-				}
-			}
-
-			slog.Info(fmt.Sprintf("✅ [SSE解析成功] [%s] 端点: %s - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d (5m=%d, 1h=%d), 缓存读取: %d",
-				connID, endpointName, modelName,
-				foundTokenUsage.InputTokens, foundTokenUsage.OutputTokens,
-				foundTokenUsage.CacheCreationTokens, foundTokenUsage.CacheCreation5mTokens, foundTokenUsage.CacheCreation1hTokens,
-				foundTokenUsage.CacheReadTokens))
-
-			return foundTokenUsage, modelName
+		if tokenUsage := tokenParser.ParseSSELine(line); tokenUsage != nil && firstUsage == nil {
+			firstUsage = tokenUsage
 		}
+	}
+
+	analysis := ResponseAnalysis{ModelName: "unknown"}
+	analysis.ResponseModel, analysis.ResponseReasoning = readParserDiagnostics(tokenParser)
+	if firstUsage != nil {
+		if tp, ok := tokenParser.(interface{ GetModelName() string }); ok && tp.GetModelName() != "" {
+			analysis.ModelName = tp.GetModelName()
+		}
+		// v5.0+: 使用 GetFinalUsage 获取完整的 TokenUsage（包含 5m/1h 缓存字段）
+		analysis.TokenUsage = tokenParser.GetFinalUsage()
+		if analysis.TokenUsage == nil {
+			analysis.TokenUsage = &tracking.TokenUsage{
+				InputTokens:         firstUsage.InputTokens,
+				OutputTokens:        firstUsage.OutputTokens,
+				CacheCreationTokens: firstUsage.CacheCreationTokens,
+				CacheReadTokens:     firstUsage.CacheReadTokens,
+			}
+		}
+		usage := analysis.TokenUsage
+		slog.Info(fmt.Sprintf("✅ [SSE解析成功] [%s] 端点: %s - 模型: %s, 输入: %d, 输出: %d, 缓存创建: %d (5m=%d, 1h=%d), 缓存读取: %d",
+			connID, endpointName, analysis.ModelName,
+			usage.InputTokens, usage.OutputTokens,
+			usage.CacheCreationTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens,
+			usage.CacheReadTokens))
+		return analysis
 	}
 
 	// 如果有错误事件或没找到Token信息
 	if hasErrorEvent {
 		slog.Info(fmt.Sprintf("❌ [SSE错误处理] [%s] 端点: %s - 错误事件已处理", connID, endpointName))
-		return nil, "error_response"
+		analysis.ModelName = "error_response"
+		return analysis
 	}
 
 	slog.Info(fmt.Sprintf("🚫 [SSE解析] [%s] 端点: %s - 未找到token usage信息", connID, endpointName))
@@ -381,24 +414,29 @@ func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName stri
 	// 🔍 [调试] 异步保存响应数据用于调试Token解析失败问题
 	utils.WriteTokenDebugResponse(connID, endpointName, responseStr)
 
-	return nil, "no_token_sse"
+	analysis.ModelName = "no_token_sse"
+	return analysis
 }
 
 // parseJSONForTokens 解析JSON格式响应获取Token信息（不直接记录）
-func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName string) ResponseAnalysis {
 	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
 
 	slog.Info(fmt.Sprintf("🔍 [JSON解析] [%s] 尝试解析JSON响应", connID))
 
-	// 首先提取模型信息
+	// 首先提取模型信息；v6.3 同时扫描 content[] / reasoning / usage 得到思考信息（不依赖 usage）
+	analysis := ResponseAnalysis{ModelName: "default"}
 	var jsonResp map[string]interface{}
-	var modelName string = "default"
-
 	if err := json.Unmarshal([]byte(responseStr), &jsonResp); err == nil {
 		if model, ok := jsonResp["model"].(string); ok && model != "" {
-			modelName = model
+			analysis.ModelName = model
+			analysis.ResponseModel = model
 			tokenParser.SetModelName(model)
 			slog.Info("📋 [JSON解析] 提取到模型信息", "model", model)
+		}
+		if aware, ok := tokenParser.(reasoningAwareParser); ok {
+			aware.MergeResponseReasoningFromJSON(jsonResp)
+			analysis.ResponseReasoning = aware.GetResponseReasoning()
 		}
 	}
 
@@ -408,8 +446,7 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 	tokenParser.ParseSSELine("data: " + responseStr)
 	if tokenParser.ParseSSELine("") != nil {
 		// 使用 GetFinalUsage 获取完整的 TokenUsage（包含 5m/1h 缓存字段）
-		tokenUsage := tokenParser.GetFinalUsage()
-		if tokenUsage != nil {
+		if tokenUsage := tokenParser.GetFinalUsage(); tokenUsage != nil {
 			slog.Info("✅ [JSON解析] 成功解析Token使用信息",
 				"endpoint", endpointName,
 				"inputTokens", tokenUsage.InputTokens,
@@ -418,8 +455,8 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 				"cache5m", tokenUsage.CacheCreation5mTokens,
 				"cache1h", tokenUsage.CacheCreation1hTokens,
 				"cacheRead", tokenUsage.CacheReadTokens)
-
-			return tokenUsage, modelName
+			analysis.TokenUsage = tokenUsage
+			return analysis
 		}
 	}
 
@@ -428,7 +465,7 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 	// 🔍 [调试] 异步保存响应数据用于调试Token解析失败问题
 	utils.WriteTokenDebugResponse(connID, endpointName, responseStr)
 
-	return nil, modelName
+	return analysis
 }
 
 // ============================================================================
@@ -530,42 +567,49 @@ func isValidSSEStructure(content string) bool {
 // ============================================================================
 
 // parseWithFallback 当结构化检测也失败时的最后防线
-func (a *TokenAnalyzer) parseWithFallback(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+func (a *TokenAnalyzer) parseWithFallback(responseStr, connID, endpointName string) ResponseAnalysis {
 	slog.Debug(fmt.Sprintf("🛡️ [回退机制] [%s] 启动兜底解析", connID))
 
 	// 尝试1: 强制JSON解析（忽略结构验证）
-	if tokenUsage, model := a.tryForceJSONParse(responseStr, connID, endpointName); tokenUsage != nil {
+	if analysis, ok := a.tryForceJSONParse(responseStr, connID, endpointName); ok {
 		slog.Info(fmt.Sprintf("✅ [回退成功] [%s] 强制JSON解析成功", connID))
-		return tokenUsage, model
+		return analysis
 	}
 
 	// 尝试2: 宽松SSE解析（降低验证标准）
-	if tokenUsage, model := a.tryLenientSSEParse(responseStr, connID, endpointName); tokenUsage != nil {
+	lenient, ok := a.tryLenientSSEParse(responseStr, connID, endpointName)
+	if ok {
 		slog.Info(fmt.Sprintf("✅ [回退成功] [%s] 宽松SSE解析成功", connID))
-		return tokenUsage, model
+		return lenient
 	}
 
-	// 最终失败
+	// 最终失败：usage 缺失不等于诊断缺失，宽松解析已拿到的响应模型 / 思考信息仍要带出
 	slog.Info(fmt.Sprintf("🎯 [回退失败] [%s] 端点: %s - 所有解析方法均失败", connID, endpointName))
-	return nil, "non_token_response"
+	return ResponseAnalysis{
+		ModelName:         "non_token_response",
+		ResponseModel:     lenient.ResponseModel,
+		ResponseReasoning: lenient.ResponseReasoning,
+	}
 }
 
-// tryForceJSONParse 强制尝试JSON解析（忽略结构验证）
-func (a *TokenAnalyzer) tryForceJSONParse(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+// tryForceJSONParse 强制尝试JSON解析（忽略结构验证）；只有拿到 usage 才算成功。
+func (a *TokenAnalyzer) tryForceJSONParse(responseStr, connID, endpointName string) (ResponseAnalysis, bool) {
 	// 如果响应包含usage字段，强制按JSON解析
 	if strings.Contains(responseStr, "\"usage\"") {
 		slog.Debug(fmt.Sprintf("🔍 [强制JSON] [%s] 发现usage字段，强制JSON解析", connID))
-		return a.parseJSONForTokens(responseStr, connID, endpointName)
+		analysis := a.parseJSONForTokens(responseStr, connID, endpointName)
+		return analysis, analysis.TokenUsage != nil
 	}
-	return nil, ""
+	return ResponseAnalysis{}, false
 }
 
-// tryLenientSSEParse 宽松的SSE解析（降低验证标准）
-func (a *TokenAnalyzer) tryLenientSSEParse(responseStr, connID, endpointName string) (*tracking.TokenUsage, string) {
+// tryLenientSSEParse 宽松的SSE解析（降低验证标准）；只有拿到 usage 才算成功。
+func (a *TokenAnalyzer) tryLenientSSEParse(responseStr, connID, endpointName string) (ResponseAnalysis, bool) {
 	// 宽松条件：只要包含任何event或data行就尝试解析
 	if strings.Contains(responseStr, "event:") || strings.Contains(responseStr, "data:") {
 		slog.Debug(fmt.Sprintf("🌊 [宽松SSE] [%s] 发现SSE关键字，尝试宽松解析", connID))
-		return a.parseSSEForTokens(responseStr, connID, endpointName)
+		analysis := a.parseSSEForTokens(responseStr, connID, endpointName)
+		return analysis, analysis.TokenUsage != nil
 	}
-	return nil, ""
+	return ResponseAnalysis{}, false
 }

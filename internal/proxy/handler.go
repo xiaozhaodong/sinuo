@@ -17,6 +17,7 @@ import (
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/proxy/response"
+	"cc-forwarder/internal/reasoning"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -321,12 +322,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctx = r.Context()
 	}
 
-	// 异步解析请求体中的模型名称（不阻塞主转发流程）
-	go func(body []byte, path string) {
-		if modelName := h.extractModelFromRequestBody(body, path); modelName != "" {
-			lifecycleManager.SetModel(modelName)
-		}
-	}(bodyBytes, r.URL.Path)
+	// v6.3：同步解析请求模型与思考配置（一次 JSON 解码），早于 StartRequest，
+	// 保证 422 未分配 / 账号池未就绪 / 秒终态等路径的 start 行也带请求字段。
+	requestModel, requestReasoning := reasoning.ParseRequest(r.URL.Path, bodyBytes)
+	if r.URL.Path == openAIImagesEditsPath {
+		// 图片编辑允许 multipart/form-data，JSON 解析读不到其中的 model 字段；
+		// 这里取默认模型注入前的原始值，避免显式模型被记成「默认模型」。
+		requestModel = imageEditRequestModel(bodyBytes, r.Header.Get("Content-Type"), requestModel)
+	}
+	if requestModel != "" {
+		lifecycleManager.SetModel(requestModel)
+	}
+	lifecycleManager.SetRequestProfile(requestModel, requestReasoning)
 
 	// 检测是否为SSE流式请求
 	isSSE := h.detectSSERequest(r, bodyBytes)

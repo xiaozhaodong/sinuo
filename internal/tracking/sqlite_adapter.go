@@ -199,6 +199,36 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "request_model",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_model TEXT DEFAULT ''",
+			description: "客户端请求模型字段（模型一致性）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "upstream_model",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_model TEXT DEFAULT ''",
+			description: "上游实际模型字段（模型一致性）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "response_model",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN response_model TEXT DEFAULT ''",
+			description: "响应模型字段（模型一致性）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "request_reasoning",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_reasoning TEXT DEFAULT ''",
+			description: "请求思考配置字段（模型一致性）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "response_reasoning",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN response_reasoning TEXT DEFAULT ''",
+			description: "响应思考信息字段（模型一致性）",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "request_source",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_source TEXT NOT NULL DEFAULT 'legacy_proxy' CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy'))",
 			description: "请求入口来源字段",

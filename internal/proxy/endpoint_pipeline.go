@@ -13,6 +13,7 @@ import (
 
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/proxy/handlers"
+	"cc-forwarder/internal/proxy/response"
 )
 
 // 端点侧扁平转发管线（方案 §4.4）：单层候选循环替代旧 streaming/regular 双循环壳。
@@ -189,6 +190,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
 			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
+		recordEndpointUpstreamModel(lifecycleManager, traceState)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()
@@ -236,6 +238,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay+pacedWait))
 								resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
 									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.SetFirstTokenStartTime)
+								recordEndpointUpstreamModel(lifecycleManager, traceState)
 								releaseUpstream = func() {
 									if upstreamCancel != nil {
 										upstreamCancel()
@@ -534,6 +537,7 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 
 	slog.Info(fmt.Sprintf("🚀 [开始流式处理] [%s] 端点: %s", connID, endpointName))
 	finalTokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
+	applyStreamResponseDiagnostics(lifecycleManager, processor)
 	if err != nil {
 		if streamErr, ok := err.(handlers.StreamIncompleteErrorInterface); ok {
 			// 流不完整但请求已完成：按完成记账并标记 failure_reason（不计失败、不迁移 active）
@@ -641,25 +645,32 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
 
+	// v6.3：上游响应已完整读入，先提取响应模型 / 思考信息再写回客户端，
+	// 客户端断连导致写入失败时失败结算仍保留已收到的诊断字段。
+	isCountTokens := r.URL.Path == "/v1/messages/count_tokens"
+	var analysis response.ResponseAnalysis
+	if !isCountTokens {
+		analysis = h.tokenAnalyzer.AnalyzeResponseUnified(responseBytes, connID, endpointName)
+		applyResponseAnalysisDiagnostics(lifecycleManager, analysis, "常规响应解析")
+	}
+
 	h.responseProcessor.CopyResponseHeaders(resp, w)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := w.Write(responseBytes); err != nil {
-		lifecycleManager.HandleError(fmt.Errorf("failed to write response: %w", err))
+		// 不再经过 HandleError：断连错误会被分类为客户端取消并先落 cancelled，
+		// 与随后的 FailRequest 形成双终态竞争；与账号池管线对齐，只落一次 failed。
 		slog.Error("Failed to write response to client", "request_id", connID, "error", err)
 		lifecycleManager.FailRequest("response_write_error", err.Error(), resp.StatusCode)
 		return ProcessOutcomeFailedAfterCommit, err.Error()
 	}
 
-	if r.URL.Path == "/v1/messages/count_tokens" {
+	if isCountTokens {
 		lifecycleManager.CompleteRequest(nil)
 		return ProcessOutcomeFullSuccess, ""
 	}
 
-	tokenUsage, modelName := h.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, connID, endpointName)
+	tokenUsage := analysis.TokenUsage
 	if tokenUsage != nil {
-		if modelName != "unknown" && modelName != "" {
-			lifecycleManager.SetModelWithComparison(modelName, "常规响应解析")
-		}
 		lifecycleManager.CompleteRequest(tokenUsage)
 	} else {
 		lifecycleManager.HandleNonTokenResponse(string(responseBytes))

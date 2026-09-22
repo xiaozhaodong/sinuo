@@ -51,7 +51,7 @@ func NewForwarder(cfg *config.Config, endpointManager *endpoint.Manager) *Forwar
 
 // ForwardRequestToEndpoint 转发请求到指定端点
 func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, error) {
-	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
+	bodyBytes, _ = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
@@ -116,7 +116,7 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 		}
 		upstreamCtx = httptrace.WithClientTrace(upstreamCtx, trace)
 	}
-	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
+	bodyBytes, _ = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
@@ -170,40 +170,40 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 	return resp, release, nil
 }
 
-func prepareBodyForEndpoint(path string, bodyBytes []byte, ep *endpoint.Endpoint) []byte {
-	bodyBytes = rewriteEndpointModel(path, bodyBytes, ep)
-	return bodyBytes
+// prepareBodyForEndpoint 应用端点级模型改写；第二个返回值是改写后的上游模型，未改写时为空串。
+func prepareBodyForEndpoint(path string, bodyBytes []byte, ep *endpoint.Endpoint) ([]byte, string) {
+	return rewriteEndpointModel(path, bodyBytes, ep)
 }
 
-func rewriteEndpointModel(path string, bodyBytes []byte, ep *endpoint.Endpoint) []byte {
+func rewriteEndpointModel(path string, bodyBytes []byte, ep *endpoint.Endpoint) ([]byte, string) {
 	if ep == nil || strings.TrimSpace(ep.Config.ModelRewriteRules) == "" || !isClaudeMessagesPath(path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 
 	var payload map[string]any
 	if !decodeSingleJSON(bodyBytes, &payload) {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 	model, ok := payload["model"].(string)
 	if !ok {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 	target, rewritten, err := modelrewrite.Rewrite(ep.Config.ModelRewriteRules, path, model)
 	if err != nil {
 		slog.Warn("⚠️ [端点模型改写] 忽略无效规则", "endpoint", ep.Config.Name, "error", err)
-		return bodyBytes
+		return bodyBytes, ""
 	}
 	if !rewritten {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 
 	payload["model"] = target
 	rewrittenBody, err := json.Marshal(payload)
 	if err != nil {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 	slog.Debug("🔀 [端点模型改写] 已替换上游模型", "endpoint", ep.Config.Name, "from", model, "to", target, "path", path)
-	return rewrittenBody
+	return rewrittenBody, target
 }
 
 func isClaudeMessagesPath(path string) bool {
@@ -371,7 +371,7 @@ func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bod
 	// Config 返回 admission 快照的独立副本；后续 helper 继续复用既有逻辑，
 	// 但不会再读取 Manager 持有的可变 Endpoint 或动态凭据状态。
 	ep := &endpoint.Endpoint{Config: target.Config()}
-	bodyBytes = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
+	bodyBytes, upstreamModel := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入换候选/标记）
 	bodyBytes, err := ApplyPrivacyFilterForEndpoint(f.privacyFilter, r, bodyBytes, ep)
@@ -385,6 +385,7 @@ func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bod
 		requestCtx, release = context.WithCancel(context.Background())
 	}
 	requestCtx, traceState := WithUpstreamTrace(requestCtx, onWroteRequest)
+	traceState.setUpstreamModel(upstreamModel)
 
 	targetURL := ep.Config.URL + r.URL.Path
 	if r.URL.RawQuery != "" {

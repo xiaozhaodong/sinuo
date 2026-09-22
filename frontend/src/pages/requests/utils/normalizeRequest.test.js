@@ -136,3 +136,41 @@ test('真实上游存在时规范化入口不做归类改写', () => {
   });
   assert.equal(result.upstreamName, 'xuanwulei');
 });
+
+test('模型一致性 5 字段：snake / camel 双来源，缺省空串，不影响 model', () => {
+  const snake = normalizeRequest({
+    request_id: 'req-mc-1',
+    model_name: 'gpt-5.5',
+    request_model: 'gpt-5.4',
+    upstream_model: 'gpt-5.5',
+    response_model: 'gpt-5.5',
+    request_reasoning: 'effort:xhigh',
+    response_reasoning: 'effort:medium reasoning_tokens:12'
+  });
+  assert.equal(snake.model, 'gpt-5.5');
+  assert.equal(snake.requestModel, 'gpt-5.4');
+  assert.equal(snake.upstreamModel, 'gpt-5.5');
+  assert.equal(snake.responseModel, 'gpt-5.5');
+  assert.equal(snake.requestReasoning, 'effort:xhigh');
+  assert.equal(snake.responseReasoning, 'effort:medium reasoning_tokens:12');
+
+  const camel = normalizeRequest({
+    requestId: 'req-mc-2',
+    requestModel: 'claude-test',
+    upstreamModel: '',
+    responseModel: 'claude-test-20250929',
+    requestReasoning: 'thinking:adaptive',
+    responseReasoning: 'thinking:present'
+  });
+  assert.equal(camel.requestModel, 'claude-test');
+  assert.equal(camel.upstreamModel, '');
+  assert.equal(camel.responseModel, 'claude-test-20250929');
+  assert.equal(camel.responseReasoning, 'thinking:present');
+
+  const legacy = normalizeRequest({ request_id: 'req-legacy', model_name: 'claude-test' });
+  assert.equal(legacy.requestModel, '');
+  assert.equal(legacy.upstreamModel, '');
+  assert.equal(legacy.responseModel, '');
+  assert.equal(legacy.requestReasoning, '');
+  assert.equal(legacy.responseReasoning, '');
+});

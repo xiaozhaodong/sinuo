@@ -2417,12 +2417,20 @@ func TestPrepareCodexAccountBodyForUpstream_ConfiguredModelRewriteRules(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := prepareCodexAccountBodyForUpstream([]byte(tt.body), tt.account, tt.path)
+			got, upstreamModel := prepareCodexAccountBodyForUpstream([]byte(tt.body), tt.account, tt.path)
 			if tt.wantRaw != "" {
-				if string(got) != tt.wantRaw {
-					t.Fatalf("expected raw body %q, got %q", tt.wantRaw, string(got))
+				if string(got) != tt.wantRaw || upstreamModel != "" {
+					t.Fatalf("expected raw body %q, got %q (upstream=%q)", tt.wantRaw, string(got), upstreamModel)
 				}
 				return
+			}
+			var original map[string]any
+			_ = json.Unmarshal([]byte(tt.body), &original)
+			if original["model"] == tt.wantModel && upstreamModel != "" {
+				t.Fatalf("unrewritten body must report empty upstream model, got %q", upstreamModel)
+			}
+			if original["model"] != tt.wantModel && upstreamModel != tt.wantModel {
+				t.Fatalf("rewritten body must report upstream model %q, got %q", tt.wantModel, upstreamModel)
 			}
 
 			var payload map[string]any

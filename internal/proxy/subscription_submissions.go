@@ -10,13 +10,15 @@ import (
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
+	"cc-forwarder/internal/reasoning"
 )
 
 // subscriptionSubmissionObserver 是 P2b 的同步生命周期接缝。
 // 回调参数不含请求正文；实现不得在回调中再次解析 Responses 事件。
 type subscriptionSubmissionObserver interface {
 	SubmissionStarted(*subscriptionSubmission)
-	SubmissionBound(*subscriptionSubmission)
+	// SubmissionBound 携带 response.created 的解析结果（响应模型与回显的 reasoning.effort）。
+	SubmissionBound(*subscriptionSubmission, *ParseResult)
 	SubmissionTerminal(*subscriptionSubmission, *ParseResult)
 	SubmissionRejected(*subscriptionSubmission, *privacy.PolicyError)
 	SubmissionInterrupted(*subscriptionSubmission, string)
@@ -29,6 +31,7 @@ type subscriptionSubmission struct {
 	ConnectionID       string
 	Sequence           uint64
 	Model              string
+	Reasoning          string // v6.3 请求思考串
 	PreviousResponseID string
 	StreamID           string
 	ResponseID         string
@@ -95,6 +98,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 		ConnectionID:       s.connectionID,
 		Sequence:           s.sequence,
 		Model:              create.Model,
+		Reasoning:          create.Reasoning,
 		PreviousResponseID: create.PreviousResponseID,
 		StreamID:           create.StreamID,
 		Generate:           create.Generate,
@@ -128,10 +132,31 @@ func (s *subscriptionSubmissionState) handleUpstream(payload []byte) *ParseResul
 	}
 	s.responseProgress(responseID, eventType, int64(len(payload)))
 	if result == nil || !result.IsCompleted || !isResponsesTerminalEvent(eventType) {
+		// 中间事件（如 response.in_progress）可能独立回显 reasoning.effort / model，
+		// 按 response ID 合并到已绑定 submission，否则终态只带 usage 时会丢失。
+		s.mergeIntermediateDiagnostics(responseID, result)
 		return result
 	}
 	s.finishTerminal(responseID, eventType, result)
 	return result
+}
+
+// mergeIntermediateDiagnostics 把非 created、非终态事件携带的响应模型 / 思考字段合并进对应 submission。
+func (s *subscriptionSubmissionState) mergeIntermediateDiagnostics(responseID string, result *ParseResult) {
+	if result == nil || s.observer == nil || responseID == "" {
+		return
+	}
+	if result.ResponseModel == "" && result.ResponseReasoningFields.IsEmpty() {
+		return
+	}
+	s.mu.Lock()
+	submission := s.byResponseID[responseID]
+	if submission == nil || submission.settled {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.observer.SubmissionBound(submission, result)
 }
 
 // responseProgress 只向观察者传有界关联与字节/时序，不保存帧或逐帧推送 UI。
@@ -231,7 +256,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		if started {
 			s.observer.SubmissionStarted(submission)
 		}
-		s.observer.SubmissionBound(submission)
+		s.observer.SubmissionBound(submission, result)
 	}
 }
 
@@ -378,18 +403,28 @@ func (s *subscriptionSubmissionState) warn(code string) {
 type subscriptionCreate struct {
 	Generate           bool
 	Model              string
+	Reasoning          string // v6.3 归一化思考串（effort:x），envelope 与 nested response 都读
 	PreviousResponseID string
 	StreamID           string
 }
 
+type subscriptionReasoningField struct {
+	Effort string `json:"effort"`
+}
+
+func (f subscriptionReasoningField) normalized() string {
+	return reasoning.ParseCodexRequest(map[string]any{"reasoning": map[string]any{"effort": f.Effort}})
+}
+
 func parseSubscriptionCreate(payload []byte) (subscriptionCreate, bool) {
 	var envelope struct {
-		Type               string          `json:"type"`
-		Generate           *bool           `json:"generate"`
-		Model              string          `json:"model"`
-		PreviousResponseID string          `json:"previous_response_id"`
-		StreamID           string          `json:"stream_id"`
-		Response           json.RawMessage `json:"response"`
+		Type               string                     `json:"type"`
+		Generate           *bool                      `json:"generate"`
+		Model              string                     `json:"model"`
+		Reasoning          subscriptionReasoningField `json:"reasoning"`
+		PreviousResponseID string                     `json:"previous_response_id"`
+		StreamID           string                     `json:"stream_id"`
+		Response           json.RawMessage            `json:"response"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Type != "response.create" {
 		return subscriptionCreate{}, false
@@ -397,15 +432,17 @@ func parseSubscriptionCreate(payload []byte) (subscriptionCreate, bool) {
 	create := subscriptionCreate{
 		Generate:           envelope.Generate == nil || *envelope.Generate,
 		Model:              envelope.Model,
+		Reasoning:          envelope.Reasoning.normalized(),
 		PreviousResponseID: envelope.PreviousResponseID,
 		StreamID:           envelope.StreamID,
 	}
 	if len(envelope.Response) > 0 && string(envelope.Response) != "null" {
 		var nested struct {
-			Generate           *bool  `json:"generate"`
-			Model              string `json:"model"`
-			PreviousResponseID string `json:"previous_response_id"`
-			StreamID           string `json:"stream_id"`
+			Generate           *bool                      `json:"generate"`
+			Model              string                     `json:"model"`
+			Reasoning          subscriptionReasoningField `json:"reasoning"`
+			PreviousResponseID string                     `json:"previous_response_id"`
+			StreamID           string                     `json:"stream_id"`
 		}
 		if json.Unmarshal(envelope.Response, &nested) == nil {
 			if nested.Generate != nil {
@@ -413,6 +450,9 @@ func parseSubscriptionCreate(payload []byte) (subscriptionCreate, bool) {
 			}
 			if nested.Model != "" {
 				create.Model = nested.Model
+			}
+			if nestedReasoning := nested.Reasoning.normalized(); nestedReasoning != "" {
+				create.Reasoning = nestedReasoning
 			}
 			if nested.PreviousResponseID != "" {
 				create.PreviousResponseID = nested.PreviousResponseID

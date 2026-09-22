@@ -209,7 +209,7 @@ func (h *CountTokensHandler) handleManualFixed(ctx context.Context, w http.Respo
 // attemptEndpoint 单端点一次尝试；失败时按 §10 记录 count_tokens scoped 软失败或负缓存
 func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, profile endpoint.RouteRequestProfile, connID string) ([]byte, countTokensAttemptOutcome, error) {
 	ep := &endpoint.Endpoint{Config: target.Config()}
-	endpointBody := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
+	endpointBody, _ := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 	// 🛡️ 出站隐私过滤；策略拒绝直返，不降级估算、不计失败
 	preparedBody, err := ApplyPrivacyFilterForEndpoint(h.forwarder.privacyFilter, r, endpointBody, ep)
 	if err != nil {

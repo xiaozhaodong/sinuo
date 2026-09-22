@@ -703,7 +703,11 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	bodyBytes = prepareCodexAccountBodyForUpstream(bodyBytes, acc, r.URL.Path)
+	var upstreamModel string
+	bodyBytes, upstreamModel = prepareCodexAccountBodyForUpstream(bodyBytes, acc, r.URL.Path)
+	if lifecycleManager != nil {
+		lifecycleManager.SetUpstreamModel(upstreamModel)
+	}
 
 	// 🛡️ 出站隐私过滤（PolicyError 由 handleAccountPipeline 短路，不冷却、不换号）
 	bodyBytes, err = h.applyAccountPrivacyFilter(r, bodyBytes, acc)
@@ -832,33 +836,34 @@ func (h *Handler) applyAccountPrivacyFilter(r *http.Request, bodyBytes []byte, a
 	return handlers.ApplyPrivacyFilter(h.privacyFilter, r, req, bodyBytes)
 }
 
-func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAccountRecord, path string) []byte {
+// prepareCodexAccountBodyForUpstream 应用账号级模型改写；第二个返回值是改写后的上游模型，未改写为空串。
+func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAccountRecord, path string) ([]byte, string) {
 	if !shouldRewriteCodexAccountModel(acc, path) || len(bytes.TrimSpace(bodyBytes)) == 0 {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 
 	var payload map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 
 	model, ok := payload["model"].(string)
 	if !ok {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 	targetModel, shouldRewrite := rewriteCodexAccountModel(acc, path, model)
 	if !shouldRewrite {
-		return bodyBytes
+		return bodyBytes, ""
 	}
 
 	payload["model"] = targetModel
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
-		return bodyBytes
+		return bodyBytes, ""
 	}
-	return rewritten
+	return rewritten, targetModel
 }
 
 func shouldRewriteCodexAccountModel(acc *store.UpstreamAccountRecord, path string) bool {
@@ -1129,6 +1134,10 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
 
+	// v6.3：先提取响应模型 / 思考信息再写回客户端，写入失败的结算仍保留已收到的诊断字段。
+	analysis := h.tokenAnalyzer.AnalyzeResponseUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)
+	applyResponseAnalysisDiagnostics(lifecycleManager, analysis, "账号常规响应解析")
+
 	h.responseProcessor.CopyResponseHeaders(resp, w)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := w.Write(responseBytes); err != nil {
@@ -1136,11 +1145,8 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		return fmt.Errorf("failed to write response: %w", err)
 	}
 
-	tokenUsage, modelName := h.tokenAnalyzer.AnalyzeResponseForTokensUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)
+	tokenUsage := analysis.TokenUsage
 	if tokenUsage != nil {
-		if modelName != "" && modelName != "unknown" {
-			lifecycleManager.SetModelWithComparison(modelName, "账号常规响应解析")
-		}
 		lifecycleManager.CompleteRequest(tokenUsage)
 		return nil
 	}
@@ -1183,6 +1189,7 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 	}
 
 	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
+	applyStreamResponseDiagnostics(lifecycleManager, processor)
 	if modelName != "" && modelName != "unknown" {
 		lifecycleManager.SetModelWithComparison(modelName, "账号流式响应解析")
 	}

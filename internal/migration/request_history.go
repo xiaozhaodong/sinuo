@@ -13,7 +13,8 @@ var requestLogTargetColumns = []string{
 	"id", "request_id", "client_ip", "user_agent", "method", "path",
 	"start_time", "end_time", "duration_ms", "first_token_ms", "completion_ms",
 	"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json",
-	"request_family", "request_source", "request_kind", "endpoint_name", "model_name", "upstream_type",
+	"request_family", "request_source", "request_kind", "endpoint_name", "model_name",
+	"request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "upstream_type",
 	"upstream_source_name", "upstream_name", "upstream_id", "is_streaming",
 	"route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason",
 	"route_decision_at", "status", "http_status_code", "retry_count",
@@ -114,7 +115,7 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 	case "upstream_name":
 		return `COALESCE(NULLIF(` + value("upstream_name", "''") + `, ''), NULLIF(` +
 			value("effective_endpoint", "''") + `, ''), NULLIF(` + value("endpoint_name", "''") + `, ''), '')`
-	case "upstream_source_name":
+	case "upstream_source_name", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning":
 		return `COALESCE(` + value(column, "''") + `, '')`
 	case "upstream_type":
 		path := value("path", "''")
@@ -176,6 +177,11 @@ func requestLogsTargetSchema(table string) string {
 		request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy', 'generation', 'compaction')),
 		endpoint_name TEXT,
 		model_name TEXT,
+		request_model TEXT DEFAULT '',
+		upstream_model TEXT DEFAULT '',
+		response_model TEXT DEFAULT '',
+		request_reasoning TEXT DEFAULT '',
+		response_reasoning TEXT DEFAULT '',
 		upstream_type TEXT NOT NULL DEFAULT '',
 		upstream_source_name TEXT NOT NULL DEFAULT '',
 		upstream_name TEXT NOT NULL DEFAULT '',

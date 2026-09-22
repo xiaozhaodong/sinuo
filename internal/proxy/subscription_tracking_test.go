@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/proxy/handlers"
+	"cc-forwarder/internal/reasoning"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -138,4 +139,119 @@ func waitSubscriptionDetail(t *testing.T, tracker *tracking.UsageTracker, reques
 	}
 	t.Fatalf("request %s did not settle", requestID)
 	return tracking.RequestDetail{}
+}
+
+// v6.3：订阅链路走无状态 ParseResponsesEventJSON，响应思考串必须由追踪 handle 按字段累计。
+func TestSubscriptionTrackingMergesReasoningAcrossCreatedAndCompleted(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	observer := newSubscriptionTrackingObserver(tracker, nil)
+	state := newSubscriptionSubmissionState(context.Background(), "ws-reasoning", observer)
+
+	// 场景 1：created 回显 effort，completed 只带 reasoning_tokens → 两者合并
+	merged, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"high"},"input":"x"}`))
+	if !ok {
+		t.Fatal("beginCreate failed")
+	}
+	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-m","model":"gpt-5.4","reasoning":{"effort":"high"}}}`))
+	state.handleUpstream([]byte(`{"type":"response.completed","response":{"id":"resp-m","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":9,"output_tokens_details":{"reasoning_tokens":7}}}}`))
+	detail := waitSubscriptionDetail(t, tracker, merged.RequestID)
+	if detail.RequestReasoning != "effort:high" {
+		t.Fatalf("request_reasoning = %q", detail.RequestReasoning)
+	}
+	if detail.ResponseReasoning != "effort:high reasoning_tokens:7" {
+		t.Fatalf("response_reasoning = %q, want merged created+completed", detail.ResponseReasoning)
+	}
+	if detail.ResponseModel != "gpt-5.4" || detail.RequestModel != "gpt-5.4" {
+		t.Fatalf("models = request:%q response:%q", detail.RequestModel, detail.ResponseModel)
+	}
+
+	// 场景 2：created 未回显 effort → 只有 reasoning_tokens，前端判「上游未回显」
+	noEcho, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"low"},"input":"y"}`))
+	if !ok {
+		t.Fatal("beginCreate failed")
+	}
+	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-n","model":"gpt-5.4"}}`))
+	state.handleUpstream([]byte(`{"type":"response.completed","response":{"id":"resp-n","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0}}}}`))
+	noEchoDetail := waitSubscriptionDetail(t, tracker, noEcho.RequestID)
+	if noEchoDetail.ResponseReasoning != "reasoning_tokens:0" {
+		t.Fatalf("no-echo response_reasoning = %q", noEchoDetail.ResponseReasoning)
+	}
+}
+
+// handle 级：终态事件缺 effort 时不得把 created 记下的 effort 清空。
+func TestSubscriptionTrackingMergeResponseFieldsKeepsEarlierEffort(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	observer := newSubscriptionTrackingObserver(tracker, nil)
+	handle := observer.StartHTTP(SubscriptionHTTPStart{
+		RequestID: "http-merge", StartedAt: time.Now(), Method: "POST", Path: "/v1/responses",
+		RequestKind: tracking.RequestKindGeneration, RequestModel: "gpt-5.4", RequestReasoning: "effort:xhigh",
+	})
+	handle.MergeResponseFields("gpt-5.4", reasoning.CodexFields{Effort: "xhigh"})
+	tokens := int64(42)
+	handle.ApplyParseResult(&ParseResult{
+		ModelName: "gpt-5.4", ResponseModel: "gpt-5.4", IsCompleted: true, Status: "completed",
+		HasTokenUsage: true, TokenUsage: &tracking.TokenUsage{},
+		ResponseReasoningFields: reasoning.CodexFields{ReasoningTokens: &tokens},
+	})
+	detail := waitSubscriptionDetail(t, tracker, "http-merge")
+	if detail.ResponseReasoning != "effort:xhigh reasoning_tokens:42" {
+		t.Fatalf("response_reasoning = %q", detail.ResponseReasoning)
+	}
+}
+
+// 服务端主动 successor 没有客户端 create，submission.Model 来自响应；请求侧必须保持空，
+// 否则前端会把同源的请求 / 响应模型误判为「一致」。
+func TestSubscriptionTrackingServerInitiatedKeepsRequestModelUnknown(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	observer := newSubscriptionTrackingObserver(tracker, nil)
+	state := newSubscriptionSubmissionState(context.Background(), "ws-successor", observer)
+
+	// 没有 pending 的 create，created 直接触发 successor
+	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-s","model":"gpt-5.4","reasoning":{"effort":"high"}}}`))
+	state.handleUpstream([]byte(`{"type":"response.completed","response":{"id":"resp-s","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`))
+
+	var rows []tracking.RequestDetail
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		var err error
+		rows, _, err = tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 1 && rows[0].Status == "completed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(rows) != 1 || rows[0].Status != "completed" {
+		t.Fatalf("settled row not found: %+v", rows)
+	}
+	row := rows[0]
+	if row.RequestModel != "" || row.RequestReasoning != "" {
+		t.Fatalf("server-initiated request profile must stay empty: model=%q reasoning=%q", row.RequestModel, row.RequestReasoning)
+	}
+	if row.ResponseModel != "gpt-5.4" || row.ModelName != "gpt-5.4" || row.ResponseReasoning != "effort:high" {
+		t.Fatalf("response side lost: %+v", row)
+	}
+}
+
+// effort 只在 response.in_progress 回显（created 不带、终态只带 usage）时，也必须按 response ID 合并进落库结果。
+func TestSubscriptionTrackingMergesReasoningFromInProgressEvent(t *testing.T) {
+	tracker := newSubscriptionUnitTracker(t)
+	observer := newSubscriptionTrackingObserver(tracker, nil)
+	state := newSubscriptionSubmissionState(context.Background(), "ws-in-progress", observer)
+
+	submission, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"xhigh"},"input":"x"}`))
+	if !ok {
+		t.Fatal("beginCreate failed")
+	}
+	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-ip","model":"gpt-5.4"}}`))
+	state.handleUpstream([]byte(`{"type":"response.in_progress","response":{"id":"resp-ip","model":"gpt-5.4","reasoning":{"effort":"low"}}}`))
+	state.handleUpstream([]byte(`{"type":"response.completed","response":{"id":"resp-ip","model":"gpt-5.4","usage":{"input_tokens":3,"output_tokens":9,"output_tokens_details":{"reasoning_tokens":5}}}}`))
+	detail := waitSubscriptionDetail(t, tracker, submission.RequestID)
+	if detail.ResponseReasoning != "effort:low reasoning_tokens:5" {
+		t.Fatalf("response_reasoning = %q, want in_progress effort merged", detail.ResponseReasoning)
+	}
+	if detail.RequestReasoning != "effort:xhigh" || detail.ResponseModel != "gpt-5.4" {
+		t.Fatalf("request_reasoning=%q response_model=%q", detail.RequestReasoning, detail.ResponseModel)
+	}
 }
