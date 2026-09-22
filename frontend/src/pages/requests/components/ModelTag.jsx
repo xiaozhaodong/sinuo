@@ -38,7 +38,7 @@ const ModelTooltip = ({ anchorRect, children, tooltipId }) => {
  * @param {string} props.model - 模型名称
  * @param {boolean} props.compact - 是否限制宽度并省略尾部内容
  * @param {{ level: string, lines: string[] } | null} [props.alert] - 模型一致性告警（仅 compact 生效；
- *   level === 'mismatch' 时加琥珀描边 + 图标，tooltip 逐行显示 lines）
+ *   level === 'mismatch' 时在名称右侧显示警告图标，tooltip 逐行显示 lines）
  */
 const ModelTag = ({ model, compact = false, alert = null }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
@@ -48,7 +48,7 @@ const ModelTag = ({ model, compact = false, alert = null }) => {
   const displayName = (!model || model === 'unknown') ? '-' : model;
   // 非 compact（详情弹窗）不显示 alert，由卡片自己表达
   const isMismatch = compact && alert?.level === 'mismatch';
-  const colorClasses = isMismatch ? 'tone-amber' : getModelColorClasses(model);
+  const colorClasses = getModelColorClasses(model);
   const alertLines = isMismatch ? (alert.lines || []) : [];
   const hasTooltip = compact && ((displayName !== '-' && isOverflowing) || alertLines.length > 0);
 
@@ -90,7 +90,7 @@ const ModelTag = ({ model, compact = false, alert = null }) => {
   return (
     <>
       <span
-        className={`inline-flex min-w-0 items-center gap-1 rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${isMismatch ? 'ring-1 ring-warn-line' : ''} ${colorClasses}`}
+        className={`inline-flex min-w-0 items-center gap-1 rounded border px-2 py-1 align-middle text-xs font-mono transition-all ${compact ? 'max-w-[160px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${colorClasses}`}
         tabIndex={hasTooltip ? 0 : undefined}
         data-model-alert={isMismatch ? 'mismatch' : undefined}
         aria-describedby={tooltipAnchor ? tooltipId : undefined}
@@ -99,8 +99,8 @@ const ModelTag = ({ model, compact = false, alert = null }) => {
         onFocus={showTooltip}
         onBlur={hideTooltip}
       >
-        {isMismatch && <AlertTriangle className="h-3 w-3 flex-shrink-0" aria-label="模型或思考等级与请求不一致" />}
         <span ref={textRef} className={compact ? 'min-w-0 truncate' : ''}>{displayName}</span>
+        {isMismatch && <AlertTriangle className="h-3 w-3 flex-shrink-0 text-warn" aria-label="模型或思考等级与请求不一致" />}
       </span>
       {hasTooltip && (
         <ModelTooltip anchorRect={tooltipAnchor} tooltipId={tooltipId}>
