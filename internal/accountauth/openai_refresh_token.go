@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -188,7 +187,7 @@ func exchangeRefreshToken(ctx context.Context, cfg *config.Config, refreshToken 
 		return nil, fmt.Errorf("创建 RT 刷新请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "codex-cli/0.91.0")
+	req.Header.Set("User-Agent", CodexBaseUserAgent())
 
 	client, err := buildHTTPClient(cfg, defaultExchangeTimeout)
 	if err != nil {
@@ -201,7 +200,10 @@ func exchangeRefreshToken(ctx context.Context, cfg *config.Config, refreshToken 
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, refreshTokenResponseReadLimit))
+	body, err := transport.ReadCodexResponseBody(resp, refreshTokenResponseReadLimit)
+	if err != nil {
+		return nil, fmt.Errorf("读取 RT 刷新响应失败 (HTTP %d): %w", resp.StatusCode, err)
+	}
 	bodyText := strings.TrimSpace(string(body))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if bodyText == "" {
@@ -220,18 +222,9 @@ func exchangeRefreshToken(ctx context.Context, cfg *config.Config, refreshToken 
 	return &parsed, nil
 }
 
+// buildHTTPClient 统一走 Codex 出站 client 工厂：继承代理配置、关闭自动 gzip。
 func buildHTTPClient(cfg *config.Config, timeout time.Duration) (*http.Client, error) {
-	if cfg == nil {
-		return &http.Client{Timeout: timeout}, nil
-	}
-	tp, err := transport.CreateTransport(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: tp,
-	}, nil
+	return transport.NewCodexHTTPClient(cfg, timeout)
 }
 
 func extractRefreshToken(raw string) string {

@@ -1,6 +1,7 @@
 package accountauth
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -300,4 +301,70 @@ func testIDTokenWithProfile(planType, accountID, userID, organizationID string) 
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `","chatgpt_plan_type":"` + planType + `","chatgpt_user_id":"` + userID + `","organization_id":"` + organizationID + `"}}`))
 	return header + "." + payload + ".signature"
+}
+
+func gzipJSONResponse(t *testing.T, w http.ResponseWriter, payload any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Encoding", "gzip")
+	writer := gzip.NewWriter(w)
+	if err := json.NewEncoder(writer).Encode(payload); err != nil {
+		t.Errorf("encode gzip payload failed: %v", err)
+	}
+	_ = writer.Close()
+}
+
+// 关闭自动 gzip 协商后，上游主动返回的压缩正文必须由辅助请求自行解码。
+func TestResolveAccessToken_DecodesGzipResponse(t *testing.T) {
+	var receivedAcceptEncoding string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAcceptEncoding = r.Header.Get("Accept-Encoding")
+		gzipJSONResponse(t, w, map[string]any{
+			"access_token":  "at-gzip",
+			"refresh_token": "rt-gzip-rotated",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	oldURL := openAIRefreshTokenURL
+	openAIRefreshTokenURL = server.URL
+	defer func() {
+		openAIRefreshTokenURL = oldURL
+	}()
+
+	manager := NewOpenAIRefreshTokenManager(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolved, err := manager.ResolveAccessTokenDetails(ctx, "rt-gzip")
+	if err != nil {
+		t.Fatalf("ResolveAccessTokenDetails failed on gzip response: %v", err)
+	}
+	if resolved.AccessToken != "at-gzip" || resolved.RefreshToken != "rt-gzip-rotated" {
+		t.Fatalf("unexpected resolved token: %+v", resolved)
+	}
+	if receivedAcceptEncoding != "" {
+		t.Fatalf("auxiliary request must not advertise Accept-Encoding, got %q", receivedAcceptEncoding)
+	}
+}
+
+func TestResolveAccessToken_RejectsUnsupportedContentEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "zstd")
+		_, _ = w.Write([]byte("compressed-bytes"))
+	}))
+	defer server.Close()
+
+	oldURL := openAIRefreshTokenURL
+	openAIRefreshTokenURL = server.URL
+	defer func() {
+		openAIRefreshTokenURL = oldURL
+	}()
+
+	manager := NewOpenAIRefreshTokenManager(nil)
+	_, err := manager.ResolveAccessTokenDetails(context.Background(), "rt-zstd")
+	if err == nil || !strings.Contains(err.Error(), "zstd") {
+		t.Fatalf("expected unsupported encoding error, got %v", err)
+	}
 }

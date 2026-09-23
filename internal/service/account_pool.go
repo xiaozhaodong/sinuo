@@ -4,7 +4,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +25,7 @@ const (
 	usageLimitResetMatchWindow           = 15 * time.Minute
 	accountPoolSettingsCategory          = "account_pool"
 	accountPoolPinnedAccountIDSettingKey = "pinned_account_id"
+	connectivityErrorBodyReadLimit       = 512
 )
 
 type usageLimitQuotaWindow string
@@ -695,6 +695,8 @@ func (s *AccountPoolService) TestUpstreamAccount(ctx context.Context, id int64) 
 		if accountID == "" {
 			return fmt.Errorf("OAuth 账号缺少 chatgpt_account_id，请重新授权后保存完整凭据")
 		}
+		// 只有 ChatGPT OAuth 账号伪装为 Codex 首方客户端；API Key 走标准 Responses 契约，不套用首方 UA。
+		req.Header.Set("User-Agent", accountauth.CodexBaseUserAgent())
 		req.Host = "chatgpt.com"
 		req.Header.Set("Host", "chatgpt.com")
 		req.Header.Set("Accept", "text/event-stream")
@@ -726,7 +728,11 @@ func (s *AccountPoolService) TestUpstreamAccount(ctx context.Context, id int64) 
 		}
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	// 关闭自动 gzip 后由此处按 Content-Encoding 解码；解码失败只丢正文，仍按状态码结算。
+	body, readErr := transport.ReadCodexResponseBody(resp, connectivityErrorBodyReadLimit)
+	if readErr != nil {
+		body = nil
+	}
 	bodyText := strings.TrimSpace(string(body))
 	if isNoAvailableProviders503(resp.StatusCode, bodyText) {
 		if err := s.MarkAccountSuccess(ctx, id); err != nil {
@@ -770,18 +776,9 @@ func isNoAvailableProviders503(statusCode int, bodyText string) bool {
 		strings.Contains(lower, "no available providers")
 }
 
+// buildHTTPClient 统一走 Codex 出站 client 工厂：继承代理配置、关闭自动 gzip。
 func (s *AccountPoolService) buildHTTPClient(timeout time.Duration) (*http.Client, error) {
-	if s.config == nil {
-		return &http.Client{Timeout: timeout}, nil
-	}
-	tp, err := transport.CreateTransport(s.config)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: tp,
-	}, nil
+	return transport.NewCodexHTTPClient(s.config, timeout)
 }
 
 func (s *AccountPoolService) ensureRuntimeCache(ctx context.Context) error {

@@ -1,7 +1,12 @@
 package main
 
 import (
+	"compress/gzip"
+	"context"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -151,4 +156,39 @@ func testOAuthIDTokenWithProfile(planType, accountID, userID, organizationID str
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `","chatgpt_plan_type":"` + planType + `","chatgpt_user_id":"` + userID + `","organization_id":"` + organizationID + `"}}`))
 	return header + "." + payload + ".signature"
+}
+
+// 关闭自动 gzip 协商后，授权码兑换主动返回的压缩正文必须自行解码。
+func TestExchangeOpenAIOAuthCode_DecodesGzipResponse(t *testing.T) {
+	var receivedAcceptEncoding string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		writer := gzip.NewWriter(w)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"access_token":  "at-gzip",
+			"refresh_token": "rt-gzip",
+			"id_token":      "id-gzip",
+			"expires_in":    3600,
+		})
+		_ = writer.Close()
+	}))
+	defer server.Close()
+
+	oldURL := openAIOAuthTokenURL
+	openAIOAuthTokenURL = server.URL
+	t.Cleanup(func() { openAIOAuthTokenURL = oldURL })
+
+	app := NewApp()
+	tokenResp, err := app.exchangeOpenAIOAuthCode(context.Background(), "code-1", "verifier-1", openAIOAuthDefaultRedirectURI)
+	if err != nil {
+		t.Fatalf("exchangeOpenAIOAuthCode failed on gzip response: %v", err)
+	}
+	if tokenResp.AccessToken != "at-gzip" || tokenResp.RefreshToken != "rt-gzip" {
+		t.Fatalf("unexpected token response: %+v", tokenResp)
+	}
+	if receivedAcceptEncoding != "" {
+		t.Fatalf("oauth exchange must not advertise Accept-Encoding, got %q", receivedAcceptEncoding)
+	}
 }

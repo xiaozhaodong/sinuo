@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,10 +11,12 @@ import (
 
 	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/store"
+	"cc-forwarder/internal/transport"
 )
 
 const (
 	defaultChatGPTWhamUsageURL = "https://chatgpt.com/backend-api/wham/usage"
+	quotaResponseReadLimit     = 1024 * 1024
 
 	quotaStatusOK                   = "ok"
 	quotaStatusUnavailable          = "unavailable"
@@ -158,6 +159,7 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 	req.Host = "chatgpt.com"
 	req.Header.Set("Host", "chatgpt.com")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", accountauth.CodexBaseUserAgent())
 	req.Header.Set("Authorization", "Bearer "+resolved.AccessToken)
 	if profile.ChatGPTAccountID != "" && accountauth.NormalizeOpenAIPlanType(profile.PlanType) != "free" {
 		req.Header.Set("chatgpt-account-id", profile.ChatGPTAccountID)
@@ -183,7 +185,11 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	// 关闭自动 gzip 后由此处按 Content-Encoding 解码一次；读取失败只丢正文，仍按状态码与响应头结算。
+	body, readErr := transport.ReadCodexResponseBody(resp, quotaResponseReadLimit)
+	if readErr != nil {
+		body = nil
+	}
 	bodyText := strings.TrimSpace(string(body))
 
 	headerQuota, headerErr := parseQuotaHeaders(resp.Header, now)
@@ -233,7 +239,9 @@ func (s *AccountPoolService) refreshChatGPTOAuthProfile(ctx context.Context, acc
 		}
 
 		msg := "刷新失败：未获取到有效额度信息"
-		if bodyErr != nil {
+		if readErr != nil {
+			msg += fmt.Sprintf("（响应体读取失败：%s）", readErr.Error())
+		} else if bodyErr != nil {
 			msg += "（响应体解析失败）"
 		} else if headerErr != nil {
 			msg += "（响应头解析失败）"

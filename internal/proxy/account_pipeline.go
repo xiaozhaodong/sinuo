@@ -1170,8 +1170,11 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 		return fmt.Errorf("response writer does not support flusher")
 	}
 
+	// 流式正文在 ProcessStreamWithRetry 内按上游 Content-Encoding 解压后转发，
+	// 下游收到的是明文：不能再回传 Content-Encoding / Content-Length，否则客户端会按压缩体解析。
+	connectionNamed := connectionNamedHeaders(resp.Header)
 	for key, values := range resp.Header {
-		if isHopByHopHeader(key) {
+		if shouldSkipAccountResponseHeader(key, connectionNamed) {
 			continue
 		}
 		for _, value := range values {
@@ -1247,30 +1250,6 @@ func (h *Handler) writeRawResponse(w http.ResponseWriter, resp *http.Response) e
 	w.WriteHeader(resp.StatusCode)
 	_, err = w.Write(body)
 	return err
-}
-
-func copyRequestHeadersForAccount(src *http.Request, dst *http.Request) {
-	skipHeaders := map[string]bool{
-		"host":              true,
-		"authorization":     true,
-		"x-api-key":         true,
-		"cookie":            true,
-		"content-encoding":  true,
-		"content-length":    true,
-		"transfer-encoding": true,
-	}
-	for key, values := range src.Header {
-		if skipHeaders[strings.ToLower(key)] {
-			continue
-		}
-		for _, value := range values {
-			dst.Header.Add(key, value)
-		}
-	}
-	if u, err := url.Parse(dst.URL.String()); err == nil {
-		dst.Header.Set("Host", u.Host)
-		dst.Host = u.Host
-	}
 }
 
 func applyOpenAIChatGPTOAuthHeaders(req *http.Request, credentialRaw string) {

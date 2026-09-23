@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,7 +21,7 @@ import (
 const (
 	openAIOAuthClientID             = "app_EMoamEEZ73f0CkXaXp7hrann"
 	openAIOAuthAuthorizeURL         = "https://auth.openai.com/oauth/authorize"
-	openAIOAuthTokenURL             = "https://auth.openai.com/oauth/token"
+	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
 	openAIOAuthDefaultRedirectURI   = "http://localhost:1455/auth/callback"
 	openAIOAuthDefaultScopes        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 	openAIOAuthDefaultOriginator    = "codex_cli_rs"
@@ -30,6 +29,9 @@ const (
 	openAIOAuthTokenExchangeTimeout = 25 * time.Second
 	openAIOAuthResponseReadLimit    = 1024 * 1024
 )
+
+// openAIOAuthTokenURL 授权码兑换地址；测试中可替换为本地 httptest 服务。
+var openAIOAuthTokenURL = defaultOpenAIOAuthTokenURL
 
 type openAIOAuthSession struct {
 	State        string
@@ -290,7 +292,7 @@ func (a *App) exchangeOpenAIOAuthCode(ctx context.Context, code, codeVerifier, r
 		return nil, fmt.Errorf("创建 token 兑换请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "codex-cli/0.91.0")
+	req.Header.Set("User-Agent", accountauth.CodexBaseUserAgent())
 
 	client, err := a.buildOAuthHTTPClient(openAIOAuthTokenExchangeTimeout)
 	if err != nil {
@@ -303,7 +305,10 @@ func (a *App) exchangeOpenAIOAuthCode(ctx context.Context, code, codeVerifier, r
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIOAuthResponseReadLimit))
+	body, err := transport.ReadCodexResponseBody(resp, openAIOAuthResponseReadLimit)
+	if err != nil {
+		return nil, fmt.Errorf("读取 token 兑换响应失败 (HTTP %d): %w", resp.StatusCode, err)
+	}
 	bodyText := strings.TrimSpace(string(body))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if bodyText == "" {
@@ -327,17 +332,11 @@ func (a *App) buildOAuthHTTPClient(timeout time.Duration) (*http.Client, error) 
 	cfg := a.config
 	a.mu.RUnlock()
 
-	if cfg == nil {
-		return &http.Client{Timeout: timeout}, nil
-	}
-	tp, err := transport.CreateTransport(cfg)
+	client, err := transport.NewCodexHTTPClient(cfg, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("创建 OAuth HTTP 客户端失败: %w", err)
 	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: tp,
-	}, nil
+	return client, nil
 }
 
 func (a *App) cleanupExpiredOAuthSessionsLocked() {

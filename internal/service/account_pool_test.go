@@ -1,6 +1,7 @@
 package service
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -1931,4 +1933,40 @@ func newTestAccountPoolServiceWithSettings(t *testing.T) (*AccountPoolService, *
 	svc.SetSettingsService(settingsSvc)
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc, accountStore, settingsSvc
+}
+
+// API Key 账号走标准 Responses 契约，连通性测试不得套用 Codex 首方 UA。
+func TestTestUpstreamAccount_APIKeyDoesNotUseCodexUserAgent(t *testing.T) {
+	var receivedUserAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUserAgent = r.Header.Get("User-Agent")
+		http.Error(w, `{"error":"missing required parameter: model"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	svc, accountID := newTestAccountPoolServiceForConnectivity(t, server.URL, "api_key", "sk-test")
+	if err := svc.TestUpstreamAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("TestUpstreamAccount failed: %v", err)
+	}
+	if strings.HasPrefix(receivedUserAgent, accountauth.CodexCompatOriginator+"/") {
+		t.Fatalf("API Key connectivity test must not impersonate Codex first-party client, got %q", receivedUserAgent)
+	}
+}
+
+// 关闭自动 gzip 后，上游主动压缩的 503 no_available_providers 正文必须先解码再判定。
+func TestTestUpstreamAccount_DecodesGzipNoAvailableProvidersBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writer := gzip.NewWriter(w)
+		_, _ = writer.Write([]byte(`{"error":{"type":"no_available_providers","message":"no_available_providers"}}`))
+		_ = writer.Close()
+	}))
+	defer server.Close()
+
+	svc, accountID := newTestAccountPoolServiceForConnectivity(t, server.URL, "api_key", "sk-test")
+	if err := svc.TestUpstreamAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("expected nil error for gzip 503 no_available_providers, got %v", err)
+	}
 }

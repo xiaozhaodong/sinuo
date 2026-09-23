@@ -1,6 +1,7 @@
 package service
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -632,4 +633,121 @@ func accountauthOpenAIRefreshURL() string {
 
 func setAccountauthOpenAIRefreshURL(value string) {
 	accountauth.SetOpenAIRefreshTokenURLForTest(value)
+}
+
+// 关闭自动 gzip 协商后，quota 接口主动返回的压缩正文必须由刷新链路自行解码。
+func TestRefreshAccountProfile_DecodesGzipQuotaBody(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-gzip",
+			"refresh_token": "rt-gzip",
+			"expires_in":    3600,
+			"id_token":      testServiceIDTokenWithProfile("plus", "acc-gzip", "user-gzip", "org-gzip"),
+		})
+	}))
+	defer authServer.Close()
+
+	var receivedAcceptEncoding string
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		writer := gzip.NewWriter(w)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"plan_type": "plus",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"used_percent":        42.0,
+					"reset_after_seconds": 600,
+				},
+				"secondary_window": map[string]any{
+					"used_percent":        7.0,
+					"reset_after_seconds": 3600,
+				},
+			},
+		})
+		_ = writer.Close()
+	}))
+	defer quotaServer.Close()
+
+	svc, st, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-gzip",
+		"",
+		"",
+		accountauth.OpenAIAccountProfile{},
+		time.Time{},
+	))
+
+	oldRefreshURL := accountauthOpenAIRefreshURL()
+	oldQuotaURL := chatGPTWhamUsageURL
+	t.Cleanup(func() {
+		setAccountauthOpenAIRefreshURL(oldRefreshURL)
+		chatGPTWhamUsageURL = oldQuotaURL
+	})
+	setAccountauthOpenAIRefreshURL(authServer.URL)
+	chatGPTWhamUsageURL = quotaServer.URL
+
+	result, err := svc.RefreshAccountProfile(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("RefreshAccountProfile failed: %v", err)
+	}
+	if !result.Success || result.QuotaStatus != quotaStatusOK {
+		t.Fatalf("gzip quota body should be decoded and parsed, got %+v", result)
+	}
+	if receivedAcceptEncoding != "" {
+		t.Fatalf("quota request must not advertise Accept-Encoding, got %q", receivedAcceptEncoding)
+	}
+
+	rec, err := st.GetAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if rec.Quota5HUsedPercent == nil || *rec.Quota5HUsedPercent != 42 {
+		t.Fatalf("unexpected 5h quota: %+v", rec.Quota5HUsedPercent)
+	}
+	if rec.QuotaWeeklyUsedPercent == nil || *rec.QuotaWeeklyUsedPercent != 7 {
+		t.Fatalf("unexpected weekly quota: %+v", rec.QuotaWeeklyUsedPercent)
+	}
+}
+
+// 连通性测试只对 ChatGPT OAuth 账号伪装 Codex 首方 UA。
+func TestTestUpstreamAccount_OAuthUsesCodexUserAgent(t *testing.T) {
+	var receivedUserAgent string
+	responsesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUserAgent = r.Header.Get("User-Agent")
+		http.Error(w, `{"error":"missing required parameter: model"}`, http.StatusBadRequest)
+	}))
+	defer responsesServer.Close()
+
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"upstream unavailable"}`, http.StatusInternalServerError)
+	}))
+	defer quotaServer.Close()
+
+	svc, _, accountID := newOAuthProfileTestService(t, accountauth.BuildStoredOpenAICredential(
+		"rt-ua",
+		"at-ua",
+		"",
+		accountauth.OpenAIAccountProfile{
+			PlanType:         "plus",
+			ChatGPTAccountID: "acc-ua",
+		},
+		time.Now().Add(time.Hour),
+	))
+
+	oldQuotaURL := chatGPTWhamUsageURL
+	oldTestURL := chatGPTCodexTestURL
+	t.Cleanup(func() {
+		chatGPTWhamUsageURL = oldQuotaURL
+		chatGPTCodexTestURL = oldTestURL
+	})
+	chatGPTWhamUsageURL = quotaServer.URL
+	chatGPTCodexTestURL = responsesServer.URL
+
+	if err := svc.TestUpstreamAccount(context.Background(), accountID); err != nil {
+		t.Fatalf("TestUpstreamAccount failed: %v", err)
+	}
+	if receivedUserAgent != accountauth.CodexBaseUserAgent() {
+		t.Fatalf("OAuth connectivity test should send Codex base UA, got %q", receivedUserAgent)
+	}
 }
