@@ -25,6 +25,8 @@ type CodexModelEntry struct {
 	Deprecated  bool   `json:"deprecated,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
 	Description string `json:"description,omitempty"`
+	// 能力对象不重复保存 slug/display_name/description，由上述字段统一生成。
+	CapabilitiesJSON string `json:"capabilities_json,omitempty"`
 }
 
 // CodexModelCatalog 是可持久化的本地 Codex 模型目录。
@@ -38,6 +40,7 @@ type CodexModelCatalog struct {
 type CodexModelsListResponse struct {
 	Object string                  `json:"object"`
 	Data   []CodexModelsListObject `json:"data"`
+	Models []json.RawMessage       `json:"models"`
 }
 
 type CodexModelsListObject struct {
@@ -137,10 +140,21 @@ func (c CodexModelCatalog) EffectiveModels() []CodexModelEntry {
 	return models
 }
 
-func (c CodexModelCatalog) BuildListResponse() CodexModelsListResponse {
+// BuildListResponse 生成 /v1/models 响应。能力无效的模型只从 models 中跳过并返回原因：
+// Codex 解析远端目录时单个模型失败即整份丢弃，data 普通列表则不受影响。
+func (c CodexModelCatalog) BuildListResponse() (CodexModelsListResponse, []error) {
 	models := c.EffectiveModels()
 	data := make([]CodexModelsListObject, 0, len(models))
+	capabilities := make([]json.RawMessage, 0, len(models))
+	var skipped []error
 	for _, model := range models {
+		if strings.TrimSpace(model.CapabilitiesJSON) != "" {
+			if metadata, err := model.BuildCodexModelMetadata(); err != nil {
+				skipped = append(skipped, fmt.Errorf("模型 %q：%w", model.ID, err))
+			} else {
+				capabilities = append(capabilities, metadata)
+			}
+		}
 		object := strings.TrimSpace(model.Object)
 		if object == "" {
 			object = "model"
@@ -155,7 +169,7 @@ func (c CodexModelCatalog) BuildListResponse() CodexModelsListResponse {
 			OwnedBy: ownedBy,
 		})
 	}
-	return CodexModelsListResponse{Object: "list", Data: data}
+	return CodexModelsListResponse{Object: "list", Data: data, Models: capabilities}, skipped
 }
 
 func (s *SettingsService) GetCodexModelCatalog(ctx context.Context) (CodexModelCatalog, error) {
@@ -171,6 +185,8 @@ func (s *SettingsService) GetCodexModelCatalog(ctx context.Context) (CodexModelC
 		return DefaultCodexModelCatalog(), nil
 	}
 
+	// 读取不做严格校验：旧版本数据或规则收紧不应让整个目录不可用。
+	// 无效能力在输出时逐条跳过并通过 CapabilitiesError 标记，保存时再严格校验。
 	var catalog CodexModelCatalog
 	if err := json.Unmarshal([]byte(raw), &catalog); err != nil {
 		return CodexModelCatalog{}, fmt.Errorf("解析 Codex 模型目录失败: %w", err)
@@ -183,6 +199,9 @@ func (s *SettingsService) SaveCodexModelCatalog(ctx context.Context, catalog Cod
 		return CodexModelCatalog{}, fmt.Errorf("设置服务未启用")
 	}
 
+	if err := ValidateCodexModelCatalog(catalog); err != nil {
+		return CodexModelCatalog{}, err
+	}
 	normalized := NormalizeCodexModelCatalog(catalog)
 	payload, err := json.Marshal(normalized)
 	if err != nil {

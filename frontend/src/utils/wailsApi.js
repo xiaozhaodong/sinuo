@@ -1974,7 +1974,10 @@ const normalizeCodexModel = (model = {}) => ({
   enabled: model.enabled !== undefined ? Boolean(model.enabled) : Boolean(model.Enabled),
   deprecated: model.deprecated !== undefined ? Boolean(model.deprecated) : Boolean(model.Deprecated),
   display_name: model.display_name || model.displayName || model.DisplayName || model.id || model.ID || '',
-  description: model.description || model.Description || ''
+  description: model.description || model.Description || '',
+  capabilities_json: model.capabilities_json ?? model.CapabilitiesJSON ?? '',
+  // 只读：后端对已保存能力的校验结果，保存时会被忽略
+  capabilities_error: model.capabilities_error ?? model.CapabilitiesError ?? ''
 });
 
 const normalizeCodexModelCatalog = (catalog = {}) => {

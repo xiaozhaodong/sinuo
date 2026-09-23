@@ -51,7 +51,10 @@ func TestCodexModelCatalogBuildListResponse_OnlyEnabledModels(t *testing.T) {
 		},
 	})
 
-	resp := catalog.BuildListResponse()
+	resp, skipped := catalog.BuildListResponse()
+	if len(skipped) != 0 {
+		t.Fatalf("unexpected skipped models: %v", skipped)
+	}
 	if resp.Object != "list" {
 		t.Fatalf("expected list response, got %s", resp.Object)
 	}

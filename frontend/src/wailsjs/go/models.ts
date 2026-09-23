@@ -237,6 +237,8 @@ export namespace main {
 	    deprecated: boolean;
 	    display_name: string;
 	    description: string;
+	    capabilities_json: string;
+	    capabilities_error: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CodexModelEntryInfo(source);
@@ -252,6 +254,8 @@ export namespace main {
 	        this.deprecated = source["deprecated"];
 	        this.display_name = source["display_name"];
 	        this.description = source["description"];
+	        this.capabilities_json = source["capabilities_json"];
+	        this.capabilities_error = source["capabilities_error"];
 	    }
 	}
 	export class CodexModelCatalogInfo {

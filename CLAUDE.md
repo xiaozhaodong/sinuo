@@ -247,6 +247,7 @@ cd frontend && npm run build
 - `frontend/src/pages/endpoints/components/model-routing/*`：`node --test frontend/src/pages/endpoints/utils/modelRouting.test.js`
 - `internal/reasoning/*` / 模型一致性链路（`lifecycle_manager_diagnostics.go` / `pipeline_response_diagnostics.go` / `token_parser_reasoning.go` / `tracking/response_diagnostics.go`）：`go test ./internal/reasoning ./internal/proxy ./internal/proxy/handlers ./internal/tracking ./internal/migration .`
 - `frontend/src/pages/requests/utils/modelConsistency.js` / `ModelTag.jsx` / `RequestDetailModal.jsx`：`node --test frontend/src/pages/requests/utils/*.test.js`
+- `internal/service/codex_model_capabilities.go` / `frontend/src/pages/account-pool/utils/codexModelCatalog.js`（Codex 模型能力校验，前后端规则须同步，共用用例 `internal/service/testdata/codex_capabilities_cases.json`）：`go test ./internal/service -run Codex` + `node --test frontend/src/pages/account-pool/utils/codexModelCatalog.test.js`
 - `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
 
 ## 调试提示
