@@ -63,6 +63,16 @@ func (s *SettingsService) migrateCodexIdentityMode(ctx context.Context) error {
 	return nil
 }
 
+func excludeSettingsCategory(records []*store.SettingRecord, category string) []*store.SettingRecord {
+	kept := make([]*store.SettingRecord, 0, len(records))
+	for _, record := range records {
+		if record.Category != category {
+			kept = append(kept, record)
+		}
+	}
+	return kept
+}
+
 // 回调可能再次读取或写入设置，必须在释放写入锁之后触发。
 func (s *SettingsService) withCodexIdentityUpdate(ctx context.Context, rows []*store.SettingRecord, write func() error) error {
 	s.identityMu.Lock()

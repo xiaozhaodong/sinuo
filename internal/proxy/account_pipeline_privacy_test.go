@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/accountauth"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/privacy"
 	servicepkg "cc-forwarder/internal/service"
@@ -103,6 +104,85 @@ func TestAccountPipeline_PrivacyPolicyErrorShortCircuitsWithoutFailover(t *testi
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(privacy.CodeScanBodyTooLarge)) {
 		t.Errorf("response body missing policy code: %s", rec.Body.String())
+	}
+}
+
+// 被隐私策略拦下的请求不能先触发 RT 刷新：凭据里已有账号 ID 时，鉴权解析在隐私过滤之后。
+func TestAccountPipeline_PrivacyPolicyErrorSkipsOAuthRefresh(t *testing.T) {
+	refreshHits := 0
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at-oauth","refresh_token":"rt-oauth","expires_in":3600}`))
+	}))
+	defer authServer.Close()
+	oldRefreshURL := accountauth.CurrentOpenAIRefreshTokenURLForTest()
+	t.Cleanup(func() { accountauth.SetOpenAIRefreshTokenURLForTest(oldRefreshURL) })
+	accountauth.SetOpenAIRefreshTokenURLForTest(authServer.URL)
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 23, AccountName: "oauth-a", ProviderType: accountauth.ProviderChatGPTRefreshToken, CredentialRaw: `{"refresh_token":"rt-privacy","chatgpt_account_id":"acc-privacy"}`, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	handler.SetPrivacyFilter(&stubPrivacyFilter{
+		err: &privacy.PolicyError{StatusCode: 413, Code: privacy.CodeScanBodyTooLarge, Message: "scannable text too large"},
+	})
+
+	rec := performResponsesRequest(t, handler)
+
+	if rec.Code != 413 {
+		t.Fatalf("expected policy status 413, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if refreshHits != 0 {
+		t.Fatalf("blocked request must not refresh token, hits=%d", refreshHits)
+	}
+	if len(service.softFailureCalls) != 0 || len(service.completeCalls) != 1 {
+		t.Fatalf("blocked request must short-circuit: soft=%+v complete=%+v", service.softFailureCalls, service.completeCalls)
+	}
+}
+
+// 按 RT 缓存的账号 ID 落后于已编辑的凭据时，出站头与身份 scope 同用凭据里的新 ID。
+func TestAccountPipeline_OAuthAccountIDFollowsEditedCredential(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at-edit","refresh_token":"rt-edit","expires_in":3600}`))
+	}))
+	defer authServer.Close()
+	oldRefreshURL := accountauth.CurrentOpenAIRefreshTokenURLForTest()
+	t.Cleanup(func() { accountauth.SetOpenAIRefreshTokenURLForTest(oldRefreshURL) })
+	accountauth.SetOpenAIRefreshTokenURLForTest(authServer.URL)
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 24, AccountName: "oauth-edit", ProviderType: accountauth.ProviderChatGPTRefreshToken, CredentialRaw: `{"refresh_token":"rt-edit","chatgpt_account_id":"acc-new"}`, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+	if _, err := handler.refreshTokenManager.ResolveAccessTokenDetails(context.Background(), `{"refresh_token":"rt-edit","chatgpt_account_id":"acc-old"}`); err != nil {
+		t.Fatal(err)
+	}
+	var sentAccountID string
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sentAccountID = req.Header.Get("chatgpt-account-id")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader([]byte(`{"id":"resp_edit","status":"completed","output":[]}`))),
+			Request:    req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+
+	rec := performResponsesRequest(t, handler)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if sentAccountID != "acc-new" {
+		t.Fatalf("chatgpt-account-id = %q, want acc-new", sentAccountID)
 	}
 }
 

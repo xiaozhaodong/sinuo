@@ -390,10 +390,13 @@ func (s *SettingsService) triggerOnChange(category, key string) {
 
 // InitDefaults 初始化默认设置
 func (s *SettingsService) InitDefaults(ctx context.Context) error {
-	if err := s.migrateCodexIdentityMode(ctx); err != nil {
-		return fmt.Errorf("迁移 Codex 身份策略失败: %w", err)
-	}
 	defaults := s.GetAllDefaults()
+	// 迁移失败不能写入默认 mode，否则下次启动会把旧「关闭」当作已迁移删除；
+	// 该分类保持待迁移（策略读取 fail-closed），其余设置照常初始化，下次启动重试。
+	if err := s.migrateCodexIdentityMode(ctx); err != nil {
+		slog.Warn("⚠️ [设置迁移] Codex 身份旧开关迁移失败，本次跳过该分类默认值", "error", err)
+		defaults = excludeSettingsCategory(defaults, CategoryCodexIdentity)
+	}
 
 	// 始终同步元数据（label、description、value_type等）
 	// 这样即使数据库中已有数据，也能更新到最新的元数据

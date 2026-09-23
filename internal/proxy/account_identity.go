@@ -178,16 +178,11 @@ func warnIdentityExtensions(prepared *codexidentity.Prepared) {
 // 每个 attempt 从调用方保存的原始正文计算，凭据、目标 scope 和隐私后校验在此收敛。
 func (h *Handler) prepareAccountIdentity(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, targetURL string) ([]byte, http.Header, *codexidentity.Prepared, error) {
 	identity := identityRequest(r)
-	var err error
-	// 一次解析凭据和真实账号 ID；同一结果用于 scope 派生和最终出站绑定。
-	authRequest := &http.Request{Header: make(http.Header)}
-	if err := accountauth.ApplyAccountAuth(ctx, authRequest, acc.ProviderType, acc.CredentialRaw, h.refreshTokenManager); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to apply account auth: %w", err)
+	accountID, authHeaders, err := h.resolveAccountScopeID(ctx, acc)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) && authRequest.Header.Get("chatgpt-account-id") == "" {
-		return nil, nil, nil, fmt.Errorf("chatgpt_account_id is missing from credential")
-	}
-	scope, scopeErr := codexidentity.NewAccountScope(acc.ID, accountauth.NormalizeProviderType(acc.ProviderType), targetURL, authRequest.Header.Get("chatgpt-account-id"), accountauth.IsChatGPTOAuthProvider(acc.ProviderType))
+	scope, scopeErr := codexidentity.NewAccountScope(acc.ID, accountauth.NormalizeProviderType(acc.ProviderType), targetURL, accountID, accountauth.IsChatGPTOAuthProvider(acc.ProviderType))
 	if scopeErr != nil {
 		return nil, nil, nil, scopeErr
 	}
@@ -222,7 +217,45 @@ func (h *Handler) prepareAccountIdentity(ctx context.Context, r *http.Request, b
 	if err := prepared.ValidatePrivacyBody(bodyBytes); err != nil {
 		return nil, nil, nil, err
 	}
-	return bodyBytes, authRequest.Header, prepared, nil
+	if authHeaders == nil {
+		if authHeaders, err = h.resolveAccountAuthHeaders(ctx, acc); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	// scope 与出站头绑定同一账号；按 RT 缓存的 ID 可能落后于已编辑的凭据，以本地凭据为准。
+	if accountID != "" {
+		authHeaders.Set("chatgpt-account-id", accountID)
+	}
+	return bodyBytes, authHeaders, prepared, nil
+}
+
+// resolveAccountScopeID 返回派生 scope 的真实账号 ID。优先读本地凭据，让隐私过滤先于
+// 可能联网的 RT 刷新；本地缺失时才提前解析凭据，返回的头供出站复用，避免重复解析。
+func (h *Handler) resolveAccountScopeID(ctx context.Context, acc *store.UpstreamAccountRecord) (string, http.Header, error) {
+	if !accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
+		return "", nil, nil
+	}
+	if accountID := accountauth.ExtractChatGPTAccountID(acc.CredentialRaw); accountID != "" {
+		return accountID, nil, nil
+	}
+	authHeaders, err := h.resolveAccountAuthHeaders(ctx, acc)
+	if err != nil {
+		return "", nil, err
+	}
+	accountID := authHeaders.Get("chatgpt-account-id")
+	if accountID == "" {
+		return "", nil, fmt.Errorf("chatgpt_account_id is missing from credential")
+	}
+	return accountID, authHeaders, nil
+}
+
+// resolveAccountAuthHeaders 解析出站鉴权头；OAuth 账号缓存未命中时会触发 RT 刷新。
+func (h *Handler) resolveAccountAuthHeaders(ctx context.Context, acc *store.UpstreamAccountRecord) (http.Header, error) {
+	authRequest := &http.Request{Header: make(http.Header)}
+	if err := accountauth.ApplyAccountAuth(ctx, authRequest, acc.ProviderType, acc.CredentialRaw, h.refreshTokenManager); err != nil {
+		return nil, fmt.Errorf("failed to apply account auth: %w", err)
+	}
+	return authRequest.Header, nil
 }
 
 // 订阅进池在选账号前已隔离来源头；自动选中第三方时，仅恢复已校验的会话状态。

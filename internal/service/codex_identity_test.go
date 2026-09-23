@@ -341,8 +341,11 @@ func TestCodexIdentityModeMigrationRejectsInvalidLegacy(t *testing.T) {
 	if err := st.Set(ctx, CategoryCodexIdentity, "enabled", "broken"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InitDefaults(ctx); err == nil {
-		t.Fatal("损坏的旧开关被静默改为自动")
+	if err := s.InitDefaults(ctx); err != nil {
+		t.Fatal("身份迁移失败不应中止其他设置初始化", err)
+	}
+	if row, err := st.Get(ctx, CategoryServer, "preferred_port"); err != nil || row == nil {
+		t.Fatal("身份迁移失败时其他分类默认值未初始化", err)
 	}
 	if _, err := s.CodexIdentityPolicySnapshot(ctx); err == nil {
 		t.Fatal("迁移未完成却发布了默认自动策略")
@@ -370,8 +373,12 @@ func TestCodexIdentityModeMigrationResumesAfterInsert(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewSettingsService(interruptedIdentityMigrationStore{st})
-	if err := s.InitDefaults(ctx); err == nil {
-		t.Fatal("迁移中断未暴露")
+	if err := s.InitDefaults(ctx); err != nil {
+		t.Fatal("迁移中断不应中止其他设置初始化", err)
+	}
+	legacy, err := st.Get(ctx, CategoryCodexIdentity, "enabled")
+	if err != nil || legacy == nil {
+		t.Fatal("迁移中断后旧开关应保留待重试", err)
 	}
 	p, err := s.CodexIdentityPolicySnapshot(ctx)
 	if err != nil || p.Mode() != codexidentity.IdentityModeDisabled {
