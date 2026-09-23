@@ -11,6 +11,7 @@ import (
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/accountauth"
+	"cc-forwarder/internal/codexidentity"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/middleware"
@@ -31,6 +32,9 @@ type Handler struct {
 	endpointManager               *endpoint.Manager
 	config                        *config.Config
 	usageTracker                  *tracking.UsageTracker
+	codexIdentityProvider         CodexIdentityProvider
+	codexIdentityOnce             sync.Once
+	codexIdentityOwners           *codexidentity.OwnerIndex
 	accountPoolService            AccountPoolService
 	codexModelRouter              CodexModelRouter
 	codexModelsProvider           CodexModelListProvider
@@ -448,6 +452,14 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		return true
 	}
 
+	var identityErr error
+	ctx, identityErr = h.attachCodexIdentityRequest(ctx, r)
+	if identityErr != nil {
+		e := codexIdentityError(identityErr)
+		writeCodexModelsError(w, e.Status, e.Code, e.Message)
+		return true
+	}
+
 	preview, err := h.accountPoolService.PreviewSchedulableAccounts(ctx, r.URL.Path)
 	if err != nil {
 		writeCodexModelsError(w, http.StatusServiceUnavailable, "account_pool_unavailable", "failed to load schedulable account for Codex /v1/models")
@@ -481,6 +493,10 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		}
 		if err != nil {
 			releaseUpstream()
+			if e := codexIdentityError(err); e != nil {
+				writeCodexModelsError(w, e.Status, e.Code, e.Message)
+				return true
+			}
 			lastErr = err
 			if !h.shouldFailOverAfterSoftFailure(ctx, acc.ID, err.Error(), accountSoftFailureCategoryServerError, 0) {
 				break

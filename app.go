@@ -893,6 +893,9 @@ func (a *App) setupProxyHandler() {
 	// 创建代理处理器
 	a.proxyHandler = proxy.NewHandler(a.endpointManager, a.config)
 	a.proxyHandler.SetEventBus(a.eventBus)
+	if a.settingsService != nil {
+		a.proxyHandler.SetCodexIdentityProvider(a.settingsService)
+	}
 
 	// 创建中间件
 	a.loggingMiddleware = middleware.NewLoggingMiddleware(a.logger)

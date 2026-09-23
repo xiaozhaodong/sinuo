@@ -29,6 +29,43 @@ const FAILURE_ACTION_OPTIONS = [
   { value: 'reject', label: 'reject - 直接拒绝返回错误' }
 ];
 
+const CODEX_IDENTITY_MODE_OPTIONS = [
+  { value: 'auto', label: '自动（推荐）' },
+  { value: 'disabled', label: '强制关闭（排障）' },
+  { value: 'enabled', label: '强制开启（排障）' }
+];
+
+const CODEX_IDENTITY_MODE_HELP = {
+  auto: '按每次实际选中的账号自动处理：官方 OAuth 隔离会话，API Key / 第三方保留原有身份信息。切换接入或路由模式无需调整。',
+  disabled: '已覆盖自动判断：所有账号池请求停止身份补全和会话映射。排障结束后可恢复自动。',
+  enabled: '已覆盖自动判断：官方 OAuth 映射身份，API Key / 第三方也执行身份清理（含 client_metadata）。排障结束后可恢复自动。'
+};
+
+const CodexIdentityModeSetting = ({ value, onChange, disabled }) => (
+  <div className="py-3 border-b border-line-soft last:border-0">
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-sm font-medium text-fg-body">身份处理</span>
+      <span className="text-xs text-fg-subtle">
+        {CODEX_IDENTITY_MODE_OPTIONS.find((option) => option.value === value)?.label || value}
+      </span>
+    </div>
+    <p className="text-xs text-fg-subtle mt-1">{CODEX_IDENTITY_MODE_HELP[value]}</p>
+    <p className="text-xs text-fg-subtle mt-1">使用客户端订阅凭据直通时，始终保留客户端身份，不受此设置影响。</p>
+    <details className="mt-3">
+      <summary className="text-xs text-fg-subtle cursor-pointer">高级排障</summary>
+      <div className="flex justify-end mt-2">
+        <CustomSelect
+          options={CODEX_IDENTITY_MODE_OPTIONS}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          size="md"
+        />
+      </div>
+    </details>
+  </div>
+);
+
 const SettingItem = ({
   setting,
   value,
@@ -66,6 +103,19 @@ const SettingItem = ({
     setLocalValue(newValue);
     onChange(setting.category, setting.key, newValue);
   };
+
+  if (setting.category === 'codex_identity' && setting.key === 'mode') {
+    return (
+      <CodexIdentityModeSetting
+        value={localValue}
+        onChange={(newValue) => {
+          setLocalValue(newValue);
+          onChange(setting.category, setting.key, newValue);
+        }}
+        disabled={disabled}
+      />
+    );
+  }
 
   // 布尔类型使用 Toggle 开关
   if (valueType === 'bool') {
@@ -178,7 +228,7 @@ const SettingItem = ({
   }
 
   // 其他类型使用文本/数字输入框
-  return (
+  const input = (
     <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
       <div className="flex-1 min-w-0 pr-4">
         <div className="flex items-center gap-2">
@@ -214,6 +264,15 @@ const SettingItem = ({
       />
     </div>
   );
+  if (setting.category === 'codex_identity' && setting.key === 'compat_version') {
+    return (
+      <details className="py-3">
+        <summary className="text-xs text-fg-subtle cursor-pointer">高级兼容设置</summary>
+        {input}
+      </details>
+    );
+  }
+  return input;
 };
 
 export default SettingItem;

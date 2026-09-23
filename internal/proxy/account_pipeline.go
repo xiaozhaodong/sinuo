@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"cc-forwarder/internal/accountauth"
+	"cc-forwarder/internal/codexidentity"
 	"cc-forwarder/internal/modelrewrite"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
@@ -104,6 +105,14 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
+	var identityErr error
+	ctx, identityErr = h.attachCodexIdentityRequest(ctx, r)
+	if identityErr != nil {
+		e := codexIdentityError(identityErr)
+		lifecycleManager.FailRequest(e.Code, e.Message, e.Status)
+		writeAccountPipelineError(w, e.Status, e.Code, e.Message)
+		return
+	}
 	requestID := ""
 	if lifecycleManager != nil {
 		requestID = lifecycleManager.GetRequestID()
@@ -257,6 +266,15 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 		if forwardErr != nil {
 			releaseUpstream()
+			if e := codexIdentityError(forwardErr); e != nil {
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeInvalidRequest)
+				}
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeInvalidRequest, e.Code)
+				lifecycleManager.FailRequest(e.Code, e.Message, e.Status)
+				writeAccountPipelineError(w, e.Status, e.Code, e.Message)
+				return
+			}
 			var bodyErr *requestBodyError
 			if errors.As(forwardErr, &bodyErr) {
 				if modelRouted {
@@ -682,6 +700,11 @@ func (h *Handler) accountStreamTailDrainTimeout() time.Duration {
 }
 
 func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, isSSE bool, lifecycleManager *RequestLifecycleManager) (*http.Response, context.CancelFunc, *handlers.UpstreamTraceState, error) {
+	var snapshotErr error
+	ctx, snapshotErr = h.attachCodexIdentityRequest(ctx, r)
+	if snapshotErr != nil {
+		return nil, nil, nil, snapshotErr
+	}
 	requestID := ""
 	if lifecycleManager != nil {
 		requestID = lifecycleManager.GetRequestID()
@@ -709,8 +732,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		lifecycleManager.SetUpstreamModel(upstreamModel)
 	}
 
-	// 🛡️ 出站隐私过滤（PolicyError 由 handleAccountPipeline 短路，不冷却、不换号）
-	bodyBytes, err = h.applyAccountPrivacyFilter(r, bodyBytes, acc)
+	bodyBytes, authHeaders, prepared, err := h.prepareAccountIdentity(ctx, r, bodyBytes, acc, targetURL)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -756,27 +778,21 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(wireBody))
-	if err := accountauth.ApplyAccountAuth(ctx, req, acc.ProviderType, acc.CredentialRaw, h.refreshTokenManager); err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, nil, traceState, fmt.Errorf("failed to apply account auth: %w", err)
-	}
-	if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
-		if accountauth.ExtractChatGPTAccountID(acc.CredentialRaw) == "" {
-			if release != nil {
-				release()
-			}
-			return nil, nil, traceState, fmt.Errorf("chatgpt_account_id is missing from credential")
-		}
+	if prepared.IdentityEnabled {
+		prepared.ApplyHeaders(req.Header, req.URL)
+	} else if accountauth.IsChatGPTOAuthProvider(acc.ProviderType) {
 		switch r.URL.Path {
 		case "/v1/models":
-			applyOpenAIChatGPTModelsHeaders(req, acc.CredentialRaw)
+			applyOpenAIChatGPTModelsHeaders(req)
 		case codexStandaloneSearchPath:
-			applyOpenAIChatGPTSearchHeaders(req, acc.CredentialRaw)
+			applyOpenAIChatGPTSearchHeaders(req)
 		default:
-			applyOpenAIChatGPTOAuthHeaders(req, acc.CredentialRaw)
+			applyOpenAIChatGPTOAuthHeaders(req)
 		}
+	}
+	restoreAutomaticThirdPartyState(r, req, prepared)
+	for key, values := range authHeaders {
+		req.Header[key] = append([]string(nil), values...)
 	}
 
 	client, err := h.getAccountHTTPClient(isSSE)
@@ -786,6 +802,9 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		}
 		return nil, nil, traceState, err
 	}
+	if prepared.IdentityEnabled {
+		client = identityBoundClient(client)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if release != nil {
@@ -793,6 +812,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		}
 		return nil, nil, traceState, fmt.Errorf("request failed: %w", err)
 	}
+	h.observeAccountIdentityResponse(resp, prepared)
 	if sendZstd && resp.StatusCode == http.StatusUnsupportedMediaType {
 		slog.Warn("⚠️ [账号请求压缩] 上游拒绝 zstd，请求不会静默降级为明文",
 			"request_id", requestID,
@@ -842,27 +862,23 @@ func prepareCodexAccountBodyForUpstream(bodyBytes []byte, acc *store.UpstreamAcc
 		return bodyBytes, ""
 	}
 
-	var payload map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
+	fields, err := codexidentity.JSONFields(bodyBytes)
+	if err != nil {
 		return bodyBytes, ""
 	}
-
-	model, ok := payload["model"].(string)
-	if !ok {
+	var model string
+	if json.Unmarshal(fields["model"], &model) != nil {
 		return bodyBytes, ""
 	}
 	targetModel, shouldRewrite := rewriteCodexAccountModel(acc, path, model)
 	if !shouldRewrite {
 		return bodyBytes, ""
 	}
-
-	payload["model"] = targetModel
-	rewritten, err := json.Marshal(payload)
+	rewritten, err := codexidentity.EditObject(bodyBytes, map[string][]byte{"model": codexidentity.JSONString(targetModel)})
 	if err != nil {
 		return bodyBytes, ""
 	}
+
 	return rewritten, targetModel
 }
 
@@ -1252,8 +1268,8 @@ func (h *Handler) writeRawResponse(w http.ResponseWriter, resp *http.Response) e
 	return err
 }
 
-func applyOpenAIChatGPTOAuthHeaders(req *http.Request, credentialRaw string) {
-	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+func applyOpenAIChatGPTOAuthHeaders(req *http.Request) {
+	applyOpenAIChatGPTCommonHeaders(req)
 	if req == nil {
 		return
 	}
@@ -1262,12 +1278,12 @@ func applyOpenAIChatGPTOAuthHeaders(req *http.Request, credentialRaw string) {
 	req.Header.Set("originator", defaultOAuthOriginator)
 }
 
-func applyOpenAIChatGPTModelsHeaders(req *http.Request, credentialRaw string) {
-	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+func applyOpenAIChatGPTModelsHeaders(req *http.Request) {
+	applyOpenAIChatGPTCommonHeaders(req)
 }
 
-func applyOpenAIChatGPTSearchHeaders(req *http.Request, credentialRaw string) {
-	applyOpenAIChatGPTCommonHeaders(req, credentialRaw)
+func applyOpenAIChatGPTSearchHeaders(req *http.Request) {
+	applyOpenAIChatGPTCommonHeaders(req)
 	if req == nil {
 		return
 	}
@@ -1276,15 +1292,12 @@ func applyOpenAIChatGPTSearchHeaders(req *http.Request, credentialRaw string) {
 	}
 }
 
-func applyOpenAIChatGPTCommonHeaders(req *http.Request, credentialRaw string) {
+func applyOpenAIChatGPTCommonHeaders(req *http.Request) {
 	if req == nil {
 		return
 	}
 	req.Host = "chatgpt.com"
 	req.Header.Set("Host", "chatgpt.com")
-	if accountID := accountauth.ExtractChatGPTAccountID(credentialRaw); accountID != "" {
-		req.Header.Set("chatgpt-account-id", accountID)
-	}
 }
 
 func joinBaseURLAndPath(baseURL, path, rawQuery string) (string, error) {

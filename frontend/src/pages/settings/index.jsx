@@ -52,7 +52,8 @@ const CATEGORY_ICONS = {
   auth: Lock,
   token_counting: Hash,
   retention: Archive,
-  image_generation: ImageIcon
+  image_generation: ImageIcon,
+  codex_identity: TerminalSquare
 };
 
 // ============================================

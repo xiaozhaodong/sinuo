@@ -23,7 +23,7 @@ var accountRequestFixedSkipHeaders = map[string]struct{}{
 	"te": {}, "trailer": {}, "trailers": {}, "transfer-encoding": {}, "upgrade": {},
 	"content-encoding": {}, "content-length": {}, "host": {},
 	// 来源凭据
-	"authorization": {}, "cookie": {}, "x-api-key": {},
+	"authorization": {}, "cookie": {}, "x-api-key": {}, "chatgpt-account-id": {}, "x-oai-attestation": {},
 	// 代理来源信息（不属于 hop-by-hop，但同样不能透传到第一方后端）
 	"forwarded": {}, "via": {},
 }
@@ -31,11 +31,16 @@ var accountRequestFixedSkipHeaders = map[string]struct{}{
 // connectionNamedHeaders 解析所有 Connection 值点名的头名（小写）。
 func connectionNamedHeaders(header http.Header) map[string]struct{} {
 	named := map[string]struct{}{}
-	for _, value := range header.Values("Connection") {
-		for _, token := range strings.Split(value, ",") {
-			token = strings.ToLower(strings.TrimSpace(token))
-			if token != "" {
-				named[token] = struct{}{}
+	for key, values := range header {
+		if !strings.EqualFold(key, "Connection") {
+			continue
+		}
+		for _, value := range values {
+			for _, token := range strings.Split(value, ",") {
+				token = strings.ToLower(strings.TrimSpace(token))
+				if token != "" {
+					named[token] = struct{}{}
+				}
 			}
 		}
 	}

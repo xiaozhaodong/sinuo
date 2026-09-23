@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-forwarder/internal/codexidentity"
 	svc "cc-forwarder/internal/service"
 )
 
@@ -26,8 +27,6 @@ const (
 	subscriptionRouteTimeoutRealtimeCall = 60 * time.Second
 	subscriptionRouteTimeoutCompact      = 300 * time.Second
 
-	// subscriptionAssociationMaxLength 限制写入内部 context 的关联头长度。
-	subscriptionAssociationMaxLength = 128
 	// subscriptionOperationEchoMaxLength 限制错误信息中回显的操作名长度。
 	subscriptionOperationEchoMaxLength = 80
 )
@@ -241,11 +240,18 @@ func canonicalHeaderKeys(keys []string) []string {
 
 // stripSubscriptionLocalHeaders 删除本地专用头（含 X-Forwarded-* 前缀），在任何转发或日志之前调用。
 func stripSubscriptionLocalHeaders(header http.Header) {
+	named := connectionNamedHeaders(header)
+	for key := range header {
+		lower := strings.ToLower(key)
+		if _, drop := named[lower]; drop && lower != "upgrade" {
+			delete(header, key)
+		}
+	}
 	for _, key := range subscriptionLocalOnlyHeaders {
 		header.Del(key)
 	}
 	for key := range header {
-		if strings.HasPrefix(key, "X-Forwarded-") {
+		if strings.HasPrefix(strings.ToLower(key), "x-forwarded-") {
 			header.Del(key)
 		}
 	}
@@ -287,20 +293,8 @@ type subscriptionClientAssociation struct {
 
 // extractSubscriptionClientAssociation 读取关联头并做长度约束。
 func extractSubscriptionClientAssociation(header http.Header) subscriptionClientAssociation {
-	get := func(key string) string {
-		value := strings.TrimSpace(header.Get(key))
-		if len(value) > subscriptionAssociationMaxLength {
-			value = value[:subscriptionAssociationMaxLength]
-		}
-		return value
-	}
-	return subscriptionClientAssociation{
-		ThreadID:        get("thread-id"),
-		SessionID:       get("session-id"),
-		ClientRequestID: get("x-client-request-id"),
-		Originator:      get("originator"),
-		WindowID:        get("x-codex-window-id"),
-	}
+	source := codexidentity.CaptureSourceHeaders(header)
+	return subscriptionClientAssociation{ThreadID: source.ThreadID, SessionID: source.SessionID, ClientRequestID: source.ClientRequestID, Originator: source.Originator, WindowID: source.WindowID}
 }
 
 // ---------------------------------------------------------------------------

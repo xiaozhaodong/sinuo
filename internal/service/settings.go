@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
+	"cc-forwarder/internal/codexidentity"
 	"cc-forwarder/internal/store"
 )
 
@@ -38,6 +40,7 @@ var ErrProtectedSettingsCategory = errors.New("该设置分类受保护，请使
 // protectedSettingsCategories 列出禁止经通用 Set/BatchSet/UpdateAndApply/Delete/ResetCategory 修改的分类。
 var protectedSettingsCategories = map[string]struct{}{
 	CategoryCodexSubscriptionProxy: {},
+	categoryCodexIdentityInternal:  {},
 }
 
 // IsProtectedSettingsCategory 判断分类是否由专用服务独占：
@@ -90,9 +93,13 @@ type CategoryInfo struct {
 
 // SettingsService 设置管理业务服务
 type SettingsService struct {
-	store          store.SettingsStore
-	onChangeFunc   func() // 配置变更回调
-	categoryLabels map[string]CategoryInfo
+	identityMu      sync.Mutex // 身份设置校验、写入和请求快照读取串行化
+	identityCacheMu sync.RWMutex
+	identityCached  bool
+	identityPolicy  codexidentity.Policy
+	store           store.SettingsStore
+	onChangeFunc    func() // 配置变更回调
+	categoryLabels  map[string]CategoryInfo
 }
 
 // NewSettingsService 创建设置服务实例
@@ -158,6 +165,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Icon:        "🧭",
 				Order:       8,
 			},
+			CategoryCodexIdentity: {Name: CategoryCodexIdentity, Label: "Codex 身份", Description: "默认自动适配账号，无需随接入或路由模式切换", Icon: "🔗", Order: 10},
 			CategoryImageGeneration: {
 				Name:        CategoryImageGeneration,
 				Label:       "图像生成",
@@ -284,7 +292,10 @@ func (s *SettingsService) Set(ctx context.Context, category, key, value string) 
 	if err := assertSettingsCategoryWritable(category); err != nil {
 		return err
 	}
-	if err := s.store.Set(ctx, category, key, value); err != nil {
+	err := s.withCodexIdentityUpdate(ctx, []*store.SettingRecord{{Category: category, Key: key, Value: value}}, func() error {
+		return s.store.Set(ctx, category, key, value)
+	})
+	if err != nil {
 		return err
 	}
 	s.triggerOnChange(category, key)
@@ -293,6 +304,9 @@ func (s *SettingsService) Set(ctx context.Context, category, key, value string) 
 
 // Delete 删除单个设置
 func (s *SettingsService) Delete(ctx context.Context, category, key string) error {
+	if category == CategoryCodexIdentity {
+		return fmt.Errorf("Codex 身份设置不能删除，请使用分类重置")
+	}
 	if err := assertSettingsCategoryWritable(category); err != nil {
 		return err
 	}
@@ -308,7 +322,7 @@ func (s *SettingsService) BatchSet(ctx context.Context, records []*store.Setting
 	if err := assertSettingsRecordsWritable(records); err != nil {
 		return err
 	}
-	return s.store.BatchSet(ctx, records)
+	return s.withCodexIdentityUpdate(ctx, records, func() error { return s.store.BatchSet(ctx, records) })
 }
 
 // UpdateAndApply 批量更新并应用（触发热更新）
@@ -317,7 +331,7 @@ func (s *SettingsService) UpdateAndApply(ctx context.Context, records []*store.S
 	if err := assertSettingsRecordsWritable(records); err != nil {
 		return err
 	}
-	if err := s.store.BatchUpdateValues(ctx, records); err != nil {
+	if err := s.withCodexIdentityUpdate(ctx, records, func() error { return s.store.BatchUpdateValues(ctx, records) }); err != nil {
 		return fmt.Errorf("保存设置失败: %w", err)
 	}
 
@@ -332,6 +346,9 @@ func (s *SettingsService) UpdateAndApply(ctx context.Context, records []*store.S
 
 // ResetCategory 重置分类设置为默认值
 func (s *SettingsService) ResetCategory(ctx context.Context, category string) error {
+	if category == CategoryCodexIdentity {
+		return s.UpdateAndApply(ctx, codexIdentityDefaults())
+	}
 	// 受保护分类禁止“先删分类再写默认值”，否则会清掉 config、密钥 hash 与 revision
 	if err := assertSettingsCategoryWritable(category); err != nil {
 		return err
@@ -373,6 +390,9 @@ func (s *SettingsService) triggerOnChange(category, key string) {
 
 // InitDefaults 初始化默认设置
 func (s *SettingsService) InitDefaults(ctx context.Context) error {
+	if err := s.migrateCodexIdentityMode(ctx); err != nil {
+		return fmt.Errorf("迁移 Codex 身份策略失败: %w", err)
+	}
 	defaults := s.GetAllDefaults()
 
 	// 始终同步元数据（label、description、value_type等）
@@ -398,6 +418,8 @@ func (s *SettingsService) IsInitialized(ctx context.Context) (bool, error) {
 // GetAllDefaults 获取所有默认设置
 func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 	var defaults []*store.SettingRecord
+
+	defaults = append(defaults, codexIdentityDefaults()...)
 
 	// Server 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryServer)...)
@@ -437,6 +459,8 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 // getDefaultsForCategory 获取分类的默认设置
 func (s *SettingsService) getDefaultsForCategory(category string) []*store.SettingRecord {
 	switch category {
+	case CategoryCodexIdentity:
+		return codexIdentityDefaults()
 	case CategoryServer:
 		return []*store.SettingRecord{
 			{Category: CategoryServer, Key: "preferred_port", Value: "8087", ValueType: ValueTypeInt, Label: "首选端口", Description: "API 服务首选端口，被占用时自动递增", DisplayOrder: 1, RequiresRestart: true},

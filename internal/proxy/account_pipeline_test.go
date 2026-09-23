@@ -2256,9 +2256,9 @@ func TestResolveAccountTargetURL_OAuthUsesChatGPTCodexSearchEndpoint(t *testing.
 
 func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{}`))
-	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
+	req.Header.Set("chatgpt-account-id", "resolved-account")
 
-	applyOpenAIChatGPTOAuthHeaders(req, credential)
+	applyOpenAIChatGPTOAuthHeaders(req)
 
 	if req.Host != "chatgpt.com" {
 		t.Fatalf("expected host=chatgpt.com, got %s", req.Host)
@@ -2272,21 +2272,21 @@ func TestApplyOpenAIChatGPTOAuthHeaders_SetsRequiredHeaders(t *testing.T) {
 	if req.Header.Get("originator") != "codex_cli_rs" {
 		t.Fatalf("unexpected originator header: %s", req.Header.Get("originator"))
 	}
-	if req.Header.Get("chatgpt-account-id") != "acc-1" {
+	if req.Header.Get("chatgpt-account-id") != "resolved-account" {
 		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
 	}
 }
 
 func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://chatgpt.com/backend-api/codex/models", nil)
-	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
+	req.Header.Set("chatgpt-account-id", "resolved-account")
 
-	applyOpenAIChatGPTModelsHeaders(req, credential)
+	applyOpenAIChatGPTModelsHeaders(req)
 
 	if req.Host != "chatgpt.com" {
 		t.Fatalf("expected host=chatgpt.com, got %s", req.Host)
 	}
-	if req.Header.Get("chatgpt-account-id") != "acc-1" {
+	if req.Header.Get("chatgpt-account-id") != "resolved-account" {
 		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
 	}
 	if req.Header.Get("OpenAI-Beta") != "" {
@@ -2300,14 +2300,14 @@ func TestApplyOpenAIChatGPTModelsHeaders_SkipsResponsesOnlyHeaders(t *testing.T)
 func TestApplyOpenAIChatGPTSearchHeaders_SkipsResponsesOnlyHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, chatGPTCodexSearchURL, strings.NewReader(`{}`))
 	req.Header.Set("Accept", "application/json")
-	credential := `{"refresh_token":"rt-1","chatgpt_account_id":"acc-1"}`
+	req.Header.Set("chatgpt-account-id", "resolved-account")
 
-	applyOpenAIChatGPTSearchHeaders(req, credential)
+	applyOpenAIChatGPTSearchHeaders(req)
 
 	if req.Host != "chatgpt.com" {
 		t.Fatalf("expected host=chatgpt.com, got %s", req.Host)
 	}
-	if req.Header.Get("chatgpt-account-id") != "acc-1" {
+	if req.Header.Get("chatgpt-account-id") != "resolved-account" {
 		t.Fatalf("unexpected chatgpt-account-id header: %s", req.Header.Get("chatgpt-account-id"))
 	}
 	if req.Header.Get("OpenAI-Beta") != "" {

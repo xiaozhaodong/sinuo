@@ -120,11 +120,23 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		writeAccountPipelineError(w, http.StatusUnprocessableEntity, privacy.CodeScanFailed, "privacy scan failed")
 		return
 	}
+	originalPlaintext := body.normalizedBody
 	body.normalizedBody = filteredBody
 	wireBody := body.normalizedBody
 	outboundEncoding := ""
 	if route.NormalizeBody {
-		wireBody, outboundEncoding = p.prepareOutboundBody(body)
+		if body.inboundContentEncoding == requestContentEncodingZstd && bytes.Equal(originalPlaintext, filteredBody) {
+			wireBody, outboundEncoding = body.originalCompressedBody, requestContentEncodingZstd
+		} else {
+			var compressionErr error
+			wireBody, outboundEncoding, compressionErr = p.prepareOutboundBody(body)
+			if compressionErr != nil {
+				status := http.StatusInternalServerError
+				track.Complete(&status, "subscription_compression_failed")
+				writeAccountPipelineError(w, status, "subscription_compression_failed", "failed to encode request body")
+				return
+			}
+		}
 	}
 	r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {
@@ -191,21 +203,18 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 
 // prepareOutboundBody 按客户端入站压缩重建出站正文：
 // 客户端用 zstd 时按规范化后的正文重新压缩（不能复用修改前的压缩体），否则明文转发。
-func (p *subscriptionPassthrough) prepareOutboundBody(body *normalizedRequestBodyMetadata) ([]byte, string) {
+func (p *subscriptionPassthrough) prepareOutboundBody(body *normalizedRequestBodyMetadata) ([]byte, string, error) {
 	if body == nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	if body.inboundContentEncoding != requestContentEncodingZstd {
-		return body.normalizedBody, ""
+		return body.normalizedBody, "", nil
 	}
 	compressed, err := compressNormalizedRequestBody(body, body.normalizedBody)
 	if err != nil {
-		if p.logger != nil {
-			p.logger.Warn("⚠️ [Codex 订阅代理] 出站压缩失败，改为明文转发", "code", "subscription_compression_failed")
-		}
-		return body.normalizedBody, ""
+		return nil, "", err
 	}
-	return compressed, requestContentEncodingZstd
+	return compressed, requestContentEncodingZstd, nil
 }
 
 // roundTrip 构造并发送上游请求；返回的 cancel 必须由调用方执行。

@@ -88,6 +88,8 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 		"conn_id", requestID, "thread_id", association.ThreadID, "originator", association.Originator)
 
 	// 就地重建：后续 copyRequestHeadersForAccount 只能看到这两项，客户端身份头无法回流。
+	source := captureCodexIdentitySource(r)
+	*r = *r.WithContext(context.WithValue(r.Context(), codexIdentitySourceKey{}, source))
 	r.Header = buildSubscriptionPoolHeaders(r.Header)
 	*r = *r.WithContext(withSubscriptionPoolMetadata(r.Context()))
 	metadata, _ := subscriptionPoolMetadataFromContext(r.Context())

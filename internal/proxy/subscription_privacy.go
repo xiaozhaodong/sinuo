@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"cc-forwarder/internal/codexidentity"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
 )
@@ -80,67 +80,7 @@ func validateSubscriptionJSON(body []byte) error {
 }
 
 func validateSubscriptionJSONDocument(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := validateSubscriptionJSONValue(decoder); err != nil {
-		return err
-	}
-	if token, err := decoder.Token(); err != io.EOF {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("unexpected trailing JSON token %v", token)
-	}
-	return nil
-}
-
-func validateSubscriptionJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		seen := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return fmt.Errorf("object key is not a string")
-			}
-			if _, duplicate := seen[key]; duplicate {
-				return fmt.Errorf("duplicate object key")
-			}
-			seen[key] = struct{}{}
-			if err := validateSubscriptionJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim('}') {
-			return fmt.Errorf("unterminated object")
-		}
-	case '[':
-		for decoder.More() {
-			if err := validateSubscriptionJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim(']') {
-			return fmt.Errorf("unterminated array")
-		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter")
-	}
-	return nil
+	return codexidentity.ValidateJSON(body)
 }
 
 func isSubscriptionPrivacyPath(path string) bool {
