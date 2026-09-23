@@ -829,7 +829,7 @@ func prepareAccountOutboundBody(r *http.Request, body []byte, acc *store.Upstrea
 		return body, false, "disabled", nil
 	}
 	metadata := normalizedRequestBodyMetadataFromRequest(r)
-	if metadata != nil && metadata.inboundContentEncoding == requestContentEncodingZstd && bytes.Equal(body, metadata.normalizedBody) {
+	if metadata.canReuseOriginalCompressed(body) {
 		return metadata.originalCompressedBody, true, "reuse_original", nil
 	}
 	compressed, err := compressNormalizedRequestBody(metadata, body)

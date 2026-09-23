@@ -1087,6 +1087,42 @@ func TestAccountPipeline_ZstdRequestCompressionReusesOriginalFrame(t *testing.T)
 	}
 }
 
+// 隐私过滤器原地修改正文（切片不变）时，不能因切片相等而复用含原文的客户端压缩帧。
+func TestAccountPipeline_RequestCompressionRecompressesAfterInPlacePrivacyEdit(t *testing.T) {
+	body := []byte(`{"model":"gpt-4.1","input":"SECRET"}`)
+	originalCompressed := mustEncodeZstd(t, body)
+	var received []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_inplace","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	service := &mockAccountPoolService{accounts: []*store.UpstreamAccountRecord{
+		{ID: 87, AccountName: "inplace-zstd", ProviderType: "api_key", CredentialRaw: "sk-inplace", BaseURL: upstream.URL, EnableRequestCompression: true, Enabled: true},
+	}}
+	handler := newAccountPipelineTestHandler(t, upstream.URL, service)
+	handler.SetPrivacyFilter(identityPrivacyMutator(func(raw []byte) []byte {
+		if at := bytes.Index(raw, []byte("SECRET")); at >= 0 {
+			copy(raw[at:], "XXXXXX")
+		}
+		return raw
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalCompressed))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "zstd")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if bytes.Equal(received, originalCompressed) || bytes.Contains(zstdDecompress(t, received), []byte("SECRET")) {
+		t.Fatalf("在原地脱敏后仍发送了原始压缩帧")
+	}
+}
+
 func TestAccountPipeline_RequestCompressionRecompressesAfterModelRewrite(t *testing.T) {
 	var received []byte
 	var receivedEncoding string

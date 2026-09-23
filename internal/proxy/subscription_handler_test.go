@@ -510,13 +510,40 @@ func TestSubscriptionHandlerNormalizesZstdRequestBody(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("上游请求数不符: %d", len(requests))
 	}
-	// 客户端用 zstd，出站按规范化后的正文重新压缩，而不是复用入站压缩体。
+	// 客户端用 zstd，出站仍为 zstd；正文未变时复用入站压缩帧，解压后必须等于规范化明文。
 	if got := requests[0].Header.Get("Content-Encoding"); got != "zstd" {
 		t.Fatalf("出站压缩标记不符: %q", got)
 	}
 	decoded := zstdDecompress(t, requests[0].Body)
 	if !bytes.Equal(decoded, plain) {
 		t.Fatalf("上游收到的正文不等于规范化明文: %q", string(decoded))
+	}
+}
+
+// 订阅直通：隐私过滤器原地修改正文时，不能因切片相等而复用含原文的客户端压缩帧。
+func TestSubscriptionHandlerRecompressesAfterInPlacePrivacyEdit(t *testing.T) {
+	env := newSubscriptionTestEnv(t, nil, svc.CodexSubscriptionProxyModeSubscription)
+	env.handler.proxy.SetPrivacyFilter(identityPrivacyMutator(func(raw []byte) []byte {
+		if at := bytes.Index(raw, []byte("SECRET")); at >= 0 {
+			copy(raw[at:], "XXXXXX")
+		}
+		return raw
+	}))
+	compressed := zstdCompress(t, []byte(`{"model":"gpt-5","input":"SECRET"}`))
+	resp := env.request(http.MethodPost, "responses", func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer client-token")
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Content-Encoding", "zstd")
+		r.Body = io.NopCloser(bytes.NewReader(compressed))
+		r.ContentLength = int64(len(compressed))
+	})
+	defer resp.Body.Close()
+	requests := env.upstreamRequests()
+	if resp.StatusCode != http.StatusOK || len(requests) != 1 {
+		t.Fatalf("状态码=%d 上游请求数=%d", resp.StatusCode, len(requests))
+	}
+	if bytes.Equal(requests[0].Body, compressed) || bytes.Contains(zstdDecompress(t, requests[0].Body), []byte("SECRET")) {
+		t.Fatal("原地脱敏后仍复用了原始压缩帧")
 	}
 }
 

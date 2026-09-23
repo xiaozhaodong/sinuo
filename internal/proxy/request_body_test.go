@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -238,7 +239,7 @@ func TestCompressNormalizedRequestBody_ReusesCompressedResultForSamePlaintext(t 
 	if err != nil {
 		t.Fatalf("second compression failed: %v", err)
 	}
-	if len(metadata.cachedPlaintext) == 0 || len(metadata.cachedCompressed) == 0 {
+	if metadata.cachedDigest != sha256.Sum256(body) || len(metadata.cachedCompressed) == 0 {
 		t.Fatalf("expected one cached compressed body")
 	}
 	if len(first) == 0 || &first[0] != &second[0] {
@@ -258,11 +259,46 @@ func TestCompressNormalizedRequestBody_ReplacesSingleSlotForChangedPlaintext(t *
 	if err != nil {
 		t.Fatalf("second compression failed: %v", err)
 	}
-	if !bytes.Equal(metadata.cachedPlaintext, secondBody) {
+	if metadata.cachedDigest != sha256.Sum256(secondBody) {
 		t.Fatalf("cached plaintext was not replaced")
 	}
 	if !bytes.Equal(metadata.cachedCompressed, secondCompressed) {
 		t.Fatalf("cached compressed body was not replaced")
+	}
+}
+
+// 过滤器原地修改正文时切片地址和长度都不变：原始帧复用与压缩缓存都必须按内容发现变化，
+// 否则会把修改前（未脱敏）的内容以压缩体发出去。
+func TestNormalizedRequestBodyReuseDetectsInPlaceMutation(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"SECRET"}`)
+	compressed := mustEncodeZstd(t, body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(compressed))
+	req.Header.Set("Content-Encoding", "zstd")
+	metadata, bodyErr := normalizeRequestBodyWithMetadata(httptest.NewRecorder(), req, nil)
+	if bodyErr != nil {
+		t.Fatal(bodyErr)
+	}
+	plain := metadata.normalizedBody
+	if !metadata.canReuseOriginalCompressed(plain) || !metadata.canReuseOriginalCompressed(bytes.Clone(plain)) {
+		t.Fatal("内容未变时应复用原始 zstd 帧")
+	}
+	cached, err := compressNormalizedRequestBody(metadata, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(plain[bytes.Index(plain, []byte("SECRET")):], "XXXXXX")
+	if metadata.canReuseOriginalCompressed(plain) {
+		t.Fatal("原地修改后仍复用原始 zstd 帧")
+	}
+	recompressed, err := compressNormalizedRequestBody(metadata, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(recompressed, cached) || bytes.Contains(zstdDecompress(t, recompressed), []byte("SECRET")) {
+		t.Fatal("原地修改后命中了旧压缩缓存")
+	}
+	if (*normalizedRequestBodyMetadata)(nil).canReuseOriginalCompressed(plain) {
+		t.Fatal("nil metadata 不应复用")
 	}
 }
 

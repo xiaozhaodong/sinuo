@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cc-forwarder/config"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -36,12 +37,21 @@ type requestBodyError struct {
 	Cause      error
 }
 
+// normalizedRequestBodyMetadata 的内容比较一律用 SHA-256 摘要：正文切片可能被过滤器原地修改，
+// 比较切片会连同被比较的一方一起改变，导致复用旧压缩体把修改前的内容发出去。
 type normalizedRequestBodyMetadata struct {
 	normalizedBody         []byte
 	originalCompressedBody []byte
 	inboundContentEncoding string
-	cachedPlaintext        []byte
+	normalizedDigest       [sha256.Size]byte // 规范化完成时的明文摘要，仅 zstd 入站记录
+	cachedDigest           [sha256.Size]byte
 	cachedCompressed       []byte
+}
+
+// canReuseOriginalCompressed 判断出站明文是否仍与客户端原始 zstd 帧内容一致；nil 安全。
+func (m *normalizedRequestBodyMetadata) canReuseOriginalCompressed(body []byte) bool {
+	return m != nil && m.inboundContentEncoding == requestContentEncodingZstd && m.originalCompressedBody != nil &&
+		sha256.Sum256(body) == m.normalizedDigest
 }
 
 type normalizedRequestBodyContextKey struct{}
@@ -184,6 +194,7 @@ func normalizeRequestBodyWithMetadata(w http.ResponseWriter, req *http.Request, 
 	}
 	if contentEncoding == requestContentEncodingZstd {
 		metadata.originalCompressedBody = append([]byte(nil), rawBody...)
+		metadata.normalizedDigest = sha256.Sum256(normalizedBody)
 	}
 	return metadata, nil
 }
@@ -313,7 +324,8 @@ func zstdDecoderPoolForLimit(limit int64) *sync.Pool {
 }
 
 func compressNormalizedRequestBody(metadata *normalizedRequestBodyMetadata, body []byte) ([]byte, error) {
-	if metadata != nil && bytes.Equal(metadata.cachedPlaintext, body) {
+	digest := sha256.Sum256(body)
+	if metadata != nil && metadata.cachedCompressed != nil && metadata.cachedDigest == digest {
 		return metadata.cachedCompressed, nil
 	}
 	compressed, err := encodeZstdRequestBody(body)
@@ -321,7 +333,7 @@ func compressNormalizedRequestBody(metadata *normalizedRequestBodyMetadata, body
 		return nil, err
 	}
 	if metadata != nil {
-		metadata.cachedPlaintext = body
+		metadata.cachedDigest = digest
 		metadata.cachedCompressed = compressed
 	}
 	return compressed, nil

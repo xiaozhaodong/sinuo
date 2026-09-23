@@ -120,24 +120,17 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		writeAccountPipelineError(w, http.StatusUnprocessableEntity, privacy.CodeScanFailed, "privacy scan failed")
 		return
 	}
-	originalPlaintext := body.normalizedBody
 	body.normalizedBody = filteredBody
-	wireBody := body.normalizedBody
-	outboundEncoding := ""
-	if route.NormalizeBody {
-		if body.inboundContentEncoding == requestContentEncodingZstd && bytes.Equal(originalPlaintext, filteredBody) {
-			wireBody, outboundEncoding = body.originalCompressedBody, requestContentEncodingZstd
-		} else {
-			var compressionErr error
-			wireBody, outboundEncoding, compressionErr = p.prepareOutboundBody(body)
-			if compressionErr != nil {
-				status := http.StatusInternalServerError
-				track.Complete(&status, "subscription_compression_failed")
-				writeAccountPipelineError(w, status, "subscription_compression_failed", "failed to encode request body")
-				return
-			}
-		}
+	wireBody, outboundEncoding, bodyMode, compressionErr := p.prepareOutboundBody(route, body)
+	if compressionErr != nil {
+		status := http.StatusInternalServerError
+		track.Complete(&status, "subscription_compression_failed")
+		writeAccountPipelineError(w, status, "subscription_compression_failed", "failed to encode request body")
+		return
 	}
+	p.logger.Debug(fmt.Sprintf("🗜️ [Codex 订阅代理] [%s] 出站正文编码: %s", requestID, bodyMode),
+		"conn_id", requestID, "kind", string(route.Kind), "mode", bodyMode,
+		"plaintext_bytes", len(body.normalizedBody), "wire_bytes", len(wireBody))
 	r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {
 			track.MarkOutbound(int64(len(wireBody)), time.Now())
@@ -201,20 +194,24 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-// prepareOutboundBody 按客户端入站压缩重建出站正文：
-// 客户端用 zstd 时按规范化后的正文重新压缩（不能复用修改前的压缩体），否则明文转发。
-func (p *subscriptionPassthrough) prepareOutboundBody(body *normalizedRequestBodyMetadata) ([]byte, string, error) {
+// prepareOutboundBody 按客户端入站压缩决定出站正文，返回正文、Content-Encoding 与摘要模式：
+// 内容未变复用客户端原始 zstd 帧（reuse_original），变化后按新正文重压（recompress），
+// 客户端未压缩或路由不规范化正文时明文转发（plaintext）。内容是否变化按规范化时的摘要判断，不比较切片。
+func (p *subscriptionPassthrough) prepareOutboundBody(route *subscriptionRoute, body *normalizedRequestBodyMetadata) ([]byte, string, string, error) {
 	if body == nil {
-		return nil, "", nil
+		return nil, "", "plaintext", nil
 	}
-	if body.inboundContentEncoding != requestContentEncodingZstd {
-		return body.normalizedBody, "", nil
+	if !route.NormalizeBody || body.inboundContentEncoding != requestContentEncodingZstd {
+		return body.normalizedBody, "", "plaintext", nil
+	}
+	if body.canReuseOriginalCompressed(body.normalizedBody) {
+		return body.originalCompressedBody, requestContentEncodingZstd, "reuse_original", nil
 	}
 	compressed, err := compressNormalizedRequestBody(body, body.normalizedBody)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	return compressed, requestContentEncodingZstd, nil
+	return compressed, requestContentEncodingZstd, "recompress", nil
 }
 
 // roundTrip 构造并发送上游请求；返回的 cancel 必须由调用方执行。
