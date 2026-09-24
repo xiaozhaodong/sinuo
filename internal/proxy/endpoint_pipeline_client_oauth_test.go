@@ -187,3 +187,36 @@ func TestEndpointPipeline_ConfiguredStreamingClientErrorHasSingleContentType(t *
 		t.Fatalf("流式请求透传 4xx 时 Content-Type 只能是上游值，got %v", values)
 	}
 }
+
+func TestEndpointPipeline_EntryRequestToVendorDropsOAuthBeta(t *testing.T) {
+	received := make(chan http.Header, 1)
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer vendor.Close()
+
+	vendorCfg := endpointPipelineConfig("vendor", vendor.URL, 1)
+	vendorCfg.ApiKey = "vendor-key"
+	handler, _ := newEndpointPipelineTestHandler(t, vendorCfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-test","messages":[]}`))
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(context.WithValue(req.Context(), "conn_id", "req-entry-vendor")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
+	req.Header.Set("Anthropic-Beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("入口请求转发第三方应成功，got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	headers := <-received
+	if got := headers.Get("Anthropic-Beta"); got != "interleaved-thinking-2025-05-14" {
+		t.Fatalf("第三方不应收到 OAuth capability，got %q", got)
+	}
+	if headers.Get("Authorization") != "" || headers.Get("X-Api-Key") != "vendor-key" {
+		t.Fatalf("第三方只能收到端点 Key，got authorization=%q api_key=%q", headers.Get("Authorization"), headers.Get("X-Api-Key"))
+	}
+}

@@ -88,3 +88,51 @@ func TestForwarder_CopyAttemptHeaders_ConfiguredNeverLeaksClientToken(t *testing
 		t.Fatalf("应使用端点 API Key，got %q", got)
 	}
 }
+
+func TestForwarder_ClientOAuthBetaStrippedOnlyForEntryToConfigured(t *testing.T) {
+	cfg := &config.Config{}
+	// 每个目标用独立 manager：同一 manager 内认证边界只保留首个候选的同类端点
+	newManager := func() *endpoint.Manager {
+		manager := endpoint.NewManager(cfg)
+		t.Cleanup(manager.Stop)
+		return manager
+	}
+	forwarder := NewForwarder(cfg, newManager())
+	vendor := acquireForwarderTestTarget(t, newManager(), config.EndpointConfig{
+		Name: "vendor", URL: "https://vendor.example.com", ApiKey: "vendor-key", Timeout: time.Second,
+	})
+	subscription := acquireForwarderTestTarget(t, newManager(), config.EndpointConfig{
+		Name: "subscription", URL: "https://api.anthropic.com", AuthMode: config.EndpointAuthModeClientOAuth, Timeout: time.Second,
+	})
+	if subscriptionCfg, vendorCfg := subscription.Config(), vendor.Config(); !subscriptionCfg.IsClientOAuth() || vendorCfg.IsClientOAuth() {
+		t.Fatal("测试目标认证方式与预期不符")
+	}
+	const beta = "oauth-2025-04-20,interleaved-thinking-2025-05-14"
+
+	copyWith := func(target *endpoint.EndpointAttemptTarget, fromEntry bool, betaValue string) http.Header {
+		src := newClaudeCodeClientRequest()
+		src.Header.Set("Anthropic-Beta", betaValue)
+		if fromEntry {
+			src = src.WithContext(endpoint.WithClaudeCodeEntry(src.Context()))
+		}
+		dst := httptest.NewRequest(http.MethodPost, "https://upstream.example.com/v1/messages", nil)
+		forwarder.CopyAttemptHeaders(src, dst, target)
+		return dst.Header
+	}
+
+	if got := copyWith(vendor, true, beta).Get("Anthropic-Beta"); got != "interleaved-thinking-2025-05-14" {
+		t.Fatalf("入口请求转发给第三方应删掉 oauth- 值、保留其余值，got %q", got)
+	}
+	if got := copyWith(vendor, false, beta).Get("Anthropic-Beta"); got != beta {
+		t.Fatalf("主端口请求不改动 anthropic-beta，got %q", got)
+	}
+	if got := copyWith(subscription, true, beta).Get("Anthropic-Beta"); got != beta {
+		t.Fatalf("订阅直通端点必须原样保留 OAuth capability，got %q", got)
+	}
+	if values := copyWith(vendor, true, "OAuth-2026-01-01").Values("Anthropic-Beta"); len(values) != 0 {
+		t.Fatalf("只有 OAuth 值时删掉后应移除整个头（前缀大小写不敏感），got %v", values)
+	}
+	if got := copyWith(vendor, true, "a-1, b-2").Get("Anthropic-Beta"); got != "a-1, b-2" {
+		t.Fatalf("没有可删的值时保持原样，got %q", got)
+	}
+}

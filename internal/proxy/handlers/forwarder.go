@@ -306,6 +306,11 @@ var clientOAuthSkipHeaders = map[string]bool{
 
 func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, creds outboundCredentials) {
 	copyClientHeaders(src.Header, dst.Header, creds.clientOAuth)
+	// Claude Code 以订阅登录经专用入口进来、却转发给端点凭据端点（第三方）时，
+	// OAuth capability 对 API Key 认证没有意义，也不必让第三方知道客户端用的是订阅登录
+	if !creds.clientOAuth && endpoint.IsClaudeCodeEntry(src.Context()) {
+		stripClientOAuthBetaValues(dst.Header)
+	}
 
 	// Set Host header based on target endpoint URL
 	if u, err := url.Parse(targetURL); err == nil {
@@ -394,6 +399,37 @@ func isAnyRouteURL(rawURL string) bool {
 
 // ensureBetaFlag 确保 anthropic-beta 头包含指定标志：
 // 头不存在时直接设置；已存在但缺该标志时追加，保留客户端原有标志；已包含则不动。
+// clientOAuthBetaPrefix Claude Code 订阅登录时 anthropic-beta 携带的 OAuth capability 前缀（值带日期后缀）
+const clientOAuthBetaPrefix = "oauth-"
+
+// stripClientOAuthBetaValues 删除 anthropic-beta 中 oauth- 开头的值，其余值保持原顺序；
+// 删空则移除整个头；没有可删的值时不改写，保持原样
+func stripClientOAuthBetaValues(header http.Header) {
+	values := header.Values(anthropicBetaHeader)
+	kept := make([]string, 0, len(values))
+	removed := false
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(part), clientOAuthBetaPrefix) {
+				removed = true
+				continue
+			}
+			kept = append(kept, part)
+		}
+	}
+	if !removed {
+		return
+	}
+	header.Del(anthropicBetaHeader)
+	if len(kept) > 0 {
+		header.Set(anthropicBetaHeader, strings.Join(kept, ","))
+	}
+}
+
 func ensureBetaFlag(header http.Header, flag string) {
 	existing := header.Get(anthropicBetaHeader)
 	if existing == "" {
