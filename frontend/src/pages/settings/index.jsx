@@ -19,14 +19,12 @@ import {
   Hash,
   Archive,
   ImageIcon,
-  ArrowRight,
   TerminalSquare
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
-import { SettingItem, SettingsSection, PortInfo } from './components';
+import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
 import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
-import ClaudeCodeEntryCard from '@components/claude-code-entry/ClaudeCodeEntryCard.jsx';
 import {
   isWailsEnvironment,
   getSettingCategories,
@@ -61,7 +59,7 @@ const CATEGORY_ICONS = {
 // Settings 页面主组件
 // ============================================
 
-const SettingsPage = ({ onNavigateToCodexAccess }) => {
+const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => {
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState([]);
   const { confirm, confirmDialog } = useConfirm();
@@ -281,31 +279,18 @@ const SettingsPage = ({ onNavigateToCodexAccess }) => {
         </div>
       )}
 
-      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="rounded-lg bg-accent-soft p-2 text-accent">
-            <TerminalSquare size={18} />
-          </div>
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">Codex 客户端接入</h2>
-            <p className="mt-1 text-xs text-fg-muted">
-              订阅代理的启停、模式、监听地址与一次性接入密钥已移至 Codex 管理。
-            </p>
-          </div>
-        </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={ArrowRight}
-          onClick={onNavigateToCodexAccess}
-          disabled={!onNavigateToCodexAccess}
-          className="shrink-0"
-        >
-          前往客户端接入
-        </Button>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <AccessShortcutCard
+          title="Codex 客户端接入"
+          description="订阅代理的启停、模式、监听地址与一次性接入密钥已移至 Codex 管理。"
+          onNavigate={onNavigateToCodexAccess}
+        />
+        <AccessShortcutCard
+          title="Claude Code 客户端接入"
+          description="入口的启停、端口与接入模式（订阅直通 / 端点）已移至 Claude 管理。"
+          onNavigate={onNavigateToClaudeAccess}
+        />
       </div>
-
-      <ClaudeCodeEntryCard />
 
       {error
         ? <ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} />

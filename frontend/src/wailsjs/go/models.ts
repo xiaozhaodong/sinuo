@@ -202,8 +202,6 @@ export namespace main {
 	    enabled: boolean;
 	    listen_port: number;
 	    mode: string;
-	    request_class_routing: boolean;
-	    api_request_classes: string[];
 	    base_url: string;
 	    running: boolean;
 	    error: string;
@@ -217,8 +215,6 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
 	        this.mode = source["mode"];
-	        this.request_class_routing = source["request_class_routing"];
-	        this.api_request_classes = source["api_request_classes"];
 	        this.base_url = source["base_url"];
 	        this.running = source["running"];
 	        this.error = source["error"];
@@ -228,8 +224,6 @@ export namespace main {
 	    enabled: boolean;
 	    listen_port: number;
 	    mode: string;
-	    request_class_routing: boolean;
-	    api_request_classes: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ClaudeCodeEntryInput(source);
@@ -240,8 +234,6 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
 	        this.mode = source["mode"];
-	        this.request_class_routing = source["request_class_routing"];
-	        this.api_request_classes = source["api_request_classes"];
 	    }
 	}
 	export class ClaudeRoutingState {
@@ -620,7 +612,6 @@ export namespace main {
 	    api_key: string;
 	    clear_token: boolean;
 	    clear_api_key: boolean;
-	    auth_mode: string;
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
@@ -650,7 +641,6 @@ export namespace main {
 	        this.api_key = source["api_key"];
 	        this.clear_token = source["clear_token"];
 	        this.clear_api_key = source["clear_api_key"];
-	        this.auth_mode = source["auth_mode"];
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];
@@ -801,7 +791,6 @@ export namespace main {
 	    last_check: string;
 	    response_time_ms: number;
 	    consecutive_fail: number;
-	    auth_mode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EndpointInfo(source);
@@ -816,7 +805,6 @@ export namespace main {
 	        this.last_check = source["last_check"];
 	        this.response_time_ms = source["response_time_ms"];
 	        this.consecutive_fail = source["consecutive_fail"];
-	        this.auth_mode = source["auth_mode"];
 	    }
 	}
 	export class EndpointRecordInfo {
@@ -825,7 +813,6 @@ export namespace main {
 	    url: string;
 	    token_masked: string;
 	    api_key_masked: string;
-	    auth_mode: string;
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
@@ -864,7 +851,6 @@ export namespace main {
 	        this.url = source["url"];
 	        this.token_masked = source["token_masked"];
 	        this.api_key_masked = source["api_key_masked"];
-	        this.auth_mode = source["auth_mode"];
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];

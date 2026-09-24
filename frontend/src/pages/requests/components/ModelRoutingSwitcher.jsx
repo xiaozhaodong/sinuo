@@ -20,7 +20,8 @@ const modeBadge = (binding) => {
   return { text: '自动', cls: 'text-fg-subtle' };
 };
 
-const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
+// embedded：嵌在 Claude 接入面板里，不渲染触发按钮，直接展开两栏内容
+const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false, embedded = false }) => {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const ref = useRef(null);
@@ -51,7 +52,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
 
   return (
     <div ref={ref} className="relative">
-      <button
+      {!embedded && <button
         type="button"
         disabled={loading}
         onClick={() => setOpen((v) => !v)}
@@ -61,16 +62,16 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
         <Route className="h-3.5 w-3.5 shrink-0 text-accent" />
         <span className="min-w-0 flex-1 truncate text-left">Claude: 模型路由 · {modelCount} 模型{hasWebTools ? ' + 联网' : ''}</span>
         {manualCount > 0 && <span className="shrink-0 text-[10px] text-fg-subtle">{manualCount} 手动</span>}
-      </button>
+      </button>}
 
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-[540px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline">
+      {(embedded || open) && (
+        <div className={embedded ? 'overflow-x-auto' : 'absolute left-0 top-full z-50 mt-2 w-[540px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline'}>
           {sorted.length === 0 ? (
             <div className="flex items-center gap-2 px-4 py-6 text-sm text-fg-subtle">
               <AlertCircle className="h-4 w-4" />尚无模型映射，所有 Claude 请求都会返回未分配错误
             </div>
           ) : (
-            <div className="flex max-h-[380px]">
+            <div className={`flex max-h-[380px] ${embedded ? 'min-w-[520px]' : ''}`}>
               {/* 左栏：模型列表 */}
               <div className="w-[220px] shrink-0 overflow-y-auto border-r border-line-soft py-1">
                 {sorted.map((binding) => {
@@ -137,7 +138,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false }) => {
               </div>
             </div>
           )}
-          <div className="border-t border-line-soft px-4 py-2 text-[11px] text-fg-subtle">新增、删除映射或调整端点集合，请前往「端点管理 → 模型路由」</div>
+          <div className="border-t border-line-soft px-4 py-2 text-[11px] text-fg-subtle">新增、删除映射或调整端点集合，请前往「Claude 管理 → 端点 → 模型路由」</div>
         </div>
       )}
     </div>

@@ -1,43 +1,24 @@
-// Claude Code 专用入口卡片的纯函数：端口校验、状态文案与客户端配置片段
+// Claude Code 接入的纯函数：模式说明、端口校验、状态文案、客户端配置片段与请求页按钮标签
 
 export const CLAUDE_CODE_ENTRY_DEFAULT_PORT = 18088;
 
-// 入口全局模式，与后端 endpoint.ClaudeCodeEntryMode* 一致
+// 接入模式，与后端 endpoint.ClaudeCodeEntryMode* 一致；两种模式不混用
 export const CLAUDE_CODE_ENTRY_MODE_OPTIONS = [
-  { value: 'auto', label: '按模型路由', hint: '按模型路由分配：映射里订阅直通端点排在最前的模型走订阅，其余走第三方。' },
-  { value: 'subscription', label: '仅订阅', hint: '只用订阅直通端点；模型的端点集合里没有订阅端点时直接报错，不会改走第三方。' },
-  { value: 'api', label: '仅 API', hint: '只用第三方端点，订阅额度用完时切到这里；相当于 Codex 的池模式。' }
+  {
+    value: 'subscription',
+    label: '订阅直通',
+    hint: '全部请求带 Claude Code 自己的 claude.ai 登录直连 Anthropic，官方 5h / 周额度照常显示；不经过端点与模型路由。'
+  },
+  {
+    value: 'endpoint',
+    label: '端点',
+    hint: '与主端口相同，按全局路由或模型路由使用第三方端点；订阅额度用完或暂停订阅时切到这里。'
+  }
 ];
 
 export const describeClaudeCodeEntryMode = (mode) => (
   CLAUDE_CODE_ENTRY_MODE_OPTIONS.find((option) => option.value === mode) || CLAUDE_CODE_ENTRY_MODE_OPTIONS[0]
 );
-
-// 可配置为强制走 API 的请求类别，与后端 endpoint.ClaudeCodeAPIRequestClasses 一致（main 不可选）
-export const CLAUDE_CODE_REQUEST_CLASS_OPTIONS = [
-  { value: 'subagent', label: '子代理', hint: 'Explore、Plan 等子代理的对话' },
-  { value: 'auxiliary', label: '后台辅助', hint: '会话标题、分类、摘要等附带请求' },
-  { value: 'compaction', label: '压缩', hint: '上下文压缩时的摘要请求，影响后续对话质量' },
-  { value: 'workflow', label: 'Workflow', hint: 'workflow 内运行的代理' }
-];
-
-// 打开按请求类别路由时，没有已选类别则默认勾选子代理与后台辅助
-export const DEFAULT_API_REQUEST_CLASSES = ['subagent', 'auxiliary'];
-
-/**
- * 勾选 / 取消一个请求类别，结果按固定顺序排列
- * @param {string[]} selected
- * @param {string} value
- */
-export const toggleRequestClass = (selected = [], value) => {
-  const next = new Set(selected);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return CLAUDE_CODE_REQUEST_CLASS_OPTIONS.map((option) => option.value).filter((item) => next.has(item));
-};
-
-// Claude Code 只在设置该变量时才向自定义 base URL 发送 x-claude-code-request-class
-export const GATEWAY_HINT_HEADERS_ENV = 'CLAUDE_CODE_GATEWAY_HINT_HEADERS';
 
 /**
  * 解析端口输入；合法返回整数，否则返回 null
@@ -65,20 +46,31 @@ export const describeClaudeCodeEntryState = (info) => {
 /**
  * 写入 ~/.claude/settings.json 的配置片段
  * @param {string} baseUrl
- * @param {{hintHeaders?: boolean}} options hintHeaders 为 true 时带上请求类别头开关
  */
-export const buildClaudeCodeSettingsSnippet = (baseUrl, { hintHeaders = false } = {}) => JSON.stringify({
-  env: {
-    ANTHROPIC_BASE_URL: baseUrl,
-    ...(hintHeaders ? { [GATEWAY_HINT_HEADERS_ENV]: '1' } : {})
-  }
+export const buildClaudeCodeSettingsSnippet = (baseUrl) => JSON.stringify({
+  env: { ANTHROPIC_BASE_URL: baseUrl }
 }, null, 2);
 
 /**
  * 首次试用命令：只对这一次启动的进程生效，不影响正在使用的 Claude Code
  * @param {string} baseUrl
- * @param {{hintHeaders?: boolean}} options
  */
-export const buildClaudeCodeTrialCommand = (baseUrl, { hintHeaders = false } = {}) => (
-  `${hintHeaders ? `${GATEWAY_HINT_HEADERS_ENV}=1 ` : ''}ANTHROPIC_BASE_URL=${baseUrl} claude`
-);
+export const buildClaudeCodeTrialCommand = (baseUrl) => `ANTHROPIC_BASE_URL=${baseUrl} claude`;
+
+/**
+ * 请求页 Claude 按钮的主标签，回答「经入口的 Claude Code 请求现在走哪」。
+ * 入口未启用时只有主端口，标签就是端点策略；入口异常时由入口状态抢标签。
+ * @param {{info:object|null, loading:boolean, error:string, routeLabel:string}} state
+ * @returns {{label:string, detail:string}}
+ */
+export const resolveClaudeAccessLabel = ({ info = null, loading = false, error = '', routeLabel = 'Auto' } = {}) => {
+  if (!info) {
+    if (loading) return { label: '读取中', detail: '' };
+    return { label: routeLabel, detail: error ? `入口状态读取失败：${error}` : '' };
+  }
+  if (!info.enabled) return { label: routeLabel, detail: 'Claude Code 入口未启用' };
+  if (info.error) return { label: '入口启动失败', detail: info.error };
+  if (!info.running) return { label: '入口未运行', detail: '' };
+  if (info.mode === 'endpoint') return { label: `端点 · ${routeLabel}`, detail: '' };
+  return { label: describeClaudeCodeEntryMode(info.mode).label, detail: '' };
+};

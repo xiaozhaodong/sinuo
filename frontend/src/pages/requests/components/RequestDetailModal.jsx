@@ -31,7 +31,6 @@ import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
-import { isSubscriptionRequest } from '../utils/subscriptionUpstream.js';
 import { getRequestPresentation } from '../utils/requestPresentation.js';
 import { assessModel, assessReasoning, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 
@@ -227,7 +226,7 @@ const formatRouteMode = (mode) => {
   }
 };
 
-const RequestDetailModal = ({ isOpen, onClose, request: initialRequest, subscriptionEndpointNames }) => {
+const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
   const { formatTimestamp } = useTimezone();
   const [activeTab, setActiveTab] = useState('overview');
   const closeButtonRef = useRef(null);
@@ -374,11 +373,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest, subscrip
                   {REQUEST_KIND_LABELS[request.requestKind] && (
                     <InfoRow icon={Activity} label="请求种类" value={REQUEST_KIND_LABELS[request.requestKind]} />
                   )}
-                  <InfoRow
-                    icon={Server}
-                    label="上游"
-                    value={`${request.upstreamName || '未知上游'}${isSubscriptionRequest(request, subscriptionEndpointNames) ? '（订阅直通）' : ''}`}
-                  />
+                  <InfoRow icon={Server} label="上游" value={request.upstreamName || '未知上游'} />
                   <InfoRow icon={Activity} label="路由模式" value={formatRouteMode(request.routeMode)} />
                   {request.requestedEndpoint && (
                     <InfoRow icon={Server} label="手动目标" value={request.requestedEndpoint} />

@@ -38,7 +38,6 @@ import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
-import { buildSubscriptionEndpointNames } from './utils/subscriptionUpstream.js';
 import { PAGINATION_CONFIG } from './utils/constants.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { bindingDisplayName, isWebToolsBinding, patchBindingPayload } from '../endpoints/utils/modelRouting.js';
@@ -62,8 +61,6 @@ const RequestsPage = () => {
   const [stats, setStats] = useState(null);
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
-  // 订阅直通端点名：请求列表与详情据此标出走订阅的请求
-  const subscriptionEndpointNames = useMemo(() => buildSubscriptionEndpointNames(endpoints), [endpoints]);
   const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
   const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false });
   const [modelRouteBindings, setModelRouteBindings] = useState([]);
@@ -682,7 +679,6 @@ const RequestsPage = () => {
           visibleColumns={visibleColumns}
           columnConfigs={columnConfigs}
           onRowDoubleClick={handleRowDoubleClick}
-          subscriptionEndpointNames={subscriptionEndpointNames}
         />
       </div>
 
@@ -691,7 +687,6 @@ const RequestsPage = () => {
         isOpen={isDetailModalOpen}
         onClose={handleCloseDetailModal}
         request={selectedRequest}
-        subscriptionEndpointNames={subscriptionEndpointNames}
       />
     </div>
   );

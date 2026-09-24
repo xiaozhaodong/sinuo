@@ -8,10 +8,7 @@ import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import { createEmptyEndpointModelRewriteRule } from '../utils/modelRewrite.js';
 import {
   buildEndpointFormPayload,
-  CLAUDE_OAUTH_UPSTREAM_URL,
   createEndpointFormState,
-  ENDPOINT_AUTH_MODE_CLIENT_OAUTH,
-  ENDPOINT_AUTH_MODE_CONFIGURED,
   validateEndpointFormState
 } from '../utils/endpointFormState.js';
 
@@ -111,47 +108,12 @@ const SecretField = ({ label, field, clearField, maskedValue, state, setState })
   );
 };
 
-const AUTH_MODE_OPTIONS = [
-  { value: ENDPOINT_AUTH_MODE_CONFIGURED, label: '端点凭据' },
-  { value: ENDPOINT_AUTH_MODE_CLIENT_OAUTH, label: 'Claude Code 订阅直通' }
-];
-
-const AuthModeSegmented = ({ value, disabled, onChange }) => (
-  <div role="radiogroup" aria-label="认证方式" className="inline-flex rounded-lg border border-line bg-surface-sub p-0.5">
-    {AUTH_MODE_OPTIONS.map((option) => (
-      <button
-        key={option.value}
-        type="button"
-        role="radio"
-        aria-checked={value === option.value}
-        disabled={disabled}
-        onClick={() => onChange(option.value)}
-        className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${value === option.value ? 'bg-surface text-accent shadow-sm' : 'text-fg-muted hover:text-fg-body'} ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
-      >
-        {option.label}
-      </button>
-    ))}
-  </div>
-);
-
-const ClientOAuthNotice = () => (
-  <div className="tone-indigo rounded-xl border px-3 py-2.5 text-xs leading-5">
-    <div className="font-medium">使用本机 Claude Code 当前登录账号的订阅额度</div>
-    <ul className="mt-1 list-disc space-y-0.5 pl-4">
-      <li>OAuth token 由 Claude Code 随请求携带，Switchboard 只透传、不保存。</li>
-      <li>只接受「设置 → Claude Code 接入」入口的请求；主端口的请求不会用到这个端点。</li>
-      <li>上游固定为 {CLAUDE_OAUTH_UPSTREAM_URL}；鉴权与限流错误原样返回给 Claude Code，端点不会因此冷却。</li>
-    </ul>
-  </div>
-);
-
 const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) => {
   const isEditMode = Boolean(endpoint);
   const [state, setState] = useState(() => createEndpointFormState(endpoint));
   const [errors, setErrors] = useState({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const closeButtonRef = useRef(null);
-  const clientOAuth = state.authMode === ENDPOINT_AUTH_MODE_CLIENT_OAUTH;
 
   const requestClose = () => {
     if (!loading) onCancel?.();
@@ -162,11 +124,6 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
     const { name, value, type, checked } = event.target;
     setState((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value }));
     if (errors[name]) setErrors((current) => ({ ...current, [name]: undefined }));
-  };
-
-  const changeAuthMode = (authMode) => {
-    setState((current) => ({ ...current, authMode }));
-    setErrors((current) => ({ ...current, url: undefined, headers: undefined }));
   };
 
   const updateRule = (index, key, value) => {
@@ -245,33 +202,18 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
                   {errors.name && <p className="mt-1 text-xs text-danger">{errors.name}</p>}
                 </div>
                 <div>
-                  <FormInput
-                    label="URL"
-                    name="url"
-                    value={clientOAuth ? CLAUDE_OAUTH_UPSTREAM_URL : state.url}
-                    onChange={change}
-                    disabled={clientOAuth}
-                    placeholder="https://api.example.com"
-                    help={clientOAuth ? '订阅直通固定使用 Anthropic 官方地址' : '仅接受不含账号密码的 HTTP(S) URL'}
-                  />
+                  <FormInput label="URL" name="url" value={state.url} onChange={change} placeholder="https://api.example.com" help="仅接受不含账号密码的 HTTP(S) URL" />
                   {errors.url && <p className="mt-1 text-xs text-danger">{errors.url}</p>}
                 </div>
               </div>
             </section>
 
             <section>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-fg-subtle">认证</h3>
-                <AuthModeSegmented value={state.authMode} disabled={loading} onChange={changeAuthMode} />
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-fg-subtle">认证</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SecretField label="Token" field="token" clearField="clearToken" maskedValue={endpoint?.tokenMasked} state={state} setState={setState} />
+                <SecretField label="API Key" field="apiKey" clearField="clearApiKey" maskedValue={endpoint?.apiKeyMasked} state={state} setState={setState} />
               </div>
-              {clientOAuth ? (
-                <ClientOAuthNotice />
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <SecretField label="Token" field="token" clearField="clearToken" maskedValue={endpoint?.tokenMasked} state={state} setState={setState} />
-                  <SecretField label="API Key" field="apiKey" clearField="clearApiKey" maskedValue={endpoint?.apiKeyMasked} state={state} setState={setState} />
-                </div>
-              )}
 
               <div className="mt-3 rounded-xl border border-line p-3">
                 <div className="mb-2 flex items-center justify-between">

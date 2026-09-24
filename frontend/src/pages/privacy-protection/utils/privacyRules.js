@@ -30,7 +30,7 @@ export const PRIVACY_PATH_OPTIONS = [
 export const PRIVACY_UPSTREAM_TYPE_OPTIONS = [
   { value: 'endpoint', label: 'Claude 端点' },
   { value: 'account', label: 'Codex 账号' },
-  { value: 'subscription', label: 'Codex 订阅直通' }
+  { value: 'subscription', label: '订阅直通（Codex / Claude Code）' }
 ];
 
 export const PRIVACY_PROVIDER_TYPE_OPTIONS = [

@@ -16,9 +16,12 @@ export const getRequestFamilyMeta = (value) => REQUEST_FAMILY_META[normalizeRequ
 
 export const UNKNOWN_UPSTREAM_LABEL = '未知上游';
 
-// 订阅直通固定标识：库里 upstream_name 是 chatgpt-subscription，
-// 界面统一显示为「订阅直通」，筛选仍用真实存储值。
-export const SUBSCRIPTION_UPSTREAM_NAME = 'chatgpt-subscription';
+// 订阅直通固定标识：库里 upstream_name 按请求族固定（Codex 为 chatgpt-subscription、
+// Claude Code 为 claude-subscription），界面统一显示为「订阅直通」，筛选仍用真实存储值。
+export const SUBSCRIPTION_UPSTREAM_NAMES = {
+  codex: 'chatgpt-subscription',
+  claude: 'claude-subscription'
+};
 export const SUBSCRIPTION_UPSTREAM_LABEL = '订阅直通';
 
 export const isSubscriptionRequest = (request = {}) => (
@@ -65,7 +68,14 @@ export const filterUpstreamOptionsByFamily = (requests = [], family = 'all') => 
     const normalized = normalizeRequestSource(request);
     if (selectedFamily && normalized.requestFamily !== selectedFamily) continue;
     if (isSubscriptionRequest(request)) {
-      options.set(SUBSCRIPTION_UPSTREAM_NAME, { value: SUBSCRIPTION_UPSTREAM_NAME, label: SUBSCRIPTION_UPSTREAM_LABEL });
+      const value = SUBSCRIPTION_UPSTREAM_NAMES[normalized.requestFamily];
+      if (value) {
+        // 不限请求族时两家订阅直通同时出现，标签带上请求族区分
+        const label = selectedFamily
+          ? SUBSCRIPTION_UPSTREAM_LABEL
+          : `${SUBSCRIPTION_UPSTREAM_LABEL} · ${getRequestFamilyMeta(normalized.requestFamily).label}`;
+        options.set(value, { value, label });
+      }
       continue;
     }
     const name = normalized.upstreamName;

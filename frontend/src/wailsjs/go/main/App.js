@@ -362,6 +362,10 @@ export function SaveCodexSubscriptionProxyConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveCodexSubscriptionProxyConfig'](arg1, arg2);
 }
 
+export function SetClaudeCodeEntryMode(arg1) {
+  return window['go']['main']['App']['SetClaudeCodeEntryMode'](arg1);
+}
+
 export function SetClaudeRoutingOverride(arg1) {
   return window['go']['main']['App']['SetClaudeRoutingOverride'](arg1);
 }

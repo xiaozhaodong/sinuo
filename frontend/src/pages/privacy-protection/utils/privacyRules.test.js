@@ -32,7 +32,7 @@ test('订阅代理可选路径与上游类型进入 scope 选项', () => {
   assert.ok(PRIVACY_PATH_OPTIONS.includes('/v1/alpha/search'));
   assert.deepEqual(
     PRIVACY_UPSTREAM_TYPE_OPTIONS.find((option) => option.value === 'subscription'),
-    { value: 'subscription', label: 'Codex 订阅直通' }
+    { value: 'subscription', label: '订阅直通（Codex / Claude Code）' }
   );
 });
 

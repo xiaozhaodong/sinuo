@@ -7,7 +7,7 @@ import { Filter, Settings2, ChevronDown } from 'lucide-react';
 import { TIME_RANGE_OPTIONS } from '../utils/constants.js';
 import ViewConfigPanel from './ViewConfigPanel.jsx';
 import AutoRefreshControl from './AutoRefreshControl.jsx';
-import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
+import ClaudeAccessSwitcher from './ClaudeAccessSwitcher.jsx';
 import CodexAccessSwitcher from './CodexAccessSwitcher.jsx';
 
 /**
@@ -72,8 +72,8 @@ const Toolbar = ({
 }) => {
   return (
     <div className="flex flex-nowrap items-center justify-end gap-2 xl:gap-3 min-w-0">
-      {/* 端点快捷切换器 */}
-      <ClaudeEndpointSwitcher
+      {/* Claude 接入与端点策略快捷切换（入口未启用时即端点切换器） */}
+      <ClaudeAccessSwitcher
         endpoints={endpoints}
         routingState={claudeRoutingState}
         modelRoutingEnabled={modelRoutingEnabled}

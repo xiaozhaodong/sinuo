@@ -19,7 +19,7 @@ test('Codex 管理页独立承载账号池与客户端接入', async () => {
   assert.match(source, /label: '客户端接入'/);
   assert.match(source, /<AccountPoolPage embedded active=\{activeTab === 'accounts'\} headerTarget=\{accountActionsTarget\} \/>/);
   assert.match(source, /<CodexSubscriptionProxyCard \/>/);
-  assert.match(source, /role="tablist"/);
+  assert.match(source, /<PageTabs tabs=\{TABS\}/);
   assert.match(source, /role="tabpanel"/);
 });
 
@@ -31,7 +31,7 @@ test('顶层导航保留原路由键，并支持设置页直达客户端接入',
   assert.match(appSource, /const \[activeCodexTab, setActiveCodexTab\] = useState\('accounts'\)/);
   assert.match(appSource, /setActiveCodexTab\('client-access'\)/);
   assert.match(appSource, /setActiveTab\('account-pool'\)/);
-  assert.match(appSource, /<SettingsPage onNavigateToCodexAccess=\{navigateToCodexAccess\} \/>/);
+  assert.match(appSource, /<SettingsPage onNavigateToCodexAccess=\{navigateToCodexAccess\}/);
 });
 
 test('页签隐藏已挂载面板，并将账号池 portal 可见性绑定到当前页签', async () => {

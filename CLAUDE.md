@@ -32,7 +32,7 @@
   - 独立 upstream context
   - tail drain 补齐 terminal event / usage
   - 已完成后的 `context canceled` 按 `completed` 处理
-- Wails 前端页面：概览、端点管理、请求追踪、配置、日志、账号池
+- Wails 前端页面：概览、Claude 管理（端点 / 客户端接入）、Codex 管理（账号池 / 客户端接入）、请求追踪、配置、日志
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
 - Codex 账号池：单账号测试、启动批量连通性检查、分组编排、冷却、鉴权失效处理
 - 账号池编排：主组 / 备组 / 冷备、组内首选账号、全局固定账号、最近一次调度快照
@@ -139,8 +139,9 @@
 - `frontend/src/utils/errors.js`：错误归一化（Error / `{message}` / 字符串三态），错误提示取文案统一走 `resolveErrorMessage`，勿直接写 `err.message ||`
 - `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
-- `frontend/src/components/claude-code-entry/`：设置页「Claude Code 接入」卡片（启停、端口、模式、按请求类别路由、试用命令与配置片段）
-- `frontend/src/pages/requests/utils/subscriptionUpstream.js`：按端点认证方式识别订阅直通请求（列表「订阅」标签与详情标注共用）
+- `frontend/src/pages/claude/index.jsx`：「Claude 管理」页（「端点 / 客户端接入」两个页签，页签条 `components/layout/PageTabs.jsx` 与 Codex 管理共用）；端点页以 `embedded` 嵌入
+- `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`
+- `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
 
@@ -263,7 +264,7 @@ cd frontend && npm run build
 - `frontend/src/pages/requests/utils/modelConsistency.js` / `ModelTag.jsx` / `RequestDetailModal.jsx`：`node --test frontend/src/pages/requests/utils/*.test.js`
 - `internal/service/codex_model_capabilities.go` / `frontend/src/pages/account-pool/utils/codexModelCatalog.js`（Codex 模型能力校验，前后端规则须同步，共用用例 `internal/service/testdata/codex_capabilities_cases.json`）：`go test ./internal/service -run Codex` + `node --test frontend/src/pages/account-pool/utils/codexModelCatalog.test.js`
 - `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
-- Claude Code 订阅直通（`internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `internal/proxy/claude_subscription.go` / `handlers/claude_subscription_forward.go` / `forwarder.go` / `app_claude_code_entry.go`）：`go test ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/endpoints/utils/endpointFormState.test.js frontend/src/pages/requests/utils/subscriptionUpstream.test.js`
+- Claude Code 订阅直通（`internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `internal/proxy/claude_subscription.go` / `handlers/claude_subscription_forward.go` / `forwarder.go` / `app_claude_code_entry.go`）：`go test ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/claude/*.test.js frontend/src/pages/requests/utils/claudeRouteLabel.test.js frontend/src/pages/requests/utils/requestSource.test.js`
 
 ## 调试提示
 

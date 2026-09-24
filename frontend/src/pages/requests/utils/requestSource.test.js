@@ -53,6 +53,20 @@ test('订阅直通行显示固定标签，候选值保留真实存储值', () =>
   );
 });
 
+test('Codex 与 Claude Code 的订阅直通各有一个筛选候选，不限请求族时标签带上请求族', () => {
+  const codex = { request_family: 'codex', upstream_type: 'subscription', upstream_name: 'chatgpt-subscription' };
+  const claude = { request_family: 'claude', upstream_type: 'subscription', upstream_name: 'claude-subscription' };
+
+  assert.equal(resolveRequestUpstream(claude), '订阅直通');
+  assert.deepEqual(filterUpstreamOptionsByFamily([codex, claude], 'claude'), [
+    { value: 'claude-subscription', label: '订阅直通' }
+  ]);
+  assert.deepEqual(
+    filterUpstreamOptionsByFamily([codex, claude], 'all').map((option) => [option.value, option.label]).sort(),
+    [['chatgpt-subscription', '订阅直通 · Codex'], ['claude-subscription', '订阅直通 · Claude']]
+  );
+});
+
 test('空上游按终态码归类：候选为空显示「无可用上游」而非「未知上游」', () => {
   assert.equal(
     resolveRequestUpstream({ failure_reason: 'no_endpoints_available: no routable endpoint candidates' }),

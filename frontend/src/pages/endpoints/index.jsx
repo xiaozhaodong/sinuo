@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Activity, AlertTriangle, Boxes, Database, Info, Plus, RefreshCw, Route, Split } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
@@ -31,7 +32,9 @@ const readStoredViewMode = () => {
   }
 };
 
-const EndpointsPage = () => {
+// embedded：嵌在「Claude 管理」页签内，标题交给外层，操作按钮渲染到 headerTarget；
+// active=false（切到其他页签）时暂停快照轮询、收起抽屉与弹窗
+const EndpointsPage = ({ embedded = false, active = true, headerTarget = null }) => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
@@ -92,10 +95,10 @@ const EndpointsPage = () => {
   }, []);
 
   useEffect(() => {
-    if (snapshotUnsupported) return undefined;
+    if (snapshotUnsupported || !active) return undefined;
     const timer = window.setInterval(() => loadSnapshot().catch(() => {}), 5000);
     return () => window.clearInterval(timer);
-  }, [loadSnapshot, snapshotUnsupported]);
+  }, [active, loadSnapshot, snapshotUnsupported]);
 
   const run = useCallback(async (key, operation) => {
     setBusyKey(key);
@@ -138,26 +141,34 @@ const EndpointsPage = () => {
     ['冷却中', stats.cooldown, 'text-warn']
   ], [stats]);
 
+  const actions = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'}>刷新</Button>
+      <Button variant="secondary" icon={Activity} onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'}>批量测试</Button>
+      <Button variant="secondary" icon={Route} onClick={() => setDrawerOpen(true)}>调度快照</Button>
+      <Button variant="secondary" icon={Boxes} onClick={() => setModelsOpen(true)}>模型目录</Button>
+      <Button variant="secondary" icon={Split} onClick={() => setRoutingOpen(true)}>模型路由</Button>
+      <Button icon={Plus} onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }}>新建端点</Button>
+    </div>
+  );
+
   if (loading && endpoints.length === 0) return <LoadingSpinner text="加载 Claude 端点..." />;
   if (error && endpoints.length === 0) return <ErrorMessage title="Claude 端点加载失败" message={error} onRetry={refresh} />;
 
   return (
     <div className="animate-fade-in space-y-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-accent"><Database size={14} />SQLite 权威源</div>
-          <h1 className="mt-1 text-2xl font-bold text-fg">Claude 端点</h1>
-          <p className="mt-1 text-sm text-fg-muted">扁平管理固定认证、调度资格、健康状态与模型兼容规则。{lastUpdate && <span className="text-fg-subtle"> · 更新于 {lastUpdate}</span>}</p>
+      {headerTarget ? (active && createPortal(actions, headerTarget)) : (
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          {!embedded && (
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-accent"><Database size={14} />SQLite 权威源</div>
+              <h1 className="mt-1 text-2xl font-bold text-fg">Claude 端点</h1>
+              <p className="mt-1 text-sm text-fg-muted">扁平管理固定认证、调度资格、健康状态与模型兼容规则。{lastUpdate && <span className="text-fg-subtle"> · 更新于 {lastUpdate}</span>}</p>
+            </div>
+          )}
+          {actions}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'}>刷新</Button>
-          <Button variant="secondary" icon={Activity} onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'}>批量测试</Button>
-          <Button variant="secondary" icon={Route} onClick={() => setDrawerOpen(true)}>调度快照</Button>
-          <Button variant="secondary" icon={Boxes} onClick={() => setModelsOpen(true)}>模型目录</Button>
-          <Button variant="secondary" icon={Split} onClick={() => setRoutingOpen(true)}>模型路由</Button>
-          <Button icon={Plus} onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }}>新建端点</Button>
-        </div>
-      </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <button
@@ -236,11 +247,11 @@ const EndpointsPage = () => {
         )}
       </div>
 
-      <EndpointScheduleDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
-      <ClaudeModelsPanel open={modelsOpen} onClose={() => setModelsOpen(false)} />
-      <ModelRoutingDrawer open={routingOpen} onClose={() => { setRoutingOpen(false); loadRouting().catch(() => {}); }} endpoints={endpoints} />
-      {formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
-      {deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
+      <EndpointScheduleDrawer open={active && drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
+      <ClaudeModelsPanel open={active && modelsOpen} onClose={() => setModelsOpen(false)} />
+      <ModelRoutingDrawer open={active && routingOpen} onClose={() => { setRoutingOpen(false); loadRouting().catch(() => {}); }} endpoints={endpoints} />
+      {active && formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
+      {active && deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>
   );
 };

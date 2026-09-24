@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, Check, ChevronDown, Loader2, RefreshCw, Route } from 'lucide-react';
 import useCodexSubscriptionProxy from '@components/codex-access/useCodexSubscriptionProxy.js';
@@ -13,6 +13,7 @@ import { resolveCodexAccessLabel, resolveFallbackRouteLabel } from '../utils/acc
 import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
 import CodexModelRoutingSwitcher from './CodexModelRoutingSwitcher.jsx';
 import CodexModeConfirmDialog from './CodexModeConfirmDialog.jsx';
+import useAnchoredPanel from './useAnchoredPanel.js';
 
 const CodexAccessSwitcher = ({
   codexModelRoutingEnabled = false, bindings = [], accounts = [], onPatch,
@@ -22,7 +23,6 @@ const CodexAccessSwitcher = ({
   const { config, status, loading, configError, statusError, busy, notice, refresh, switchMode, clearNotice } = useCodexSubscriptionProxy();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(null);
-  const [position, setPosition] = useState(null);
   const [pending, setPending] = useState(null);
   const [result, setResult] = useState(null);
   const triggerRef = useRef(null);
@@ -58,42 +58,7 @@ const CodexAccessSwitcher = ({
     ? <CodexModelRoutingSwitcher embedded bindings={bindings} accounts={accounts} onPatch={onPatch} loading={modelRoutePatching} />
     : <AccountPoolSwitcher embedded accounts={accounts} activeAccount={activeAccount} recentSelectedAccountId={recentSelectedAccountId} onSwitch={onSwitch} onSwitchAuto={onSwitchAuto} loading={accountSwitching} modelRoutingEnabled={false} />;
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const positionPanel = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const width = Math.min(560, window.innerWidth - 24);
-      const top = Math.min(rect.bottom + 8, Math.max(12, window.innerHeight - 180));
-      setPosition({ width, top, left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), maxHeight: Math.max(120, window.innerHeight - top - 12) });
-    };
-    positionPanel();
-    window.addEventListener('resize', positionPanel);
-    window.addEventListener('scroll', positionPanel, true);
-    return () => {
-      window.removeEventListener('resize', positionPanel);
-      window.removeEventListener('scroll', positionPanel, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || pending) return undefined;
-    const outside = (event) => {
-      if (!triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false);
-    };
-    const escape = (event) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('mousedown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [open, pending]);
+  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: 560, dismissible: !pending });
 
   const chooseMode = (mode) => {
     if (!ready || busy || loading || mode === config.mode) return;

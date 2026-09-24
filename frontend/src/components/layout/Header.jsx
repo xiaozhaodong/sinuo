@@ -25,7 +25,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
   const { resolved, toggle } = useTheme();
   const tabs = [
     { name: 'overview', label: '概览' },
-    { name: 'endpoints', label: 'Claude 端点' },
+    { name: 'endpoints', label: 'Claude 管理' },
     { name: 'account-pool', label: 'Codex 管理' },
     { name: 'requests', label: '请求追踪' },
     // v6.1: 隐私保护

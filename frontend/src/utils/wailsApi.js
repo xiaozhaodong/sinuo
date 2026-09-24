@@ -254,8 +254,7 @@ export const getEndpoints = async () => {
     last_check: ep.last_check,
     response_time: ep.response_time_ms,
     consecutive_fail: ep.consecutive_fail,
-    never_checked: ep.never_checked === true || !ep.last_check,
-    authMode: ep.auth_mode || 'configured'
+    never_checked: ep.never_checked === true || !ep.last_check
   }));
 
   const healthy = formattedEndpoints.filter(e => e.healthy).length;
@@ -1486,7 +1485,6 @@ export const mapEndpointRecord = (record = {}) => ({
   url: record.url,
   tokenMasked: record.token_masked,
   apiKeyMasked: record.api_key_masked,
-  authMode: record.auth_mode || 'configured',
   headers: record.headers || {},
   priority: record.priority,
   failoverEnabled: record.failover_enabled,
@@ -1529,7 +1527,6 @@ export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
   api_key: input.apiKey || '',
   clear_token: input.clearToken === true,
   clear_api_key: input.clearApiKey === true,
-  auth_mode: input.authMode || 'configured',
   headers: input.headers || {},
   priority: Number.isFinite(Number(input.priority)) ? Math.max(0, parseInt(input.priority, 10)) : 1,
   failover_enabled: input.failoverEnabled !== false,
@@ -2471,12 +2468,11 @@ export const rotateCodexSubscriptionProxyAccess = async (expectedRevision = 0) =
   );
 };
 
-const normalizeClaudeCodeEntryInfo = (info = {}) => ({
+// 入口状态的前端形状；claude-code-entry:update 事件推送的是后端原始字段，也用它归一
+export const normalizeClaudeCodeEntryInfo = (info = {}) => ({
   enabled: info.enabled === true,
   listenPort: Number(info.listen_port) || 0,
-  mode: info.mode || 'auto',
-  requestClassRouting: info.request_class_routing === true,
-  apiRequestClasses: Array.isArray(info.api_request_classes) ? info.api_request_classes : [],
+  mode: info.mode || 'subscription',
   baseUrl: info.base_url || '',
   running: info.running === true,
   error: info.error || ''
@@ -2484,7 +2480,7 @@ const normalizeClaudeCodeEntryInfo = (info = {}) => ({
 
 /**
  * 获取 Claude Code 专用入口的配置与运行态
- * @returns {Promise<{enabled:boolean, listenPort:number, baseUrl:string, running:boolean, error:string}>}
+ * @returns {Promise<{enabled:boolean, listenPort:number, mode:string, baseUrl:string, running:boolean, error:string}>}
  */
 export const getClaudeCodeEntryStatus = async () => {
   await initWails();
@@ -2495,7 +2491,7 @@ export const getClaudeCodeEntryStatus = async () => {
 
 /**
  * 保存 Claude Code 专用入口配置并立即应用；监听失败时由返回值的 error 字段说明原因
- * @param {{enabled:boolean, listenPort:number, mode:string, requestClassRouting:boolean, apiRequestClasses:string[]}} input
+ * @param {{enabled:boolean, listenPort:number, mode:string}} input
  */
 export const saveClaudeCodeEntrySettings = async (input = {}) => {
   await initWails();
@@ -2504,10 +2500,19 @@ export const saveClaudeCodeEntrySettings = async (input = {}) => {
   return normalizeClaudeCodeEntryInfo(await WailsApp.SaveClaudeCodeEntrySettings({
     enabled: input.enabled === true,
     listen_port: Number(input.listenPort),
-    mode: String(input.mode || 'auto'),
-    request_class_routing: input.requestClassRouting === true,
-    api_request_classes: Array.isArray(input.apiRequestClasses) ? input.apiRequestClasses : []
+    mode: String(input.mode || 'subscription')
   }));
+};
+
+/**
+ * 只切换 Claude Code 入口的接入模式（subscription / endpoint），启用状态与端口沿用已保存配置
+ * @param {string} mode
+ */
+export const setClaudeCodeEntryMode = async (mode) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeClaudeCodeEntryInfo(await WailsApp.SetClaudeCodeEntryMode(String(mode || '')));
 };
 
 export const getCodexSubscriptionProxyStatus = async () => {

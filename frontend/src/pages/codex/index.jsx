@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { KeyRound, Layers3 } from 'lucide-react';
 import CodexSubscriptionProxyCard from '@components/codex-access/CodexSubscriptionProxyCard.jsx';
+import PageTabs from '@components/layout/PageTabs.jsx';
 import AccountPoolPage from '@pages/account-pool/index.jsx';
 
 const TABS = [
@@ -49,35 +50,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="tablist"
-          aria-label="Codex 管理"
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-surface-sub p-1"
-        >
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            const selected = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                id={`codex-tab-${tab.id}`}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-controls={`codex-panel-${tab.id}`}
-                onClick={() => handleTabChange(tab.id)}
-                className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  selected
-                    ? 'bg-surface text-accent shadow-sm'
-                    : 'text-fg-muted hover:bg-surface/60 hover:text-fg-body'
-                }`}
-              >
-                <Icon size={15} className="shrink-0" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
+        <PageTabs tabs={TABS} activeTab={activeTab} onChange={handleTabChange} idPrefix="codex" ariaLabel="Codex 管理" />
         {/* 操作仍由账号池页面管理，在同一工具栏展示，避免多占一行。 */}
         <div ref={setAccountActionsTarget} hidden={activeTab !== 'accounts'} />
       </div>

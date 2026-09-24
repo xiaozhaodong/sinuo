@@ -184,6 +184,8 @@ export function SaveCodexModelCatalog(arg1:main.SaveCodexModelCatalogInput):Prom
 
 export function SaveCodexSubscriptionProxyConfig(arg1:main.CodexSubscriptionProxyConfigInput,arg2:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;
 
+export function SetClaudeCodeEntryMode(arg1:string):Promise<main.ClaudeCodeEntryInfo>;
+
 export function SetClaudeRoutingOverride(arg1:main.SetClaudeRoutingOverrideInput):Promise<main.ClaudeRoutingState>;
 
 export function SetCodexSubscriptionProxyEnabled(arg1:boolean,arg2:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;

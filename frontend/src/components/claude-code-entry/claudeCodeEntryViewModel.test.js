@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 import {
   buildClaudeCodeSettingsSnippet,
   buildClaudeCodeTrialCommand,
+  CLAUDE_CODE_ENTRY_MODE_OPTIONS,
   describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
   parseClaudeCodeEntryPort,
-  toggleRequestClass
+  resolveClaudeAccessLabel
 } from './claudeCodeEntryViewModel.js';
 
 test('端口只接受 1-65535 的整数', () => {
@@ -27,33 +28,28 @@ test('状态徽章：启动失败优先于运行态与启用意图', () => {
   assert.equal(describeClaudeCodeEntryState({ enabled: false, running: false, error: '' }).label, '未启用');
 });
 
-test('配置片段与试用命令使用入口地址', () => {
+test('配置片段与试用命令只设置入口地址', () => {
   const snippet = buildClaudeCodeSettingsSnippet('http://127.0.0.1:18088');
   assert.deepEqual(JSON.parse(snippet), { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:18088' } });
   assert.equal(buildClaudeCodeTrialCommand('http://127.0.0.1:18088'), 'ANTHROPIC_BASE_URL=http://127.0.0.1:18088 claude');
 });
 
-test('模式说明：未知值回落到按模型路由', () => {
-  assert.equal(describeClaudeCodeEntryMode('subscription').label, '仅订阅');
-  assert.equal(describeClaudeCodeEntryMode('api').label, '仅 API');
-  assert.equal(describeClaudeCodeEntryMode('auto').label, '按模型路由');
-  assert.equal(describeClaudeCodeEntryMode('unknown').value, 'auto');
+test('接入模式只有订阅直通与端点，未知值回落到订阅直通', () => {
+  assert.deepEqual(CLAUDE_CODE_ENTRY_MODE_OPTIONS.map((option) => option.value), ['subscription', 'endpoint']);
+  assert.equal(describeClaudeCodeEntryMode('endpoint').label, '端点');
+  assert.equal(describeClaudeCodeEntryMode('auto').value, 'subscription');
 });
 
-test('请求类别勾选结果按固定顺序排列', () => {
-  assert.deepEqual(toggleRequestClass(['workflow'], 'subagent'), ['subagent', 'workflow']);
-  assert.deepEqual(toggleRequestClass(['subagent', 'auxiliary'], 'subagent'), ['auxiliary']);
-  assert.deepEqual(toggleRequestClass([], 'compaction'), ['compaction']);
-});
-
-test('启用按请求类别路由时配置片段与试用命令带上类别头开关', () => {
-  const snippet = JSON.parse(buildClaudeCodeSettingsSnippet('http://127.0.0.1:18088', { hintHeaders: true }));
-  assert.deepEqual(snippet.env, {
-    ANTHROPIC_BASE_URL: 'http://127.0.0.1:18088',
-    CLAUDE_CODE_GATEWAY_HINT_HEADERS: '1'
-  });
-  assert.equal(
-    buildClaudeCodeTrialCommand('http://127.0.0.1:18088', { hintHeaders: true }),
-    'CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 ANTHROPIC_BASE_URL=http://127.0.0.1:18088 claude'
+test('请求页按钮标签：入口未启用时显示端点策略，运行中按接入模式显示', () => {
+  const running = { enabled: true, running: true, error: '' };
+  assert.deepEqual(resolveClaudeAccessLabel({ loading: true }), { label: '读取中', detail: '' });
+  assert.equal(resolveClaudeAccessLabel({ error: 'boom', routeLabel: 'Auto' }).label, 'Auto');
+  assert.deepEqual(
+    resolveClaudeAccessLabel({ info: { enabled: false }, routeLabel: '模型路由 · 3 模型' }),
+    { label: '模型路由 · 3 模型', detail: 'Claude Code 入口未启用' }
   );
+  assert.equal(resolveClaudeAccessLabel({ info: { enabled: true, error: '端口被占用' } }).label, '入口启动失败');
+  assert.equal(resolveClaudeAccessLabel({ info: { enabled: true, running: false, error: '' } }).label, '入口未运行');
+  assert.equal(resolveClaudeAccessLabel({ info: { ...running, mode: 'subscription' } }).label, '订阅直通');
+  assert.equal(resolveClaudeAccessLabel({ info: { ...running, mode: 'endpoint' }, routeLabel: 'Auto · vendor' }).label, '端点 · Auto · vendor');
 });

@@ -41,7 +41,7 @@ export const PAGINATION_CONFIG = {
 };
 
 // 来源视图选项：value 与服务端 source_view 取值一一对应，
-// subscription 是 Codex 订阅直通的落库来源（upstream_type=subscription）。
+// subscription 是 Codex / Claude Code 订阅直通的落库来源（upstream_type=subscription）。
 export const SOURCE_VIEW_OPTIONS = [
   { value: 'all', label: '全部来源' },
   { value: 'endpoint', label: '端点' },

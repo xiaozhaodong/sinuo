@@ -15,7 +15,8 @@ import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 
 // 懒加载页面组件
 const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
-const EndpointsPage = lazy(() => import('@pages/endpoints/index.jsx'));
+// Claude 管理页面（端点 + 客户端接入）
+const ClaudePage = lazy(() => import('@pages/claude/index.jsx'));
 const RequestsPage = lazy(() => import('@pages/requests/index.jsx'));
 const PricingPage = lazy(() => import('@pages/pricing/index.jsx'));
 // v5.1: 配置页面改为设置页面（可编辑）
@@ -37,6 +38,7 @@ const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index
 const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [activeCodexTab, setActiveCodexTab] = useState('accounts');
+  const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
   // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
@@ -75,6 +77,11 @@ const AppRoutes = () => {
     setActiveTab('account-pool');
   }, []);
 
+  const navigateToClaudeAccess = useCallback(() => {
+    setActiveClaudeTab('client-access');
+    setActiveTab('endpoints');
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -106,14 +113,14 @@ const AppRoutes = () => {
     const pages = {
       // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
       overview: <OverviewPage onNavigate={setActiveTab} />,
-      endpoints: <EndpointsPage />,
+      endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} />,
       requests: <RequestsPage />,
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,
       'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} />,
       // v5.1: 设置页面（可编辑）
-      settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} />,
+      settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} onNavigateToClaudeAccess={navigateToClaudeAccess} />,
       // 保留只读配置页面
       config: <ConfigPage />,
       // v5.1: 系统日志页面
