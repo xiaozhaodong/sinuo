@@ -77,7 +77,9 @@ const reasonLabels = {
     member_missing: '组成员不存在',
     outside_model_group: '不在该模型的端点集合中',
     manual_fixed_target_not_member: '固定目标不在该模型的端点集合中',
-    manual_preferred_target_not_member: '优选目标不在该模型的端点集合中'
+    manual_preferred_target_not_member: '优选目标不在该模型的端点集合中',
+    client_oauth_requires_claude_code_entry: '订阅直通端点只服务 Claude Code 入口',
+    cross_auth_boundary: '认证方式与首个候选不同，不在订阅与 API 间转移'
 };
 
 const negativeCacheLabels = {

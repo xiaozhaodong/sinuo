@@ -124,3 +124,85 @@ func TestClaudeCodeEntryRuntime_ApplyStopAndPortConflict(t *testing.T) {
 		t.Fatal("停用后端口应已释放")
 	}
 }
+
+// TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor
+// 端到端：经真实入口监听进来的请求命中订阅直通端点并透传客户端 token；
+// 主端口（直接进代理处理器）的同样请求只走第三方端点，且客户端 token 不外泄。
+func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
+	type hit struct{ authorization, apiKey string }
+	subscriptionHits := make(chan hit, 4)
+	vendorHits := make(chan hit, 4)
+	upstream := func(hits chan hit) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits <- hit{authorization: r.Header.Get("Authorization"), apiKey: r.Header.Get("X-Api-Key")}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+		}))
+	}
+	subscription := upstream(subscriptionHits)
+	defer subscription.Close()
+	vendor := upstream(vendorHits)
+	defer vendor.Close()
+
+	subscriptionCfg := clientOAuthPipelineConfig("subscription", subscription.URL, 1)
+	vendorCfg := endpointPipelineConfig("vendor", vendor.URL, 2)
+	vendorCfg.ApiKey = "vendor-key"
+	handler, _ := newEndpointPipelineTestHandler(t, subscriptionCfg, vendorCfg)
+
+	rt := NewClaudeCodeEntryRuntime(handler, nil)
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port failed: %v", err)
+	}
+	addr := holder.Addr().String()
+	_ = holder.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := rt.Apply(ctx, true, addr); err != nil {
+		t.Fatalf("start entry failed: %v", err)
+	}
+	defer func() { _ = rt.Stop(ctx) }()
+
+	const body = `{"model":"claude-test","messages":[{"role":"user","content":"hi"}]}`
+	send := func(target string) int {
+		req, _ := http.NewRequest(http.MethodPost, target+"/v1/messages?beta=true", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request %s failed: %v", target, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if status := send("http://" + addr); status != http.StatusOK {
+		t.Fatalf("入口请求应成功，got %d", status)
+	}
+	select {
+	case got := <-subscriptionHits:
+		if got.authorization != "Bearer sk-ant-oat01-client" || got.apiKey != "" {
+			t.Fatalf("订阅直通上游应只收到客户端 OAuth token，got %+v", got)
+		}
+	default:
+		t.Fatal("入口请求应命中订阅直通端点")
+	}
+
+	mainPort := httptest.NewServer(handler)
+	defer mainPort.Close()
+	if status := send(mainPort.URL); status != http.StatusOK {
+		t.Fatalf("主端口请求应成功，got %d", status)
+	}
+	select {
+	case got := <-vendorHits:
+		if got.authorization != "" || got.apiKey != "vendor-key" {
+			t.Fatalf("第三方上游只能收到端点 API Key，不能收到客户端 token，got %+v", got)
+		}
+	default:
+		t.Fatal("主端口请求应命中第三方端点")
+	}
+	if len(subscriptionHits) != 0 {
+		t.Fatal("主端口请求不得命中订阅直通端点")
+	}
+}
