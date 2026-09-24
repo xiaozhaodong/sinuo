@@ -2,7 +2,7 @@
 // 创建时间: 2026-09-24
 //
 // Claude Code 以 claude.ai 订阅登录、ANTHROPIC_BASE_URL 指向本入口时，请求携带自己的 OAuth token；
-// 只有经本入口进来的请求才能调度到订阅直通端点。配置以单行 JSON 存在 settings 表的
+// 订阅直通模式直连 Anthropic 官方，端点模式与主端口一样走端点调度。配置以单行 JSON 存在 settings 表的
 // claude_code_entry.config，由本服务独占（通用设置接口不可写）。
 // 监听地址固定为 127.0.0.1；端口写进 Claude Code 配置后不能漂移，被占用时启动失败而不是换端口。
 package service
@@ -43,22 +43,18 @@ var (
 
 // ClaudeCodeEntryConfig 持久化的单行配置
 type ClaudeCodeEntryConfig struct {
-	SchemaVersion int    `json:"schema_version"`
-	Enabled       bool   `json:"enabled"`
-	ListenPort    int    `json:"listen_port"`
-	Mode          string `json:"mode"` // auto / subscription / api；旧配置缺省按 auto
-	// RequestClassRouting 按请求类别路由：APIRequestClasses 中的类别强制走 API
-	RequestClassRouting bool     `json:"request_class_routing"`
-	APIRequestClasses   []string `json:"api_request_classes"`
+	SchemaVersion int  `json:"schema_version"`
+	Enabled       bool `json:"enabled"`
+	ListenPort    int  `json:"listen_port"`
+	// Mode 接入模式：subscription / endpoint；缺省与旧版 auto 按订阅直通，旧版 api 按端点
+	Mode string `json:"mode"`
 }
 
 // ClaudeCodeEntryInput 保存输入
 type ClaudeCodeEntryInput struct {
-	Enabled             bool
-	ListenPort          int
-	Mode                string
-	RequestClassRouting bool
-	APIRequestClasses   []string
+	Enabled    bool
+	ListenPort int
+	Mode       string
 }
 
 // ListenAddr 监听地址 host:port
@@ -77,11 +73,7 @@ func DefaultClaudeCodeEntryConfig() ClaudeCodeEntryConfig {
 		SchemaVersion: ClaudeCodeEntrySchemaVersion,
 		Enabled:       false,
 		ListenPort:    ClaudeCodeEntryDefaultPort,
-		Mode:          endpoint.ClaudeCodeEntryModeAuto,
-		APIRequestClasses: []string{
-			endpoint.ClaudeCodeRequestClassSubagent,
-			endpoint.ClaudeCodeRequestClassAuxiliary,
-		},
+		Mode:          endpoint.ClaudeCodeEntryModeSubscription,
 	}
 }
 
@@ -111,12 +103,10 @@ func (s *ClaudeCodeEntrySettingsService) Load(ctx context.Context) (ClaudeCodeEn
 // Save 校验后整体覆盖保存；已存配置损坏时拒绝覆盖，避免掩盖问题
 func (s *ClaudeCodeEntrySettingsService) Save(ctx context.Context, input ClaudeCodeEntryInput) (ClaudeCodeEntryConfig, error) {
 	next, err := normalizeClaudeCodeEntryConfig(ClaudeCodeEntryConfig{
-		SchemaVersion:       ClaudeCodeEntrySchemaVersion,
-		Enabled:             input.Enabled,
-		ListenPort:          input.ListenPort,
-		Mode:                input.Mode,
-		RequestClassRouting: input.RequestClassRouting,
-		APIRequestClasses:   input.APIRequestClasses,
+		SchemaVersion: ClaudeCodeEntrySchemaVersion,
+		Enabled:       input.Enabled,
+		ListenPort:    input.ListenPort,
+		Mode:          input.Mode,
 	})
 	if err != nil {
 		return ClaudeCodeEntryConfig{}, err
@@ -152,19 +142,14 @@ func parseClaudeCodeEntryConfig(raw string) (ClaudeCodeEntryConfig, error) {
 	return normalized, nil
 }
 
-// normalizeClaudeCodeEntryConfig 归一化并校验字段；Mode 空值按 auto
+// normalizeClaudeCodeEntryConfig 归一化并校验字段；Mode 空值与旧版 auto 按订阅直通
 func normalizeClaudeCodeEntryConfig(cfg ClaudeCodeEntryConfig) (ClaudeCodeEntryConfig, error) {
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		return cfg, fmt.Errorf("%w: 端口必须在 1-65535 之间", ErrClaudeCodeEntryInvalidConfig)
 	}
 	cfg.Mode = endpoint.NormalizeClaudeCodeEntryMode(cfg.Mode)
 	if !endpoint.IsValidClaudeCodeEntryMode(cfg.Mode) {
-		return cfg, fmt.Errorf("%w: 模式只能是 auto / subscription / api", ErrClaudeCodeEntryInvalidConfig)
+		return cfg, fmt.Errorf("%w: 模式只能是 subscription / endpoint", ErrClaudeCodeEntryInvalidConfig)
 	}
-	classes, err := endpoint.NormalizeClaudeCodeAPIRequestClasses(cfg.APIRequestClasses)
-	if err != nil {
-		return cfg, fmt.Errorf("%w: %v", ErrClaudeCodeEntryInvalidConfig, err)
-	}
-	cfg.APIRequestClasses = classes
 	return cfg, nil
 }

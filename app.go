@@ -95,7 +95,7 @@ type App struct {
 	subscriptionProxyHandler         *proxy.CodexSubscriptionProxyHandler
 	subscriptionProxyRuntime         *proxy.CodexSubscriptionProxyRuntime
 
-	// Claude Code 专用入口（独立回环 listener；只有经此进入的请求能调度到订阅直通端点）
+	// Claude Code 专用入口（独立回环 listener；订阅直通模式直连 Anthropic 官方，端点模式与主端口相同）
 	claudeCodeEntryMu       sync.Mutex // 串行化「保存配置 + 应用运行态」
 	claudeCodeEntrySettings *service.ClaudeCodeEntrySettingsService
 	claudeCodeEntryRuntime  *proxy.ClaudeCodeEntryRuntime

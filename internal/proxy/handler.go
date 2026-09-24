@@ -64,6 +64,8 @@ type Handler struct {
 	// §9.2 规则 5：endpoint+scope 非阻塞 429 重试 gate，同一时刻只放行一个延迟重试
 	rateLimitRetryGates   sync.Map
 	endpointDispatchPacer *endpointDispatchPacer
+	// claudeSubscriptionBaseURL Claude Code 订阅直通的上游；空值为 Anthropic 官方地址，仅测试注入本地上游
+	claudeSubscriptionBaseURL string
 }
 
 type CodexModelListProvider interface {
@@ -229,7 +231,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled
+	// Claude Code 订阅直通不进端点调度；count_tokens 也直接交给官方，不做本地估算
+	claudeSubscription := endpoint.IsClaudeCodeSubscription(r.Context())
+	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled && !claudeSubscription
 	poolMetadata, hasPoolMetadata := subscriptionPoolMetadataFromContext(r.Context())
 	var lifecycleManager *RequestLifecycleManager
 	startTrackedRequest := func(bool) {}
@@ -250,8 +254,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			lifecycleManager.SetRequestFamily(tracking.RequestFamilyOther)
 		}
-		// Codex 账号池链路分离，不挂载 endpoint 失败追踪语义
-		if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) {
+		// Codex 账号池、图像代理与 Claude 订阅直通都不挂载 endpoint 失败追踪语义
+		if !h.isAccountPipelinePath(r.URL.Path) && !isImageAPIPath(r.URL.Path) && !claudeSubscription {
 			// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 			lifecycleManager.SetEndpointManager(h.endpointManager)
 		}
@@ -361,6 +365,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.isAccountPipelinePath(r.URL.Path) {
 		h.handleUnavailableAccountPipeline(w, lifecycleManager)
+		return
+	}
+
+	// Claude Code 订阅直通：直连 Anthropic 官方，不进端点调度
+	if claudeSubscription {
+		h.handleClaudeSubscription(ctx, w, r, bodyBytes, lifecycleManager, isSSE)
 		return
 	}
 

@@ -352,16 +352,6 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 			return fmt.Errorf("端点 Header 名称不能为空")
 		}
 	}
-	record.AuthMode = config.NormalizeEndpointAuthMode(record.AuthMode)
-	if err := config.ValidateEndpointAuthSettings(config.EndpointAuthSettings{
-		AuthMode: record.AuthMode,
-		URL:      record.URL,
-		Token:    record.Token,
-		ApiKey:   record.ApiKey,
-		Headers:  record.Headers,
-	}); err != nil {
-		return err
-	}
 	if err := config.ValidateSoftFailureOverrides(record.SoftFailureWindowMinutes, record.SoftFailureThreshold); err != nil {
 		return err
 	}
@@ -380,7 +370,6 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 		Priority:                 record.Priority,
 		Token:                    record.Token,
 		ApiKey:                   record.ApiKey,
-		AuthMode:                 config.NormalizeEndpointAuthMode(record.AuthMode),
 		Headers:                  record.Headers,
 		Timeout:                  time.Duration(record.TimeoutSeconds) * time.Second,
 		SupportsCountTokens:      record.SupportsCountTokens,

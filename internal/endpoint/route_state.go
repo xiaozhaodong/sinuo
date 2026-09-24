@@ -33,12 +33,6 @@ type RouteRequestProfile struct {
 	// 模型路由据此优先命中「联网工具」映射。
 	ServerToolTypes []string
 	WebTools        bool
-	// ClaudeCodeEntry 请求来自 Claude Code 专用 loopback 入口；只有这类请求能调度到订阅直通端点
-	ClaudeCodeEntry bool
-	// ClaudeCodeEntryMode 入口请求的生效模式（auto / subscription / api），非入口请求为空
-	ClaudeCodeEntryMode string
-	// ClaudeCodeEntryClassOverride 生效模式来自「按请求类别路由」覆盖
-	ClaudeCodeEntryClassOverride bool
 }
 
 type RouteBlock struct {
@@ -272,7 +266,7 @@ func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
 		return &RouteBlock{StatusCode: http.StatusUnprocessableEntity, Code: code, Message: message, Reason: scope.UnassignedReason}
 	}
 	if scope.Mode != RouteModeManualFixed || scope.Target == "" {
-		return m.claudeCodeEntryModeBlock(scope, profile)
+		return nil
 	}
 	if scope.Kind == RouteScopeUpstreamGroup && !slices.Contains(scope.Members, scope.Target) {
 		return &RouteBlock{
@@ -306,15 +300,6 @@ func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
 			Reason:     "manual_fixed_endpoint_disabled",
 		}
 	}
-	if ok, reason := endpointServesEntry(ep, profile); !ok {
-		return &RouteBlock{
-			StatusCode: http.StatusUnprocessableEntity,
-			Code:       reason,
-			Message:    manualFixedEntryMismatchMessage(reason),
-			Endpoint:   scope.Target,
-			Reason:     "manual_fixed_" + reason,
-		}
-	}
 	if hit, reason := m.routeState.HasNegativeHit(scope.Target, profile); hit {
 		return &RouteBlock{
 			StatusCode: http.StatusUnprocessableEntity,
@@ -337,20 +322,6 @@ func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
 		}
 	}
 	return nil
-}
-
-// manualFixedEntryMismatchMessage 手动固定目标与入口约束不符时的提示
-func manualFixedEntryMismatchMessage(reason string) string {
-	switch reason {
-	case routeSkipClientOAuthOutsideEntry:
-		return "手动固定的是 Claude Code 订阅直通端点，只接受 Claude Code 专用入口的请求。"
-	case routeSkipEntryModeSubscriptionOnly:
-		return "Claude Code 接入模式为「仅订阅」，但手动固定的是第三方端点。"
-	case routeSkipEntryRequestClassAPI:
-		return "该请求类别按设置走 API，但手动固定的是订阅直通端点。"
-	default:
-		return "Claude Code 接入模式为「仅 API」，但手动固定的是订阅直通端点。"
-	}
 }
 
 func retryAfterFromDuration(duration time.Duration) int {

@@ -62,13 +62,13 @@
   - 思考串文法：空格分隔 `key:value`，key ∈ `thinking / budget / effort / reasoning_tokens`；Claude 响应只能观测有无思考块，不做默认值推断；Codex 响应按字段合并 `created` 的 effort 与 `completed` 的 reasoning_tokens
   - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
-- Claude Code 订阅直通（本机 claude.ai 登录透传）：
-  - 端点 `auth_mode`：`configured`（端点凭据，旧行为）/ `client_oauth`（订阅直通）；订阅直通端点 URL 只能是 `https://api.anthropic.com`、不存 Token/API Key，OAuth token 只在请求内透传、不落库
-  - Claude Code 专用 loopback 入口（默认 `127.0.0.1:18088`，端口被占用即启动失败、不漂移；不经 AuthMiddleware）：只有经此入口的请求能命中订阅直通端点，主端口请求永远只走端点凭据端点；配置存 settings 受保护分类 `claude_code_entry`
-  - 入口模式 `auto / subscription / api` 热切换不重启 listener；「按请求类别路由」（默认关）读 `x-claude-code-request-class`，勾选类别强制走 API，需客户端设置 `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`
-  - 认证边界：候选只保留与首个候选同认证方式的端点，订阅与 API 之间不自动转移；非自动模式下作用域内无符合端点返回 422 `claude_code_mode_no_compatible_endpoint`
-  - 订阅直通端点的响应按透明网关处理：4xx 原样透传，不冷却、不计软失败、不短重试、不换候选；5xx 原样透传并记一次 server_error 软失败；流式成功带回 `anthropic-ratelimit-unified-*` 等上游头；count_tokens 的 401/403 不写全局鉴权冷却
-  - 入口请求转发第三方时删除 `anthropic-beta` 中 `oauth-` 前缀值；订阅请求有意按 API 价格计费，请求页按端点名标出「订阅」
+- Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：
+  - Claude Code 专用 loopback 入口（默认 `127.0.0.1:18088`，端口被占用即启动失败、不漂移；不经 AuthMiddleware）；配置存 settings 受保护分类 `claude_code_entry`
+  - 入口接入模式二选一，热切换不重启 listener：`subscription`（订阅直通）/ `endpoint`（端点，与主端口相同，走全局路由或模型路由）；旧值 `auto` 按订阅直通、`api` 按端点读取。订阅与第三方**不混用**，订阅不是端点、不参与模型路由
+  - 订阅直通不进端点调度：固定发往 `https://api.anthropic.com`，透传客户端 OAuth（OAuth token 只在请求内透传、不落库），count_tokens 也直发官方、不受「Token 计数」开关影响；未带 Authorization 时本地返回 401 说明原因
+  - 按透明网关处理：4xx / 5xx 原样透传，不冷却、不重试；流式成功带回 `anthropic-ratelimit-unified-*` 等上游头；连接失败以 Anthropic 错误格式返回 502 / 504
+  - 追踪记为 `upstream_type=subscription`、上游名 `claude-subscription`（与 Codex 的 `chatgpt-subscription` 并列），请求页按「订阅直通」展示；有意按 API 价格计费；隐私规则按 `subscription` 上游类型匹配
+  - 端点模式的入口请求转发第三方时删除 `anthropic-beta` 中 `oauth-` 前缀值；主端口请求永远只走端点
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
   - 规则存 SQLite（`privacy_settings` / `privacy_rules`），保存先编译后落库，原子热替换不重启
@@ -115,9 +115,9 @@
 - `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
-- `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；按 `auth_mode` 选择请求头策略（订阅直通透传客户端 OAuth、入口请求转第三方时剔除 OAuth beta）
-- `config/endpoint_auth_mode.go`：端点认证方式常量与「认证方式 × URL × 凭据 × 自定义头」组合校验
-- `internal/endpoint/claude_code_entry.go`：入口标记与生效模式、请求类别、入口判定（`entryRouteDecision`）、认证边界与模式阻断
+- `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta
+- `internal/proxy/claude_subscription.go` / `internal/proxy/handlers/claude_subscription_forward.go`：Claude Code 订阅直通分支（透明透传、追踪、复用端点管线的响应处理）与出站请求头策略
+- `internal/endpoint/claude_code_entry.go`：入口接入模式常量（含旧值归一）与入口上下文标记
 - `internal/proxy/claude_code_entry.go`：Claude Code 入口 handler（Host / Origin / 路径校验）、运行态与可热更新的入口策略
 - `internal/service/claude_code_entry_settings.go` / `app_claude_code_entry.go`：入口配置（受保护分类）与 Wails API
 - `internal/proxy/stream_processor.go`：流式 terminal / cancellation / tail drain 核心
@@ -263,12 +263,12 @@ cd frontend && npm run build
 - `frontend/src/pages/requests/utils/modelConsistency.js` / `ModelTag.jsx` / `RequestDetailModal.jsx`：`node --test frontend/src/pages/requests/utils/*.test.js`
 - `internal/service/codex_model_capabilities.go` / `frontend/src/pages/account-pool/utils/codexModelCatalog.js`（Codex 模型能力校验，前后端规则须同步，共用用例 `internal/service/testdata/codex_capabilities_cases.json`）：`go test ./internal/service -run Codex` + `node --test frontend/src/pages/account-pool/utils/codexModelCatalog.test.js`
 - `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
-- Claude Code 订阅直通（`config/endpoint_auth_mode.go` / `internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `endpoint_failure_policy.go` / `forwarder.go` / `app_claude_code_entry.go`）：`go test ./config ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service ./internal/store .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/endpoints/utils/endpointFormState.test.js frontend/src/pages/requests/utils/subscriptionUpstream.test.js`
+- Claude Code 订阅直通（`internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `internal/proxy/claude_subscription.go` / `handlers/claude_subscription_forward.go` / `forwarder.go` / `app_claude_code_entry.go`）：`go test ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/endpoints/utils/endpointFormState.test.js frontend/src/pages/requests/utils/subscriptionUpstream.test.js`
 
 ## 调试提示
 
 - 请求追踪：用 `req-xxxxxxxx` 过滤日志
-- Claude Code 订阅直通问题优先看：请求是否来自入口端口（主端口永远用不到订阅端点）、设置页入口卡片的运行状态与模式、调度快照里的跳过原因（`client_oauth_requires_claude_code_entry` / `cross_auth_boundary` / `claude_code_mode_*` / `claude_code_request_class_api`）
+- Claude Code 订阅直通问题优先看：请求是否来自入口端口（主端口永远走端点）、入口卡片的运行状态与接入模式、请求记录的 `upstream_type`（`subscription` 才是订阅直通）；订阅直通不进端点调度，调度快照里不会有它
 - 账号池问题优先看：
   - `group_key`
   - `is_active_selection / is_group_preferred`

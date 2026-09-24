@@ -259,56 +259,38 @@ func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
 
 // CopyHeaders 复制头部逻辑
 func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoint.Endpoint) {
-	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Headers, outboundCredentials{
-		token:       f.endpointManager.GetTokenForEndpoint(ep),
-		apiKey:      f.endpointManager.GetApiKeyForEndpoint(ep),
-		clientOAuth: ep.Config.IsClientOAuth(),
-	})
+	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Headers,
+		f.endpointManager.GetTokenForEndpoint(ep), f.endpointManager.GetApiKeyForEndpoint(ep))
 }
 
 // CopyAttemptHeaders 只使用 admission 快照中已解析的凭据与 headers。
 // 即使快照凭据为空，也不得回退到运行态组内继承。
 func (f *Forwarder) CopyAttemptHeaders(src *http.Request, dst *http.Request, target *endpoint.EndpointAttemptTarget) {
 	cfg := target.Config()
-	f.copyHeaders(src, dst, cfg.URL, cfg.Headers, outboundCredentials{
-		token:       cfg.Token,
-		apiKey:      cfg.ApiKey,
-		clientOAuth: cfg.IsClientOAuth(),
-	})
+	f.copyHeaders(src, dst, cfg.URL, cfg.Headers, cfg.Token, cfg.ApiKey)
 }
 
-// outboundCredentials 出站认证来源：端点凭据，或透传客户端的 OAuth（订阅直通）
-type outboundCredentials struct {
-	token       string
-	apiKey      string
-	clientOAuth bool
-}
+func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, token, apiKey string) {
+	// List of headers to skip/remove
+	skipHeaders := map[string]bool{
+		"host":          true, // We'll set this based on target endpoint
+		"authorization": true, // We'll add our own if configured
+		"x-api-key":     true, // Remove sensitive client API keys
+	}
 
-// configuredSkipHeaders 端点凭据模式：删除客户端认证头，改用端点凭据
-var configuredSkipHeaders = map[string]bool{
-	"host":          true, // We'll set this based on target endpoint
-	"authorization": true, // We'll add our own if configured
-	"x-api-key":     true, // Remove sensitive client API keys
-}
+	// Copy all headers except those we want to skip
+	for key, values := range src.Header {
+		if skipHeaders[strings.ToLower(key)] {
+			continue
+		}
 
-// clientOAuthSkipHeaders 订阅直通模式：保留客户端 Authorization（OAuth token），
-// 其余沿用黑名单复制，另外剔除 Cookie、代理与来源类头。上游固定为 api.anthropic.com，
-// Claude Code 直连时本来就会把其余头发给它，原样转发等价于直连。
-var clientOAuthSkipHeaders = map[string]bool{
-	"host":                true,
-	"x-api-key":           true,
-	"cookie":              true,
-	"proxy-authorization": true,
-	"forwarded":           true,
-	"origin":              true,
-	"referer":             true,
-}
-
-func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, creds outboundCredentials) {
-	copyClientHeaders(src.Header, dst.Header, creds.clientOAuth)
-	// Claude Code 以订阅登录经专用入口进来、却转发给端点凭据端点（第三方）时，
-	// OAuth capability 对 API Key 认证没有意义，也不必让第三方知道客户端用的是订阅登录
-	if !creds.clientOAuth && endpoint.IsClaudeCodeEntry(src.Context()) {
+		for _, value := range values {
+			dst.Header.Add(key, value)
+		}
+	}
+	// Claude Code 以订阅登录经专用入口进来、按端点模式转发给第三方时，
+	// OAuth capability 对端点凭据没有意义，也不必让第三方知道客户端用的是订阅登录
+	if endpoint.IsClaudeCodeEntry(src.Context()) {
 		stripClientOAuthBetaValues(dst.Header)
 	}
 
@@ -319,21 +301,18 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 		dst.Host = u.Host
 	}
 
-	// 订阅直通不注入端点凭据（保存前已校验为空，这里再兜底一次）
-	if !creds.clientOAuth {
-		if creds.token != "" {
-			dst.Header.Set("Authorization", "Bearer "+creds.token)
-		}
-		if creds.apiKey != "" {
-			dst.Header.Set("X-Api-Key", creds.apiKey)
-		}
+	// Add or override Authorization header
+	if token != "" {
+		dst.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	// Add or override X-Api-Key header
+	if apiKey != "" {
+		dst.Header.Set("X-Api-Key", apiKey)
 	}
 
 	// Add custom headers from endpoint configuration
 	for key, value := range headers {
-		if creds.clientOAuth && clientOAuthProtectedHeader(key) {
-			continue
-		}
 		dst.Header.Set(key, value)
 	}
 	if isAnyRouteURL(targetURL) {
@@ -357,32 +336,6 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 	}
 }
 
-// copyClientHeaders 按认证方式复制客户端请求头
-func copyClientHeaders(src, dst http.Header, clientOAuth bool) {
-	skipHeaders := configuredSkipHeaders
-	if clientOAuth {
-		skipHeaders = clientOAuthSkipHeaders
-	}
-	for key, values := range src {
-		lower := strings.ToLower(key)
-		if skipHeaders[lower] || (clientOAuth && strings.HasPrefix(lower, "x-forwarded-")) {
-			continue
-		}
-		for _, value := range values {
-			dst.Add(key, value)
-		}
-	}
-}
-
-// clientOAuthProtectedHeader 订阅直通端点的自定义头不得覆盖认证类头
-func clientOAuthProtectedHeader(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "authorization", "x-api-key", "cookie", "proxy-authorization":
-		return true
-	}
-	return false
-}
-
 var anyRouteHosts = map[string]struct{}{
 	"anyrouter.top":                      {},
 	"a-ocnfniawgw.cn-shanghai.fcapp.run": {},
@@ -399,37 +352,6 @@ func isAnyRouteURL(rawURL string) bool {
 
 // ensureBetaFlag 确保 anthropic-beta 头包含指定标志：
 // 头不存在时直接设置；已存在但缺该标志时追加，保留客户端原有标志；已包含则不动。
-// clientOAuthBetaPrefix Claude Code 订阅登录时 anthropic-beta 携带的 OAuth capability 前缀（值带日期后缀）
-const clientOAuthBetaPrefix = "oauth-"
-
-// stripClientOAuthBetaValues 删除 anthropic-beta 中 oauth- 开头的值，其余值保持原顺序；
-// 删空则移除整个头；没有可删的值时不改写，保持原样
-func stripClientOAuthBetaValues(header http.Header) {
-	values := header.Values(anthropicBetaHeader)
-	kept := make([]string, 0, len(values))
-	removed := false
-	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			if strings.HasPrefix(strings.ToLower(part), clientOAuthBetaPrefix) {
-				removed = true
-				continue
-			}
-			kept = append(kept, part)
-		}
-	}
-	if !removed {
-		return
-	}
-	header.Del(anthropicBetaHeader)
-	if len(kept) > 0 {
-		header.Set(anthropicBetaHeader, strings.Join(kept, ","))
-	}
-}
-
 func ensureBetaFlag(header http.Header, flag string) {
 	existing := header.Get(anthropicBetaHeader)
 	if existing == "" {
@@ -462,50 +384,69 @@ func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bod
 		return nil, nil, nil, err
 	}
 
+	requestTimeout := time.Duration(0)
+	if !isSSE {
+		requestTimeout = ep.Config.Timeout
+	}
+	return f.sendUpstream(ctx, r, bodyBytes, upstreamSend{
+		baseURL:        ep.Config.URL,
+		timeout:        requestTimeout,
+		detach:         detachUpstream,
+		onWroteRequest: onWroteRequest,
+		upstreamModel:  upstreamModel,
+		copyHeaders:    func(dst *http.Request) { f.CopyAttemptHeaders(r, dst, target) },
+	})
+}
+
+// upstreamSend 一次出站请求的目标与头部策略；正文已完成改写与隐私过滤
+type upstreamSend struct {
+	baseURL        string
+	timeout        time.Duration // 0 表示不设总超时（SSE）
+	detach         bool          // 独立 upstream context，下游断开后仍可短时 drain 尾部
+	onWroteRequest func(time.Time)
+	upstreamModel  string
+	copyHeaders    func(dst *http.Request)
+}
+
+// sendUpstream 端点管线与订阅直通共用的出站核心：挂 trace、构造请求、按调用方策略写头并发送
+func (f *Forwarder) sendUpstream(ctx context.Context, r *http.Request, bodyBytes []byte, send upstreamSend) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
 	requestCtx := ctx
 	var release context.CancelFunc
-	if detachUpstream {
+	if send.detach {
 		requestCtx, release = context.WithCancel(context.Background())
 	}
-	requestCtx, traceState := WithUpstreamTrace(requestCtx, onWroteRequest)
-	traceState.setUpstreamModel(upstreamModel)
+	requestCtx, traceState := WithUpstreamTrace(requestCtx, send.onWroteRequest)
+	traceState.setUpstreamModel(send.upstreamModel)
+	fail := func(err error) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+		if release != nil {
+			release()
+		}
+		return nil, nil, traceState, err
+	}
 
-	targetURL := ep.Config.URL + r.URL.Path
+	targetURL := send.baseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, nil, traceState, fmt.Errorf("failed to create request: %w", err)
+		return fail(fmt.Errorf("failed to create request: %w", err))
 	}
-	f.CopyAttemptHeaders(r, req, target)
+	send.copyHeaders(req)
 
 	httpTransport, err := f.buildStreamingTransport()
 	if err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, nil, traceState, fmt.Errorf("failed to create transport: %w", err)
-	}
-	requestTimeout := time.Duration(0)
-	if !isSSE {
-		requestTimeout = ep.Config.Timeout
+		return fail(fmt.Errorf("failed to create transport: %w", err))
 	}
 	client := &http.Client{
-		Timeout:   requestTimeout,
+		Timeout:   send.timeout,
 		Transport: httpTransport,
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, nil, traceState, fmt.Errorf("request failed: %w", err)
+		return fail(fmt.Errorf("request failed: %w", err))
 	}
 	return resp, release, traceState, nil
 }

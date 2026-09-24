@@ -1,7 +1,8 @@
 // app_claude_code_entry.go - Claude Code 专用入口装配与 Wails API
 // 创建时间: 2026-09-24
 //
-// 入口复用主端口的代理处理器（带日志中间件、不带 AuthMiddleware），只多一层边界校验与入口标记。
+// 入口复用主端口的代理处理器（带日志中间件、不带 AuthMiddleware），只多一层边界校验与入口标记：
+// 订阅直通模式直连 Anthropic 官方，端点模式与主端口一样走端点调度。
 // 启动时按持久化配置决定是否监听；绑定失败只记录错误，不影响主端口与其他入口。
 package main
 
@@ -12,32 +13,31 @@ import (
 
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // claudeCodeEntryStopTimeout 停用或改端口时等待在途请求的上限，超时后强制关闭
 const claudeCodeEntryStopTimeout = 10 * time.Second
 
+// EventClaudeCodeEntryUpdate 入口配置或运行态变化后推送给前端（设置卡片与请求页切换栏共用）
+const EventClaudeCodeEntryUpdate = "claude-code-entry:update"
+
 // ClaudeCodeEntryInfo 前端展示用的入口状态
 type ClaudeCodeEntryInfo struct {
 	Enabled    bool   `json:"enabled"`     // 持久化的启用意图
 	ListenPort int    `json:"listen_port"` // 持久化的端口
-	Mode       string `json:"mode"`        // 全局模式：auto / subscription / api
-	// RequestClassRouting 按请求类别路由开关；APIRequestClasses 为强制走 API 的类别
-	RequestClassRouting bool     `json:"request_class_routing"`
-	APIRequestClasses   []string `json:"api_request_classes"`
-	BaseURL             string   `json:"base_url"` // Claude Code 的 ANTHROPIC_BASE_URL
-	Running             bool     `json:"running"`  // 当前是否在监听
-	Error               string   `json:"error"`    // 最近一次启动失败或监听异常
+	Mode       string `json:"mode"`        // 接入模式：subscription / endpoint
+	BaseURL    string `json:"base_url"`    // Claude Code 的 ANTHROPIC_BASE_URL
+	Running    bool   `json:"running"`     // 当前是否在监听
+	Error      string `json:"error"`       // 最近一次启动失败或监听异常
 }
 
 // ClaudeCodeEntryInput 保存入口配置的输入
 type ClaudeCodeEntryInput struct {
 	Enabled    bool   `json:"enabled"`
 	ListenPort int    `json:"listen_port"`
-	Mode       string `json:"mode"` // 空值按 auto
-	// RequestClassRouting / APIRequestClasses 按请求类别路由
-	RequestClassRouting bool     `json:"request_class_routing"`
-	APIRequestClasses   []string `json:"api_request_classes"`
+	Mode       string `json:"mode"` // 空值按订阅直通
 }
 
 // setupClaudeCodeEntry 装配入口；必须在 setupProxyHandler 之后调用。
@@ -74,18 +74,39 @@ func (a *App) GetClaudeCodeEntryStatus() (ClaudeCodeEntryInfo, error) {
 func (a *App) SaveClaudeCodeEntrySettings(input ClaudeCodeEntryInput) (ClaudeCodeEntryInfo, error) {
 	a.claudeCodeEntryMu.Lock()
 	defer a.claudeCodeEntryMu.Unlock()
+	return a.saveClaudeCodeEntryLocked(service.ClaudeCodeEntryInput{
+		Enabled:    input.Enabled,
+		ListenPort: input.ListenPort,
+		Mode:       input.Mode,
+	})
+}
+
+// SetClaudeCodeEntryMode 只切换接入模式，启用状态与端口沿用已保存的配置；
+// 供请求页快捷切换使用，避免用页面上可能过期的端口等字段覆盖配置
+func (a *App) SetClaudeCodeEntryMode(mode string) (ClaudeCodeEntryInfo, error) {
+	a.claudeCodeEntryMu.Lock()
+	defer a.claudeCodeEntryMu.Unlock()
 	if a.claudeCodeEntrySettings == nil || a.claudeCodeEntryRuntime == nil {
 		return ClaudeCodeEntryInfo{}, fmt.Errorf("Claude Code 入口未初始化")
 	}
-
-	ctx := context.Background()
-	cfg, err := a.claudeCodeEntrySettings.Save(ctx, service.ClaudeCodeEntryInput{
-		Enabled:             input.Enabled,
-		ListenPort:          input.ListenPort,
-		Mode:                input.Mode,
-		RequestClassRouting: input.RequestClassRouting,
-		APIRequestClasses:   input.APIRequestClasses,
+	current, err := a.claudeCodeEntrySettings.Load(context.Background())
+	if err != nil {
+		return ClaudeCodeEntryInfo{}, err
+	}
+	return a.saveClaudeCodeEntryLocked(service.ClaudeCodeEntryInput{
+		Enabled:    current.Enabled,
+		ListenPort: current.ListenPort,
+		Mode:       mode,
 	})
+}
+
+// saveClaudeCodeEntryLocked 保存、应用并推送最新状态；调用方须持有 claudeCodeEntryMu
+func (a *App) saveClaudeCodeEntryLocked(input service.ClaudeCodeEntryInput) (ClaudeCodeEntryInfo, error) {
+	if a.claudeCodeEntrySettings == nil || a.claudeCodeEntryRuntime == nil {
+		return ClaudeCodeEntryInfo{}, fmt.Errorf("Claude Code 入口未初始化")
+	}
+	ctx := context.Background()
+	cfg, err := a.claudeCodeEntrySettings.Save(ctx, input)
 	if err != nil {
 		return ClaudeCodeEntryInfo{}, err
 	}
@@ -94,7 +115,12 @@ func (a *App) SaveClaudeCodeEntrySettings(input ClaudeCodeEntryInput) (ClaudeCod
 	if err := a.claudeCodeEntryRuntime.Apply(applyCtx, cfg.Enabled, cfg.ListenAddr(), claudeCodeEntryPolicy(cfg)); err != nil {
 		a.logger.Error("❌ Claude Code 入口应用配置失败", "error", err)
 	}
-	return a.claudeCodeEntryInfoLocked(ctx)
+	info, err := a.claudeCodeEntryInfoLocked(ctx)
+	if err != nil {
+		return ClaudeCodeEntryInfo{}, err
+	}
+	a.emitClaudeCodeEntryUpdate(info)
+	return info, nil
 }
 
 // claudeCodeEntryInfoLocked 组合持久化配置与运行态；调用方须持有 claudeCodeEntryMu
@@ -108,22 +134,23 @@ func (a *App) claudeCodeEntryInfoLocked(ctx context.Context) (ClaudeCodeEntryInf
 	}
 	status := a.claudeCodeEntryRuntime.Status()
 	return ClaudeCodeEntryInfo{
-		Enabled:             cfg.Enabled,
-		ListenPort:          cfg.ListenPort,
-		Mode:                cfg.Mode,
-		RequestClassRouting: cfg.RequestClassRouting,
-		APIRequestClasses:   append([]string{}, cfg.APIRequestClasses...),
-		BaseURL:             cfg.BaseURL(),
-		Running:             status.Running,
-		Error:               status.Error,
+		Enabled:    cfg.Enabled,
+		ListenPort: cfg.ListenPort,
+		Mode:       cfg.Mode,
+		BaseURL:    cfg.BaseURL(),
+		Running:    status.Running,
+		Error:      status.Error,
 	}, nil
+}
+
+func (a *App) emitClaudeCodeEntryUpdate(info ClaudeCodeEntryInfo) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, EventClaudeCodeEntryUpdate, info)
 }
 
 // claudeCodeEntryPolicy 把持久化配置转换为运行态策略
 func claudeCodeEntryPolicy(cfg service.ClaudeCodeEntryConfig) proxy.ClaudeCodeEntryPolicy {
-	policy := proxy.ClaudeCodeEntryPolicy{Mode: cfg.Mode}
-	if cfg.RequestClassRouting {
-		policy.APIRequestClasses = append([]string{}, cfg.APIRequestClasses...)
-	}
-	return policy
+	return proxy.ClaudeCodeEntryPolicy{Mode: cfg.Mode}
 }

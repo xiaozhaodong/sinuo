@@ -2,8 +2,9 @@
 // 创建时间: 2026-09-24
 //
 // Claude Code 以 claude.ai 订阅登录、ANTHROPIC_BASE_URL 指向本入口时，请求携带自己的 OAuth token。
-// 入口只做边界校验（Host / Origin / 路径），通过后给请求打上 Claude Code 入口标记，
-// 交给与主端口相同的代理处理器；调度器据此决定是否允许命中订阅直通端点。
+// 入口只做边界校验（Host / Origin / 路径），通过后给请求打上入口标记与接入模式，
+// 交给与主端口相同的代理处理器：订阅直通模式直连 Anthropic 官方（claude_subscription.go），
+// 端点模式与主端口一样走端点调度。
 // 本入口不经过 AuthMiddleware：Authorization 里是 OAuth token，不是网关令牌。
 package proxy
 
@@ -15,7 +16,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,25 +32,8 @@ var claudeCodeEntryPaths = map[string]struct{}{
 
 // ClaudeCodeEntryPolicy 入口的路由策略；运行中可热更新，不重启 listener
 type ClaudeCodeEntryPolicy struct {
-	// Mode 全局模式：auto / subscription / api
+	// Mode 接入模式：subscription / endpoint
 	Mode string
-	// APIRequestClasses 按请求类别路由：命中的类别强制走 API；为空表示未启用
-	APIRequestClasses []string
-}
-
-// resolve 为单个请求算出生效模式：请求类别命中配置时强制走 API，否则用全局模式。
-// 类别来自 Claude Code 的 x-claude-code-request-class（需客户端设置 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1），
-// 没带这个头的请求按全局模式处理。
-func (p ClaudeCodeEntryPolicy) resolve(r *http.Request) endpoint.ClaudeCodeEntryRequest {
-	mode := endpoint.NormalizeClaudeCodeEntryMode(p.Mode)
-	if mode == endpoint.ClaudeCodeEntryModeAPI || len(p.APIRequestClasses) == 0 || r == nil {
-		return endpoint.ClaudeCodeEntryRequest{Mode: mode}
-	}
-	class := strings.ToLower(strings.TrimSpace(r.Header.Get(endpoint.ClaudeCodeRequestClassHeader)))
-	if class != "" && slices.Contains(p.APIRequestClasses, class) {
-		return endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeAPI, RequestClassOverride: true}
-	}
-	return endpoint.ClaudeCodeEntryRequest{Mode: mode}
 }
 
 // claudeCodeEntryHandler 边界校验后转交代理处理器
@@ -77,7 +60,7 @@ func (h *claudeCodeEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		writeClaudeCodeEntryError(w, http.StatusMethodNotAllowed, "invalid_request_error", "Claude Code 入口只接受 POST")
 		return
 	}
-	entry := h.policy().resolve(r)
+	entry := endpoint.ClaudeCodeEntryRequest{Mode: h.policy().Mode}
 	h.next.ServeHTTP(w, r.WithContext(endpoint.WithClaudeCodeEntry(r.Context(), entry)))
 }
 
@@ -125,7 +108,7 @@ func NewClaudeCodeEntryRuntime(next http.Handler, logger *slog.Logger) *ClaudeCo
 		logger = slog.Default()
 	}
 	rt := &ClaudeCodeEntryRuntime{next: next, logger: logger}
-	rt.policy.Store(&ClaudeCodeEntryPolicy{Mode: endpoint.ClaudeCodeEntryModeAuto})
+	rt.policy.Store(&ClaudeCodeEntryPolicy{Mode: endpoint.ClaudeCodeEntryModeSubscription})
 	return rt
 }
 

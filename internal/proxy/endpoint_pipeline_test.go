@@ -858,3 +858,22 @@ func TestEndpointPipeline_SoftFailurePolicy_5xx仍结束当前请求(t *testing.
 		t.Fatal("后续请求未跳过已冷却端点")
 	}
 }
+
+func TestEndpointPipeline_StreamingClientErrorHasSingleContentType(t *testing.T) {
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`))
+	}))
+	defer vendor.Close()
+
+	handler, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("vendor", vendor.URL, 1))
+	recorder := performEndpointPipelineRequest(t, handler, true)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("普通 4xx 应原样透传，got %d", recorder.Code)
+	}
+	if values := recorder.Header().Values("Content-Type"); len(values) != 1 || values[0] != "application/json" {
+		t.Fatalf("流式请求透传 4xx 时 Content-Type 只能是上游值，got %v", values)
+	}
+}

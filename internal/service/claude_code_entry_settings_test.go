@@ -59,54 +59,40 @@ func TestClaudeCodeEntrySettings_RejectsInvalidPortAndCorruptedRow(t *testing.T)
 	}
 }
 
-func TestClaudeCodeEntrySettings_ModePersistenceAndLegacyDefault(t *testing.T) {
-	_, _, st := newCodexSubscriptionProxySettingsTestEnv(t)
-	svc := NewClaudeCodeEntrySettingsService(st)
-	ctx := context.Background()
-
-	// 加入 mode 字段之前保存的配置：读出来按 auto 处理
-	if err := st.Set(ctx, CategoryClaudeCodeEntry, ClaudeCodeEntryConfigKey, `{"schema_version":1,"enabled":true,"listen_port":18088}`); err != nil {
-		t.Fatalf("seed legacy row failed: %v", err)
-	}
-	legacy, err := svc.Load(ctx)
-	if err != nil || legacy.Mode != "auto" {
-		t.Fatalf("旧配置应按 auto 读取: cfg=%+v err=%v", legacy, err)
-	}
-
-	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{Enabled: true, ListenPort: 18088, Mode: " API "})
-	if err != nil || saved.Mode != "api" {
-		t.Fatalf("模式应归一化保存: cfg=%+v err=%v", saved, err)
-	}
-	if loaded, err := svc.Load(ctx); err != nil || loaded.Mode != "api" {
-		t.Fatalf("保存后读取模式不一致: cfg=%+v err=%v", loaded, err)
-	}
-	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, Mode: "pool"}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
-		t.Fatalf("未知模式应被拒绝，got %v", err)
-	}
-}
-
-func TestClaudeCodeEntrySettings_RequestClassRouting(t *testing.T) {
+func TestClaudeCodeEntrySettings_ModePersistenceAndLegacyModes(t *testing.T) {
 	_, _, st := newCodexSubscriptionProxySettingsTestEnv(t)
 	svc := NewClaudeCodeEntrySettingsService(st)
 	ctx := context.Background()
 
 	defaults, err := svc.Load(ctx)
-	if err != nil || defaults.RequestClassRouting || !reflect.DeepEqual(defaults.APIRequestClasses, []string{"subagent", "auxiliary"}) {
-		t.Fatalf("默认关闭，预选子代理与后台辅助: cfg=%+v err=%v", defaults, err)
+	if err != nil || defaults.Mode != "subscription" {
+		t.Fatalf("未初始化时默认订阅直通: cfg=%+v err=%v", defaults, err)
 	}
 
-	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{
-		ListenPort:          18088,
-		RequestClassRouting: true,
-		APIRequestClasses:   []string{" Workflow ", "subagent", "subagent", ""},
-	})
-	if err != nil || !saved.RequestClassRouting || !reflect.DeepEqual(saved.APIRequestClasses, []string{"subagent", "workflow"}) {
-		t.Fatalf("类别应去重、归一化并按固定顺序保存: cfg=%+v err=%v", saved, err)
+	// 旧版配置：没有 mode 字段、按模型混用的 auto、仅 API 的 api，以及已取消的请求类别字段
+	legacyRows := map[string]string{
+		`{"schema_version":1,"enabled":true,"listen_port":18088}`:                                                 "subscription",
+		`{"schema_version":1,"enabled":true,"listen_port":18088,"mode":"auto","request_class_routing":true}`:      "subscription",
+		`{"schema_version":1,"enabled":true,"listen_port":18088,"mode":"api","api_request_classes":["subagent"]}`: "endpoint",
 	}
-	if loaded, err := svc.Load(ctx); err != nil || !reflect.DeepEqual(loaded, saved) {
-		t.Fatalf("保存后读取不一致: loaded=%+v saved=%+v err=%v", loaded, saved, err)
+	for raw, want := range legacyRows {
+		if err := st.Set(ctx, CategoryClaudeCodeEntry, ClaudeCodeEntryConfigKey, raw); err != nil {
+			t.Fatalf("seed legacy row failed: %v", err)
+		}
+		legacy, err := svc.Load(ctx)
+		if err != nil || legacy.Mode != want {
+			t.Fatalf("旧配置 %s 应按 %s 读取: cfg=%+v err=%v", raw, want, legacy, err)
+		}
 	}
-	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, APIRequestClasses: []string{"main"}}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
-		t.Fatalf("main 不可配置为强制走 API，got %v", err)
+
+	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{Enabled: true, ListenPort: 18088, Mode: " Endpoint "})
+	if err != nil || saved.Mode != "endpoint" {
+		t.Fatalf("模式应归一化保存: cfg=%+v err=%v", saved, err)
+	}
+	if loaded, err := svc.Load(ctx); err != nil || loaded.Mode != "endpoint" {
+		t.Fatalf("保存后读取模式不一致: cfg=%+v err=%v", loaded, err)
+	}
+	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, Mode: "pool"}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
+		t.Fatalf("未知模式应被拒绝，got %v", err)
 	}
 }

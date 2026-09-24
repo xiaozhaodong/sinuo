@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/utils"
@@ -28,7 +27,6 @@ type EndpointRecordInfo struct {
 	URL                           string            `json:"url"`
 	TokenMasked                   string            `json:"token_masked"` // 脱敏后的 Token（列表展示用）
 	ApiKeyMasked                  string            `json:"api_key_masked"`
-	AuthMode                      string            `json:"auth_mode"` // configured / client_oauth
 	Headers                       map[string]string `json:"headers"`
 	Priority                      int               `json:"priority"`
 	FailoverEnabled               bool              `json:"failover_enabled"`
@@ -68,7 +66,6 @@ type CreateEndpointInput struct {
 	ApiKey                        string            `json:"api_key"`
 	ClearToken                    bool              `json:"clear_token"`
 	ClearApiKey                   bool              `json:"clear_api_key"`
-	AuthMode                      string            `json:"auth_mode"` // 空值按 configured 处理
 	Headers                       map[string]string `json:"headers"`
 	Priority                      int               `json:"priority"`
 	FailoverEnabled               bool              `json:"failover_enabled"`
@@ -239,7 +236,6 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 		URL:                           input.URL,
 		Token:                         input.Token,
 		ApiKey:                        input.ApiKey,
-		AuthMode:                      input.AuthMode,
 		Headers:                       input.Headers,
 		Priority:                      input.Priority,
 		FailoverEnabled:               input.FailoverEnabled,
@@ -308,7 +304,6 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	if err != nil {
 		return err
 	}
-	token, apiKey = dropInheritedSecretsForClientOAuth(input, token, apiKey)
 	defaultEndpointMultipliers(&input)
 
 	record := &store.EndpointRecord{
@@ -316,7 +311,6 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		URL:                           input.URL,
 		Token:                         token,  // 空值时保留原有值
 		ApiKey:                        apiKey, // 空值时保留原有值
-		AuthMode:                      input.AuthMode,
 		Headers:                       input.Headers,
 		Priority:                      input.Priority,
 		FailoverEnabled:               input.FailoverEnabled,
@@ -443,7 +437,6 @@ func (a *App) recordToInfo(r *store.EndpointRecord) EndpointRecordInfo {
 		URL:                           r.URL,
 		TokenMasked:                   maskToken(r.Token),
 		ApiKeyMasked:                  maskToken(r.ApiKey),
-		AuthMode:                      config.NormalizeEndpointAuthMode(r.AuthMode),
 		Headers:                       r.Headers,
 		Priority:                      r.Priority,
 		FailoverEnabled:               r.FailoverEnabled,
@@ -485,22 +478,6 @@ func resolveSecretEdit(current, replacement string, clear bool, field string) (s
 		return current, nil
 	}
 	return replacement, nil
-}
-
-// dropInheritedSecretsForClientOAuth 切换为订阅直通时，编辑表单不再提交凭据，
-// 「空值保留原值」会把旧 Token / API Key 带进来导致校验失败；此时丢弃沿用的旧值。
-// 用户显式填了新凭据则原样保留，交由校验拒绝。
-func dropInheritedSecretsForClientOAuth(input CreateEndpointInput, token, apiKey string) (string, string) {
-	if config.NormalizeEndpointAuthMode(input.AuthMode) != config.EndpointAuthModeClientOAuth {
-		return token, apiKey
-	}
-	if strings.TrimSpace(input.Token) == "" {
-		token = ""
-	}
-	if strings.TrimSpace(input.ApiKey) == "" {
-		apiKey = ""
-	}
-	return token, apiKey
 }
 
 func defaultEndpointMultipliers(input *CreateEndpointInput) {

@@ -125,10 +125,10 @@ func TestClaudeCodeEntryRuntime_ApplyStopAndPortConflict(t *testing.T) {
 	}
 }
 
-// TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor
-// 端到端：经真实入口监听进来的请求命中订阅直通端点并透传客户端 token；
-// 主端口（直接进代理处理器）的同样请求只走第三方端点，且客户端 token 不外泄。
-func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
+// TestClaudeCodeEntry_EndToEndModes
+// 端到端：经真实入口监听进来的请求，订阅直通模式直连官方并透传客户端 token；
+// 切到端点模式后同样的请求走第三方端点；主端口（直接进代理处理器）始终走第三方端点，且客户端 token 不外泄。
+func TestClaudeCodeEntry_EndToEndModes(t *testing.T) {
 	type hit struct{ authorization, apiKey string }
 	subscriptionHits := make(chan hit, 4)
 	vendorHits := make(chan hit, 4)
@@ -144,10 +144,10 @@ func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
 	vendor := upstream(vendorHits)
 	defer vendor.Close()
 
-	subscriptionCfg := clientOAuthPipelineConfig("subscription", subscription.URL, 1)
-	vendorCfg := endpointPipelineConfig("vendor", vendor.URL, 2)
+	vendorCfg := endpointPipelineConfig("vendor", vendor.URL, 1)
 	vendorCfg.ApiKey = "vendor-key"
-	handler, _ := newEndpointPipelineTestHandler(t, subscriptionCfg, vendorCfg)
+	handler, _ := newEndpointPipelineTestHandler(t, vendorCfg)
+	handler.claudeSubscriptionBaseURL = subscription.URL
 
 	rt := NewClaudeCodeEntryRuntime(handler, nil)
 	holder, err := net.Listen("tcp", "127.0.0.1:0")
@@ -158,13 +158,13 @@ func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
 	_ = holder.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{}); err != nil {
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: endpoint.ClaudeCodeEntryModeSubscription}); err != nil {
 		t.Fatalf("start entry failed: %v", err)
 	}
 	defer func() { _ = rt.Stop(ctx) }()
 
 	const body = `{"model":"claude-test","messages":[{"role":"user","content":"hi"}]}`
-	send := func(target string) int {
+	send := func(target string) {
 		req, _ := http.NewRequest(http.MethodPost, target+"/v1/messages?beta=true", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
@@ -174,36 +174,39 @@ func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
-		return resp.StatusCode
-	}
-
-	if status := send("http://" + addr); status != http.StatusOK {
-		t.Fatalf("入口请求应成功，got %d", status)
-	}
-	select {
-	case got := <-subscriptionHits:
-		if got.authorization != "Bearer sk-ant-oat01-client" || got.apiKey != "" {
-			t.Fatalf("订阅直通上游应只收到客户端 OAuth token，got %+v", got)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %s status = %d", target, resp.StatusCode)
 		}
-	default:
-		t.Fatal("入口请求应命中订阅直通端点")
 	}
+	expectHit := func(hits chan hit, want hit, label string) {
+		t.Helper()
+		select {
+		case got := <-hits:
+			if got != want {
+				t.Fatalf("%s: 上游收到的凭据不符，got %+v want %+v", label, got, want)
+			}
+		default:
+			t.Fatalf("%s: 未命中预期上游", label)
+		}
+	}
+	clientToken := hit{authorization: "Bearer sk-ant-oat01-client"}
+	vendorKey := hit{apiKey: "vendor-key"}
+
+	send("http://" + addr)
+	expectHit(subscriptionHits, clientToken, "订阅直通模式")
+
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: endpoint.ClaudeCodeEntryModeEndpoint}); err != nil {
+		t.Fatalf("switch mode failed: %v", err)
+	}
+	send("http://" + addr)
+	expectHit(vendorHits, vendorKey, "端点模式")
 
 	mainPort := httptest.NewServer(handler)
 	defer mainPort.Close()
-	if status := send(mainPort.URL); status != http.StatusOK {
-		t.Fatalf("主端口请求应成功，got %d", status)
-	}
-	select {
-	case got := <-vendorHits:
-		if got.authorization != "" || got.apiKey != "vendor-key" {
-			t.Fatalf("第三方上游只能收到端点 API Key，不能收到客户端 token，got %+v", got)
-		}
-	default:
-		t.Fatal("主端口请求应命中第三方端点")
-	}
+	send(mainPort.URL)
+	expectHit(vendorHits, vendorKey, "主端口")
 	if len(subscriptionHits) != 0 {
-		t.Fatal("主端口请求不得命中订阅直通端点")
+		t.Fatal("只有订阅直通模式的入口请求可以直连官方")
 	}
 }
 
@@ -245,106 +248,13 @@ func TestClaudeCodeEntryRuntime_PolicyHotSwapWithoutRestart(t *testing.T) {
 		t.Fatalf("请求应带上当前模式，got %q", got)
 	}
 	server := rt.server
-	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: "api"}); err != nil {
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: endpoint.ClaudeCodeEntryModeEndpoint}); err != nil {
 		t.Fatalf("hot swap failed: %v", err)
 	}
 	if rt.server != server {
 		t.Fatal("只改模式不应重启 listener")
 	}
-	if got := send(); got != endpoint.ClaudeCodeEntryModeAPI {
+	if got := send(); got != endpoint.ClaudeCodeEntryModeEndpoint {
 		t.Fatalf("切换后下一个请求应使用新模式，got %q", got)
-	}
-}
-
-func TestClaudeCodeEntryPolicy_ResolveRequestClass(t *testing.T) {
-	request := func(class string) *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-		if class != "" {
-			req.Header.Set("x-claude-code-request-class", class)
-		}
-		return req
-	}
-	policy := ClaudeCodeEntryPolicy{Mode: "subscription", APIRequestClasses: []string{"subagent", "auxiliary"}}
-
-	cases := []struct {
-		name         string
-		policy       ClaudeCodeEntryPolicy
-		class        string
-		wantMode     string
-		wantOverride bool
-	}{
-		{"主对话按全局模式", policy, "main", "subscription", false},
-		{"子代理强制走 API", policy, "subagent", "api", true},
-		{"类别大小写不敏感", policy, "Auxiliary", "api", true},
-		{"未勾选的类别按全局模式", policy, "compaction", "subscription", false},
-		{"没带类别头按全局模式", policy, "", "subscription", false},
-		{"未启用按请求类别路由", ClaudeCodeEntryPolicy{Mode: "subscription"}, "subagent", "subscription", false},
-		{"全局已是仅 API 不标记覆盖", ClaudeCodeEntryPolicy{Mode: "api", APIRequestClasses: []string{"subagent"}}, "subagent", "api", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tc.policy.resolve(request(tc.class))
-			if got.Mode != tc.wantMode || got.RequestClassOverride != tc.wantOverride {
-				t.Fatalf("got %+v, want mode=%s override=%v", got, tc.wantMode, tc.wantOverride)
-			}
-		})
-	}
-}
-
-func TestClaudeCodeEntry_EndToEndRequestClassRoutesSubagentToVendor(t *testing.T) {
-	hits := make(chan string, 4)
-	upstream := func(name string) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits <- name
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
-		}))
-	}
-	subscription := upstream("subscription")
-	defer subscription.Close()
-	vendor := upstream("vendor")
-	defer vendor.Close()
-	handler, _ := newEndpointPipelineTestHandler(t,
-		clientOAuthPipelineConfig("subscription", subscription.URL, 1),
-		endpointPipelineConfig("vendor", vendor.URL, 2),
-	)
-
-	rt := NewClaudeCodeEntryRuntime(handler, nil)
-	holder, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port failed: %v", err)
-	}
-	addr := holder.Addr().String()
-	_ = holder.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	policy := ClaudeCodeEntryPolicy{Mode: "auto", APIRequestClasses: []string{"subagent"}}
-	if err := rt.Apply(ctx, true, addr, policy); err != nil {
-		t.Fatalf("start entry failed: %v", err)
-	}
-	defer func() { _ = rt.Stop(ctx) }()
-
-	send := func(class string) string {
-		req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/messages", strings.NewReader(`{"model":"claude-test","messages":[]}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
-		req.Header.Set("X-Claude-Code-Request-Class", class)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("class=%s status=%d", class, resp.StatusCode)
-		}
-		return <-hits
-	}
-
-	if got := send("main"); got != "subscription" {
-		t.Fatalf("主对话应走订阅，got %s", got)
-	}
-	if got := send("subagent"); got != "vendor" {
-		t.Fatalf("子代理请求应按类别路由走第三方，got %s", got)
 	}
 }

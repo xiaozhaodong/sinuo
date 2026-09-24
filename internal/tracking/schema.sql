@@ -172,7 +172,6 @@ CREATE TABLE IF NOT EXISTS endpoints (
     api_key TEXT,                                   -- API Key (备用)
     headers TEXT NOT NULL DEFAULT '{}'
         CHECK (json_valid(headers) AND json_type(headers) = 'object'), -- 自定义请求头
-    auth_mode TEXT NOT NULL DEFAULT 'configured',   -- 认证方式: configured(端点凭据) / client_oauth(Claude Code 订阅直通)；不加 CHECK，取值由 Go 层校验
 
     -- ========== 路由配置 ==========
     priority INTEGER NOT NULL DEFAULT 1 CHECK (priority >= 0), -- 优先级（数字越小越高）

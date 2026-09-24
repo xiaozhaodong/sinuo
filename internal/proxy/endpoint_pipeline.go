@@ -45,7 +45,6 @@ const (
 func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager, isSSE bool) {
 	connID := lifecycleManager.GetRequestID()
 	profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
-	profile.ApplyClaudeCodeEntry(r.Context())
 	if profile.Model != "" {
 		lifecycleManager.SetModel(profile.Model)
 	}
@@ -99,8 +98,6 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			outcome := endpoint.EndpointScheduleOutcomeManualFixedBlocked
 			if scope.Kind == endpoint.RouteScopeUnassigned {
 				outcome = endpoint.EndpointScheduleOutcomeModelRoutingUnassigned
-			} else if block.Code == endpoint.RouteBlockCodeClaudeCodeModeNoEndpoint {
-				outcome = endpoint.EndpointScheduleOutcomeClaudeCodeModeBlocked
 			}
 			h.completeEndpointSchedule(connID, scope, "", outcome, block.Message)
 			h.writeEndpointPipelineError(w, isSSE, flusher, block.StatusCode,
@@ -218,7 +215,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 		}
-		decision := decideEndpointForwardOutcomeFor(ep.Config.IsClientOAuth(), forwardErr, resp, traceState, bodySample)
+		decision := decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
 		lifecycleManager.IncrementAttempt()
 
 		// §9.2 普通 429 同端点短重试（最多 1 次；gate 未取得或等待超限则跳过）
@@ -252,7 +249,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 									bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 								}
-								decision = decideEndpointForwardOutcomeFor(ep.Config.IsClientOAuth(), forwardErr, resp, traceState, bodySample)
+								decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
 								lifecycleManager.IncrementAttempt()
 							}
 						}
@@ -368,9 +365,6 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 		case EndpointForwardPassthroughRaw:
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
-			if decision.Mark != EndpointMarkNone {
-				h.markEndpointFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), decision, profile, detail)
-			}
 			relayErr := h.relayEndpointRawResponse(w, resp, lifecycleManager, isSSE, flusher)
 			releaseUpstream()
 			if relayErr != nil {
@@ -384,10 +378,11 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			var outcome EndpointProcessOutcome
 			var outcomeDetail string
 			if isSSE {
-				if ep.Config.IsClientOAuth() {
-					copyUpstreamStreamHeaders(w.Header(), resp.Header)
+				// 📊 [软失败] P2 流式失败计入 messages+transport（§9.1，取消除外）
+				recordStreamFailure := func() {
+					h.recordEndpointAttemptSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryTransport, 0, "stream_failure")
 				}
-				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, target.Revision(), target.FailureEpoch(), upstreamCancel)
+				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, recordStreamFailure, upstreamCancel)
 			} else {
 				outcome, outcomeDetail = h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ep.Config.Name)
 			}
@@ -531,8 +526,9 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 }
 
 // processEndpointStreamingResponse P2 流式响应处理（自旧循环壳迁移，内部逻辑只搬不改；
-// 新增仅为 EndpointProcessOutcome 返回值包装）
-func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, endpointRevision int64, endpointEpoch int64, upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
+// 新增仅为 EndpointProcessOutcome 返回值包装）。
+// onStreamFailure 在流式失败（非取消）时调用，端点管线用它记软失败；订阅直通传 nil。
+func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, onStreamFailure func(), upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
 	connID := lifecycleManager.GetRequestID()
 	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
 	w.WriteHeader(resp.StatusCode)
@@ -602,8 +598,10 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 		*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", statusCode))
 		slog.Warn(fmt.Sprintf("🔄 [流式处理失败] [%s] 端点: %s, 状态: %s, 错误: %v", connID, endpointName, status, err))
 
-		// 📊 [软失败] P2 流式失败计入 messages+transport（§9.1，取消除外——已提前返回）
-		h.recordEndpointAttemptSoftFailure(endpointName, endpointRevision, endpointEpoch, endpoint.SoftFailureCategoryTransport, 0, "stream_failure")
+		// 取消已提前返回；失败结算交给调用方（订阅直通没有端点状态可记）
+		if onStreamFailure != nil {
+			onStreamFailure()
+		}
 
 		if h.config.Streaming.EOFRetryHint {
 			interruptModelName := parsedModelName
@@ -687,8 +685,7 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 	return ProcessOutcomeFullSuccess, ""
 }
 
-// relayEndpointRawResponse 原样透传上游错误响应（状态码、头、错误体）。
-// 通用端点只有普通 4xx 走到这里；订阅直通端点的 401/403/429/5xx 也走这里。
+// relayEndpointRawResponse 原样透传上游 4xx（客户端请求问题，不记录端点状态）
 func (h *Handler) relayEndpointRawResponse(w http.ResponseWriter, resp *http.Response, lifecycleManager *RequestLifecycleManager, isSSE bool, flusher http.Flusher) error {
 	detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
 	if isSSE {
@@ -703,22 +700,8 @@ func (h *Handler) relayEndpointRawResponse(w http.ResponseWriter, resp *http.Res
 	if isSSE && flusher != nil {
 		flusher.Flush()
 	}
-	lifecycleManager.FailRequest(rawRelayFailureReason(resp.StatusCode), detail, resp.StatusCode)
+	lifecycleManager.FailRequest("upstream_client_error", detail, resp.StatusCode)
 	return nil
-}
-
-// rawRelayFailureReason 原样透传时记录的失败原因
-func rawRelayFailureReason(statusCode int) string {
-	switch {
-	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		return FailoverReasonAuthRejected
-	case statusCode == http.StatusTooManyRequests:
-		return FailoverReasonRateLimited
-	case statusCode >= http.StatusInternalServerError:
-		return FailoverReasonServerError
-	default:
-		return "upstream_client_error"
-	}
 }
 
 func endpointScheduleOutcomeName(outcome EndpointProcessOutcome) string {
@@ -779,28 +762,6 @@ var endpointStreamingHeaderKeys = []string{
 func clearEndpointStreamingHeaders(header http.Header) {
 	for _, key := range endpointStreamingHeaderKeys {
 		header.Del(key)
-	}
-}
-
-// upstreamStreamSkipHeaders 流式成功响应不透传的上游头：由代理自己设置，或流处理后语义已变（如已解压）
-var upstreamStreamSkipHeaders = map[string]struct{}{
-	"Content-Type": {}, "Content-Length": {}, "Content-Encoding": {}, "Transfer-Encoding": {},
-	"Connection": {}, "Keep-Alive": {}, "Cache-Control": {}, "Set-Cookie": {},
-	"Proxy-Authenticate": {}, "Trailer": {}, "Upgrade": {},
-}
-
-// copyUpstreamStreamHeaders 把上游响应头带回客户端（anthropic-ratelimit-unified-*、retry-after、
-// x-should-retry、request-id 等），覆盖同名值而不是追加
-func copyUpstreamStreamHeaders(dst, src http.Header) {
-	for key, values := range src {
-		canonical := http.CanonicalHeaderKey(key)
-		if _, skip := upstreamStreamSkipHeaders[canonical]; skip {
-			continue
-		}
-		dst.Del(canonical)
-		for _, value := range values {
-			dst.Add(canonical, value)
-		}
 	}
 }
 

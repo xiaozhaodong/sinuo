@@ -354,12 +354,6 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			description: "CC端点模型兼容改写规则字段",
 		},
 		{
-			table:       "endpoints",
-			checkColumn: "auth_mode",
-			alterSQL:    "ALTER TABLE endpoints ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'configured'",
-			description: "CC端点认证方式字段（订阅直通）",
-		},
-		{
 			table:       "upstream_accounts",
 			checkColumn: "group_key",
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN group_key TEXT DEFAULT ''",

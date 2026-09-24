@@ -162,45 +162,6 @@ func decideEndpointForwardOutcome(forwardErr error, resp *http.Response, trace *
 	}
 }
 
-// decideEndpointForwardOutcomeFor 按端点认证方式选择决策表
-func decideEndpointForwardOutcomeFor(clientOAuth bool, forwardErr error, resp *http.Response, trace *handlers.UpstreamTraceState, respBodySample string) EndpointFailureDecision {
-	if clientOAuth {
-		return decideClientOAuthForwardOutcome(forwardErr, resp, trace)
-	}
-	return decideEndpointForwardOutcome(forwardErr, resp, trace, respBodySample)
-}
-
-// decideClientOAuthForwardOutcome 订阅直通端点的决策：上游已给出的响应一律原样透传。
-// Claude Code 要靠真实状态码、头与错误体自行处理（token 过期刷新 / 提示 /login / 显示额度与重置时间），
-// 且凭据来自请求本身，换端点仍是同一账号同一额度，所以 4xx 不冷却、不计软失败、不重试、不换候选；
-// 5xx 与凭据无关，原样透传的同时记一次 server_error 软失败。连接层失败沿用通用决策。
-func decideClientOAuthForwardOutcome(forwardErr error, resp *http.Response, trace *handlers.UpstreamTraceState) EndpointFailureDecision {
-	if forwardErr != nil || resp == nil {
-		return decideEndpointForwardOutcome(forwardErr, resp, trace, "")
-	}
-	switch {
-	case resp.StatusCode >= http.StatusInternalServerError:
-		return EndpointFailureDecision{
-			Action:   EndpointForwardPassthroughRaw,
-			Mark:     EndpointMarkSoftFailure,
-			Category: endpoint.SoftFailureCategoryServerError,
-			Reason:   FailoverReasonServerError,
-		}
-	case resp.StatusCode >= http.StatusBadRequest:
-		return EndpointFailureDecision{
-			Action: EndpointForwardPassthroughRaw,
-			Mark:   EndpointMarkNone,
-			Reason: "client_oauth_passthrough",
-		}
-	default:
-		return EndpointFailureDecision{
-			Action: EndpointForwardProcess,
-			Mark:   EndpointMarkNone,
-			Reason: "process_response",
-		}
-	}
-}
-
 // endpointSoftFailureCooldown 各类别阈值触发后的 cooldown 时长（§12 配置）。
 // rate_limit 优先尊重最后一次有效 Retry-After（§9.2 规则 10）。
 func endpointSoftFailureCooldown(cfg *config.Config, category endpoint.SoftFailureCategory, retryAfter time.Duration) time.Duration {

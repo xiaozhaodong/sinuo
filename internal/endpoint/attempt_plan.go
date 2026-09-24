@@ -23,8 +23,6 @@ type EndpointAttemptPlan struct {
 	// 仅供进程内 admission 使用；私有字段不会进入 JSON 或 Wails 模型。
 	resolvedToken  string
 	resolvedAPIKey string
-	// authMode 快照时刻的认证方式，供认证边界过滤使用
-	authMode string
 }
 
 // EndpointAttemptTarget 是 admission 时生成的不可变出站快照。
@@ -37,7 +35,6 @@ type EndpointAttemptTarget struct {
 	headers                  map[string]string
 	token                    string
 	apiKey                   string
-	authMode                 string
 	supportsCountTokens      bool
 	modelRewriteRules        string
 	softFailureWindowMinutes *int
@@ -94,7 +91,6 @@ func (t *EndpointAttemptTarget) Config() config.EndpointConfig {
 		Headers:                  cloneStringMap(t.headers),
 		Token:                    t.token,
 		ApiKey:                   t.apiKey,
-		AuthMode:                 t.authMode,
 		SupportsCountTokens:      t.supportsCountTokens,
 		ModelRewriteRules:        t.modelRewriteRules,
 		SoftFailureWindowMinutes: config.CloneSoftFailureValue(t.softFailureWindowMinutes),
@@ -181,7 +177,6 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 		headers:                  cloneStringMap(configSnapshot.Headers),
 		token:                    plan.resolvedToken,
 		apiKey:                   plan.resolvedAPIKey,
-		authMode:                 configSnapshot.AuthMode,
 		supportsCountTokens:      configSnapshot.SupportsCountTokens,
 		modelRewriteRules:        configSnapshot.ModelRewriteRules,
 		softFailureWindowMinutes: config.CloneSoftFailureValue(configSnapshot.SoftFailureWindowMinutes),
