@@ -20,6 +20,10 @@ import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
+import { isSubscriptionRequest } from '../utils/subscriptionUpstream.js';
+
+// 默认值必须是稳定引用，否则 MemoizedRequestRow 的比较恒为 false
+const NO_SUBSCRIPTION_ENDPOINTS = new Set();
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -189,7 +193,7 @@ const ValueCell = ({ pending, tone, children }) => (
  * ⚠️ 每个分支必须返回单一根元素，且该元素不能是非替换的行内盒
  * （见 ValueCell 的注释）—— 由静态扫描用例锁定。
  */
-const renderCell = (columnId, request, formatTimestamp) => {
+const renderCell = (columnId, request, formatTimestamp, subscriptionEndpointNames) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
   const usagePending = pending || request.usageKnown === false;
@@ -214,7 +218,13 @@ const renderCell = (columnId, request, formatTimestamp) => {
       return <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold ${family.className}`}>{family.label}</span>;
     }
     case 'upstreamName':
-      return <span className="block max-w-[190px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
+      // 根元素与 return 同行：静态扫描用例按 `return <span className=` 识别根元素
+      return <span className="flex max-w-[190px] items-center gap-1.5" title={request.upstreamName}>
+        <span className="min-w-0 truncate text-xs text-fg-body">{request.upstreamName || '未知上游'}</span>
+        {isSubscriptionRequest(request, subscriptionEndpointNames) && (
+          <span className="tone-indigo shrink-0 rounded border px-1 py-px text-[10px] font-medium">订阅</span>
+        )}
+      </span>;
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
@@ -241,7 +251,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
  * 「新的 requestId」等价于「新挂载的 RequestRow」。固化之后，
  * 后续任何 re-render 都不会重播入场动画。
  */
-const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp, enterAnimation }) => {
+const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp, enterAnimation, subscriptionEndpointNames }) => {
   const clickCountRef = React.useRef(0);
   const clickTimerRef = React.useRef(null);
   const enterTimerRef = React.useRef(null);
@@ -326,7 +336,7 @@ const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp
           key={col.id}
           className={`px-3 py-3 ${col.align === 'right' ? 'text-right' : ''}`}
         >
-          {renderCell(col.id, request, formatTimestamp)}
+          {renderCell(col.id, request, formatTimestamp, subscriptionEndpointNames)}
         </td>
       ))}
     </tr>
@@ -341,6 +351,7 @@ const MemoizedRequestRow = React.memo(RequestRow, (prev, next) => (
   && prev.onCopyId === next.onCopyId
   && prev.onDoubleClick === next.onDoubleClick
   && prev.formatTimestamp === next.formatTimestamp
+  && prev.subscriptionEndpointNames === next.subscriptionEndpointNames
 ));
 
 /**
@@ -367,7 +378,8 @@ const RequestsTable = ({
   onPageSizeChange,
   visibleColumns = [],
   columnConfigs = [],
-  onRowDoubleClick
+  onRowDoubleClick,
+  subscriptionEndpointNames = NO_SUBSCRIPTION_ENDPOINTS
 }) => {
   const { formatTimestamp } = useTimezone();
 
@@ -434,6 +446,7 @@ const RequestsTable = ({
                     onDoubleClick={onRowDoubleClick}
                     formatTimestamp={formatTimestamp}
                     enterAnimation={enterAnimations.get(req.requestId) || null}
+                    subscriptionEndpointNames={subscriptionEndpointNames}
                   />
                 ))
               )}

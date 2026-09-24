@@ -254,7 +254,8 @@ export const getEndpoints = async () => {
     last_check: ep.last_check,
     response_time: ep.response_time_ms,
     consecutive_fail: ep.consecutive_fail,
-    never_checked: ep.never_checked === true || !ep.last_check
+    never_checked: ep.never_checked === true || !ep.last_check,
+    authMode: ep.auth_mode || 'configured'
   }));
 
   const healthy = formattedEndpoints.filter(e => e.healthy).length;

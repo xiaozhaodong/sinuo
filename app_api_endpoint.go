@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 
+	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 )
 
@@ -22,6 +23,7 @@ type EndpointInfo struct {
 	LastCheck       string  `json:"last_check"`
 	ResponseTimeMs  float64 `json:"response_time_ms"`
 	ConsecutiveFail int     `json:"consecutive_fail"`
+	AuthMode        string  `json:"auth_mode"` // configured / client_oauth
 }
 
 // EndpointScheduleDecisionInfo 最近一次端点调度中的单端点决策。
@@ -79,6 +81,7 @@ func (a *App) GetEndpoints() []EndpointInfo {
 			Healthy:         ep.Status.Healthy,
 			ConsecutiveFail: ep.Status.ConsecutiveFails,
 			ResponseTimeMs:  float64(ep.Status.ResponseTime.Milliseconds()),
+			AuthMode:        config.NormalizeEndpointAuthMode(ep.Config.AuthMode),
 		}
 		if !ep.Status.LastCheck.IsZero() {
 			info.LastCheck = formatAPITime(ep.Status.LastCheck)

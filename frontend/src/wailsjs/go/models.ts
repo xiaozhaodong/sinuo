@@ -801,6 +801,7 @@ export namespace main {
 	    last_check: string;
 	    response_time_ms: number;
 	    consecutive_fail: number;
+	    auth_mode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EndpointInfo(source);
@@ -815,6 +816,7 @@ export namespace main {
 	        this.last_check = source["last_check"];
 	        this.response_time_ms = source["response_time_ms"];
 	        this.consecutive_fail = source["consecutive_fail"];
+	        this.auth_mode = source["auth_mode"];
 	    }
 	}
 	export class EndpointRecordInfo {
