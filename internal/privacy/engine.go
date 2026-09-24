@@ -164,6 +164,9 @@ func (s *Snapshot) collectSegments(req Request, body []byte) ([]textSegment, str
 		if err != nil {
 			return nil, "", err
 		}
+		if isClaudeMessagesPath(req.Path) {
+			segments = dropClaudeAttributionSegments(segments)
+		}
 		return segments, "", nil
 	}
 	contentType := strings.ToLower(strings.TrimSpace(req.ContentType))

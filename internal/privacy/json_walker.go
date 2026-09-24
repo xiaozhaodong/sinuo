@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -16,7 +17,8 @@ type textSegment struct {
 	Start  int // 含
 	End    int // 不含
 	Value  string
-	IsJSON bool // true 表示区间是 JSON 字符串 token，替换时需要重新 escape
+	IsJSON bool       // true 表示区间是 JSON 字符串 token，替换时需要重新 escape
+	Path   []pathElem // JSON 路径；非 JSON 文本为空
 }
 
 // pathElem JSON 路径元素：Key 为对象键；Index >= 0 时为数组下标。
@@ -30,9 +32,10 @@ type segmentMatcher func(path []pathElem) bool
 
 // walkerForPath 返回请求路径对应的字段匹配器；不支持的路径返回 nil。
 func walkerForPath(requestPath string) segmentMatcher {
-	switch requestPath {
-	case "/v1/messages", "/v1/messages/count_tokens":
+	if isClaudeMessagesPath(requestPath) {
 		return matchClaudeMessagesTextPath
+	}
+	switch requestPath {
 	case "/v1/responses", "/v1/responses/compact":
 		return matchCodexResponsesTextPath
 	case "/v1/alpha/search":
@@ -83,6 +86,36 @@ func matchCodexSearchTextPath(path []pathElem) bool {
 // matchOpenAIImagesGenerationsTextPath 匹配 Image API 的 prompt 字段。
 func matchOpenAIImagesGenerationsTextPath(path []pathElem) bool {
 	return len(path) == 1 && path[0].Key == "prompt" && path[0].Index < 0
+}
+
+func isClaudeMessagesPath(requestPath string) bool {
+	return requestPath == "/v1/messages" || requestPath == "/v1/messages/count_tokens"
+}
+
+// claudeAttributionPrefix Claude Code 放在 system 首块的 attribution block 前缀
+const claudeAttributionPrefix = "x-anthropic-billing-header:"
+
+// dropClaudeAttributionSegments 剔除 system[0].text 上的 attribution block：
+// api.anthropic.com 只在它原样位于 system 数组首位时才剥离，被脱敏改动后会混进 prompt 与缓存键。
+// 该块只含客户端版本与会话指纹，不含用户内容；只按这一精确位置判断，其他位置同样前缀的文本照常扫描。
+func dropClaudeAttributionSegments(segments []textSegment) []textSegment {
+	kept := segments[:0]
+	for _, segment := range segments {
+		if isClaudeAttributionSegment(segment) {
+			continue
+		}
+		kept = append(kept, segment)
+	}
+	return kept
+}
+
+func isClaudeAttributionSegment(segment textSegment) bool {
+	path := segment.Path
+	return len(path) == 3 &&
+		path[0].Key == "system" && path[0].Index < 0 &&
+		path[1].Index == 0 &&
+		path[2].Key == "text" &&
+		strings.HasPrefix(segment.Value, claudeAttributionPrefix)
 }
 
 // matchClaudeMessagesTextPath 匹配 Claude /v1/messages 可扫描文本字段：
@@ -262,18 +295,21 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 			}
 			// 字符串值：定位 token 原始字节区间（前一 token 末尾到当前末尾之间，
 			// 仅有空白/逗号/冒号，首个双引号即 token 起点）
-			if match != nil && match(currentPath()) {
-				gap := body[prevOffset:offset]
-				quote := bytes.IndexByte(gap, '"')
-				if quote < 0 {
-					return nil, fmt.Errorf("failed to locate string token at offset %d", prevOffset)
+			if match != nil {
+				if path := currentPath(); match(path) {
+					gap := body[prevOffset:offset]
+					quote := bytes.IndexByte(gap, '"')
+					if quote < 0 {
+						return nil, fmt.Errorf("failed to locate string token at offset %d", prevOffset)
+					}
+					segments = append(segments, textSegment{
+						Start:  int(prevOffset) + quote,
+						End:    int(offset),
+						Value:  tok,
+						IsJSON: true,
+						Path:   path,
+					})
 				}
-				segments = append(segments, textSegment{
-					Start:  int(prevOffset) + quote,
-					End:    int(offset),
-					Value:  tok,
-					IsJSON: true,
-				})
 			}
 			advanceContainer()
 		default:
