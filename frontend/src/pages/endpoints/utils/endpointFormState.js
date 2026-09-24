@@ -11,7 +11,18 @@ const numericValue = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+// 端点认证方式，与后端 config/endpoint_auth_mode.go 保持一致
+export const ENDPOINT_AUTH_MODE_CONFIGURED = 'configured';
+export const ENDPOINT_AUTH_MODE_CLIENT_OAUTH = 'client_oauth';
+// 订阅直通端点唯一允许的上游
+export const CLAUDE_OAUTH_UPSTREAM_URL = 'https://api.anthropic.com';
+// 订阅直通端点的自定义头不得覆盖的认证类头（小写）
+const CLIENT_OAUTH_PROTECTED_HEADERS = new Set(['authorization', 'x-api-key', 'cookie', 'proxy-authorization']);
+
+export const isClientOAuthEndpoint = (endpoint = {}) => endpoint?.authMode === ENDPOINT_AUTH_MODE_CLIENT_OAUTH;
+
 export const summarizeEndpointAuthentication = (endpoint = {}) => {
+  if (isClientOAuthEndpoint(endpoint)) return 'Claude 订阅直通';
   const methods = [];
   if (endpoint.tokenMasked) methods.push('Token');
   if (endpoint.apiKeyMasked) methods.push('API Key');
@@ -26,6 +37,7 @@ export const createEndpointFormState = (endpoint = null) => {
     ...createSoftFailurePolicyState(endpoint || {}),
     name: endpoint?.name || '',
     url: endpoint?.url || '',
+    authMode: isClientOAuthEndpoint(endpoint) ? ENDPOINT_AUTH_MODE_CLIENT_OAUTH : ENDPOINT_AUTH_MODE_CONFIGURED,
     token: '',
     apiKey: '',
     clearToken: false,
@@ -60,7 +72,9 @@ export const validateEndpointFormState = (state = {}) => {
     errors.name = '请输入端点名称';
   }
 
-  const rawURL = String(state.url || '').trim();
+  const rawURL = state.authMode === ENDPOINT_AUTH_MODE_CLIENT_OAUTH
+    ? CLAUDE_OAUTH_UPSTREAM_URL
+    : String(state.url || '').trim();
   if (!rawURL) {
     errors.url = '请输入端点 URL';
   } else {
@@ -74,6 +88,7 @@ export const validateEndpointFormState = (state = {}) => {
     }
   }
 
+  const clientOAuth = state.authMode === ENDPOINT_AUTH_MODE_CLIENT_OAUTH;
   const seenHeaders = new Set();
   for (const row of state.headerRows || []) {
     const name = String(row?.name || '').trim().toLowerCase();
@@ -85,6 +100,10 @@ export const validateEndpointFormState = (state = {}) => {
     }
     if (seenHeaders.has(name)) {
       errors.headers = 'Header 名称不能重复';
+      break;
+    }
+    if (clientOAuth && CLIENT_OAUTH_PROTECTED_HEADERS.has(name)) {
+      errors.headers = '订阅直通端点的自定义 Header 不能包含认证类请求头';
       break;
     }
     seenHeaders.add(name);
@@ -100,14 +119,17 @@ export const buildEndpointFormPayload = (state = {}) => {
     if (name && value) headers[name] = value;
   }
 
+  // 订阅直通：URL 固定为官方地址、不提交任何凭据（后端会丢弃编辑时沿用的旧凭据）
+  const clientOAuth = state.authMode === ENDPOINT_AUTH_MODE_CLIENT_OAUTH;
   return {
     ...buildSoftFailurePolicyPayload(state),
     name: String(state.name || '').trim(),
-    url: String(state.url || '').trim(),
-    token: String(state.token || '').trim(),
-    apiKey: String(state.apiKey || '').trim(),
-    clearToken: state.clearToken === true,
-    clearApiKey: state.clearApiKey === true,
+    url: clientOAuth ? CLAUDE_OAUTH_UPSTREAM_URL : String(state.url || '').trim(),
+    authMode: clientOAuth ? ENDPOINT_AUTH_MODE_CLIENT_OAUTH : ENDPOINT_AUTH_MODE_CONFIGURED,
+    token: clientOAuth ? '' : String(state.token || '').trim(),
+    apiKey: clientOAuth ? '' : String(state.apiKey || '').trim(),
+    clearToken: !clientOAuth && state.clearToken === true,
+    clearApiKey: !clientOAuth && state.clearApiKey === true,
     headers,
     priority: Math.max(0, Math.trunc(numericValue(state.priority, 1))),
     failoverEnabled: state.failoverEnabled !== false,

@@ -110,6 +110,10 @@ export function GetAllSettings() {
   return window['go']['main']['App']['GetAllSettings']();
 }
 
+export function GetClaudeCodeEntryStatus() {
+  return window['go']['main']['App']['GetClaudeCodeEntryStatus']();
+}
+
 export function GetClaudeRoutingState() {
   return window['go']['main']['App']['GetClaudeRoutingState']();
 }
@@ -344,6 +348,10 @@ export function RetryStartupMigration() {
 
 export function RotateCodexSubscriptionProxyAccess(arg1) {
   return window['go']['main']['App']['RotateCodexSubscriptionProxyAccess'](arg1);
+}
+
+export function SaveClaudeCodeEntrySettings(arg1) {
+  return window['go']['main']['App']['SaveClaudeCodeEntrySettings'](arg1);
 }
 
 export function SaveCodexModelCatalog(arg1) {

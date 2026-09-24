@@ -1485,6 +1485,7 @@ export const mapEndpointRecord = (record = {}) => ({
   url: record.url,
   tokenMasked: record.token_masked,
   apiKeyMasked: record.api_key_masked,
+  authMode: record.auth_mode || 'configured',
   headers: record.headers || {},
   priority: record.priority,
   failoverEnabled: record.failover_enabled,
@@ -1527,6 +1528,7 @@ export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
   api_key: input.apiKey || '',
   clear_token: input.clearToken === true,
   clear_api_key: input.clearApiKey === true,
+  auth_mode: input.authMode || 'configured',
   headers: input.headers || {},
   priority: Number.isFinite(Number(input.priority)) ? Math.max(0, parseInt(input.priority, 10)) : 1,
   failover_enabled: input.failoverEnabled !== false,
@@ -2466,6 +2468,39 @@ export const rotateCodexSubscriptionProxyAccess = async (expectedRevision = 0) =
   return normalizeCodexSubscriptionProxySaveResult(
     await WailsApp.RotateCodexSubscriptionProxyAccess(Number(expectedRevision ?? 0))
   );
+};
+
+const normalizeClaudeCodeEntryInfo = (info = {}) => ({
+  enabled: info.enabled === true,
+  listenPort: Number(info.listen_port) || 0,
+  baseUrl: info.base_url || '',
+  running: info.running === true,
+  error: info.error || ''
+});
+
+/**
+ * 获取 Claude Code 专用入口的配置与运行态
+ * @returns {Promise<{enabled:boolean, listenPort:number, baseUrl:string, running:boolean, error:string}>}
+ */
+export const getClaudeCodeEntryStatus = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeClaudeCodeEntryInfo(await WailsApp.GetClaudeCodeEntryStatus());
+};
+
+/**
+ * 保存 Claude Code 专用入口配置并立即应用；监听失败时由返回值的 error 字段说明原因
+ * @param {{enabled:boolean, listenPort:number}} input
+ */
+export const saveClaudeCodeEntrySettings = async (input = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return normalizeClaudeCodeEntryInfo(await WailsApp.SaveClaudeCodeEntrySettings({
+    enabled: input.enabled === true,
+    listen_port: Number(input.listenPort)
+  }));
 };
 
 export const getCodexSubscriptionProxyStatus = async () => {

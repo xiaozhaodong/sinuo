@@ -26,6 +26,7 @@ import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
 import { SettingItem, SettingsSection, PortInfo } from './components';
 import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
+import ClaudeCodeEntryCard from '@components/claude-code-entry/ClaudeCodeEntryCard.jsx';
 import {
   isWailsEnvironment,
   getSettingCategories,
@@ -303,6 +304,8 @@ const SettingsPage = ({ onNavigateToCodexAccess }) => {
           前往客户端接入
         </Button>
       </div>
+
+      <ClaudeCodeEntryCard />
 
       {error
         ? <ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} />

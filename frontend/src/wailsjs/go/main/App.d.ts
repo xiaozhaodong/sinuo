@@ -58,6 +58,8 @@ export function GenerateChatGPTOAuthLink():Promise<main.GenerateChatGPTOAuthLink
 
 export function GetAllSettings():Promise<Array<main.SettingInfo>>;
 
+export function GetClaudeCodeEntryStatus():Promise<main.ClaudeCodeEntryInfo>;
+
 export function GetClaudeRoutingState():Promise<main.ClaudeRoutingState>;
 
 export function GetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
@@ -175,6 +177,8 @@ export function ResetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 export function RetryStartupMigration():Promise<migration.Status>;
 
 export function RotateCodexSubscriptionProxyAccess(arg1:number):Promise<main.CodexSubscriptionProxySaveResultInfo>;
+
+export function SaveClaudeCodeEntrySettings(arg1:main.ClaudeCodeEntryInput):Promise<main.ClaudeCodeEntryInfo>;
 
 export function SaveCodexModelCatalog(arg1:main.SaveCodexModelCatalogInput):Promise<main.CodexModelCatalogInfo>;
 

@@ -198,6 +198,40 @@ export namespace main {
 	        this.timestamp = source["timestamp"];
 	    }
 	}
+	export class ClaudeCodeEntryInfo {
+	    enabled: boolean;
+	    listen_port: number;
+	    base_url: string;
+	    running: boolean;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeCodeEntryInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.listen_port = source["listen_port"];
+	        this.base_url = source["base_url"];
+	        this.running = source["running"];
+	        this.error = source["error"];
+	    }
+	}
+	export class ClaudeCodeEntryInput {
+	    enabled: boolean;
+	    listen_port: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeCodeEntryInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.listen_port = source["listen_port"];
+	    }
+	}
 	export class ClaudeRoutingState {
 	    mode: string;
 	    endpoint_name: string;
@@ -574,6 +608,7 @@ export namespace main {
 	    api_key: string;
 	    clear_token: boolean;
 	    clear_api_key: boolean;
+	    auth_mode: string;
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
@@ -603,6 +638,7 @@ export namespace main {
 	        this.api_key = source["api_key"];
 	        this.clear_token = source["clear_token"];
 	        this.clear_api_key = source["clear_api_key"];
+	        this.auth_mode = source["auth_mode"];
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];
@@ -775,6 +811,7 @@ export namespace main {
 	    url: string;
 	    token_masked: string;
 	    api_key_masked: string;
+	    auth_mode: string;
 	    headers: Record<string, string>;
 	    priority: number;
 	    failover_enabled: boolean;
@@ -813,6 +850,7 @@ export namespace main {
 	        this.url = source["url"];
 	        this.token_masked = source["token_masked"];
 	        this.api_key_masked = source["api_key_masked"];
+	        this.auth_mode = source["auth_mode"];
 	        this.headers = source["headers"];
 	        this.priority = source["priority"];
 	        this.failover_enabled = source["failover_enabled"];
