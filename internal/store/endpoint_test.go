@@ -24,6 +24,7 @@ func createTestDB(t *testing.T) *sql.DB {
 			token TEXT NOT NULL DEFAULT '',
 			api_key TEXT NOT NULL DEFAULT '',
 			headers TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(headers) AND json_type(headers) = 'object'),
+			auth_mode TEXT NOT NULL DEFAULT 'configured',
 			priority INTEGER NOT NULL DEFAULT 1 CHECK(priority >= 0),
 			failover_enabled INTEGER NOT NULL DEFAULT 1,
 			cooldown_seconds INTEGER,
@@ -261,5 +262,48 @@ func TestEndpointSchemaHasNoLegacyChannelOrEnabled(t *testing.T) {
 	}
 	if !columns["availability_enabled"] || !columns["failover_enabled"] {
 		t.Fatalf("目标双状态列缺失: %+v", columns)
+	}
+}
+
+func TestSQLiteEndpointStoreAuthModeRoundTrip(t *testing.T) {
+	store := NewSQLiteEndpointStore(createTestDB(t))
+	ctx := context.Background()
+
+	legacy, err := store.Create(ctx, &EndpointRecord{Name: "legacy", URL: "https://relay.example.com", Token: "t"})
+	if err != nil {
+		t.Fatalf("创建旧式端点失败: %v", err)
+	}
+	gotLegacy, err := store.GetByID(ctx, legacy.ID)
+	if err != nil || gotLegacy == nil {
+		t.Fatalf("读取旧式端点失败: record=%+v err=%v", gotLegacy, err)
+	}
+	if gotLegacy.AuthMode != "configured" {
+		t.Fatalf("未填写认证方式应落库为 configured，实际 %q", gotLegacy.AuthMode)
+	}
+
+	if _, err := store.Create(ctx, &EndpointRecord{Name: "oauth", URL: "https://api.anthropic.com", AuthMode: "client_oauth"}); err != nil {
+		t.Fatalf("创建订阅直通端点失败: %v", err)
+	}
+	records, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("列出端点失败: %v", err)
+	}
+	modes := map[string]string{}
+	for _, record := range records {
+		modes[record.Name] = record.AuthMode
+	}
+	if modes["oauth"] != "client_oauth" || modes["legacy"] != "configured" {
+		t.Fatalf("List 返回的认证方式不正确: %+v", modes)
+	}
+
+	gotLegacy.AuthMode = "client_oauth"
+	gotLegacy.URL = "https://api.anthropic.com"
+	gotLegacy.Token = ""
+	if err := store.Update(ctx, gotLegacy); err != nil {
+		t.Fatalf("更新认证方式失败: %v", err)
+	}
+	updated, err := store.Get(ctx, "legacy")
+	if err != nil || updated == nil || updated.AuthMode != "client_oauth" {
+		t.Fatalf("更新后认证方式不正确: record=%+v err=%v", updated, err)
 	}
 }

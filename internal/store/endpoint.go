@@ -26,6 +26,8 @@ type EndpointRecord struct {
 	Token   string            `json:"token,omitempty"`   // Bearer Token
 	ApiKey  string            `json:"api_key,omitempty"` // API Key
 	Headers map[string]string `json:"headers,omitempty"` // 自定义请求头
+	// AuthMode 认证方式：configured（端点凭据）/ client_oauth（Claude Code 订阅直通）
+	AuthMode string `json:"auth_mode"`
 
 	// 路由配置
 	Priority        int  `json:"priority"`         // 优先级（数字越小越高）
@@ -160,17 +162,17 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 
 	query := `
 		INSERT INTO endpoints (
-			name, url, token, api_key, headers,
+			name, url, token, api_key, headers, auth_mode,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON), config.NormalizeEndpointAuthMode(record.AuthMode),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
@@ -199,7 +201,7 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers, auth_mode,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
@@ -217,7 +219,7 @@ func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointR
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers, auth_mode,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
@@ -235,7 +237,7 @@ func (s *SQLiteEndpointStore) List(ctx context.Context) ([]*EndpointRecord, erro
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, url, token, api_key, headers,
+		SELECT id, name, url, token, api_key, headers, auth_mode,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
@@ -264,7 +266,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 
 	query := `
 		UPDATE endpoints SET
-			url = ?, token = ?, api_key = ?, headers = ?,
+			url = ?, token = ?, api_key = ?, headers = ?, auth_mode = ?,
 			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
 			supports_count_tokens = ?, model_rewrite_rules = ?, soft_failure_window_minutes = ?, soft_failure_threshold = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
@@ -274,7 +276,7 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.URL, record.Token, record.ApiKey, string(headersJSON), config.NormalizeEndpointAuthMode(record.AuthMode),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 		boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
@@ -385,13 +387,13 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 
 	query := `
 		INSERT INTO endpoints (
-			name, url, token, api_key, headers,
+			name, url, token, api_key, headers, auth_mode,
 			priority, failover_enabled, cooldown_seconds, timeout_seconds,
 			supports_count_tokens, model_rewrite_rules, soft_failure_window_minutes, soft_failure_threshold,
 			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
 			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
 			availability_enabled
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	stmt, err := tx.PrepareContext(ctx, query)
@@ -430,7 +432,7 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 		}
 
 		_, err = stmt.ExecContext(ctx,
-			record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
+			record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON), config.NormalizeEndpointAuthMode(record.AuthMode),
 			record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 			boolToInt(record.SupportsCountTokens), record.ModelRewriteRules, record.SoftFailureWindowMinutes, record.SoftFailureThreshold,
 			record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
@@ -507,7 +509,7 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 
 	err := row.Scan(
 		&record.ID, &record.Name, &record.URL,
-		&record.Token, &record.ApiKey, &headersJSON,
+		&record.Token, &record.ApiKey, &headersJSON, &record.AuthMode,
 		&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
 		&supportsCountTokens, &record.ModelRewriteRules, &record.SoftFailureWindowMinutes, &record.SoftFailureThreshold,
 		&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
@@ -540,6 +542,7 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	}
 	record.FailoverEnabled = failoverEnabled == 1
 	record.SupportsCountTokens = supportsCountTokens == 1
+	record.AuthMode = config.NormalizeEndpointAuthMode(record.AuthMode)
 	availValue := availabilityEnabled == 1
 	record.AvailabilityEnabled = &availValue
 
@@ -576,7 +579,7 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 
 		err := rows.Scan(
 			&record.ID, &record.Name, &record.URL,
-			&record.Token, &record.ApiKey, &headersJSON,
+			&record.Token, &record.ApiKey, &headersJSON, &record.AuthMode,
 			&record.Priority, &failoverEnabled, &cooldownSeconds, &record.TimeoutSeconds,
 			&supportsCountTokens, &record.ModelRewriteRules, &record.SoftFailureWindowMinutes, &record.SoftFailureThreshold,
 			&record.CostMultiplier, &record.InputCostMultiplier, &record.OutputCostMultiplier,
@@ -606,6 +609,7 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		}
 		record.FailoverEnabled = failoverEnabled == 1
 		record.SupportsCountTokens = supportsCountTokens == 1
+		record.AuthMode = config.NormalizeEndpointAuthMode(record.AuthMode)
 		availValue := availabilityEnabled == 1
 		record.AvailabilityEnabled = &availValue
 

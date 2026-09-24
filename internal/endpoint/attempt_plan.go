@@ -35,6 +35,7 @@ type EndpointAttemptTarget struct {
 	headers                  map[string]string
 	token                    string
 	apiKey                   string
+	authMode                 string
 	supportsCountTokens      bool
 	modelRewriteRules        string
 	softFailureWindowMinutes *int
@@ -91,6 +92,7 @@ func (t *EndpointAttemptTarget) Config() config.EndpointConfig {
 		Headers:                  cloneStringMap(t.headers),
 		Token:                    t.token,
 		ApiKey:                   t.apiKey,
+		AuthMode:                 t.authMode,
 		SupportsCountTokens:      t.supportsCountTokens,
 		ModelRewriteRules:        t.modelRewriteRules,
 		SoftFailureWindowMinutes: config.CloneSoftFailureValue(t.softFailureWindowMinutes),
@@ -177,6 +179,7 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 		headers:                  cloneStringMap(configSnapshot.Headers),
 		token:                    plan.resolvedToken,
 		apiKey:                   plan.resolvedAPIKey,
+		authMode:                 configSnapshot.AuthMode,
 		supportsCountTokens:      configSnapshot.SupportsCountTokens,
 		modelRewriteRules:        configSnapshot.ModelRewriteRules,
 		softFailureWindowMinutes: config.CloneSoftFailureValue(configSnapshot.SoftFailureWindowMinutes),

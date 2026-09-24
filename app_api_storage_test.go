@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -226,6 +227,90 @@ func TestUpdateEndpointRecord_MissingEndpointReturnsError(t *testing.T) {
 	}
 }
 
+func TestCreateEndpointRecord_ClientOAuthValidationAndRuntime(t *testing.T) {
+	app, cleanup := newEndpointStorageAPITestApp(t)
+	defer cleanup()
+
+	base := CreateEndpointInput{
+		URL:            "https://api.anthropic.com",
+		AuthMode:       config.EndpointAuthModeClientOAuth,
+		Priority:       1,
+		TimeoutSeconds: 30,
+	}
+	rejected := []struct {
+		name  string
+		patch func(*CreateEndpointInput)
+	}{
+		{"非官方地址", func(in *CreateEndpointInput) { in.URL = "https://relay.example.com" }},
+		{"填写 Token", func(in *CreateEndpointInput) { in.Token = "sk-should-not-store" }},
+		{"自定义 Authorization", func(in *CreateEndpointInput) { in.Headers = map[string]string{"Authorization": "Bearer x"} }},
+	}
+	for i, tc := range rejected {
+		input := base
+		input.Name = fmt.Sprintf("oauth-rejected-%d", i)
+		tc.patch(&input)
+		if err := app.CreateEndpointRecord(input); err == nil {
+			t.Fatalf("%s 应被拒绝", tc.name)
+		}
+	}
+
+	input := base
+	input.Name = "oauth-ok"
+	if err := app.CreateEndpointRecord(input); err != nil {
+		t.Fatalf("合法订阅直通端点创建失败: %v", err)
+	}
+	info, err := app.GetEndpointRecord("oauth-ok")
+	if err != nil || info.AuthMode != config.EndpointAuthModeClientOAuth {
+		t.Fatalf("前端读到的认证方式不正确: info=%+v err=%v", info, err)
+	}
+	runtime := app.endpointManager.GetEndpointByNameAny("oauth-ok")
+	if runtime == nil || !runtime.Config.IsClientOAuth() {
+		t.Fatalf("运行态端点未带上认证方式: %+v", runtime)
+	}
+}
+
+func TestUpdateEndpointRecord_SwitchToClientOAuthDropsStoredSecrets(t *testing.T) {
+	app, cleanup := newEndpointStorageAPITestApp(t)
+	defer cleanup()
+
+	if err := app.CreateEndpointRecord(CreateEndpointInput{
+		Name:           "switching",
+		URL:            "https://relay.example.com",
+		Token:          "sk-old",
+		ApiKey:         "api-old",
+		Priority:       1,
+		TimeoutSeconds: 30,
+	}); err != nil {
+		t.Fatalf("create endpoint failed: %v", err)
+	}
+
+	if err := app.UpdateEndpointRecord("switching", CreateEndpointInput{
+		URL:            "https://api.anthropic.com",
+		AuthMode:       config.EndpointAuthModeClientOAuth,
+		Priority:       1,
+		TimeoutSeconds: 30,
+	}); err != nil {
+		t.Fatalf("切换为订阅直通失败: %v", err)
+	}
+	updated, err := app.endpointService.GetEndpoint(context.Background(), "switching")
+	if err != nil {
+		t.Fatalf("get endpoint failed: %v", err)
+	}
+	if updated.Token != "" || updated.ApiKey != "" || updated.AuthMode != config.EndpointAuthModeClientOAuth {
+		t.Fatalf("切换后旧凭据必须清空: %+v", updated)
+	}
+
+	if err := app.UpdateEndpointRecord("switching", CreateEndpointInput{
+		URL:            "https://api.anthropic.com",
+		AuthMode:       config.EndpointAuthModeClientOAuth,
+		Token:          "sk-explicit",
+		Priority:       1,
+		TimeoutSeconds: 30,
+	}); err == nil {
+		t.Fatal("订阅直通端点显式填写 Token 必须被拒绝")
+	}
+}
+
 func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 	t.Helper()
 
@@ -249,6 +334,7 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 			token TEXT,
 			api_key TEXT,
 			headers TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(headers) AND json_type(headers) = 'object'),
+			auth_mode TEXT NOT NULL DEFAULT 'configured',
 			priority INTEGER NOT NULL DEFAULT 1 CHECK (priority >= 0),
 			failover_enabled INTEGER NOT NULL DEFAULT 1 CHECK (failover_enabled IN (0, 1)),
 			availability_enabled INTEGER NOT NULL DEFAULT 1 CHECK (availability_enabled IN (0, 1)),

@@ -212,6 +212,7 @@ func endpointTargetSchema(table string) string {
 		token TEXT,
 		api_key TEXT,
 		headers TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(headers) AND json_type(headers) = 'object'),
+		auth_mode TEXT NOT NULL DEFAULT 'configured',
 		priority INTEGER NOT NULL DEFAULT 1 CHECK (priority >= 0),
 		failover_enabled INTEGER NOT NULL DEFAULT 1 CHECK (failover_enabled IN (0, 1)),
 		availability_enabled INTEGER NOT NULL DEFAULT 1 CHECK (availability_enabled IN (0, 1)),

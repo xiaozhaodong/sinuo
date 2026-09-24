@@ -268,6 +268,7 @@ type EndpointConfig struct {
 	Cooldown                 *time.Duration    `yaml:"cooldown,omitempty"`         // v4.0: 端点级冷却时间（可选），默认使用全局配置
 	Token                    string            `yaml:"-"`
 	ApiKey                   string            `yaml:"-"`
+	AuthMode                 string            `yaml:"-"` // configured / client_oauth，见 endpoint_auth_mode.go
 	Timeout                  time.Duration     `yaml:"timeout"`
 	Headers                  map[string]string `yaml:"-"`
 	SupportsCountTokens      bool              `yaml:"supports_count_tokens,omitempty"` // 是否支持count_tokens端点
