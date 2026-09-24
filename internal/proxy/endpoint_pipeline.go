@@ -216,7 +216,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 		}
-		decision := decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
+		decision := decideEndpointForwardOutcomeFor(ep.Config.IsClientOAuth(), forwardErr, resp, traceState, bodySample)
 		lifecycleManager.IncrementAttempt()
 
 		// §9.2 普通 429 同端点短重试（最多 1 次；gate 未取得或等待超限则跳过）
@@ -250,7 +250,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								if forwardErr == nil && resp != nil && resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 									bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 								}
-								decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
+								decision = decideEndpointForwardOutcomeFor(ep.Config.IsClientOAuth(), forwardErr, resp, traceState, bodySample)
 								lifecycleManager.IncrementAttempt()
 							}
 						}
@@ -366,6 +366,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 
 		case EndpointForwardPassthroughRaw:
 			detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			if decision.Mark != EndpointMarkNone {
+				h.markEndpointFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), decision, profile, detail)
+			}
 			relayErr := h.relayEndpointRawResponse(w, resp, lifecycleManager, isSSE, flusher)
 			releaseUpstream()
 			if relayErr != nil {
@@ -379,6 +382,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			var outcome EndpointProcessOutcome
 			var outcomeDetail string
 			if isSSE {
+				if ep.Config.IsClientOAuth() {
+					copyUpstreamStreamHeaders(w.Header(), resp.Header)
+				}
 				outcome, outcomeDetail = h.processEndpointStreamingResponse(ctx, w, r, resp, flusher, lifecycleManager, ep.Config.Name, target.Revision(), target.FailureEpoch(), upstreamCancel)
 			} else {
 				outcome, outcomeDetail = h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ep.Config.Name)
@@ -679,9 +685,15 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 	return ProcessOutcomeFullSuccess, ""
 }
 
-// relayEndpointRawResponse 原样透传上游 4xx（客户端请求问题，不记录端点状态）
+// relayEndpointRawResponse 原样透传上游错误响应（状态码、头、错误体）。
+// 通用端点只有普通 4xx 走到这里；订阅直通端点的 401/403/429/5xx 也走这里。
 func (h *Handler) relayEndpointRawResponse(w http.ResponseWriter, resp *http.Response, lifecycleManager *RequestLifecycleManager, isSSE bool, flusher http.Flusher) error {
 	detail := fmt.Sprintf("upstream returned %d", resp.StatusCode)
+	if isSSE {
+		// 候选循环前已预设 text/event-stream 等流式头；不清掉会与上游 Content-Type 并存，
+		// 客户端可能把 JSON 错误体当 SSE 解析而识别不出错误
+		clearEndpointStreamingHeaders(w.Header())
+	}
 	if err := h.writeRawResponse(w, resp); err != nil {
 		lifecycleManager.FailRequest("endpoint_response_write_error", err.Error(), resp.StatusCode)
 		return err
@@ -689,8 +701,22 @@ func (h *Handler) relayEndpointRawResponse(w http.ResponseWriter, resp *http.Res
 	if isSSE && flusher != nil {
 		flusher.Flush()
 	}
-	lifecycleManager.FailRequest("upstream_client_error", detail, resp.StatusCode)
+	lifecycleManager.FailRequest(rawRelayFailureReason(resp.StatusCode), detail, resp.StatusCode)
 	return nil
+}
+
+// rawRelayFailureReason 原样透传时记录的失败原因
+func rawRelayFailureReason(statusCode int) string {
+	switch {
+	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		return FailoverReasonAuthRejected
+	case statusCode == http.StatusTooManyRequests:
+		return FailoverReasonRateLimited
+	case statusCode >= http.StatusInternalServerError:
+		return FailoverReasonServerError
+	default:
+		return "upstream_client_error"
+	}
 }
 
 func endpointScheduleOutcomeName(outcome EndpointProcessOutcome) string {
@@ -740,6 +766,40 @@ func setEndpointStreamingHeaders(w http.ResponseWriter) {
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
+}
+
+// endpointStreamingHeaderKeys setEndpointStreamingHeaders 预设的响应头
+var endpointStreamingHeaderKeys = []string{
+	"Content-Type", "Cache-Control", "Connection", "Transfer-Encoding",
+	"Access-Control-Allow-Origin", "Access-Control-Allow-Headers",
+}
+
+func clearEndpointStreamingHeaders(header http.Header) {
+	for _, key := range endpointStreamingHeaderKeys {
+		header.Del(key)
+	}
+}
+
+// upstreamStreamSkipHeaders 流式成功响应不透传的上游头：由代理自己设置，或流处理后语义已变（如已解压）
+var upstreamStreamSkipHeaders = map[string]struct{}{
+	"Content-Type": {}, "Content-Length": {}, "Content-Encoding": {}, "Transfer-Encoding": {},
+	"Connection": {}, "Keep-Alive": {}, "Cache-Control": {}, "Set-Cookie": {},
+	"Proxy-Authenticate": {}, "Trailer": {}, "Upgrade": {},
+}
+
+// copyUpstreamStreamHeaders 把上游响应头带回客户端（anthropic-ratelimit-unified-*、retry-after、
+// x-should-retry、request-id 等），覆盖同名值而不是追加
+func copyUpstreamStreamHeaders(dst, src http.Header) {
+	for key, values := range src {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, skip := upstreamStreamSkipHeaders[canonical]; skip {
+			continue
+		}
+		dst.Del(canonical)
+		for _, value := range values {
+			dst.Add(canonical, value)
+		}
+	}
 }
 
 func shouldEnableEndpointTailDrain(r *http.Request) bool {

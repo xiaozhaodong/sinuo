@@ -299,3 +299,39 @@ func TestCountTokens_NewEpochSettlementNormal(t *testing.T) {
 		t.Fatal("count_tokens scoped cooldown 不应冷却 /v1/messages")
 	}
 }
+
+// TestCountTokens_ClientOAuthUnauthorizedDoesNotCooldownEndpoint
+// 订阅直通端点在 count_tokens 上收到 401：降级估算，且不写全局鉴权冷却（否则会连带锁住 /v1/messages）
+func TestCountTokens_ClientOAuthUnauthorizedDoesNotCooldownEndpoint(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-ant-oat01-client" {
+			t.Errorf("上游应收到客户端 OAuth token，got %q", got)
+		}
+		http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired"}}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(upstream.Close)
+
+	handler, manager := newCountTokensBaselineHandler(t, config.EndpointConfig{
+		Name:                "count-oauth",
+		URL:                 upstream.URL,
+		AuthMode:            config.EndpointAuthModeClientOAuth,
+		Priority:            1,
+		Timeout:             time.Second,
+		SupportsCountTokens: true,
+	})
+	body := []byte(`{"model":"claude-test","messages":[{"role":"user","content":"hello world"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(req.Context()))
+	req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
+	recorder := httptest.NewRecorder()
+	handler.Handle(context.Background(), recorder, req, body, "req-count-oauth")
+
+	requireCountTokensEstimation(t, recorder)
+	if recorder.Header().Get("X-Token-Estimation-Reason") != "upstream_failed" {
+		t.Fatalf("应因上游失败降级估算（说明确实请求过订阅直通端点），got %q", recorder.Header().Get("X-Token-Estimation-Reason"))
+	}
+	status := manager.GetEndpointStatus("count-oauth")
+	if !status.GlobalCooldownUntil.IsZero() && status.GlobalCooldownUntil.After(time.Now()) {
+		t.Fatalf("订阅直通端点的 401 不得写全局鉴权冷却: %+v", status)
+	}
+}

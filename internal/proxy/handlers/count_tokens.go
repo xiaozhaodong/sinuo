@@ -254,6 +254,10 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 	errorBody, _ := io.ReadAll(resp.Body)
 	errorText := string(errorBody)
 	switch {
+	case ep.Config.IsClientOAuth() && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden):
+		// 订阅直通：凭据来自客户端请求（token 过期等），端点本身没有问题；
+		// 写全局鉴权冷却会让 /v1/messages 也被锁住，而本路径降级为估算后客户端毫无感知
+		slog.Info(fmt.Sprintf("🔑 [Token计数] [%s] 订阅直通端点 %s 返回 %d，降级估算且不冷却端点", connID, ep.Config.Name, resp.StatusCode))
 	case resp.StatusCode == http.StatusUnauthorized:
 		// §10 规则 4：凭据两个 path 共用，认证失败写端点全局 auth cooldown
 		h.recordAuthCooldown(ep.Config.Name, target.Revision(), target.FailureEpoch(), connID)

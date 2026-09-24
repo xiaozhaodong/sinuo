@@ -259,35 +259,53 @@ func (f *Forwarder) buildStreamingTransport() (*http.Transport, error) {
 
 // CopyHeaders 复制头部逻辑
 func (f *Forwarder) CopyHeaders(src *http.Request, dst *http.Request, ep *endpoint.Endpoint) {
-	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Headers,
-		f.endpointManager.GetTokenForEndpoint(ep), f.endpointManager.GetApiKeyForEndpoint(ep))
+	f.copyHeaders(src, dst, ep.Config.URL, ep.Config.Headers, outboundCredentials{
+		token:       f.endpointManager.GetTokenForEndpoint(ep),
+		apiKey:      f.endpointManager.GetApiKeyForEndpoint(ep),
+		clientOAuth: ep.Config.IsClientOAuth(),
+	})
 }
 
 // CopyAttemptHeaders 只使用 admission 快照中已解析的凭据与 headers。
 // 即使快照凭据为空，也不得回退到运行态组内继承。
 func (f *Forwarder) CopyAttemptHeaders(src *http.Request, dst *http.Request, target *endpoint.EndpointAttemptTarget) {
 	cfg := target.Config()
-	f.copyHeaders(src, dst, cfg.URL, cfg.Headers, cfg.Token, cfg.ApiKey)
+	f.copyHeaders(src, dst, cfg.URL, cfg.Headers, outboundCredentials{
+		token:       cfg.Token,
+		apiKey:      cfg.ApiKey,
+		clientOAuth: cfg.IsClientOAuth(),
+	})
 }
 
-func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, token, apiKey string) {
-	// List of headers to skip/remove
-	skipHeaders := map[string]bool{
-		"host":          true, // We'll set this based on target endpoint
-		"authorization": true, // We'll add our own if configured
-		"x-api-key":     true, // Remove sensitive client API keys
-	}
+// outboundCredentials 出站认证来源：端点凭据，或透传客户端的 OAuth（订阅直通）
+type outboundCredentials struct {
+	token       string
+	apiKey      string
+	clientOAuth bool
+}
 
-	// Copy all headers except those we want to skip
-	for key, values := range src.Header {
-		if skipHeaders[strings.ToLower(key)] {
-			continue
-		}
+// configuredSkipHeaders 端点凭据模式：删除客户端认证头，改用端点凭据
+var configuredSkipHeaders = map[string]bool{
+	"host":          true, // We'll set this based on target endpoint
+	"authorization": true, // We'll add our own if configured
+	"x-api-key":     true, // Remove sensitive client API keys
+}
 
-		for _, value := range values {
-			dst.Header.Add(key, value)
-		}
-	}
+// clientOAuthSkipHeaders 订阅直通模式：保留客户端 Authorization（OAuth token），
+// 其余沿用黑名单复制，另外剔除 Cookie、代理与来源类头。上游固定为 api.anthropic.com，
+// Claude Code 直连时本来就会把其余头发给它，原样转发等价于直连。
+var clientOAuthSkipHeaders = map[string]bool{
+	"host":                true,
+	"x-api-key":           true,
+	"cookie":              true,
+	"proxy-authorization": true,
+	"forwarded":           true,
+	"origin":              true,
+	"referer":             true,
+}
+
+func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL string, headers map[string]string, creds outboundCredentials) {
+	copyClientHeaders(src.Header, dst.Header, creds.clientOAuth)
 
 	// Set Host header based on target endpoint URL
 	if u, err := url.Parse(targetURL); err == nil {
@@ -296,18 +314,21 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 		dst.Host = u.Host
 	}
 
-	// Add or override Authorization header
-	if token != "" {
-		dst.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	// Add or override X-Api-Key header
-	if apiKey != "" {
-		dst.Header.Set("X-Api-Key", apiKey)
+	// 订阅直通不注入端点凭据（保存前已校验为空，这里再兜底一次）
+	if !creds.clientOAuth {
+		if creds.token != "" {
+			dst.Header.Set("Authorization", "Bearer "+creds.token)
+		}
+		if creds.apiKey != "" {
+			dst.Header.Set("X-Api-Key", creds.apiKey)
+		}
 	}
 
 	// Add custom headers from endpoint configuration
 	for key, value := range headers {
+		if creds.clientOAuth && clientOAuthProtectedHeader(key) {
+			continue
+		}
 		dst.Header.Set(key, value)
 	}
 	if isAnyRouteURL(targetURL) {
@@ -329,6 +350,32 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 	for _, header := range hopByHopHeaders {
 		dst.Header.Del(header)
 	}
+}
+
+// copyClientHeaders 按认证方式复制客户端请求头
+func copyClientHeaders(src, dst http.Header, clientOAuth bool) {
+	skipHeaders := configuredSkipHeaders
+	if clientOAuth {
+		skipHeaders = clientOAuthSkipHeaders
+	}
+	for key, values := range src {
+		lower := strings.ToLower(key)
+		if skipHeaders[lower] || (clientOAuth && strings.HasPrefix(lower, "x-forwarded-")) {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
+}
+
+// clientOAuthProtectedHeader 订阅直通端点的自定义头不得覆盖认证类头
+func clientOAuthProtectedHeader(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "authorization", "x-api-key", "cookie", "proxy-authorization":
+		return true
+	}
+	return false
 }
 
 var anyRouteHosts = map[string]struct{}{

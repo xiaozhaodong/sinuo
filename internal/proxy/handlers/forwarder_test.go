@@ -464,7 +464,10 @@ func acquireForwarderTestTarget(t *testing.T, manager *endpoint.Manager, cfg con
 	if err := manager.AddEndpoint(cfg); err != nil {
 		t.Fatalf("add test endpoint: %v", err)
 	}
-	result := manager.PrepareRouteCandidates(context.Background(), endpoint.BuildRouteRequestProfile("/v1/messages", nil))
+	profile := endpoint.BuildRouteRequestProfile("/v1/messages", nil)
+	// 订阅直通端点只对 Claude Code 入口请求可见
+	profile.ClaudeCodeEntry = cfg.IsClientOAuth()
+	result := manager.PrepareRouteCandidates(context.Background(), profile)
 	if len(result.Plans) != 1 {
 		t.Fatalf("expected one test attempt plan, got %d", len(result.Plans))
 	}
