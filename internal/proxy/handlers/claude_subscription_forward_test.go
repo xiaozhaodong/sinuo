@@ -116,6 +116,64 @@ func TestForwarder_EntryRequestStripsOAuthBetaForEndpoints(t *testing.T) {
 	}
 }
 
+func TestForwarder_EntryRequestDropsClientSourceHeadersForEndpoints(t *testing.T) {
+	cfg := &config.Config{}
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	vendor := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
+		Name: "vendor", URL: "https://vendor.example.com", ApiKey: "vendor-key", Timeout: time.Second,
+	})
+	sourceHeaders := []string{"Cookie", "Forwarded", "X-Forwarded-For", "X-Forwarded-Proto", "Origin", "Referer"}
+
+	copyWith := func(fromEntry bool) http.Header {
+		src := newClaudeCodeClientRequest()
+		src.Header.Set("X-Forwarded-Proto", "https")
+		if fromEntry {
+			src = src.WithContext(endpoint.WithClaudeCodeEntry(src.Context(), endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeEndpoint}))
+		}
+		dst := httptest.NewRequest(http.MethodPost, "https://vendor.example.com/v1/messages", nil)
+		forwarder.CopyAttemptHeaders(src, dst, vendor)
+		return dst.Header
+	}
+
+	entry := copyWith(true)
+	for _, key := range sourceHeaders {
+		if got := entry.Get(key); got != "" {
+			t.Errorf("入口端点模式不得把 %s 转发给第三方，got %q", key, got)
+		}
+	}
+	if entry.Get("X-Claude-Code-Session-Id") != "session-1" || entry.Get("X-Api-Key") != "vendor-key" {
+		t.Errorf("入口端点模式应保留其余客户端头并写入端点凭据，got %v", entry)
+	}
+	mainPort := copyWith(false)
+	for _, key := range sourceHeaders {
+		if mainPort.Get(key) == "" {
+			t.Errorf("主端口保持原有透传，%s 不应被删除", key)
+		}
+	}
+}
+
+func TestForwarder_EntryRequestKeepsConfiguredOAuthBeta(t *testing.T) {
+	cfg := &config.Config{}
+	manager := endpoint.NewManager(cfg)
+	t.Cleanup(manager.Stop)
+	forwarder := NewForwarder(cfg, manager)
+	vendor := acquireForwarderTestTarget(t, manager, config.EndpointConfig{
+		Name: "vendor", URL: "https://vendor.example.com", ApiKey: "vendor-key", Timeout: time.Second,
+		Headers: map[string]string{"anthropic-beta": "oauth-2025-04-20"},
+	})
+
+	src := newClaudeCodeClientRequest()
+	src = src.WithContext(endpoint.WithClaudeCodeEntry(src.Context(), endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeEndpoint}))
+	dst := httptest.NewRequest(http.MethodPost, "https://vendor.example.com/v1/messages", nil)
+	forwarder.CopyAttemptHeaders(src, dst, vendor)
+
+	if got := dst.Header.Get("Anthropic-Beta"); got != "oauth-2025-04-20" {
+		t.Fatalf("只清客户端带来的 oauth- 值，端点配置显式写的 anthropic-beta 以配置为准，got %q", got)
+	}
+}
+
 func TestForwardClaudeSubscription_SendsToFixedUpstreamWithClientToken(t *testing.T) {
 	var gotPath, gotAuth, gotBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

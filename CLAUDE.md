@@ -68,7 +68,7 @@
   - 订阅直通不进端点调度：固定发往 `https://api.anthropic.com`，透传客户端 OAuth（OAuth token 只在请求内透传、不落库），count_tokens 也直发官方、不受「Token 计数」开关影响；未带 Authorization 时本地返回 401 说明原因
   - 按透明网关处理：4xx / 5xx 原样透传，不冷却、不重试；流式成功带回 `anthropic-ratelimit-unified-*` 等上游头；连接失败以 Anthropic 错误格式返回 502 / 504
   - 追踪记为 `upstream_type=subscription`、上游名 `claude-subscription`（与 Codex 的 `chatgpt-subscription` 并列），请求页按「订阅直通」展示；有意按 API 价格计费；隐私规则按 `subscription` 上游类型匹配
-  - 端点模式的入口请求转发第三方时删除 `anthropic-beta` 中 `oauth-` 前缀值；主端口请求永远只走端点
+  - 端点模式的入口请求转发第三方时删除客户端带来的 `anthropic-beta` 中 `oauth-` 前缀值（端点自定义头显式配置的以配置为准），并与订阅直通共用来源头名单，剔除 Cookie / Proxy-Authorization / Forwarded / X-Forwarded-* / Origin / Referer；主端口请求永远只走端点，来源头保持原样透传
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
   - 规则存 SQLite（`privacy_settings` / `privacy_rules`），保存先编译后落库，原子热替换不重启
@@ -115,7 +115,7 @@
 - `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
-- `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta
+- `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta 与来源类头
 - `internal/proxy/claude_subscription.go` / `internal/proxy/handlers/claude_subscription_forward.go`：Claude Code 订阅直通分支（透明透传、追踪、复用端点管线的响应处理）与出站请求头策略
 - `internal/endpoint/claude_code_entry.go`：入口接入模式常量（含旧值归一）与入口上下文标记
 - `internal/proxy/claude_code_entry.go`：Claude Code 入口 handler（Host / Origin / 路径校验）、运行态与可热更新的入口策略

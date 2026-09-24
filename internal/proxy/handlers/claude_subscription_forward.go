@@ -14,16 +14,26 @@ import (
 const ClaudeSubscriptionUpstreamURL = "https://api.anthropic.com"
 
 // claudeSubscriptionSkipHeaders 订阅直通复制客户端请求头时剔除的头：保留客户端 Authorization（OAuth token），
-// 其余沿用黑名单复制，另外剔除 Cookie、代理与来源类头。Claude Code 直连官方时本来就会发出其余头，
+// 其余沿用黑名单复制，另外剔除来源类头（isClientSourceHeader）。Claude Code 直连官方时本来就会发出其余头，
 // 原样转发等价于直连
 var claudeSubscriptionSkipHeaders = map[string]bool{
-	"host":                true,
-	"x-api-key":           true,
+	"host":      true,
+	"x-api-key": true,
+}
+
+// clientSourceHeaders Claude Code 入口请求不向任何上游转发的 Cookie、代理与来源类头；
+// 订阅直通与入口端点模式共用这条边界，X-Forwarded-* 另按前缀匹配
+var clientSourceHeaders = map[string]bool{
 	"cookie":              true,
 	"proxy-authorization": true,
 	"forwarded":           true,
 	"origin":              true,
 	"referer":             true,
+}
+
+// isClientSourceHeader lower 为小写头名
+func isClientSourceHeader(lower string) bool {
+	return clientSourceHeaders[lower] || strings.HasPrefix(lower, "x-forwarded-")
 }
 
 // claudeSubscriptionHopByHopHeaders 逐跳头不向上游转发
@@ -66,7 +76,7 @@ func (f *Forwarder) ForwardClaudeSubscription(ctx context.Context, r *http.Reque
 func copyClaudeSubscriptionHeaders(src, dst *http.Request, baseURL string) {
 	for key, values := range src.Header {
 		lower := strings.ToLower(key)
-		if claudeSubscriptionSkipHeaders[lower] || strings.HasPrefix(lower, "x-forwarded-") {
+		if claudeSubscriptionSkipHeaders[lower] || isClientSourceHeader(lower) {
 			continue
 		}
 		for _, value := range values {

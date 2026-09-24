@@ -278,9 +278,13 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 		"x-api-key":     true, // Remove sensitive client API keys
 	}
 
+	// Claude Code 入口的端点模式与订阅直通共用来源头边界；主端口保持原有透传
+	fromEntry := endpoint.IsClaudeCodeEntry(src.Context())
+
 	// Copy all headers except those we want to skip
 	for key, values := range src.Header {
-		if skipHeaders[strings.ToLower(key)] {
+		lower := strings.ToLower(key)
+		if skipHeaders[lower] || (fromEntry && isClientSourceHeader(lower)) {
 			continue
 		}
 
@@ -289,8 +293,9 @@ func (f *Forwarder) copyHeaders(src *http.Request, dst *http.Request, targetURL 
 		}
 	}
 	// Claude Code 以订阅登录经专用入口进来、按端点模式转发给第三方时，
-	// OAuth capability 对端点凭据没有意义，也不必让第三方知道客户端用的是订阅登录
-	if endpoint.IsClaudeCodeEntry(src.Context()) {
+	// OAuth capability 对端点凭据没有意义，也不必让第三方知道客户端用的是订阅登录。
+	// 只清客户端带来的值，因此放在端点自定义头之前：端点配置显式写的 anthropic-beta 以配置为准
+	if fromEntry {
 		stripClientOAuthBetaValues(dst.Header)
 	}
 
