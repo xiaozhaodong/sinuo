@@ -40,6 +40,7 @@ var ErrProtectedSettingsCategory = errors.New("该设置分类受保护，请使
 // protectedSettingsCategories 列出禁止经通用 Set/BatchSet/UpdateAndApply/Delete/ResetCategory 修改的分类。
 var protectedSettingsCategories = map[string]struct{}{
 	CategoryCodexSubscriptionProxy: {},
+	CategoryClaudeCodeEntry:        {},
 	categoryCodexIdentityInternal:  {},
 }
 

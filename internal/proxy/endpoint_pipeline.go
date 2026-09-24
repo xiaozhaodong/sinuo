@@ -45,6 +45,7 @@ const (
 func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager, isSSE bool) {
 	connID := lifecycleManager.GetRequestID()
 	profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
+	profile.ClaudeCodeEntry = endpoint.IsClaudeCodeEntry(r.Context())
 	if profile.Model != "" {
 		lifecycleManager.SetModel(profile.Model)
 	}

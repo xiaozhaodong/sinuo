@@ -457,7 +457,7 @@ func (m *Manager) firstLogicalCandidateName(profiles ...RouteRequestProfile) str
 		return ""
 	}
 	if scope.Mode != RouteModeAuto && scope.Target != "" {
-		if ep := m.GetEndpointByNameAny(scope.Target); ep != nil && m.EndpointHardEnabled(ep) {
+		if ep := m.GetEndpointByNameAny(scope.Target); ep != nil && m.EndpointHardEnabled(ep) && endpointServesEntry(ep, profile) {
 			return scope.Target
 		}
 	}
@@ -479,8 +479,9 @@ func (m *Manager) firstLogicalCandidateName(profiles ...RouteRequestProfile) str
 		priority := ep.Config.Priority
 		hardEnabled := ep.Config.IsAvailabilityEnabled()
 		autoScheduleEnabled := ep.Config.IsAutoScheduleEnabled()
+		clientOAuth := ep.Config.IsClientOAuth()
 		ep.mutex.RUnlock()
-		if !hardEnabled || !autoScheduleEnabled {
+		if !hardEnabled || !autoScheduleEnabled || (clientOAuth && !profile.ClaudeCodeEntry) {
 			continue
 		}
 		if scope.Kind == RouteScopeUpstreamGroup {

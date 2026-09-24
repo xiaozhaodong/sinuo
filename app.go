@@ -95,6 +95,11 @@ type App struct {
 	subscriptionProxyHandler         *proxy.CodexSubscriptionProxyHandler
 	subscriptionProxyRuntime         *proxy.CodexSubscriptionProxyRuntime
 
+	// Claude Code 专用入口（独立回环 listener；只有经此进入的请求能调度到订阅直通端点）
+	claudeCodeEntryMu       sync.Mutex // 串行化「保存配置 + 应用运行态」
+	claudeCodeEntrySettings *service.ClaudeCodeEntrySettingsService
+	claudeCodeEntryRuntime  *proxy.ClaudeCodeEntryRuntime
+
 	// HTTP 代理服务器 (保留，监听配置的端口)
 	proxyServer   *http.Server
 	proxyRequests *proxyRequestLifecycle
@@ -232,6 +237,9 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	// 10.5 启动 Codex 订阅代理独立入口（未启用时不监听；失败不影响旧入口）
 	a.setupCodexSubscriptionProxy(ctx)
 
+	// 10.6 启动 Claude Code 专用入口（未启用时不监听；失败不影响主端口）
+	a.setupClaudeCodeEntry(ctx)
+
 	// 11. 设置配置热重载
 	a.setupConfigReload()
 
@@ -308,6 +316,7 @@ func (a *App) shutdown(ctx context.Context) {
 	a.shutdownDone = done
 	server, requests := a.proxyServer, a.proxyRequests
 	subscriptionRuntime := a.subscriptionProxyRuntime
+	claudeCodeEntryRuntime := a.claudeCodeEntryRuntime
 	a.mu.Unlock()
 	defer close(done)
 
@@ -319,6 +328,15 @@ func (a *App) shutdown(ctx context.Context) {
 		stopCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		if err := subscriptionRuntime.Stop(stopCtx); err != nil {
 			a.logger.Error("Codex 订阅代理停用失败", "error", err)
+		}
+		cancel()
+	}
+
+	// 0.5 停 Claude Code 专用入口：它复用主端口的代理处理器，须先于主端口停止
+	if claudeCodeEntryRuntime != nil {
+		stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := claudeCodeEntryRuntime.Stop(stopCtx); err != nil {
+			a.logger.Error("Claude Code 入口停用失败", "error", err)
 		}
 		cancel()
 	}

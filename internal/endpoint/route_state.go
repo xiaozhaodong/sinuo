@@ -33,6 +33,8 @@ type RouteRequestProfile struct {
 	// 模型路由据此优先命中「联网工具」映射。
 	ServerToolTypes []string
 	WebTools        bool
+	// ClaudeCodeEntry 请求来自 Claude Code 专用 loopback 入口；只有这类请求能调度到订阅直通端点
+	ClaudeCodeEntry bool
 }
 
 type RouteBlock struct {
@@ -298,6 +300,15 @@ func (m *Manager) GetRouteBlock(profile RouteRequestProfile) *RouteBlock {
 			Message:    "Manual fixed endpoint is disabled.",
 			Endpoint:   scope.Target,
 			Reason:     "manual_fixed_endpoint_disabled",
+		}
+	}
+	if !endpointServesEntry(ep, profile) {
+		return &RouteBlock{
+			StatusCode: http.StatusUnprocessableEntity,
+			Code:       routeSkipClientOAuthOutsideEntry,
+			Message:    "手动固定的是 Claude Code 订阅直通端点，只接受 Claude Code 专用入口的请求。",
+			Endpoint:   scope.Target,
+			Reason:     "manual_fixed_" + routeSkipClientOAuthOutsideEntry,
 		}
 	}
 	if hit, reason := m.routeState.HasNegativeHit(scope.Target, profile); hit {

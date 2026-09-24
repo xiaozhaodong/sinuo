@@ -504,6 +504,7 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 			SelectionSource:     source,
 			resolvedToken:       candidate.token,
 			resolvedAPIKey:      candidate.apiKey,
+			authMode:            config.NormalizeEndpointAuthMode(candidate.config.AuthMode),
 		}
 		result.Candidates = append(result.Candidates, candidate.live)
 		result.Plans = append(result.Plans, plan)
@@ -626,16 +627,13 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		}
 	}
 
+	// 认证边界：订阅直通与端点凭据两类候选不互相转移，以首个候选为准
+	restrictToFirstCandidateAuthMode(&result)
+
 	// §8.2：Failover.Enabled=false 时只保留第一个逻辑候选（不冻结后续请求）
 	if !cfg.Failover.Enabled && len(result.Candidates) > 1 {
 		for _, plan := range result.Plans[1:] {
-			for idx := range result.Snapshot.Decisions {
-				d := &result.Snapshot.Decisions[idx]
-				if d.Name == plan.EndpointName && d.Decision == endpointDecisionCandidate {
-					d.Decision = endpointDecisionSkipped
-					d.Reason = "failover_disabled_single_candidate"
-				}
-			}
+			markCandidateDecisionSkipped(result.Snapshot, plan.EndpointName, "failover_disabled_single_candidate")
 		}
 		result.Candidates = result.Candidates[:1]
 		result.Plans = result.Plans[:1]
@@ -686,6 +684,10 @@ func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, plans 
 }
 
 func (m *Manager) classifyEndpointSnapshotRoutable(candidate endpointScheduleCandidateSnapshot, profile RouteRequestProfile) (bool, string, time.Time) {
+	// 订阅直通端点只服务 Claude Code 专用入口；一处判定覆盖手动固定、手动优先与自动三条路径
+	if candidate.config.IsClientOAuth() && !profile.ClaudeCodeEntry {
+		return false, routeSkipClientOAuthOutsideEntry, time.Time{}
+	}
 	now := time.Now()
 	blockingUntil := time.Time{}
 	if !candidate.status.GlobalCooldownUntil.IsZero() && now.Before(candidate.status.GlobalCooldownUntil) {

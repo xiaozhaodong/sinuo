@@ -23,6 +23,8 @@ type EndpointAttemptPlan struct {
 	// 仅供进程内 admission 使用；私有字段不会进入 JSON 或 Wails 模型。
 	resolvedToken  string
 	resolvedAPIKey string
+	// authMode 快照时刻的认证方式，供认证边界过滤使用
+	authMode string
 }
 
 // EndpointAttemptTarget 是 admission 时生成的不可变出站快照。
