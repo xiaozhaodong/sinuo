@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +178,65 @@ func warnIdentityExtensions(prepared *codexidentity.Prepared) {
 	}
 }
 
+// identityDecision 是单次 attempt 身份处理结果的日志输入，只读 Prepare 已算好的值。
+type identityDecision struct {
+	identity   *codexidentity.Request
+	prepared   *codexidentity.Prepared
+	scope      codexidentity.AccountScope
+	operation  codexidentity.Operation
+	sourceBody []byte // Prepare 前的正文，用于判断身份层是否改写了正文
+}
+
+// identityEffect 返回本次身份处理的短码与日志文案。
+func identityEffect(prepared *codexidentity.Prepared) (string, string) {
+	switch {
+	case !prepared.IdentityEnabled:
+		return "passthrough", "🪪 [Codex 身份] 未生效，原样透传"
+	case prepared.FirstParty:
+		return "mapped", "🪪 [Codex 身份] 已按账号映射身份（官方 OAuth）"
+	default:
+		return "third_party_cleanup", "🪪 [Codex 身份] 已清理首方身份字段（强制开启，第三方目标）"
+	}
+}
+
+func identityTurnStateAction(identity *codexidentity.Request, prepared *codexidentity.Prepared) string {
+	switch {
+	case identity.Source.TurnState == "":
+		return "absent"
+	case !prepared.IdentityEnabled:
+		return "passthrough"
+	case prepared.Headers.Get(codexidentity.HeaderTurnState) != "":
+		return "kept_owner_match"
+	}
+	return "dropped_owner_mismatch_or_unknown"
+}
+
+// logIdentityDecision 按 request_id 记录每个 attempt 身份层实际做了什么，只记录头名不记录值。
+// Debug 未开启时直接返回，避免每次 attempt 白做正文比较和头名排序。
+func logIdentityDecision(ctx context.Context, acc *store.UpstreamAccountRecord, d identityDecision) {
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	effect, message := identityEffect(d.prepared)
+	attrs := []any{
+		"request_id", failoverRequestID(ctx), "account_id", acc.ID, "account", acc.AccountName,
+		"operation", d.operation, "target_host", d.scope.TargetHost(), "mode", d.identity.Policy.Mode(),
+		"effective", d.prepared.IdentityEnabled, "first_party", d.prepared.FirstParty, "effect", effect,
+		"turn_state_action", identityTurnStateAction(d.identity, d.prepared),
+	}
+	if d.prepared.IdentityEnabled {
+		if d.prepared.FirstParty {
+			attrs = append(attrs,
+				"ua_source", d.prepared.DescriptionSource, "version", d.prepared.Version, "rule", codexidentity.ProfileRuleVersion)
+		}
+		attrs = append(attrs,
+			"set_headers", slices.Sorted(maps.Keys(d.prepared.Headers)),
+			"body_rewritten", !bytes.Equal(d.sourceBody, d.prepared.Body),
+			"dropped_fields", d.prepared.DroppedFields)
+	}
+	slog.Debug(message, attrs...)
+}
+
 // 每个 attempt 从调用方保存的原始正文计算，凭据、目标 scope 和隐私后校验在此收敛。
 func (h *Handler) prepareAccountIdentity(ctx context.Context, r *http.Request, bodyBytes []byte, acc *store.UpstreamAccountRecord, targetURL string) ([]byte, http.Header, *codexidentity.Prepared, error) {
 	identity := identityRequest(r)
@@ -186,23 +248,14 @@ func (h *Handler) prepareAccountIdentity(ctx context.Context, r *http.Request, b
 	if scopeErr != nil {
 		return nil, nil, nil, scopeErr
 	}
-	prepared, err := identity.Prepare(scope, identityOperation(r.URL.Path), bodyBytes, h.identityOwners())
+	operation := identityOperation(r.URL.Path)
+	prepared, err := identity.Prepare(scope, operation, bodyBytes, h.identityOwners())
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	stateAction := "absent"
-	if identity.Source.TurnState != "" {
-		stateAction = "dropped_owner_mismatch_or_unknown"
-		if !prepared.IdentityEnabled {
-			stateAction = "passthrough"
-		} else if prepared.Headers.Get(codexidentity.HeaderTurnState) != "" {
-			stateAction = "kept_owner_match"
-		}
-	}
-	slog.Debug("Codex 账号身份策略已应用",
-		"account_id", acc.ID, "mode", identity.Policy.Mode(), "enabled", prepared.IdentityEnabled,
-		"first_party", prepared.FirstParty, "source", prepared.DescriptionSource,
-		"version", prepared.Version, "rule", codexidentity.ProfileRuleVersion, "turn_state_action", stateAction)
+	logIdentityDecision(ctx, acc, identityDecision{
+		identity: identity, prepared: prepared, scope: scope, operation: operation, sourceBody: bodyBytes,
+	})
 	bodyBytes = prepared.Body
 	if prepared.IdentityEnabled {
 		logIdentityProfile(prepared, identity.Policy)
