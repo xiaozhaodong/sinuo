@@ -201,6 +201,7 @@ export namespace main {
 	export class ClaudeCodeEntryInfo {
 	    enabled: boolean;
 	    listen_port: number;
+	    mode: string;
 	    base_url: string;
 	    running: boolean;
 	    error: string;
@@ -213,6 +214,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
+	        this.mode = source["mode"];
 	        this.base_url = source["base_url"];
 	        this.running = source["running"];
 	        this.error = source["error"];
@@ -221,6 +223,7 @@ export namespace main {
 	export class ClaudeCodeEntryInput {
 	    enabled: boolean;
 	    listen_port: number;
+	    mode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ClaudeCodeEntryInput(source);
@@ -230,6 +233,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
+	        this.mode = source["mode"];
 	    }
 	}
 	export class ClaudeRoutingState {

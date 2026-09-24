@@ -45,7 +45,7 @@ const (
 func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager, isSSE bool) {
 	connID := lifecycleManager.GetRequestID()
 	profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
-	profile.ClaudeCodeEntry = endpoint.IsClaudeCodeEntry(r.Context())
+	profile.ApplyClaudeCodeEntry(r.Context())
 	if profile.Model != "" {
 		lifecycleManager.SetModel(profile.Model)
 	}
@@ -99,6 +99,8 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			outcome := endpoint.EndpointScheduleOutcomeManualFixedBlocked
 			if scope.Kind == endpoint.RouteScopeUnassigned {
 				outcome = endpoint.EndpointScheduleOutcomeModelRoutingUnassigned
+			} else if block.Code == endpoint.RouteBlockCodeClaudeCodeModeNoEndpoint {
+				outcome = endpoint.EndpointScheduleOutcomeClaudeCodeModeBlocked
 			}
 			h.completeEndpointSchedule(connID, scope, "", outcome, block.Message)
 			h.writeEndpointPipelineError(w, isSSE, flusher, block.StatusCode,

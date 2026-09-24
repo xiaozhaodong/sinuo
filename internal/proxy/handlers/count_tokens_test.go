@@ -321,7 +321,7 @@ func TestCountTokens_ClientOAuthUnauthorizedDoesNotCooldownEndpoint(t *testing.T
 	})
 	body := []byte(`{"model":"claude-test","messages":[{"role":"user","content":"hello world"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
-	req = req.WithContext(endpoint.WithClaudeCodeEntry(req.Context()))
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(req.Context(), endpoint.ClaudeCodeEntryRequest{}))
 	req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
 	recorder := httptest.NewRecorder()
 	handler.Handle(context.Background(), recorder, req, body, "req-count-oauth")

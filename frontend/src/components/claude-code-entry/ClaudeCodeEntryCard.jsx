@@ -10,9 +10,29 @@ import { getClaudeCodeEntryStatus, isWailsEnvironment, saveClaudeCodeEntrySettin
 import {
   buildClaudeCodeSettingsSnippet,
   buildClaudeCodeTrialCommand,
+  CLAUDE_CODE_ENTRY_MODE_OPTIONS,
+  describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
   parseClaudeCodeEntryPort
 } from './claudeCodeEntryViewModel.js';
+
+const ModeSegmented = ({ value, disabled, onChange }) => (
+  <div role="radiogroup" aria-label="Claude Code 接入模式" className="inline-flex rounded-lg border border-line bg-surface-sub p-0.5">
+    {CLAUDE_CODE_ENTRY_MODE_OPTIONS.map((option) => (
+      <button
+        key={option.value}
+        type="button"
+        role="radio"
+        aria-checked={value === option.value}
+        disabled={disabled}
+        onClick={() => value !== option.value && onChange(option.value)}
+        className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${value === option.value ? 'bg-surface text-accent shadow-sm' : 'text-fg-muted hover:text-fg-body'} ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+      >
+        {option.label}
+      </button>
+    ))}
+  </div>
+);
 
 const CopyBlock = ({ label, text, onCopied }) => (
   <div className="space-y-1.5">
@@ -63,7 +83,7 @@ const ClaudeCodeEntryCard = () => {
     setError('');
     setNotice('');
     try {
-      applyInfo(await saveClaudeCodeEntrySettings({ enabled: info.enabled, listenPort: info.listenPort, ...patch }));
+      applyInfo(await saveClaudeCodeEntrySettings({ enabled: info.enabled, listenPort: info.listenPort, mode: info.mode, ...patch }));
     } catch (err) {
       setError(resolveErrorMessage(err, '保存 Claude Code 入口配置失败'));
     } finally {
@@ -140,6 +160,14 @@ const ClaudeCodeEntryCard = () => {
             </div>
           </div>
           {portDirty && parsedPort === null && <p className="text-xs text-danger">端口必须是 1-65535 的整数</p>}
+
+          <div className="space-y-1.5 border-t border-line-soft pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm text-fg-body">接入模式</span>
+              <ModeSegmented value={info?.mode || 'auto'} disabled={busy || !info} onChange={(mode) => save({ mode })} />
+            </div>
+            <p className="text-xs text-fg-subtle">{describeClaudeCodeEntryMode(info?.mode).hint} 切换立即对新请求生效，进行中的请求不受影响。</p>
+          </div>
           <p className="text-xs text-fg-subtle">端口写进 Claude Code 配置后不会自动更换；被占用时入口启动失败，请换一个端口。</p>
 
           {info?.baseUrl && (

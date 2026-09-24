@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"sync"
 
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/store"
 )
 
@@ -42,9 +43,17 @@ var (
 
 // ClaudeCodeEntryConfig 持久化的单行配置
 type ClaudeCodeEntryConfig struct {
-	SchemaVersion int  `json:"schema_version"`
-	Enabled       bool `json:"enabled"`
-	ListenPort    int  `json:"listen_port"`
+	SchemaVersion int    `json:"schema_version"`
+	Enabled       bool   `json:"enabled"`
+	ListenPort    int    `json:"listen_port"`
+	Mode          string `json:"mode"` // auto / subscription / api；旧配置缺省按 auto
+}
+
+// ClaudeCodeEntryInput 保存输入
+type ClaudeCodeEntryInput struct {
+	Enabled    bool
+	ListenPort int
+	Mode       string
 }
 
 // ListenAddr 监听地址 host:port
@@ -63,6 +72,7 @@ func DefaultClaudeCodeEntryConfig() ClaudeCodeEntryConfig {
 		SchemaVersion: ClaudeCodeEntrySchemaVersion,
 		Enabled:       false,
 		ListenPort:    ClaudeCodeEntryDefaultPort,
+		Mode:          endpoint.ClaudeCodeEntryModeAuto,
 	}
 }
 
@@ -90,8 +100,14 @@ func (s *ClaudeCodeEntrySettingsService) Load(ctx context.Context) (ClaudeCodeEn
 }
 
 // Save 校验后整体覆盖保存；已存配置损坏时拒绝覆盖，避免掩盖问题
-func (s *ClaudeCodeEntrySettingsService) Save(ctx context.Context, enabled bool, listenPort int) (ClaudeCodeEntryConfig, error) {
-	if err := validateClaudeCodeEntryPort(listenPort); err != nil {
+func (s *ClaudeCodeEntrySettingsService) Save(ctx context.Context, input ClaudeCodeEntryInput) (ClaudeCodeEntryConfig, error) {
+	next, err := normalizeClaudeCodeEntryConfig(ClaudeCodeEntryConfig{
+		SchemaVersion: ClaudeCodeEntrySchemaVersion,
+		Enabled:       input.Enabled,
+		ListenPort:    input.ListenPort,
+		Mode:          input.Mode,
+	})
+	if err != nil {
 		return ClaudeCodeEntryConfig{}, err
 	}
 	s.mu.Lock()
@@ -99,11 +115,6 @@ func (s *ClaudeCodeEntrySettingsService) Save(ctx context.Context, enabled bool,
 
 	if _, err := s.Load(ctx); err != nil {
 		return ClaudeCodeEntryConfig{}, err
-	}
-	next := ClaudeCodeEntryConfig{
-		SchemaVersion: ClaudeCodeEntrySchemaVersion,
-		Enabled:       enabled,
-		ListenPort:    listenPort,
 	}
 	value, err := json.Marshal(next)
 	if err != nil {
@@ -123,15 +134,21 @@ func parseClaudeCodeEntryConfig(raw string) (ClaudeCodeEntryConfig, error) {
 	if cfg.SchemaVersion != ClaudeCodeEntrySchemaVersion {
 		return ClaudeCodeEntryConfig{}, fmt.Errorf("%w: 不支持的 schema_version=%d", ErrClaudeCodeEntryConfigCorrupted, cfg.SchemaVersion)
 	}
-	if err := validateClaudeCodeEntryPort(cfg.ListenPort); err != nil {
+	normalized, err := normalizeClaudeCodeEntryConfig(cfg)
+	if err != nil {
 		return ClaudeCodeEntryConfig{}, fmt.Errorf("%w: %v", ErrClaudeCodeEntryConfigCorrupted, err)
 	}
-	return cfg, nil
+	return normalized, nil
 }
 
-func validateClaudeCodeEntryPort(port int) error {
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("%w: 端口必须在 1-65535 之间", ErrClaudeCodeEntryInvalidConfig)
+// normalizeClaudeCodeEntryConfig 归一化并校验字段；Mode 空值按 auto
+func normalizeClaudeCodeEntryConfig(cfg ClaudeCodeEntryConfig) (ClaudeCodeEntryConfig, error) {
+	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
+		return cfg, fmt.Errorf("%w: 端口必须在 1-65535 之间", ErrClaudeCodeEntryInvalidConfig)
 	}
-	return nil
+	cfg.Mode = endpoint.NormalizeClaudeCodeEntryMode(cfg.Mode)
+	if !endpoint.IsValidClaudeCodeEntryMode(cfg.Mode) {
+		return cfg, fmt.Errorf("%w: 模式只能是 auto / subscription / api", ErrClaudeCodeEntryInvalidConfig)
+	}
+	return cfg, nil
 }

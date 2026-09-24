@@ -22,7 +22,7 @@ func TestClaudeCodeEntrySettings_DefaultSaveAndLoad(t *testing.T) {
 		t.Fatalf("BaseURL = %q", cfg.BaseURL())
 	}
 
-	saved, err := svc.Save(ctx, true, 19000)
+	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{Enabled: true, ListenPort: 19000})
 	if err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestClaudeCodeEntrySettings_RejectsInvalidPortAndCorruptedRow(t *testing.T)
 	ctx := context.Background()
 
 	for _, port := range []int{0, -1, 65536} {
-		if _, err := svc.Save(ctx, true, port); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
+		if _, err := svc.Save(ctx, ClaudeCodeEntryInput{Enabled: true, ListenPort: port}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
 			t.Fatalf("端口 %d 应被拒绝，got %v", port, err)
 		}
 	}
@@ -53,7 +53,33 @@ func TestClaudeCodeEntrySettings_RejectsInvalidPortAndCorruptedRow(t *testing.T)
 	if _, err := svc.Load(ctx); !errors.Is(err, ErrClaudeCodeEntryConfigCorrupted) {
 		t.Fatalf("损坏配置应报错，got %v", err)
 	}
-	if _, err := svc.Save(ctx, false, 18088); !errors.Is(err, ErrClaudeCodeEntryConfigCorrupted) {
+	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088}); !errors.Is(err, ErrClaudeCodeEntryConfigCorrupted) {
 		t.Fatalf("已存配置损坏时必须拒绝覆盖，got %v", err)
+	}
+}
+
+func TestClaudeCodeEntrySettings_ModePersistenceAndLegacyDefault(t *testing.T) {
+	_, _, st := newCodexSubscriptionProxySettingsTestEnv(t)
+	svc := NewClaudeCodeEntrySettingsService(st)
+	ctx := context.Background()
+
+	// 加入 mode 字段之前保存的配置：读出来按 auto 处理
+	if err := st.Set(ctx, CategoryClaudeCodeEntry, ClaudeCodeEntryConfigKey, `{"schema_version":1,"enabled":true,"listen_port":18088}`); err != nil {
+		t.Fatalf("seed legacy row failed: %v", err)
+	}
+	legacy, err := svc.Load(ctx)
+	if err != nil || legacy.Mode != "auto" {
+		t.Fatalf("旧配置应按 auto 读取: cfg=%+v err=%v", legacy, err)
+	}
+
+	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{Enabled: true, ListenPort: 18088, Mode: " API "})
+	if err != nil || saved.Mode != "api" {
+		t.Fatalf("模式应归一化保存: cfg=%+v err=%v", saved, err)
+	}
+	if loaded, err := svc.Load(ctx); err != nil || loaded.Mode != "api" {
+		t.Fatalf("保存后读取模式不一致: cfg=%+v err=%v", loaded, err)
+	}
+	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, Mode: "pool"}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
+		t.Fatalf("未知模式应被拒绝，got %v", err)
 	}
 }

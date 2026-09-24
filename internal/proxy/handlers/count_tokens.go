@@ -71,7 +71,7 @@ const (
 func (h *CountTokensHandler) Handle(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, connID string) {
 	slog.Info(fmt.Sprintf("🔢 [Token计数] [%s] 收到count_tokens请求", connID))
 	routeProfile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
-	routeProfile.ClaudeCodeEntry = endpoint.IsClaudeCodeEntry(r.Context())
+	routeProfile.ApplyClaudeCodeEntry(r.Context())
 	scope := h.endpointManager.ResolveRouteScope(routeProfile)
 
 	// Manual Fixed：只用目标，不 fallback、不估算（§10.1）

@@ -2,6 +2,17 @@
 
 export const CLAUDE_CODE_ENTRY_DEFAULT_PORT = 18088;
 
+// 入口全局模式，与后端 endpoint.ClaudeCodeEntryMode* 一致
+export const CLAUDE_CODE_ENTRY_MODE_OPTIONS = [
+  { value: 'auto', label: '按模型路由', hint: '按模型路由分配：映射里订阅直通端点排在最前的模型走订阅，其余走第三方。' },
+  { value: 'subscription', label: '仅订阅', hint: '只用订阅直通端点；模型的端点集合里没有订阅端点时直接报错，不会改走第三方。' },
+  { value: 'api', label: '仅 API', hint: '只用第三方端点，订阅额度用完时切到这里；相当于 Codex 的池模式。' }
+];
+
+export const describeClaudeCodeEntryMode = (mode) => (
+  CLAUDE_CODE_ENTRY_MODE_OPTIONS.find((option) => option.value === mode) || CLAUDE_CODE_ENTRY_MODE_OPTIONS[0]
+);
+
 /**
  * 解析端口输入；合法返回整数，否则返回 null
  * @param {string|number} value

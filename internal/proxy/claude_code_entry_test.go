@@ -48,7 +48,7 @@ func TestClaudeCodeEntryHandler_Boundaries(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			probe := &entryProbe{}
-			handler := &claudeCodeEntryHandler{next: probe, port: "18088"}
+			handler := &claudeCodeEntryHandler{next: probe, port: "18088", policy: func() ClaudeCodeEntryPolicy { return ClaudeCodeEntryPolicy{} }}
 			req := httptest.NewRequest(tc.method, "http://"+tc.host+tc.path, strings.NewReader("{}"))
 			req.Host = tc.host
 			if tc.origin != "" {
@@ -83,7 +83,7 @@ func TestClaudeCodeEntryRuntime_ApplyStopAndPortConflict(t *testing.T) {
 	addr := holder.Addr().String()
 	_ = holder.Close()
 
-	if err := rt.Apply(ctx, true, addr); err != nil {
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{}); err != nil {
 		t.Fatalf("apply enable failed: %v", err)
 	}
 	if status := rt.Status(); !status.Running || status.ListenAddr != addr {
@@ -100,20 +100,20 @@ func TestClaudeCodeEntryRuntime_ApplyStopAndPortConflict(t *testing.T) {
 	}
 
 	// 同地址重复启用是幂等的
-	if err := rt.Apply(ctx, true, addr); err != nil {
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{}); err != nil {
 		t.Fatalf("idempotent apply failed: %v", err)
 	}
 
 	// 另一个运行态抢同一端口：启动失败并记录原因，不漂移到其他端口
 	other := NewClaudeCodeEntryRuntime(probe, nil)
-	if err := other.Apply(ctx, true, addr); err == nil {
+	if err := other.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{}); err == nil {
 		t.Fatal("端口被占用时应启动失败")
 	}
 	if status := other.Status(); status.Running || status.Error == "" {
 		t.Fatalf("启动失败应保留错误且不在监听，got %+v", status)
 	}
 
-	if err := rt.Apply(ctx, false, addr); err != nil {
+	if err := rt.Apply(ctx, false, addr, ClaudeCodeEntryPolicy{}); err != nil {
 		t.Fatalf("apply disable failed: %v", err)
 	}
 	if status := rt.Status(); status.Running {
@@ -158,7 +158,7 @@ func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
 	_ = holder.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := rt.Apply(ctx, true, addr); err != nil {
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{}); err != nil {
 		t.Fatalf("start entry failed: %v", err)
 	}
 	defer func() { _ = rt.Stop(ctx) }()
@@ -204,5 +204,54 @@ func TestClaudeCodeEntry_EndToEndSplitsSubscriptionAndVendor(t *testing.T) {
 	}
 	if len(subscriptionHits) != 0 {
 		t.Fatal("主端口请求不得命中订阅直通端点")
+	}
+}
+
+// modeProbe 记录转交请求携带的生效模式
+type modeProbe struct{ mode string }
+
+func (p *modeProbe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	entry, _ := endpoint.ClaudeCodeEntryFromContext(r.Context())
+	p.mode = entry.Mode
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func TestClaudeCodeEntryRuntime_PolicyHotSwapWithoutRestart(t *testing.T) {
+	probe := &modeProbe{}
+	rt := NewClaudeCodeEntryRuntime(probe, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port failed: %v", err)
+	}
+	addr := holder.Addr().String()
+	_ = holder.Close()
+	defer func() { _ = rt.Stop(ctx) }()
+
+	send := func() string {
+		resp, err := http.Post("http://"+addr+"/v1/messages", "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		return probe.mode
+	}
+
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: "subscription"}); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if got := send(); got != endpoint.ClaudeCodeEntryModeSubscription {
+		t.Fatalf("请求应带上当前模式，got %q", got)
+	}
+	server := rt.server
+	if err := rt.Apply(ctx, true, addr, ClaudeCodeEntryPolicy{Mode: "api"}); err != nil {
+		t.Fatalf("hot swap failed: %v", err)
+	}
+	if rt.server != server {
+		t.Fatal("只改模式不应重启 listener")
+	}
+	if got := send(); got != endpoint.ClaudeCodeEntryModeAPI {
+		t.Fatalf("切换后下一个请求应使用新模式，got %q", got)
 	}
 }

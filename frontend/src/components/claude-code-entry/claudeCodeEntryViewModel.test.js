@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildClaudeCodeSettingsSnippet,
   buildClaudeCodeTrialCommand,
+  describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
   parseClaudeCodeEntryPort
 } from './claudeCodeEntryViewModel.js';
@@ -29,4 +30,11 @@ test('配置片段与试用命令使用入口地址', () => {
   const snippet = buildClaudeCodeSettingsSnippet('http://127.0.0.1:18088');
   assert.deepEqual(JSON.parse(snippet), { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:18088' } });
   assert.equal(buildClaudeCodeTrialCommand('http://127.0.0.1:18088'), 'ANTHROPIC_BASE_URL=http://127.0.0.1:18088 claude');
+});
+
+test('模式说明：未知值回落到按模型路由', () => {
+  assert.equal(describeClaudeCodeEntryMode('subscription').label, '仅订阅');
+  assert.equal(describeClaudeCodeEntryMode('api').label, '仅 API');
+  assert.equal(describeClaudeCodeEntryMode('auto').label, '按模型路由');
+  assert.equal(describeClaudeCodeEntryMode('unknown').value, 'auto');
 });

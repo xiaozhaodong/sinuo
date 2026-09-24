@@ -20,7 +20,7 @@ func TestClaudeCodeEntryContextMarker(t *testing.T) {
 	if IsClaudeCodeEntry(context.Background()) {
 		t.Fatal("未标记的上下文不应视为 Claude Code 入口")
 	}
-	if !IsClaudeCodeEntry(WithClaudeCodeEntry(context.Background())) {
+	if !IsClaudeCodeEntry(WithClaudeCodeEntry(context.Background(), ClaudeCodeEntryRequest{})) {
 		t.Fatal("标记后应识别为 Claude Code 入口")
 	}
 	var nilCtx context.Context
@@ -97,5 +97,91 @@ func TestFirstLogicalCandidateSkipsClientOAuthOutsideEntry(t *testing.T) {
 	}
 	if name := manager.firstLogicalCandidateName(RouteRequestProfile{Path: "/v1/messages", ClaudeCodeEntry: true}); name != "subscription" {
 		t.Fatalf("入口请求的第一逻辑候选应为订阅直通端点，got %q", name)
+	}
+}
+
+func entryProfile(mode string, classOverride bool) RouteRequestProfile {
+	return RouteRequestProfile{Path: "/v1/messages", ClaudeCodeEntry: true, ClaudeCodeEntryMode: mode, ClaudeCodeEntryClassOverride: classOverride}
+}
+
+func TestEntryRouteDecision(t *testing.T) {
+	cases := []struct {
+		name        string
+		clientOAuth bool
+		profile     RouteRequestProfile
+		wantOK      bool
+		wantReason  string
+	}{
+		{"主端口 + 端点凭据", false, RouteRequestProfile{}, true, ""},
+		{"主端口 + 订阅直通", true, RouteRequestProfile{}, false, routeSkipClientOAuthOutsideEntry},
+		{"自动 + 订阅直通", true, entryProfile(ClaudeCodeEntryModeAuto, false), true, ""},
+		{"自动 + 端点凭据", false, entryProfile(ClaudeCodeEntryModeAuto, false), true, ""},
+		{"仅订阅 + 端点凭据", false, entryProfile(ClaudeCodeEntryModeSubscription, false), false, routeSkipEntryModeSubscriptionOnly},
+		{"仅订阅 + 订阅直通", true, entryProfile(ClaudeCodeEntryModeSubscription, false), true, ""},
+		{"仅 API + 订阅直通", true, entryProfile(ClaudeCodeEntryModeAPI, false), false, routeSkipEntryModeAPIOnly},
+		{"类别覆盖 API + 订阅直通", true, entryProfile(ClaudeCodeEntryModeAPI, true), false, routeSkipEntryRequestClassAPI},
+		{"仅 API + 端点凭据", false, entryProfile(ClaudeCodeEntryModeAPI, false), true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, reason := entryRouteDecision(tc.clientOAuth, tc.profile)
+			if ok != tc.wantOK || reason != tc.wantReason {
+				t.Fatalf("got ok=%v reason=%q, want ok=%v reason=%q", ok, reason, tc.wantOK, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestPrepareRouteCandidates_ClaudeCodeEntryModes(t *testing.T) {
+	manager := newSchedulerTestManager(t, oauthSchedulerConfig(
+		[]string{"subscription", "vendor"},
+		[]string{config.EndpointAuthModeClientOAuth, config.EndpointAuthModeConfigured},
+	))
+
+	apiOnly := manager.PrepareRouteCandidates(context.Background(), entryProfile(ClaudeCodeEntryModeAPI, false))
+	if got := candidateNames(apiOnly); len(got) != 1 || got[0] != "vendor" {
+		t.Fatalf("仅 API 模式只能用第三方端点，got %v", got)
+	}
+	if reason, _ := skippedReason(t, apiOnly, "subscription"); reason != routeSkipEntryModeAPIOnly {
+		t.Fatalf("订阅直通端点跳过原因 = %q", reason)
+	}
+
+	subscriptionOnly := manager.PrepareRouteCandidates(context.Background(), entryProfile(ClaudeCodeEntryModeSubscription, false))
+	if got := candidateNames(subscriptionOnly); len(got) != 1 || got[0] != "subscription" {
+		t.Fatalf("仅订阅模式只能用订阅直通端点，got %v", got)
+	}
+	if reason, _ := skippedReason(t, subscriptionOnly, "vendor"); reason != routeSkipEntryModeSubscriptionOnly {
+		t.Fatalf("第三方端点跳过原因 = %q", reason)
+	}
+}
+
+func TestGetRouteBlock_ClaudeCodeModeWithoutCompatibleEndpoint(t *testing.T) {
+	manager := newSchedulerTestManager(t, oauthSchedulerConfig(
+		[]string{"vendor"},
+		[]string{config.EndpointAuthModeConfigured},
+	))
+
+	block := manager.GetRouteBlock(entryProfile(ClaudeCodeEntryModeSubscription, false))
+	if block == nil || block.Code != RouteBlockCodeClaudeCodeModeNoEndpoint || block.StatusCode != 422 {
+		t.Fatalf("仅订阅模式下没有订阅直通端点应返回明确的 422，got %+v", block)
+	}
+	if block := manager.GetRouteBlock(entryProfile(ClaudeCodeEntryModeAPI, false)); block != nil {
+		t.Fatalf("存在符合模式的端点时不应阻断，got %+v", block)
+	}
+	if block := manager.GetRouteBlock(entryProfile(ClaudeCodeEntryModeAuto, false)); block != nil {
+		t.Fatalf("自动模式不做模式阻断，got %+v", block)
+	}
+}
+
+func TestGetRouteBlock_ManualFixedConflictsWithEntryMode(t *testing.T) {
+	manager := newSchedulerTestManager(t, oauthSchedulerConfig(
+		[]string{"subscription", "vendor"},
+		[]string{config.EndpointAuthModeClientOAuth, config.EndpointAuthModeConfigured},
+	))
+	manager.SetClaudeRoutingOverride(RouteOverrideState{Mode: RouteModeManualFixed, EndpointName: "subscription"})
+
+	block := manager.GetRouteBlock(entryProfile(ClaudeCodeEntryModeAPI, false))
+	if block == nil || block.Code != routeSkipEntryModeAPIOnly || block.Reason != "manual_fixed_"+routeSkipEntryModeAPIOnly {
+		t.Fatalf("仅 API 模式下手动固定到订阅直通端点应得到明确阻断，got %+v", block)
 	}
 }

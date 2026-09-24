@@ -29,7 +29,7 @@ func performClaudeCodeEntryRequest(t *testing.T, handler *Handler, streaming boo
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(body))
 	ctx := context.WithValue(req.Context(), "conn_id", "req-endpoint-pipeline")
-	req = req.WithContext(endpoint.WithClaudeCodeEntry(ctx))
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(ctx, endpoint.ClaudeCodeEntryRequest{}))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
 	if streaming {
@@ -202,7 +202,7 @@ func TestEndpointPipeline_EntryRequestToVendorDropsOAuthBeta(t *testing.T) {
 	handler, _ := newEndpointPipelineTestHandler(t, vendorCfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-test","messages":[]}`))
-	req = req.WithContext(endpoint.WithClaudeCodeEntry(context.WithValue(req.Context(), "conn_id", "req-entry-vendor")))
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(context.WithValue(req.Context(), "conn_id", "req-entry-vendor"), endpoint.ClaudeCodeEntryRequest{}))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
 	req.Header.Set("Anthropic-Beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14")
@@ -219,4 +219,29 @@ func TestEndpointPipeline_EntryRequestToVendorDropsOAuthBeta(t *testing.T) {
 	if headers.Get("Authorization") != "" || headers.Get("X-Api-Key") != "vendor-key" {
 		t.Fatalf("第三方只能收到端点 Key，got authorization=%q api_key=%q", headers.Get("Authorization"), headers.Get("X-Api-Key"))
 	}
+}
+
+func TestEndpointPipeline_EntrySubscriptionModeWithoutSubscriptionEndpointReturns422(t *testing.T) {
+	var vendorHits atomic.Int32
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendorHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer vendor.Close()
+
+	handler, manager := newEndpointPipelineTestHandler(t, endpointPipelineConfig("vendor", vendor.URL, 1))
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-test","messages":[]}`))
+	ctx := context.WithValue(req.Context(), "conn_id", "req-endpoint-pipeline")
+	req = req.WithContext(endpoint.WithClaudeCodeEntry(ctx, endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeSubscription}))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity || !strings.Contains(recorder.Body.String(), endpoint.RouteBlockCodeClaudeCodeModeNoEndpoint) {
+		t.Fatalf("仅订阅模式无订阅端点应返回明确的 422，got status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if vendorHits.Load() != 0 {
+		t.Fatal("仅订阅模式不得请求第三方端点")
+	}
+	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeClaudeCodeModeBlocked, "")
 }

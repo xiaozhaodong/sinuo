@@ -46,6 +46,7 @@ const (
 	EndpointScheduleOutcomeNoCandidates             = "no_candidates"
 	EndpointScheduleOutcomeManualFixedBlocked       = "manual_fixed_blocked"
 	EndpointScheduleOutcomeModelRoutingUnassigned   = "model_routing_unassigned"
+	EndpointScheduleOutcomeClaudeCodeModeBlocked    = "claude_code_mode_blocked"
 	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
 	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
 	EndpointScheduleOutcomeRateLimited              = "rate_limited"
@@ -684,9 +685,10 @@ func orderEndpointScheduleDecisions(decisions []EndpointScheduleDecision, plans 
 }
 
 func (m *Manager) classifyEndpointSnapshotRoutable(candidate endpointScheduleCandidateSnapshot, profile RouteRequestProfile) (bool, string, time.Time) {
-	// 订阅直通端点只服务 Claude Code 专用入口；一处判定覆盖手动固定、手动优先与自动三条路径
-	if candidate.config.IsClientOAuth() && !profile.ClaudeCodeEntry {
-		return false, routeSkipClientOAuthOutsideEntry, time.Time{}
+	// 订阅直通端点只服务 Claude Code 专用入口，入口请求再受生效模式约束；
+	// 一处判定覆盖手动固定、手动优先与自动三条路径
+	if ok, reason := entryRouteDecision(candidate.config.IsClientOAuth(), profile); !ok {
+		return false, reason, time.Time{}
 	}
 	now := time.Now()
 	blockingUntil := time.Time{}

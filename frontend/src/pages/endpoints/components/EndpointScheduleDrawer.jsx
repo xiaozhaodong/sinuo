@@ -33,6 +33,7 @@ export const resolveSnapshotOutcome = (snapshot = {}) => {
     no_candidates: { label: '无可用候选', className: 'tone-amber', isAbnormal: true },
     manual_fixed_blocked: { label: '固定目标不可用', className: 'tone-amber', isAbnormal: true },
     model_routing_unassigned: { label: '模型未配置上游端点', className: 'tone-amber', isAbnormal: true },
+    claude_code_mode_blocked: { label: '接入模式下无可用端点', className: 'tone-amber', isAbnormal: true },
     all_candidates_failed: { label: '全部候选失败', className: 'tone-amber', isAbnormal: true },
     rejected_by_failure_tracker: { label: '失败阈值拦截', className: 'tone-amber', isAbnormal: true },
     rate_limited: { label: '限流', className: 'tone-amber', isAbnormal: true }
@@ -79,7 +80,10 @@ const reasonLabels = {
     manual_fixed_target_not_member: '固定目标不在该模型的端点集合中',
     manual_preferred_target_not_member: '优选目标不在该模型的端点集合中',
     client_oauth_requires_claude_code_entry: '订阅直通端点只服务 Claude Code 入口',
-    cross_auth_boundary: '认证方式与首个候选不同，不在订阅与 API 间转移'
+    cross_auth_boundary: '认证方式与首个候选不同，不在订阅与 API 间转移',
+    claude_code_mode_subscription_only: 'Claude Code 接入为「仅订阅」',
+    claude_code_mode_api_only: 'Claude Code 接入为「仅 API」',
+    claude_code_request_class_api: '该请求类别按设置走 API'
 };
 
 const negativeCacheLabels = {

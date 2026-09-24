@@ -113,7 +113,7 @@ func TestForwarder_ClientOAuthBetaStrippedOnlyForEntryToConfigured(t *testing.T)
 		src := newClaudeCodeClientRequest()
 		src.Header.Set("Anthropic-Beta", betaValue)
 		if fromEntry {
-			src = src.WithContext(endpoint.WithClaudeCodeEntry(src.Context()))
+			src = src.WithContext(endpoint.WithClaudeCodeEntry(src.Context(), endpoint.ClaudeCodeEntryRequest{}))
 		}
 		dst := httptest.NewRequest(http.MethodPost, "https://upstream.example.com/v1/messages", nil)
 		forwarder.CopyAttemptHeaders(src, dst, target)
