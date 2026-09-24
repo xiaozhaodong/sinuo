@@ -61,6 +61,9 @@ func TestAccountPoolQuotaRefreshDispatcher_RespectsSuccessCooldown(t *testing.T)
 		t.Fatal("expected first refresh to finish")
 	}
 
+	// 回调发出 finished 时调度器还没记下结果；不等它落定就拨时钟，
+	// 结果会用拨过之后的时间记账，冷却从头算起，测试随调度时序偶发失败
+	waitQuotaRefreshSettled(t, dispatcher, 1)
 	if ok := dispatcher.TryEnqueue(1); ok {
 		t.Fatal("expected enqueue inside success cooldown to be rejected")
 	}
@@ -95,6 +98,9 @@ func TestAccountPoolQuotaRefreshDispatcher_RespectsFailureCooldown(t *testing.T)
 		t.Fatal("expected first refresh to finish")
 	}
 
+	// 回调发出 finished 时调度器还没记下结果；不等它落定就拨时钟，
+	// 结果会用拨过之后的时间记账，冷却从头算起，测试随调度时序偶发失败
+	waitQuotaRefreshSettled(t, dispatcher, 1)
 	if ok := dispatcher.TryEnqueue(1); ok {
 		t.Fatal("expected enqueue inside failure cooldown to be rejected")
 	}
@@ -166,4 +172,22 @@ func TestSelectQuotaProbeAccountIDs_SelectsOldestEligibleOAuthAccounts(t *testin
 	if ids[0] != 5 || ids[1] != 4 {
 		t.Fatalf("expected nil-refreshed account first then oldest stale account, got %v", ids)
 	}
+}
+
+// waitQuotaRefreshSettled 等调度器记下本次刷新结果（inFlight 清除且写入成功 / 失败时间）
+func waitQuotaRefreshSettled(t *testing.T, dispatcher *accountPoolQuotaRefreshDispatcher, accountID int64) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		dispatcher.mu.Lock()
+		state := dispatcher.states[accountID]
+		settled := state != nil && !state.inFlight && !state.queued &&
+			(!state.lastSuccess.IsZero() || !state.lastFailure.IsZero())
+		dispatcher.mu.Unlock()
+		if settled {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("dispatcher did not record the refresh result in time")
 }
