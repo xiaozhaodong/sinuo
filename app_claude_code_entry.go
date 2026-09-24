@@ -22,9 +22,12 @@ type ClaudeCodeEntryInfo struct {
 	Enabled    bool   `json:"enabled"`     // 持久化的启用意图
 	ListenPort int    `json:"listen_port"` // 持久化的端口
 	Mode       string `json:"mode"`        // 全局模式：auto / subscription / api
-	BaseURL    string `json:"base_url"`    // Claude Code 的 ANTHROPIC_BASE_URL
-	Running    bool   `json:"running"`     // 当前是否在监听
-	Error      string `json:"error"`       // 最近一次启动失败或监听异常
+	// RequestClassRouting 按请求类别路由开关；APIRequestClasses 为强制走 API 的类别
+	RequestClassRouting bool     `json:"request_class_routing"`
+	APIRequestClasses   []string `json:"api_request_classes"`
+	BaseURL             string   `json:"base_url"` // Claude Code 的 ANTHROPIC_BASE_URL
+	Running             bool     `json:"running"`  // 当前是否在监听
+	Error               string   `json:"error"`    // 最近一次启动失败或监听异常
 }
 
 // ClaudeCodeEntryInput 保存入口配置的输入
@@ -32,6 +35,9 @@ type ClaudeCodeEntryInput struct {
 	Enabled    bool   `json:"enabled"`
 	ListenPort int    `json:"listen_port"`
 	Mode       string `json:"mode"` // 空值按 auto
+	// RequestClassRouting / APIRequestClasses 按请求类别路由
+	RequestClassRouting bool     `json:"request_class_routing"`
+	APIRequestClasses   []string `json:"api_request_classes"`
 }
 
 // setupClaudeCodeEntry 装配入口；必须在 setupProxyHandler 之后调用。
@@ -74,9 +80,11 @@ func (a *App) SaveClaudeCodeEntrySettings(input ClaudeCodeEntryInput) (ClaudeCod
 
 	ctx := context.Background()
 	cfg, err := a.claudeCodeEntrySettings.Save(ctx, service.ClaudeCodeEntryInput{
-		Enabled:    input.Enabled,
-		ListenPort: input.ListenPort,
-		Mode:       input.Mode,
+		Enabled:             input.Enabled,
+		ListenPort:          input.ListenPort,
+		Mode:                input.Mode,
+		RequestClassRouting: input.RequestClassRouting,
+		APIRequestClasses:   input.APIRequestClasses,
 	})
 	if err != nil {
 		return ClaudeCodeEntryInfo{}, err
@@ -100,16 +108,22 @@ func (a *App) claudeCodeEntryInfoLocked(ctx context.Context) (ClaudeCodeEntryInf
 	}
 	status := a.claudeCodeEntryRuntime.Status()
 	return ClaudeCodeEntryInfo{
-		Enabled:    cfg.Enabled,
-		ListenPort: cfg.ListenPort,
-		Mode:       cfg.Mode,
-		BaseURL:    cfg.BaseURL(),
-		Running:    status.Running,
-		Error:      status.Error,
+		Enabled:             cfg.Enabled,
+		ListenPort:          cfg.ListenPort,
+		Mode:                cfg.Mode,
+		RequestClassRouting: cfg.RequestClassRouting,
+		APIRequestClasses:   append([]string{}, cfg.APIRequestClasses...),
+		BaseURL:             cfg.BaseURL(),
+		Running:             status.Running,
+		Error:               status.Error,
 	}, nil
 }
 
 // claudeCodeEntryPolicy 把持久化配置转换为运行态策略
 func claudeCodeEntryPolicy(cfg service.ClaudeCodeEntryConfig) proxy.ClaudeCodeEntryPolicy {
-	return proxy.ClaudeCodeEntryPolicy{Mode: cfg.Mode}
+	policy := proxy.ClaudeCodeEntryPolicy{Mode: cfg.Mode}
+	if cfg.RequestClassRouting {
+		policy.APIRequestClasses = append([]string{}, cfg.APIRequestClasses...)
+	}
+	return policy
 }

@@ -2474,6 +2474,8 @@ const normalizeClaudeCodeEntryInfo = (info = {}) => ({
   enabled: info.enabled === true,
   listenPort: Number(info.listen_port) || 0,
   mode: info.mode || 'auto',
+  requestClassRouting: info.request_class_routing === true,
+  apiRequestClasses: Array.isArray(info.api_request_classes) ? info.api_request_classes : [],
   baseUrl: info.base_url || '',
   running: info.running === true,
   error: info.error || ''
@@ -2492,7 +2494,7 @@ export const getClaudeCodeEntryStatus = async () => {
 
 /**
  * 保存 Claude Code 专用入口配置并立即应用；监听失败时由返回值的 error 字段说明原因
- * @param {{enabled:boolean, listenPort:number, mode:string}} input
+ * @param {{enabled:boolean, listenPort:number, mode:string, requestClassRouting:boolean, apiRequestClasses:string[]}} input
  */
 export const saveClaudeCodeEntrySettings = async (input = {}) => {
   await initWails();
@@ -2501,7 +2503,9 @@ export const saveClaudeCodeEntrySettings = async (input = {}) => {
   return normalizeClaudeCodeEntryInfo(await WailsApp.SaveClaudeCodeEntrySettings({
     enabled: input.enabled === true,
     listen_port: Number(input.listenPort),
-    mode: String(input.mode || 'auto')
+    mode: String(input.mode || 'auto'),
+    request_class_routing: input.requestClassRouting === true,
+    api_request_classes: Array.isArray(input.apiRequestClasses) ? input.apiRequestClasses : []
   }));
 };
 

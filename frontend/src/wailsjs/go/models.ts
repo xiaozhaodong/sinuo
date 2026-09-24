@@ -202,6 +202,8 @@ export namespace main {
 	    enabled: boolean;
 	    listen_port: number;
 	    mode: string;
+	    request_class_routing: boolean;
+	    api_request_classes: string[];
 	    base_url: string;
 	    running: boolean;
 	    error: string;
@@ -215,6 +217,8 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
 	        this.mode = source["mode"];
+	        this.request_class_routing = source["request_class_routing"];
+	        this.api_request_classes = source["api_request_classes"];
 	        this.base_url = source["base_url"];
 	        this.running = source["running"];
 	        this.error = source["error"];
@@ -224,6 +228,8 @@ export namespace main {
 	    enabled: boolean;
 	    listen_port: number;
 	    mode: string;
+	    request_class_routing: boolean;
+	    api_request_classes: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ClaudeCodeEntryInput(source);
@@ -234,6 +240,8 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.listen_port = source["listen_port"];
 	        this.mode = source["mode"];
+	        this.request_class_routing = source["request_class_routing"];
+	        this.api_request_classes = source["api_request_classes"];
 	    }
 	}
 	export class ClaudeRoutingState {

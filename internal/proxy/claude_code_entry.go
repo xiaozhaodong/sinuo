@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,11 +34,23 @@ var claudeCodeEntryPaths = map[string]struct{}{
 type ClaudeCodeEntryPolicy struct {
 	// Mode 全局模式：auto / subscription / api
 	Mode string
+	// APIRequestClasses 按请求类别路由：命中的类别强制走 API；为空表示未启用
+	APIRequestClasses []string
 }
 
-// resolve 为单个请求算出生效模式
-func (p ClaudeCodeEntryPolicy) resolve(_ *http.Request) endpoint.ClaudeCodeEntryRequest {
-	return endpoint.ClaudeCodeEntryRequest{Mode: endpoint.NormalizeClaudeCodeEntryMode(p.Mode)}
+// resolve 为单个请求算出生效模式：请求类别命中配置时强制走 API，否则用全局模式。
+// 类别来自 Claude Code 的 x-claude-code-request-class（需客户端设置 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1），
+// 没带这个头的请求按全局模式处理。
+func (p ClaudeCodeEntryPolicy) resolve(r *http.Request) endpoint.ClaudeCodeEntryRequest {
+	mode := endpoint.NormalizeClaudeCodeEntryMode(p.Mode)
+	if mode == endpoint.ClaudeCodeEntryModeAPI || len(p.APIRequestClasses) == 0 || r == nil {
+		return endpoint.ClaudeCodeEntryRequest{Mode: mode}
+	}
+	class := strings.ToLower(strings.TrimSpace(r.Header.Get(endpoint.ClaudeCodeRequestClassHeader)))
+	if class != "" && slices.Contains(p.APIRequestClasses, class) {
+		return endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeAPI, RequestClassOverride: true}
+	}
+	return endpoint.ClaudeCodeEntryRequest{Mode: mode}
 }
 
 // claudeCodeEntryHandler 边界校验后转交代理处理器

@@ -11,9 +11,13 @@ import {
   buildClaudeCodeSettingsSnippet,
   buildClaudeCodeTrialCommand,
   CLAUDE_CODE_ENTRY_MODE_OPTIONS,
+  CLAUDE_CODE_REQUEST_CLASS_OPTIONS,
+  DEFAULT_API_REQUEST_CLASSES,
   describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
-  parseClaudeCodeEntryPort
+  GATEWAY_HINT_HEADERS_ENV,
+  parseClaudeCodeEntryPort,
+  toggleRequestClass
 } from './claudeCodeEntryViewModel.js';
 
 const ModeSegmented = ({ value, disabled, onChange }) => (
@@ -83,7 +87,14 @@ const ClaudeCodeEntryCard = () => {
     setError('');
     setNotice('');
     try {
-      applyInfo(await saveClaudeCodeEntrySettings({ enabled: info.enabled, listenPort: info.listenPort, mode: info.mode, ...patch }));
+      applyInfo(await saveClaudeCodeEntrySettings({
+        enabled: info.enabled,
+        listenPort: info.listenPort,
+        mode: info.mode,
+        requestClassRouting: info.requestClassRouting,
+        apiRequestClasses: info.apiRequestClasses,
+        ...patch
+      }));
     } catch (err) {
       setError(resolveErrorMessage(err, '保存 Claude Code 入口配置失败'));
     } finally {
@@ -95,6 +106,11 @@ const ClaudeCodeEntryCard = () => {
   const portDirty = info && String(info.listenPort) !== portInput.trim();
   const state = describeClaudeCodeEntryState(info);
   const onCopied = (copied, label) => setNotice(copied ? `已复制${label}` : '');
+  const hintHeaders = info?.requestClassRouting === true;
+  const toggleClassRouting = () => save({
+    requestClassRouting: !info.requestClassRouting,
+    apiRequestClasses: info.apiRequestClasses.length > 0 ? info.apiRequestClasses : DEFAULT_API_REQUEST_CLASSES
+  });
 
   return (
     <div className="rounded-2xl border border-line bg-surface shadow-sm">
@@ -168,12 +184,56 @@ const ClaudeCodeEntryCard = () => {
             </div>
             <p className="text-xs text-fg-subtle">{describeClaudeCodeEntryMode(info?.mode).hint} 切换立即对新请求生效，进行中的请求不受影响。</p>
           </div>
+
+          <div className="space-y-2 border-t border-line-soft pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm text-fg-body">按请求类别路由</div>
+                <p className="text-xs text-fg-subtle">勾选的请求类别强制走第三方 API，其余按接入模式；例如主对话用订阅、子代理和后台请求走 API。</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={hintHeaders}
+                aria-label="启用按请求类别路由"
+                disabled={busy || !info}
+                onClick={toggleClassRouting}
+                className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${hintHeaders ? 'bg-indigo-600' : 'bg-surface-emph'} ${busy || !info ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                <span className={`absolute left-[2px] top-0.5 h-5 w-5 rounded-full bg-surface shadow-sm transition-transform ${hintHeaders ? 'translate-x-full' : ''}`} />
+              </button>
+            </div>
+            {hintHeaders && (
+              <>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {CLAUDE_CODE_REQUEST_CLASS_OPTIONS.map((option) => (
+                    <label key={option.value} className="flex items-start gap-2 rounded-lg border border-line bg-surface-sub px-3 py-2">
+                      <input
+                        type="checkbox"
+                        className="app-checkbox mt-0.5"
+                        checked={info.apiRequestClasses.includes(option.value)}
+                        disabled={busy}
+                        onChange={() => save({ apiRequestClasses: toggleRequestClass(info.apiRequestClasses, option.value) })}
+                      />
+                      <span>
+                        <span className="block text-xs font-medium text-fg-body">{option.label}</span>
+                        <span className="block text-[11px] text-fg-subtle">{option.hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-fg-subtle">
+                  需要 Claude Code 设置 {GATEWAY_HINT_HEADERS_ENV}=1 才会发送请求类别，下方命令与配置已自动带上；没带类别的请求按接入模式处理。
+                </p>
+              </>
+            )}
+          </div>
           <p className="text-xs text-fg-subtle">端口写进 Claude Code 配置后不会自动更换；被占用时入口启动失败，请换一个端口。</p>
 
           {info?.baseUrl && (
             <div className="space-y-3 rounded-xl border border-line p-3">
-              <CopyBlock label="首次试用（另开终端运行，不影响正在用的 Claude Code）" text={buildClaudeCodeTrialCommand(info.baseUrl)} onCopied={onCopied} />
-              <CopyBlock label="确认无误后写入 ~/.claude/settings.json" text={buildClaudeCodeSettingsSnippet(info.baseUrl)} onCopied={onCopied} />
+              <CopyBlock label="首次试用（另开终端运行，不影响正在用的 Claude Code）" text={buildClaudeCodeTrialCommand(info.baseUrl, { hintHeaders })} onCopied={onCopied} />
+              <CopyBlock label="确认无误后写入 ~/.claude/settings.json" text={buildClaudeCodeSettingsSnippet(info.baseUrl, { hintHeaders })} onCopied={onCopied} />
               <p className="text-xs leading-5 text-fg-subtle">
                 不要同时设置 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_API_KEY 或 apiKeyHelper，否则会顶替订阅登录、改按 token 计费。Switchboard 未运行时 Claude Code 无法请求，删掉 ANTHROPIC_BASE_URL 即可恢复直连。
               </p>

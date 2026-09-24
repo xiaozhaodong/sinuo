@@ -231,3 +231,45 @@ func markCandidateDecisionSkipped(snapshot *EndpointScheduleSnapshot, name, reas
 		}
 	}
 }
+
+// Claude Code 请求类别（x-claude-code-request-class，需客户端设置 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1）。
+// 可配置为强制走 API 的类别不含 main：主对话始终按全局模式。
+const (
+	ClaudeCodeRequestClassHeader = "X-Claude-Code-Request-Class"
+
+	ClaudeCodeRequestClassSubagent   = "subagent"
+	ClaudeCodeRequestClassAuxiliary  = "auxiliary"
+	ClaudeCodeRequestClassCompaction = "compaction"
+	ClaudeCodeRequestClassWorkflow   = "workflow"
+)
+
+// ClaudeCodeAPIRequestClasses 可配置为强制走 API 的请求类别，按展示顺序排列
+var ClaudeCodeAPIRequestClasses = []string{
+	ClaudeCodeRequestClassSubagent,
+	ClaudeCodeRequestClassAuxiliary,
+	ClaudeCodeRequestClassCompaction,
+	ClaudeCodeRequestClassWorkflow,
+}
+
+// NormalizeClaudeCodeAPIRequestClasses 去空白、转小写、去重并按固定顺序排列；含未知类别时返回错误
+func NormalizeClaudeCodeAPIRequestClasses(classes []string) ([]string, error) {
+	selected := make(map[string]struct{}, len(classes))
+	for _, class := range classes {
+		class = strings.ToLower(strings.TrimSpace(class))
+		if class == "" {
+			continue
+		}
+		selected[class] = struct{}{}
+	}
+	normalized := make([]string, 0, len(selected))
+	for _, class := range ClaudeCodeAPIRequestClasses {
+		if _, ok := selected[class]; ok {
+			normalized = append(normalized, class)
+			delete(selected, class)
+		}
+	}
+	for unknown := range selected {
+		return nil, fmt.Errorf("不支持的请求类别: %q", unknown)
+	}
+	return normalized, nil
+}

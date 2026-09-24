@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestClaudeCodeEntrySettings_DefaultSaveAndLoad(t *testing.T) {
 		t.Fatalf("save failed: %v", err)
 	}
 	loaded, err := svc.Load(ctx)
-	if err != nil || loaded != saved || !loaded.Enabled || loaded.ListenPort != 19000 {
+	if err != nil || !reflect.DeepEqual(loaded, saved) || !loaded.Enabled || loaded.ListenPort != 19000 {
 		t.Fatalf("保存后读取不一致: saved=%+v loaded=%+v err=%v", saved, loaded, err)
 	}
 
@@ -81,5 +82,31 @@ func TestClaudeCodeEntrySettings_ModePersistenceAndLegacyDefault(t *testing.T) {
 	}
 	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, Mode: "pool"}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
 		t.Fatalf("未知模式应被拒绝，got %v", err)
+	}
+}
+
+func TestClaudeCodeEntrySettings_RequestClassRouting(t *testing.T) {
+	_, _, st := newCodexSubscriptionProxySettingsTestEnv(t)
+	svc := NewClaudeCodeEntrySettingsService(st)
+	ctx := context.Background()
+
+	defaults, err := svc.Load(ctx)
+	if err != nil || defaults.RequestClassRouting || !reflect.DeepEqual(defaults.APIRequestClasses, []string{"subagent", "auxiliary"}) {
+		t.Fatalf("默认关闭，预选子代理与后台辅助: cfg=%+v err=%v", defaults, err)
+	}
+
+	saved, err := svc.Save(ctx, ClaudeCodeEntryInput{
+		ListenPort:          18088,
+		RequestClassRouting: true,
+		APIRequestClasses:   []string{" Workflow ", "subagent", "subagent", ""},
+	})
+	if err != nil || !saved.RequestClassRouting || !reflect.DeepEqual(saved.APIRequestClasses, []string{"subagent", "workflow"}) {
+		t.Fatalf("类别应去重、归一化并按固定顺序保存: cfg=%+v err=%v", saved, err)
+	}
+	if loaded, err := svc.Load(ctx); err != nil || !reflect.DeepEqual(loaded, saved) {
+		t.Fatalf("保存后读取不一致: loaded=%+v saved=%+v err=%v", loaded, saved, err)
+	}
+	if _, err := svc.Save(ctx, ClaudeCodeEntryInput{ListenPort: 18088, APIRequestClasses: []string{"main"}}); !errors.Is(err, ErrClaudeCodeEntryInvalidConfig) {
+		t.Fatalf("main 不可配置为强制走 API，got %v", err)
 	}
 }

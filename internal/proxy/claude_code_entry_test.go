@@ -255,3 +255,96 @@ func TestClaudeCodeEntryRuntime_PolicyHotSwapWithoutRestart(t *testing.T) {
 		t.Fatalf("切换后下一个请求应使用新模式，got %q", got)
 	}
 }
+
+func TestClaudeCodeEntryPolicy_ResolveRequestClass(t *testing.T) {
+	request := func(class string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		if class != "" {
+			req.Header.Set("x-claude-code-request-class", class)
+		}
+		return req
+	}
+	policy := ClaudeCodeEntryPolicy{Mode: "subscription", APIRequestClasses: []string{"subagent", "auxiliary"}}
+
+	cases := []struct {
+		name         string
+		policy       ClaudeCodeEntryPolicy
+		class        string
+		wantMode     string
+		wantOverride bool
+	}{
+		{"主对话按全局模式", policy, "main", "subscription", false},
+		{"子代理强制走 API", policy, "subagent", "api", true},
+		{"类别大小写不敏感", policy, "Auxiliary", "api", true},
+		{"未勾选的类别按全局模式", policy, "compaction", "subscription", false},
+		{"没带类别头按全局模式", policy, "", "subscription", false},
+		{"未启用按请求类别路由", ClaudeCodeEntryPolicy{Mode: "subscription"}, "subagent", "subscription", false},
+		{"全局已是仅 API 不标记覆盖", ClaudeCodeEntryPolicy{Mode: "api", APIRequestClasses: []string{"subagent"}}, "subagent", "api", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.policy.resolve(request(tc.class))
+			if got.Mode != tc.wantMode || got.RequestClassOverride != tc.wantOverride {
+				t.Fatalf("got %+v, want mode=%s override=%v", got, tc.wantMode, tc.wantOverride)
+			}
+		})
+	}
+}
+
+func TestClaudeCodeEntry_EndToEndRequestClassRoutesSubagentToVendor(t *testing.T) {
+	hits := make(chan string, 4)
+	upstream := func(name string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits <- name
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+		}))
+	}
+	subscription := upstream("subscription")
+	defer subscription.Close()
+	vendor := upstream("vendor")
+	defer vendor.Close()
+	handler, _ := newEndpointPipelineTestHandler(t,
+		clientOAuthPipelineConfig("subscription", subscription.URL, 1),
+		endpointPipelineConfig("vendor", vendor.URL, 2),
+	)
+
+	rt := NewClaudeCodeEntryRuntime(handler, nil)
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port failed: %v", err)
+	}
+	addr := holder.Addr().String()
+	_ = holder.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	policy := ClaudeCodeEntryPolicy{Mode: "auto", APIRequestClasses: []string{"subagent"}}
+	if err := rt.Apply(ctx, true, addr, policy); err != nil {
+		t.Fatalf("start entry failed: %v", err)
+	}
+	defer func() { _ = rt.Stop(ctx) }()
+
+	send := func(class string) string {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/messages", strings.NewReader(`{"model":"claude-test","messages":[]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer sk-ant-oat01-client")
+		req.Header.Set("X-Claude-Code-Request-Class", class)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("class=%s status=%d", class, resp.StatusCode)
+		}
+		return <-hits
+	}
+
+	if got := send("main"); got != "subscription" {
+		t.Fatalf("主对话应走订阅，got %s", got)
+	}
+	if got := send("subagent"); got != "vendor" {
+		t.Fatalf("子代理请求应按类别路由走第三方，got %s", got)
+	}
+}

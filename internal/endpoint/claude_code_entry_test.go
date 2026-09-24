@@ -185,3 +185,16 @@ func TestGetRouteBlock_ManualFixedConflictsWithEntryMode(t *testing.T) {
 		t.Fatalf("仅 API 模式下手动固定到订阅直通端点应得到明确阻断，got %+v", block)
 	}
 }
+
+func TestNormalizeClaudeCodeAPIRequestClasses(t *testing.T) {
+	got, err := NormalizeClaudeCodeAPIRequestClasses([]string{"workflow", " SUBAGENT ", "workflow", ""})
+	if err != nil || len(got) != 2 || got[0] != "subagent" || got[1] != "workflow" {
+		t.Fatalf("got %v err=%v", got, err)
+	}
+	if got, err := NormalizeClaudeCodeAPIRequestClasses(nil); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("空输入应得到非 nil 空切片，got %#v err=%v", got, err)
+	}
+	if _, err := NormalizeClaudeCodeAPIRequestClasses([]string{"main"}); err == nil {
+		t.Fatal("main 不在可配置类别中")
+	}
+}

@@ -47,13 +47,18 @@ type ClaudeCodeEntryConfig struct {
 	Enabled       bool   `json:"enabled"`
 	ListenPort    int    `json:"listen_port"`
 	Mode          string `json:"mode"` // auto / subscription / api；旧配置缺省按 auto
+	// RequestClassRouting 按请求类别路由：APIRequestClasses 中的类别强制走 API
+	RequestClassRouting bool     `json:"request_class_routing"`
+	APIRequestClasses   []string `json:"api_request_classes"`
 }
 
 // ClaudeCodeEntryInput 保存输入
 type ClaudeCodeEntryInput struct {
-	Enabled    bool
-	ListenPort int
-	Mode       string
+	Enabled             bool
+	ListenPort          int
+	Mode                string
+	RequestClassRouting bool
+	APIRequestClasses   []string
 }
 
 // ListenAddr 监听地址 host:port
@@ -73,6 +78,10 @@ func DefaultClaudeCodeEntryConfig() ClaudeCodeEntryConfig {
 		Enabled:       false,
 		ListenPort:    ClaudeCodeEntryDefaultPort,
 		Mode:          endpoint.ClaudeCodeEntryModeAuto,
+		APIRequestClasses: []string{
+			endpoint.ClaudeCodeRequestClassSubagent,
+			endpoint.ClaudeCodeRequestClassAuxiliary,
+		},
 	}
 }
 
@@ -102,10 +111,12 @@ func (s *ClaudeCodeEntrySettingsService) Load(ctx context.Context) (ClaudeCodeEn
 // Save 校验后整体覆盖保存；已存配置损坏时拒绝覆盖，避免掩盖问题
 func (s *ClaudeCodeEntrySettingsService) Save(ctx context.Context, input ClaudeCodeEntryInput) (ClaudeCodeEntryConfig, error) {
 	next, err := normalizeClaudeCodeEntryConfig(ClaudeCodeEntryConfig{
-		SchemaVersion: ClaudeCodeEntrySchemaVersion,
-		Enabled:       input.Enabled,
-		ListenPort:    input.ListenPort,
-		Mode:          input.Mode,
+		SchemaVersion:       ClaudeCodeEntrySchemaVersion,
+		Enabled:             input.Enabled,
+		ListenPort:          input.ListenPort,
+		Mode:                input.Mode,
+		RequestClassRouting: input.RequestClassRouting,
+		APIRequestClasses:   input.APIRequestClasses,
 	})
 	if err != nil {
 		return ClaudeCodeEntryConfig{}, err
@@ -150,5 +161,10 @@ func normalizeClaudeCodeEntryConfig(cfg ClaudeCodeEntryConfig) (ClaudeCodeEntryC
 	if !endpoint.IsValidClaudeCodeEntryMode(cfg.Mode) {
 		return cfg, fmt.Errorf("%w: 模式只能是 auto / subscription / api", ErrClaudeCodeEntryInvalidConfig)
 	}
+	classes, err := endpoint.NormalizeClaudeCodeAPIRequestClasses(cfg.APIRequestClasses)
+	if err != nil {
+		return cfg, fmt.Errorf("%w: %v", ErrClaudeCodeEntryInvalidConfig, err)
+	}
+	cfg.APIRequestClasses = classes
 	return cfg, nil
 }

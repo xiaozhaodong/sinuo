@@ -13,6 +13,32 @@ export const describeClaudeCodeEntryMode = (mode) => (
   CLAUDE_CODE_ENTRY_MODE_OPTIONS.find((option) => option.value === mode) || CLAUDE_CODE_ENTRY_MODE_OPTIONS[0]
 );
 
+// 可配置为强制走 API 的请求类别，与后端 endpoint.ClaudeCodeAPIRequestClasses 一致（main 不可选）
+export const CLAUDE_CODE_REQUEST_CLASS_OPTIONS = [
+  { value: 'subagent', label: '子代理', hint: 'Explore、Plan 等子代理的对话' },
+  { value: 'auxiliary', label: '后台辅助', hint: '会话标题、分类、摘要等附带请求' },
+  { value: 'compaction', label: '压缩', hint: '上下文压缩时的摘要请求，影响后续对话质量' },
+  { value: 'workflow', label: 'Workflow', hint: 'workflow 内运行的代理' }
+];
+
+// 打开按请求类别路由时，没有已选类别则默认勾选子代理与后台辅助
+export const DEFAULT_API_REQUEST_CLASSES = ['subagent', 'auxiliary'];
+
+/**
+ * 勾选 / 取消一个请求类别，结果按固定顺序排列
+ * @param {string[]} selected
+ * @param {string} value
+ */
+export const toggleRequestClass = (selected = [], value) => {
+  const next = new Set(selected);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return CLAUDE_CODE_REQUEST_CLASS_OPTIONS.map((option) => option.value).filter((item) => next.has(item));
+};
+
+// Claude Code 只在设置该变量时才向自定义 base URL 发送 x-claude-code-request-class
+export const GATEWAY_HINT_HEADERS_ENV = 'CLAUDE_CODE_GATEWAY_HINT_HEADERS';
+
 /**
  * 解析端口输入；合法返回整数，否则返回 null
  * @param {string|number} value
@@ -39,13 +65,20 @@ export const describeClaudeCodeEntryState = (info) => {
 /**
  * 写入 ~/.claude/settings.json 的配置片段
  * @param {string} baseUrl
+ * @param {{hintHeaders?: boolean}} options hintHeaders 为 true 时带上请求类别头开关
  */
-export const buildClaudeCodeSettingsSnippet = (baseUrl) => JSON.stringify({
-  env: { ANTHROPIC_BASE_URL: baseUrl }
+export const buildClaudeCodeSettingsSnippet = (baseUrl, { hintHeaders = false } = {}) => JSON.stringify({
+  env: {
+    ANTHROPIC_BASE_URL: baseUrl,
+    ...(hintHeaders ? { [GATEWAY_HINT_HEADERS_ENV]: '1' } : {})
+  }
 }, null, 2);
 
 /**
  * 首次试用命令：只对这一次启动的进程生效，不影响正在使用的 Claude Code
  * @param {string} baseUrl
+ * @param {{hintHeaders?: boolean}} options
  */
-export const buildClaudeCodeTrialCommand = (baseUrl) => `ANTHROPIC_BASE_URL=${baseUrl} claude`;
+export const buildClaudeCodeTrialCommand = (baseUrl, { hintHeaders = false } = {}) => (
+  `${hintHeaders ? `${GATEWAY_HINT_HEADERS_ENV}=1 ` : ''}ANTHROPIC_BASE_URL=${baseUrl} claude`
+);
