@@ -175,6 +175,9 @@ func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
 		return fmt.Errorf("创建模型定价失败: %w", err)
 	}
 
+	// 成本计算读取的是 UsageTracker 的定价快照，写库后需立即同步，否则要重启才生效
+	a.syncPricingToTracker(ctx)
+
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已创建", "model", input.ModelName)
 	}
@@ -210,6 +213,8 @@ func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput
 		return fmt.Errorf("更新模型定价失败: %w", err)
 	}
 
+	a.syncPricingToTracker(ctx)
+
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已更新", "model", modelName)
 	}
@@ -232,6 +237,8 @@ func (a *App) DeleteModelPricing(modelName string) error {
 	if err := a.modelPricingService.DeletePricing(ctx, modelName); err != nil {
 		return fmt.Errorf("删除模型定价失败: %w", err)
 	}
+
+	a.syncPricingToTracker(ctx)
 
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已删除", "model", modelName)

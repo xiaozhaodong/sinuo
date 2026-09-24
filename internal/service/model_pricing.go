@@ -294,13 +294,14 @@ func (s *ModelPricingService) GetPricingCount(ctx context.Context) (int, error) 
 }
 
 // ToTrackingPricing 转换为 tracking.ModelPricing 格式（兼容现有代码）
-// 注意：CacheCreation 使用 5m 价格，因为大多数请求使用默认 5 分钟缓存
+// 注意：CacheCreation 对应 5m 价格；CacheCreation1h 为 0 时由 CalculateCostV2 回退为 2x input
 func (s *ModelPricingService) ToTrackingPricing(record *store.ModelPricingRecord) tracking.ModelPricing {
 	return tracking.ModelPricing{
-		Input:         record.InputPrice,
-		Output:        record.OutputPrice,
-		CacheCreation: record.CacheCreationPrice5m, // 使用 5m 价格作为默认
-		CacheRead:     record.CacheReadPrice,
+		Input:           record.InputPrice,
+		Output:          record.OutputPrice,
+		CacheCreation:   record.CacheCreationPrice5m,
+		CacheCreation1h: record.CacheCreationPrice1h,
+		CacheRead:       record.CacheReadPrice,
 	}
 }
 
