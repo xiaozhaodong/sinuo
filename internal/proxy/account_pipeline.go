@@ -281,8 +281,8 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeInvalidRequest)
 				}
 				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeInvalidRequest, bodyErr.Code)
-				slog.Warn("[账号请求] 本地报文检查未通过", "request_id", requestID, "account_id", acc.ID,
-					"path", r.URL.Path, "enabled", acc.StripCodexInternalMetadata, "removed_items", 0, "code", bodyErr.Code)
+				slog.Warn(fmt.Sprintf("⚠️ [账号请求] [%s] 本地报文检查未通过", requestID),
+					"account_id", acc.ID, "path", r.URL.Path, "code", bodyErr.Code)
 				lifecycleManager.FailRequest(bodyErr.Code, bodyErr.Message, bodyErr.StatusCode)
 				writeAccountPipelineError(w, bodyErr.StatusCode, bodyErr.Code, bodyErr.Message)
 				return
@@ -589,9 +589,9 @@ func logAccountPipelineAttemptFailure(requestID string, acc *store.UpstreamAccou
 	if willTryNext {
 		action = "try_next_account"
 	}
+	message := fmt.Sprintf("⚠️ [账号池上游失败] [%s]", requestID)
 	if statusCode > 0 {
-		slog.Warn("账号池上游失败",
-			"request_id", requestID,
+		slog.Warn(message,
 			"account_id", accountID,
 			"account_name", accountName,
 			"provider_type", providerType,
@@ -602,8 +602,7 @@ func logAccountPipelineAttemptFailure(requestID string, acc *store.UpstreamAccou
 		)
 		return
 	}
-	slog.Warn("账号池上游失败",
-		"request_id", requestID,
+	slog.Warn(message,
 		"account_id", accountID,
 		"account_name", accountName,
 		"provider_type", providerType,
@@ -718,8 +717,8 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 			}
 		}
 		bodyBytes = filtered
-		slog.Info("🧹 [Codex 内部元数据] 出站兼容处理完成",
-			"request_id", requestID, "account_id", acc.ID, "path", r.URL.Path,
+		slog.Info(fmt.Sprintf("🧹 [Codex 内部元数据] [%s] 出站兼容处理完成", requestID),
+			"account_id", acc.ID, "path", r.URL.Path,
 			"enabled", true, "removed_items", removed)
 	}
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
@@ -741,8 +740,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		return nil, nil, nil, err
 	}
 	if compressionMode != "disabled" {
-		slog.Info("🗜️ [账号请求压缩] 出站请求已规范化",
-			"request_id", requestID,
+		slog.Info(fmt.Sprintf("🗜️ [账号请求压缩] [%s] 出站请求已规范化", requestID),
 			"account", acc.AccountName,
 			"path", r.URL.Path,
 			"mode", compressionMode,
@@ -814,8 +812,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 	h.observeAccountIdentityResponse(resp, prepared)
 	if sendZstd && resp.StatusCode == http.StatusUnsupportedMediaType {
-		slog.Warn("⚠️ [账号请求压缩] 上游拒绝 zstd，请求不会静默降级为明文",
-			"request_id", requestID,
+		slog.Warn(fmt.Sprintf("⚠️ [账号请求压缩] [%s] 上游拒绝 zstd，请求不会静默降级为明文", requestID),
 			"account", acc.AccountName,
 			"path", r.URL.Path,
 			"status_code", resp.StatusCode,

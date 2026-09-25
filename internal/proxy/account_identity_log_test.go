@@ -84,7 +84,7 @@ func TestAccountIdentityDecisionLogByEffect(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			output := prepareIdentityWithLog(t, slog.LevelDebug, tc.policy, tc.acc, tc.target)
-			assertIdentityLogContains(t, output, append(tc.want, "request_id="+identityLogTestRequest)...)
+			assertIdentityLogContains(t, output, append(tc.want, "[Codex 身份] ["+identityLogTestRequest+"]")...)
 			for _, part := range tc.without {
 				if strings.Contains(output, part) {
 					t.Fatalf("不应输出 %q:\n%s", part, output)

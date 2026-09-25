@@ -187,15 +187,15 @@ type identityDecision struct {
 	sourceBody []byte // Prepare 前的正文，用于判断身份层是否改写了正文
 }
 
-// identityEffect 返回本次身份处理的短码与日志文案。
+// identityEffect 返回本次身份处理的短码与结果文案（不含日志前缀）。
 func identityEffect(prepared *codexidentity.Prepared) (string, string) {
 	switch {
 	case !prepared.IdentityEnabled:
-		return "passthrough", "🪪 [Codex 身份] 未生效，原样透传"
+		return "passthrough", "未生效，原样透传"
 	case prepared.FirstParty:
-		return "mapped", "🪪 [Codex 身份] 已按账号映射身份（官方 OAuth）"
+		return "mapped", "已按账号映射身份（官方 OAuth）"
 	default:
-		return "third_party_cleanup", "🪪 [Codex 身份] 已清理首方身份字段（强制开启，第三方目标）"
+		return "third_party_cleanup", "已清理首方身份字段（强制开启，第三方目标）"
 	}
 }
 
@@ -217,9 +217,9 @@ func logIdentityDecision(ctx context.Context, acc *store.UpstreamAccountRecord, 
 	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
 		return
 	}
-	effect, message := identityEffect(d.prepared)
+	effect, summary := identityEffect(d.prepared)
 	attrs := []any{
-		"request_id", failoverRequestID(ctx), "account_id", acc.ID, "account", acc.AccountName,
+		"account_id", acc.ID, "account", acc.AccountName,
 		"operation", d.operation, "target_host", d.scope.TargetHost(), "mode", d.identity.Policy.Mode(),
 		"effective", d.prepared.IdentityEnabled, "first_party", d.prepared.FirstParty, "effect", effect,
 		"turn_state_action", identityTurnStateAction(d.identity, d.prepared),
@@ -234,7 +234,7 @@ func logIdentityDecision(ctx context.Context, acc *store.UpstreamAccountRecord, 
 			"body_rewritten", !bytes.Equal(d.sourceBody, d.prepared.Body),
 			"dropped_fields", d.prepared.DroppedFields)
 	}
-	slog.Debug(message, attrs...)
+	slog.Debug(fmt.Sprintf("🪪 [Codex 身份] [%s] %s", failoverRequestID(ctx), summary), attrs...)
 }
 
 // 每个 attempt 从调用方保存的原始正文计算，凭据、目标 scope 和隐私后校验在此收敛。
