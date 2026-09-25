@@ -24,6 +24,15 @@ test('getModelColorClasses distinguishes GPT-6 Astra from generic GPT', () => {
   assert.match(getModelColorClasses('GPT-6-Astra'), /fuchsia/);
 });
 
+test('getModelColorClasses reuses GPT-5.6 Sol / Luna colors for GPT-6 Sol / Luna', () => {
+  assert.match(getModelColorClasses('gpt-6-sol'), /yellow/);
+  assert.match(getModelColorClasses('gpt-6-sol-2026-09-22'), /yellow/);
+  assert.match(getModelColorClasses('GPT-6-Sol'), /yellow/);
+  assert.match(getModelColorClasses('gpt-6-luna'), /sky/);
+  assert.match(getModelColorClasses('gpt-6-luna-2026-09-22'), /sky/);
+  assert.match(getModelColorClasses('gpt-6'), /indigo/);
+});
+
 test('getModelColorClasses keeps existing model color mappings', () => {
   assert.match(getModelColorClasses('claude-sonnet-4'), /orange/);
   assert.match(getModelColorClasses('claude-3-5-haiku'), /green/);

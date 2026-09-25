@@ -41,7 +41,7 @@ const MODEL_COLOR_RULES = [
     classes: 'tone-purple'
   },
   {
-    matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol'),
+    matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol') || modelName.includes('gpt-6-sol'),
     classes: 'tone-yellow'
   },
   {
@@ -49,7 +49,7 @@ const MODEL_COLOR_RULES = [
     classes: 'tone-lime'
   },
   {
-    matches: (modelName) => modelName.startsWith('gpt-5.6-luna'),
+    matches: (modelName) => modelName.startsWith('gpt-5.6-luna') || modelName.includes('gpt-6-luna'),
     classes: 'tone-sky'
   },
   {
