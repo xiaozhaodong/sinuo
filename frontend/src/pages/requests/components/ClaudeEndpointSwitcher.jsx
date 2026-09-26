@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, LockKeyhole, RotateCcw, Route, Server } from 'lucide-react';
+import { AlertCircle, Check, LockKeyhole, RotateCcw, Route } from 'lucide-react';
 import ModelRoutingSwitcher from './ModelRoutingSwitcher.jsx';
 import { resolveClaudeRouteLabel } from '../utils/claudeRouteLabel.js';
 
@@ -44,7 +44,7 @@ const ClaudeEndpointSwitcher = ({ endpoints = [], routingState = {}, onSwitch, o
 
   return (
     <div ref={ref} className="relative">
-      <button type="button" disabled={loading} onClick={() => setOpen((value) => !value)} className="flex w-[190px] items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50"><Server className="h-3.5 w-3.5 shrink-0 text-fg-subtle" /><span className="min-w-0 flex-1 truncate text-left">Claude: {resolveClaudeRouteLabel({ routingState })}</span><span className="text-[10px] text-fg-subtle">{mode === 'manual_fixed' ? '固定' : mode === 'manual_preferred' ? '优选' : '自动'}</span></button>
+      <button type="button" disabled={loading} onClick={() => setOpen((value) => !value)} className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50 lg:w-[190px] xl:w-[220px]"><Route size={14} className="shrink-0 text-accent" /><span className="min-w-0 flex-1 truncate text-left">Claude: {resolveClaudeRouteLabel({ routingState })}</span><span className="shrink-0 text-[10px] text-fg-subtle">{mode === 'manual_fixed' ? '固定' : mode === 'manual_preferred' ? '优选' : '自动'}</span></button>
       {open && (
         <div className="absolute left-0 top-full z-50 mt-2 w-[310px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline">
           {options}

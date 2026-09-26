@@ -41,6 +41,8 @@ const CodexAccessSwitcher = ({
   const { label: displayLabel, detail: displayDetail } = resolveCodexAccessLabel({
     loading, configError, statusError, config, status, ready, routeLabel: fallbackRouteLabel
   });
+  // 图标与主标签同口径：入口未初始化/已停用时主标签展示的是原有入口策略，同样是正常路由；只有真实异常才提示。
+  const triggerIconTone = ready || displayDetail ? 'text-accent' : 'text-warn';
   const triggerTitle = displayDetail
     ? `原有入口策略：${displayLabel} · ${displayDetail}；点击调整账号池策略`
     : `Codex 接入状态：${displayLabel}；点击切换接入模式或调整账号池策略`;
@@ -83,7 +85,7 @@ const CodexAccessSwitcher = ({
   return (
     <>
       <button ref={triggerRef} type="button" aria-expanded={open} aria-controls={menuId} aria-label={`Codex 接入与路由：${displayLabel}${displayDetail ? `（${displayDetail}）` : ''}`} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} title={triggerTitle} className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]">
-        {loading || busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${ready ? 'text-accent' : 'text-fg-subtle'}`} />}
+        {loading || busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${triggerIconTone}`} />}
         <span className="min-w-0 flex-1 truncate text-left">Codex: {displayLabel}</span>
         <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>

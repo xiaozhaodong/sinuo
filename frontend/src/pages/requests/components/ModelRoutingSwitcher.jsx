@@ -57,7 +57,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false, embedde
         disabled={loading}
         onClick={() => setOpen((v) => !v)}
         title="模型路由启用中，按请求模型选择上游端点；点击可调整每个模型的策略"
-        className="flex w-[220px] items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50"
+        className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50 lg:w-[190px] xl:w-[220px]"
       >
         <Route className="h-3.5 w-3.5 shrink-0 text-accent" />
         <span className="min-w-0 flex-1 truncate text-left">Claude: 模型路由 · {modelCount} 模型{hasWebTools ? ' + 联网' : ''}</span>
