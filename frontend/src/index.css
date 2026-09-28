@@ -512,6 +512,20 @@
   animation: pulse-slow 2s infinite;
 }
 
+/* 浮层 / 弹窗打开动画：播一次即静止；关闭是直接卸载，瞬间消失。
+   项目未装 tailwindcss-animate，animate-in / zoom-in-95 / slide-in-from-* 等类不生效，改用这里的类。
+   浮层由使用方用 origin-* 指定缩放起点为锚点所在的角，读作「从按钮处长出来」。 */
+@keyframes motion-popover-in { from { opacity: 0; transform: scale(.96); } }
+@keyframes motion-overlay-in { from { opacity: 0; } }
+@keyframes motion-dialog-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+
+/* 只在未开启「减弱动态效果」时播放 */
+@media (prefers-reduced-motion: no-preference) {
+  .motion-popover { animation: motion-popover-in 150ms cubic-bezier(.22,1,.36,1); }
+  .motion-overlay { animation: motion-overlay-in 180ms ease-out; }
+  .motion-dialog { animation: motion-dialog-in 220ms cubic-bezier(.22,1,.36,1); }
+}
+
 /* ============================================================
  * 请求追踪 —— 实时列表动效
  *

@@ -266,7 +266,7 @@ const AccountPoolSwitcher = ({
       </button>}
 
       {(embedded || isOpen) && (
-        <div className={embedded ? 'min-w-0' : 'absolute top-full left-0 mt-2 w-[360px] bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200'}>
+        <div className={embedded ? 'min-w-0' : 'absolute top-full left-0 mt-2 w-[360px] bg-surface rounded-xl shadow-xl border border-line ring-1 ring-hairline z-50 overflow-hidden motion-popover origin-top-left'}>
           <div className="px-4 py-3 bg-surface-sub border-b border-line-soft">
             <div className="text-xs font-semibold text-fg-muted uppercase tracking-wider">账号池调度策略</div>
             <div className="text-[10px] text-fg-subtle mt-0.5">可固定具体账号，也可切回 Auto 按编排调度</div>

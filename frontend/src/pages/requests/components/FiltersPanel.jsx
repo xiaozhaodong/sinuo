@@ -30,7 +30,7 @@ const FiltersPanel = ({ isOpen, onClose, filters, updateFilter, onApply, onReset
 
   if (!isOpen) return null;
   return (
-    <div className="absolute left-0 right-0 z-20 mt-3 rounded-xl border border-line bg-surface p-5 shadow-xl ring-1 ring-hairline">
+    <div className="absolute left-0 right-0 z-20 mt-3 rounded-xl border border-line bg-surface p-5 shadow-xl ring-1 ring-hairline motion-popover origin-top">
       <div className="mb-5 flex items-start justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-fg"><Filter className="h-4 w-4 text-accent" />高级筛选</h3>
         <button type="button" onClick={onClose} className="text-fg-subtle hover:text-fg-muted" aria-label="关闭筛选"><X className="h-4 w-4" /></button>

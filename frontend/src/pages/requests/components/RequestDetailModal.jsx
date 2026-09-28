@@ -268,7 +268,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
     <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-[15vh] px-4">
       {/* 背景遮罩 */}
       <div
-        className="fixed inset-0 bg-overlay backdrop-blur-sm animate-in fade-in duration-200"
+        className="fixed inset-0 bg-overlay backdrop-blur-sm motion-overlay"
         onClick={onClose}
       />
 
@@ -277,7 +277,7 @@ const RequestDetailModal = ({ isOpen, onClose, request: initialRequest }) => {
         role="dialog"
         aria-modal="true"
         aria-label="请求详情"
-        className="relative w-full max-w-3xl max-h-[80vh] bg-surface rounded-2xl shadow-2xl ring-1 ring-hairline animate-in zoom-in-95 fade-in duration-200 flex flex-col overflow-hidden"
+        className="relative w-full max-w-3xl max-h-[80vh] bg-surface rounded-2xl shadow-2xl ring-1 ring-hairline motion-dialog flex flex-col overflow-hidden"
       >
         {/* 头部 - 固定不滚动 */}
         <div className="flex-shrink-0 px-6 py-4 border-b border-line-soft bg-surface rounded-t-2xl flex items-center justify-between">

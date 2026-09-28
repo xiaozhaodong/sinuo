@@ -77,7 +77,7 @@ const ClaudeAccessSwitcher = (props) => {
       </button>
 
       {open && position && createPortal(
-        <div ref={panelRef} id={menuId} style={position} className="fixed z-50 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline">
+        <div ref={panelRef} id={menuId} style={position} className="fixed z-50 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline motion-popover origin-top-left">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-surface-sub px-4 py-3">
             <div><h2 className="text-sm font-semibold text-fg">Claude 接入与路由</h2><p className="mt-0.5 text-[11px] text-fg-subtle">Claude Code 入口接入模式 · 端点调度策略</p></div>
             <button type="button" onClick={refresh} disabled={loading || busy} title="重新读取入口状态" aria-label="刷新 Claude Code 入口状态" className="rounded-lg border border-line p-1.5 text-fg-muted hover:bg-surface disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
