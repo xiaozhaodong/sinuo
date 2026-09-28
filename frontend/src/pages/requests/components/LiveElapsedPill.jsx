@@ -10,9 +10,8 @@
 import { useLayoutEffect, useRef } from 'react';
 import { parseTimestampOrNull } from '../utils/lifecycle.js';
 import { resolveElapsedMs, subscribeElapsedTick } from '../utils/elapsedTicker.js';
-import { formatTimingBadge, getRunningPillClassName } from '../utils/timing.js';
+import { formatTimingBadge, getRunningPillClassName, TIMING_PILL_BASE } from '../utils/timing.js';
 
-const PILL_BASE = 'inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all';
 
 // 首帧占位。渲染函数必须是纯的，读不了 Date.now，所以先渲染一个格式正确、
 // 宽度接近真实值的字符串，由 layout effect 在绘制前替换掉 —— 用户看不到它。
@@ -44,7 +43,7 @@ const LiveElapsedPill = ({ timestamp, baseMs = 0, threshold }) => {
       // 正常区间保持中性灰（还在跑 = 未定稿），跨过阈值才变黄/红。
       // 这让跑秒既是预警 —— 卡住的请求会自己浮出来 —— 又给完成瞬间
       // 留出了「灰→彩」这个信号，否则秒表停下来根本看不出来。
-      node.className = `${PILL_BASE} ${getRunningPillClassName(threshold, elapsedMs)}`;
+      node.className = `${TIMING_PILL_BASE} ${getRunningPillClassName(threshold, elapsedMs)}`;
     };
 
     paint();
@@ -56,7 +55,7 @@ const LiveElapsedPill = ({ timestamp, baseMs = 0, threshold }) => {
       ref={nodeRef}
       // 时间戳解析失败时同样是中性色 —— 按 elapsed=0 上色会涂成「健康」的绿，
       // 把一个读不出来的值伪装成一次很快的响应。
-      className={`${PILL_BASE} ${canTick ? getRunningPillClassName(threshold, PLACEHOLDER_MS) : 'tone-slate'}`}
+      className={`${TIMING_PILL_BASE} ${canTick ? getRunningPillClassName(threshold, PLACEHOLDER_MS) : 'tone-slate'}`}
     >
       {canTick ? formatTimingBadge(PLACEHOLDER_MS) : '-'}
     </span>

@@ -254,6 +254,177 @@
   .dark .tone-green   { --tone-bg: rgb(134 239 172 / .12); --tone-fg: #86efac; --tone-line: rgb(134 239 172 / .24); }
   .dark .tone-yellow  { --tone-bg: rgb(253 224  71 / .12); --tone-fg: #fde047; --tone-line: rgb(253 224  71 / .24); }
   .dark .tone-lime    { --tone-bg: rgb(190 242 100 / .12); --tone-fg: #bef264; --tone-line: rgb(190 242 100 / .24); }
+
+  /* 渐变徽章（请求页模型标签 model-tone-*、请求类型 family-tone-*）：
+     模型起点沿用原主色，终点按模型名含义取色（astra 星河、opus 紫夜、sol 日出、fable 晚霞、
+     deepseek 深海、terra 大地、luna 月光…）；未知模型与 Other 类型仍用 tone-slate 纯色。
+     渐变描边由伪元素 + mask 绘制，底色保持半透明，深色下行 hover 底色仍能透上来。
+     渐变字只作用于徽章内的文字 span；外层 color（--gt-fg）是没有内层 span 时的兜底。 */
+  .grad-tone {
+    position: relative;
+    color: var(--gt-fg);
+    background-image: var(--gt-bg);
+    border-color: transparent;
+  }
+  .grad-tone::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    padding: 1px;
+    border-radius: inherit;
+    background: var(--gt-line);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  .grad-tone > span {
+    background-image: var(--gt-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .model-tone-astra {
+    --gt-fg: #2563eb; --gt-text: linear-gradient(90deg, #2563eb, #7c3aed, #db2777);
+    --gt-bg: linear-gradient(120deg, #eff6ff, #f5f3ff, #fdf2f8); --gt-line: linear-gradient(120deg, #bfdbfe, #ddd6fe, #fbcfe8);
+  }
+  .model-tone-opus {
+    --gt-fg: #9333ea; --gt-text: linear-gradient(90deg, #9333ea, #7c3aed, #4f46e5);
+    --gt-bg: linear-gradient(120deg, #faf5ff, #eef2ff); --gt-line: linear-gradient(120deg, #e9d5ff, #c7d2fe);
+  }
+  .model-tone-sol {
+    --gt-fg: #ca8a04; --gt-text: linear-gradient(90deg, #ca8a04, #ea580c);
+    --gt-bg: linear-gradient(120deg, #fefce8, #ffedd5); --gt-line: linear-gradient(120deg, #fde68a, #fed7aa);
+  }
+  .model-tone-fable {
+    --gt-fg: #e11d48; --gt-text: linear-gradient(90deg, #e11d48, #f97316);
+    --gt-bg: linear-gradient(120deg, #fff1f2, #ffedd5); --gt-line: linear-gradient(120deg, #fecdd3, #fed7aa);
+  }
+  .model-tone-deepseek {
+    --gt-fg: #0891b2; --gt-text: linear-gradient(90deg, #0891b2, #2563eb, #4338ca);
+    --gt-bg: linear-gradient(120deg, #ecfeff, #eef2ff); --gt-line: linear-gradient(120deg, #a5f3fc, #c7d2fe);
+  }
+  .model-tone-terra {
+    --gt-fg: #65a30d; --gt-text: linear-gradient(90deg, #65a30d, #a16207, #9a3412);
+    --gt-bg: linear-gradient(120deg, #f7fee7, #ffedd5); --gt-line: linear-gradient(120deg, #d9f99d, #fed7aa);
+  }
+  .model-tone-luna {
+    --gt-fg: #0284c7; --gt-text: linear-gradient(90deg, #0284c7, #64748b);
+    --gt-bg: linear-gradient(120deg, #f0f9ff, #f1f5f9); --gt-line: linear-gradient(120deg, #bae6fd, #cbd5e1);
+  }
+  .model-tone-sonnet-5 {
+    --gt-fg: #d97706; --gt-text: linear-gradient(90deg, #d97706, #92400e);
+    --gt-bg: linear-gradient(120deg, #fffbeb, #ffedd5); --gt-line: linear-gradient(120deg, #fde68a, #fed7aa);
+  }
+  .model-tone-sonnet-4 {
+    --gt-fg: #ea580c; --gt-text: linear-gradient(90deg, #ea580c, #dc2626);
+    --gt-bg: linear-gradient(120deg, #fff7ed, #fef2f2); --gt-line: linear-gradient(120deg, #fed7aa, #fecaca);
+  }
+  .model-tone-haiku {
+    --gt-fg: #16a34a; --gt-text: linear-gradient(90deg, #16a34a, #0d9488);
+    --gt-bg: linear-gradient(120deg, #f0fdf4, #f0fdfa); --gt-line: linear-gradient(120deg, #bbf7d0, #99f6e4);
+  }
+  .model-tone-glm {
+    --gt-fg: #0f766e; --gt-text: linear-gradient(90deg, #0f766e, #0891b2);
+    --gt-bg: linear-gradient(120deg, #f0fdfa, #ecfeff); --gt-line: linear-gradient(120deg, #99f6e4, #a5f3fc);
+  }
+  .model-tone-kimi {
+    --gt-fg: #db2777; --gt-text: linear-gradient(90deg, #db2777, #475569);
+    --gt-bg: linear-gradient(120deg, #fdf2f8, #f1f5f9); --gt-line: linear-gradient(120deg, #fbcfe8, #cbd5e1);
+  }
+  .model-tone-sonnet-3-5 {
+    --gt-fg: #1d4ed8; --gt-text: linear-gradient(90deg, #1d4ed8, #0284c7);
+    --gt-bg: linear-gradient(120deg, #eff6ff, #f0f9ff); --gt-line: linear-gradient(120deg, #bfdbfe, #bae6fd);
+  }
+  .model-tone-gpt {
+    --gt-fg: #4338ca; --gt-text: linear-gradient(90deg, #4338ca, #2563eb);
+    --gt-bg: linear-gradient(120deg, #eef2ff, #eff6ff); --gt-line: linear-gradient(120deg, #c7d2fe, #bfdbfe);
+  }
+
+  .dark .model-tone-astra {
+    --gt-fg: #93c5fd; --gt-text: linear-gradient(90deg, #93c5fd, #c4b5fd, #f9a8d4);
+    --gt-bg: linear-gradient(120deg, rgb(147 197 253 / .14), rgb(196 181 253 / .10), rgb(249 168 212 / .10)); --gt-line: linear-gradient(120deg, rgb(147 197 253 / .38), rgb(196 181 253 / .38), rgb(249 168 212 / .38));
+  }
+  .dark .model-tone-opus {
+    --gt-fg: #d8b4fe; --gt-text: linear-gradient(90deg, #d8b4fe, #c4b5fd, #a5b4fc);
+    --gt-bg: linear-gradient(120deg, rgb(216 180 254 / .14), rgb(196 181 253 / .10), rgb(165 180 252 / .10)); --gt-line: linear-gradient(120deg, rgb(216 180 254 / .38), rgb(196 181 253 / .38), rgb(165 180 252 / .38));
+  }
+  .dark .model-tone-sol {
+    --gt-fg: #fde047; --gt-text: linear-gradient(90deg, #fde047, #fb923c);
+    --gt-bg: linear-gradient(120deg, rgb(253 224 71 / .14), rgb(251 146 60 / .10)); --gt-line: linear-gradient(120deg, rgb(253 224 71 / .38), rgb(251 146 60 / .38));
+  }
+  .dark .model-tone-fable {
+    --gt-fg: #fda4af; --gt-text: linear-gradient(90deg, #fda4af, #fdba74);
+    --gt-bg: linear-gradient(120deg, rgb(253 164 175 / .14), rgb(253 186 116 / .10)); --gt-line: linear-gradient(120deg, rgb(253 164 175 / .38), rgb(253 186 116 / .38));
+  }
+  .dark .model-tone-deepseek {
+    --gt-fg: #67e8f9; --gt-text: linear-gradient(90deg, #67e8f9, #93c5fd, #a5b4fc);
+    --gt-bg: linear-gradient(120deg, rgb(103 232 249 / .14), rgb(147 197 253 / .10), rgb(165 180 252 / .10)); --gt-line: linear-gradient(120deg, rgb(103 232 249 / .38), rgb(147 197 253 / .38), rgb(165 180 252 / .38));
+  }
+  .dark .model-tone-terra {
+    --gt-fg: #bef264; --gt-text: linear-gradient(90deg, #bef264, #fcd34d, #fdba74);
+    --gt-bg: linear-gradient(120deg, rgb(190 242 100 / .14), rgb(252 211 77 / .10), rgb(253 186 116 / .10)); --gt-line: linear-gradient(120deg, rgb(190 242 100 / .38), rgb(252 211 77 / .38), rgb(253 186 116 / .38));
+  }
+  .dark .model-tone-luna {
+    --gt-fg: #7dd3fc; --gt-text: linear-gradient(90deg, #7dd3fc, #cbd5e1);
+    --gt-bg: linear-gradient(120deg, rgb(125 211 252 / .14), rgb(203 213 225 / .10)); --gt-line: linear-gradient(120deg, rgb(125 211 252 / .38), rgb(203 213 225 / .38));
+  }
+  .dark .model-tone-sonnet-5 {
+    --gt-fg: #fcd34d; --gt-text: linear-gradient(90deg, #fcd34d, #f59e0b);
+    --gt-bg: linear-gradient(120deg, rgb(252 211 77 / .14), rgb(245 158 11 / .10)); --gt-line: linear-gradient(120deg, rgb(252 211 77 / .38), rgb(245 158 11 / .38));
+  }
+  .dark .model-tone-sonnet-4 {
+    --gt-fg: #fdba74; --gt-text: linear-gradient(90deg, #fdba74, #fca5a5);
+    --gt-bg: linear-gradient(120deg, rgb(253 186 116 / .14), rgb(252 165 165 / .10)); --gt-line: linear-gradient(120deg, rgb(253 186 116 / .38), rgb(252 165 165 / .38));
+  }
+  .dark .model-tone-haiku {
+    --gt-fg: #86efac; --gt-text: linear-gradient(90deg, #86efac, #5eead4);
+    --gt-bg: linear-gradient(120deg, rgb(134 239 172 / .14), rgb(94 234 212 / .10)); --gt-line: linear-gradient(120deg, rgb(134 239 172 / .38), rgb(94 234 212 / .38));
+  }
+  .dark .model-tone-glm {
+    --gt-fg: #5eead4; --gt-text: linear-gradient(90deg, #5eead4, #67e8f9);
+    --gt-bg: linear-gradient(120deg, rgb(94 234 212 / .14), rgb(103 232 249 / .10)); --gt-line: linear-gradient(120deg, rgb(94 234 212 / .38), rgb(103 232 249 / .38));
+  }
+  .dark .model-tone-kimi {
+    --gt-fg: #f9a8d4; --gt-text: linear-gradient(90deg, #f9a8d4, #94a3b8);
+    --gt-bg: linear-gradient(120deg, rgb(249 168 212 / .14), rgb(148 163 184 / .10)); --gt-line: linear-gradient(120deg, rgb(249 168 212 / .38), rgb(148 163 184 / .38));
+  }
+  .dark .model-tone-sonnet-3-5 {
+    --gt-fg: #93c5fd; --gt-text: linear-gradient(90deg, #93c5fd, #7dd3fc);
+    --gt-bg: linear-gradient(120deg, rgb(147 197 253 / .14), rgb(125 211 252 / .10)); --gt-line: linear-gradient(120deg, rgb(147 197 253 / .38), rgb(125 211 252 / .38));
+  }
+  .dark .model-tone-gpt {
+    --gt-fg: #a5b4fc; --gt-text: linear-gradient(90deg, #a5b4fc, #93c5fd);
+    --gt-bg: linear-gradient(120deg, rgb(165 180 252 / .14), rgb(147 197 253 / .10)); --gt-line: linear-gradient(120deg, rgb(165 180 252 / .38), rgb(147 197 253 / .38));
+  }
+
+  /* 请求类型：Claude 紫→品红、Codex 天蓝→青、Image 品红→橙 */
+  .family-tone-claude {
+    --gt-fg: #7c3aed; --gt-text: linear-gradient(90deg, #7c3aed, #c026d3);
+    --gt-bg: linear-gradient(120deg, #f5f3ff, #fdf4ff); --gt-line: linear-gradient(120deg, #ddd6fe, #f5d0fe);
+  }
+  .family-tone-codex {
+    --gt-fg: #0284c7; --gt-text: linear-gradient(90deg, #0284c7, #0d9488);
+    --gt-bg: linear-gradient(120deg, #f0f9ff, #f0fdfa); --gt-line: linear-gradient(120deg, #bae6fd, #99f6e4);
+  }
+  .family-tone-image {
+    --gt-fg: #c026d3; --gt-text: linear-gradient(90deg, #c026d3, #f97316);
+    --gt-bg: linear-gradient(120deg, #fdf4ff, #fff7ed); --gt-line: linear-gradient(120deg, #f5d0fe, #fed7aa);
+  }
+  .dark .family-tone-claude {
+    --gt-fg: #c4b5fd; --gt-text: linear-gradient(90deg, #c4b5fd, #f0abfc);
+    --gt-bg: linear-gradient(120deg, rgb(196 181 253 / .14), rgb(240 171 252 / .10)); --gt-line: linear-gradient(120deg, rgb(196 181 253 / .38), rgb(240 171 252 / .38));
+  }
+  .dark .family-tone-codex {
+    --gt-fg: #7dd3fc; --gt-text: linear-gradient(90deg, #7dd3fc, #5eead4);
+    --gt-bg: linear-gradient(120deg, rgb(125 211 252 / .14), rgb(94 234 212 / .10)); --gt-line: linear-gradient(120deg, rgb(125 211 252 / .38), rgb(94 234 212 / .38));
+  }
+  .dark .family-tone-image {
+    --gt-fg: #f0abfc; --gt-text: linear-gradient(90deg, #f0abfc, #fdba74);
+    --gt-bg: linear-gradient(120deg, rgb(240 171 252 / .14), rgb(253 186 116 / .10)); --gt-line: linear-gradient(120deg, rgb(240 171 252 / .38), rgb(253 186 116 / .38));
+  }
 }
 
 /* ============================================================

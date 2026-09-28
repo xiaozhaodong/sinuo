@@ -27,7 +27,8 @@ import {
   formatTpsBadge,
   getTimingPillClassName,
   resolveCompletionMs,
-  resolveFirstResponseMs
+  resolveFirstResponseMs,
+  TIMING_PILL_BASE
 } from '../utils/timing.js';
 
 // 整套入场里收尾最晚的一条动画（左缘亮线 620ms）。摘 class 必须等它 ——
@@ -92,7 +93,6 @@ const TimingTooltip = ({ anchorRect, items }) => {
   );
 };
 
-const TIMING_PILL_BASE = 'inline-flex items-center px-2 py-1 rounded text-xs font-mono font-medium border transition-all';
 
 const RequestTimingCell = ({ request }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
@@ -211,7 +211,8 @@ const renderCell = (columnId, request, formatTimestamp) => {
       return <ModelTag model={request.model} alert={buildModelAlert(request)} compact />;
     case 'requestFamily': {
       const family = getRequestFamilyMeta(request.requestFamily);
-      return <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-semibold ${family.className}`}>{family.label}</span>;
+      // 文字包一层 span：grad-tone 的渐变字只作用于内层 span
+      return <span className={`inline-flex items-center rounded-md border px-2 py-[3px] text-xs leading-4 font-semibold ${family.className}`}><span>{family.label}</span></span>;
     }
     case 'upstreamName':
       return <span className="block max-w-[190px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;

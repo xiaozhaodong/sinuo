@@ -1,9 +1,10 @@
 import { NO_UPSTREAM_LABEL, isNoUpstreamReason } from './lifecycle.js';
 
+// className 为请求页类型徽章配色：index.css 的 grad-tone 渐变；Other 保持 tone-slate 纯色
 export const REQUEST_FAMILY_META = {
-  claude: { label: 'Claude', className: 'tone-violet' },
-  codex: { label: 'Codex', className: 'tone-sky' },
-  image: { label: 'Image', className: 'tone-fuchsia' },
+  claude: { label: 'Claude', className: 'grad-tone family-tone-claude' },
+  codex: { label: 'Codex', className: 'grad-tone family-tone-codex' },
+  image: { label: 'Image', className: 'grad-tone family-tone-image' },
   other: { label: 'Other', className: 'tone-slate' }
 };
 

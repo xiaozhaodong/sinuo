@@ -3,56 +3,61 @@ import assert from 'node:assert/strict';
 
 import { getModelColorClasses } from './modelTag.js';
 
+const tone = (key) => `grad-tone model-tone-${key}`;
+
 test('getModelColorClasses supports new model families used in request tracking', () => {
-  assert.match(getModelColorClasses('glm-5.2'), /teal/);
-  assert.match(getModelColorClasses('claude-fable-5'), /rose/);
-  assert.match(getModelColorClasses('claude-sonnet-5'), /amber/);
-  assert.match(getModelColorClasses(' Claude-Sonnet-5 '), /amber/);
+  assert.equal(getModelColorClasses('glm-5.2'), tone('glm'));
+  assert.equal(getModelColorClasses('claude-fable-5'), tone('fable'));
+  assert.equal(getModelColorClasses('claude-sonnet-5'), tone('sonnet-5'));
+  assert.equal(getModelColorClasses(' Claude-Sonnet-5 '), tone('sonnet-5'));
 });
 
 test('getModelColorClasses distinguishes GPT-5.6 model tiers', () => {
-  assert.match(getModelColorClasses('gpt-5.6'), /yellow/);
-  assert.match(getModelColorClasses('gpt-5.6-sol'), /yellow/);
-  assert.match(getModelColorClasses('gpt-5.6-sol-2026-07-09'), /yellow/);
-  assert.match(getModelColorClasses('gpt-5.6-terra'), /lime/);
-  assert.match(getModelColorClasses('gpt-5.6-luna'), /sky/);
+  assert.equal(getModelColorClasses('gpt-5.6'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-5.6-sol'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-5.6-sol-2026-07-09'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-5.6-terra'), tone('terra'));
+  assert.equal(getModelColorClasses('gpt-5.6-luna'), tone('luna'));
 });
 
-test('getModelColorClasses distinguishes GPT-6 Astra from generic GPT', () => {
-  assert.match(getModelColorClasses('gpt-6-astra'), /fuchsia/);
-  assert.match(getModelColorClasses('gpt-6-astra-2026-09-01'), /fuchsia/);
-  assert.match(getModelColorClasses('GPT-6-Astra'), /fuchsia/);
+test('getModelColorClasses gives GPT-6 Astra its own tone, distinct from generic GPT, Opus and Haiku', () => {
+  assert.equal(getModelColorClasses('gpt-6-astra'), tone('astra'));
+  assert.equal(getModelColorClasses('gpt-6-astra-2026-09-01'), tone('astra'));
+  assert.equal(getModelColorClasses('GPT-6-Astra'), tone('astra'));
+  assert.notEqual(getModelColorClasses('gpt-6-astra'), getModelColorClasses('claude-opus-5-5'));
+  assert.notEqual(getModelColorClasses('gpt-6-astra'), getModelColorClasses('claude-haiku-4-5'));
 });
 
 test('getModelColorClasses reuses GPT-5.6 Sol / Luna colors for GPT-6 Sol / Luna', () => {
-  assert.match(getModelColorClasses('gpt-6-sol'), /yellow/);
-  assert.match(getModelColorClasses('gpt-6-sol-2026-09-22'), /yellow/);
-  assert.match(getModelColorClasses('GPT-6-Sol'), /yellow/);
-  assert.match(getModelColorClasses('gpt-6-luna'), /sky/);
-  assert.match(getModelColorClasses('gpt-6-luna-2026-09-22'), /sky/);
-  assert.match(getModelColorClasses('gpt-6'), /indigo/);
+  assert.equal(getModelColorClasses('gpt-6-sol'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-6-sol-2026-09-22'), tone('sol'));
+  assert.equal(getModelColorClasses('GPT-6-Sol'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-6-luna'), tone('luna'));
+  assert.equal(getModelColorClasses('gpt-6-luna-2026-09-22'), tone('luna'));
+  assert.equal(getModelColorClasses('gpt-6'), tone('gpt'));
 });
 
-test('getModelColorClasses keeps existing model color mappings', () => {
-  assert.match(getModelColorClasses('claude-sonnet-4'), /orange/);
-  assert.match(getModelColorClasses('claude-3-5-haiku'), /green/);
-  assert.match(getModelColorClasses('claude-3-5-sonnet'), /blue/);
-  assert.match(getModelColorClasses('claude-opus-4'), /purple/);
-  assert.match(getModelColorClasses('gpt-5.4-mini'), /indigo/);
+test('getModelColorClasses keeps existing model family mappings', () => {
+  assert.equal(getModelColorClasses('claude-sonnet-4'), tone('sonnet-4'));
+  assert.equal(getModelColorClasses('claude-3-5-haiku'), tone('haiku'));
+  assert.equal(getModelColorClasses('claude-3-5-sonnet'), tone('sonnet-3-5'));
+  assert.equal(getModelColorClasses('claude-opus-4'), tone('opus'));
+  assert.equal(getModelColorClasses('gpt-5.4-mini'), tone('gpt'));
 });
 
 test('getModelColorClasses supports deepseek / kimi / moonshot model families', () => {
-  assert.match(getModelColorClasses('deepseek-v4-flash'), /cyan/);
-  assert.match(getModelColorClasses('DeepSeek-R1'), /cyan/);
-  assert.match(getModelColorClasses('kimi-k3'), /pink/);
-  assert.match(getModelColorClasses('moonshot-v1-8k'), /pink/);
-  assert.match(getModelColorClasses('glm-5.2'), /teal/);
-  assert.match(getModelColorClasses('glm'), /teal/);
+  assert.equal(getModelColorClasses('deepseek-v4-flash'), tone('deepseek'));
+  assert.equal(getModelColorClasses('DeepSeek-R1'), tone('deepseek'));
+  assert.equal(getModelColorClasses('kimi-k3'), tone('kimi'));
+  assert.equal(getModelColorClasses('moonshot-v1-8k'), tone('kimi'));
+  assert.equal(getModelColorClasses('glm-5.2'), tone('glm'));
+  assert.equal(getModelColorClasses('glm'), tone('glm'));
 });
 
 test('getModelColorClasses uses neutral color for missing or unknown models', () => {
-  assert.match(getModelColorClasses('unknown'), /slate/);
-  assert.match(getModelColorClasses('-'), /slate/);
-  assert.match(getModelColorClasses(''), /slate/);
-  assert.match(getModelColorClasses(null), /slate/);
+  assert.equal(getModelColorClasses('unknown'), 'tone-slate');
+  assert.equal(getModelColorClasses('-'), 'tone-slate');
+  assert.equal(getModelColorClasses(''), 'tone-slate');
+  assert.equal(getModelColorClasses(null), 'tone-slate');
+  assert.equal(getModelColorClasses('codex-auto-review'), 'tone-slate');
 });

@@ -1,64 +1,66 @@
 // 请求追踪模型标签颜色规则
-// tone-* 一个类给齐底 / 字 / 边，深浅双主题由 index.css 统一维护。
+// 已识别模型用 index.css 的 grad-tone + model-tone-* 渐变（底 / 描边 / 字，深浅双主题）；未知模型用 tone-slate 纯色。
 
 const DEFAULT_MODEL_CLASSES = 'tone-slate';
+
+const modelTone = (key) => `grad-tone model-tone-${key}`;
 
 const MODEL_COLOR_RULES = [
   {
     matches: (modelName) => modelName.includes('deepseek'),
-    classes: 'tone-cyan'
+    classes: modelTone('deepseek')
   },
   {
     matches: (modelName) => modelName.includes('kimi') || modelName.includes('moonshot'),
-    classes: 'tone-pink'
+    classes: modelTone('kimi')
   },
   {
     matches: (modelName) => modelName.includes('glm-5.2') || modelName.startsWith('glm'),
-    classes: 'tone-teal'
+    classes: modelTone('glm')
   },
   {
     matches: (modelName) => modelName.includes('fable-5') || modelName.includes('claude-fable-5'),
-    classes: 'tone-rose'
+    classes: modelTone('fable')
   },
   {
     matches: (modelName) => modelName.includes('sonnet-5') || modelName.includes('claude-sonnet-5'),
-    classes: 'tone-amber'
+    classes: modelTone('sonnet-5')
   },
   {
     matches: (modelName) => modelName.includes('sonnet-4') || modelName.includes('claude-sonnet-4'),
-    classes: 'tone-orange'
+    classes: modelTone('sonnet-4')
   },
   {
     matches: (modelName) => modelName.includes('3-5-haiku') || modelName.includes('haiku'),
-    classes: 'tone-green'
+    classes: modelTone('haiku')
   },
   {
     matches: (modelName) => modelName.includes('3-5-sonnet') || (modelName.includes('sonnet') && modelName.includes('3.5')),
-    classes: 'tone-blue'
+    classes: modelTone('sonnet-3-5')
   },
   {
     matches: (modelName) => modelName.includes('opus'),
-    classes: 'tone-purple'
+    classes: modelTone('opus')
   },
   {
     matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol') || modelName.includes('gpt-6-sol'),
-    classes: 'tone-yellow'
+    classes: modelTone('sol')
   },
   {
     matches: (modelName) => modelName.startsWith('gpt-5.6-terra'),
-    classes: 'tone-lime'
+    classes: modelTone('terra')
   },
   {
     matches: (modelName) => modelName.startsWith('gpt-5.6-luna') || modelName.includes('gpt-6-luna'),
-    classes: 'tone-sky'
+    classes: modelTone('luna')
   },
   {
     matches: (modelName) => modelName.includes('gpt-6-astra'),
-    classes: 'tone-fuchsia'
+    classes: modelTone('astra')
   },
   {
     matches: (modelName) => modelName.includes('gpt-'),
-    classes: 'tone-indigo'
+    classes: modelTone('gpt')
   }
 ];
 

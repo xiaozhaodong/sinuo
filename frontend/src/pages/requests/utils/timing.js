@@ -9,6 +9,10 @@ export const TIMING_THRESHOLDS_MS = Object.freeze({
   }
 });
 
+// 耗时 pill（已定值与跑秒共用）的尺寸与字形，与模型标签对齐：24px 高、6px 圆角、13px 等宽；
+// 配色由下方 getTimingPillClassName / getRunningPillClassName 给出
+export const TIMING_PILL_BASE = 'inline-flex items-center px-2 py-[3px] rounded-md text-[13px] leading-4 font-mono font-medium border transition-all';
+
 const toSafeMs = (ms) => (Number.isFinite(ms) ? Math.max(ms, 0) : 0);
 
 /**
