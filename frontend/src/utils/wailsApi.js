@@ -2515,6 +2515,26 @@ export const setClaudeCodeEntryMode = async (mode) => {
   return normalizeClaudeCodeEntryInfo(await WailsApp.SetClaudeCodeEntryMode(String(mode || '')));
 };
 
+/**
+ * 获取订阅直通额度状态（后端原始字段，与 claude-code-entry:rate-limit 事件同形）；代理未就绪时为 null
+ */
+export const getClaudeSubscriptionRateLimit = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return WailsApp.GetClaudeSubscriptionRateLimit();
+};
+
+/**
+ * 手动查询官方订阅额度；冷却中、正在查询或没有登录凭据时后端拒绝，查询失败写在 last_error
+ */
+export const refreshClaudeSubscriptionRateLimit = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  return WailsApp.RefreshClaudeSubscriptionRateLimit();
+};
+
 export const getCodexSubscriptionProxyStatus = async () => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');

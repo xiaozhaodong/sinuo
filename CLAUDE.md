@@ -65,9 +65,15 @@
 - Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：
   - Claude Code 专用 loopback 入口（默认 `127.0.0.1:18088`，端口被占用即启动失败、不漂移；不经 AuthMiddleware）；配置存 settings 受保护分类 `claude_code_entry`
   - 入口接入模式二选一，热切换不重启 listener：`subscription`（订阅直通）/ `endpoint`（端点，与主端口相同，走全局路由或模型路由）；旧值 `auto` 按订阅直通、`api` 按端点读取。订阅与第三方**不混用**，订阅不是端点、不参与模型路由
-  - 订阅直通不进端点调度：固定发往 `https://api.anthropic.com`，透传客户端 OAuth（OAuth token 只在请求内透传、不落库），count_tokens 也直发官方、不受「Token 计数」开关影响；未带 Authorization 时本地返回 401 说明原因
+  - 订阅直通不进端点调度：固定发往 `https://api.anthropic.com`，透传客户端 OAuth（OAuth token 不落库、不写日志；只为额度查询在内存保留最近一次，最后一个订阅请求结束 30 分钟后或查询返回 401/403 时丢弃），count_tokens 也直发官方、不受「Token 计数」开关影响；未带 Authorization 时本地返回 401 说明原因
   - 按透明网关处理：4xx / 5xx 原样透传，不冷却、不重试；流式成功带回 `anthropic-ratelimit-unified-*` 等上游头；连接失败以 Anthropic 错误格式返回 502 / 504
   - 追踪记为 `upstream_type=subscription`、上游名 `claude-subscription`（与 Codex 的 `chatgpt-subscription` 并列），请求页按「订阅直通」展示；有意按 API 价格计费；隐私规则按 `subscription` 上游类型匹配
+  - 订阅额度只在入口**已启用且处于订阅直通模式**时工作：App 应用入口配置时（启动、保存、快捷切模式）先切开关再生效；切走或停用时立即丢弃查询凭据、取消待发补查、拒绝手动刷新，已采集的读数保留、切回后继续展示
+  - 订阅额度两个来源，都只存内存、不落库：
+    - 响应头 `anthropic-ratelimit-unified-*`：每个订阅响应采集（5h / 7d 已用、整体 status / reset / overage-status），零额外请求；只有带 `unified-status` 的响应才整份替换，count_tokens 等不带额度头的响应保留旧值；`rejected` + `overage-status=allowed*` 表示正在消耗额外用量而不是被拒绝
+    - 主动查询 `GET /api/oauth/usage`（与 Claude Code `/usage`、claude.ai 用量页同源，带 `anthropic-beta: oauth-2025-04-20`）：补上网页等其他客户端的用量、按模型周额度与额外用量
+  - 主动查询从严节流、全在后端卡住：订阅请求全部结束静默 3 分钟后补查一次，两次自动补查至少间隔 10 分钟（不足则推迟、不丢弃）；手动刷新至少间隔 60 秒；同一时刻只有一个查询；429 按 Retry-After 退避（缺省 10 分钟）；**不做定时轮询**，不用 Claude Code 时不发请求
+  - 展示在请求页 Claude 按钮：订阅直通模式下角标显示剩余更少的窗口，「接入模式」页签展示完整额度与刷新按钮；5h / d7 取两个来源中较新的一份。状态经独立事件 `claude-code-entry:rate-limit` 推送（带递增 `revision` 防乱序），不走 `claudeCodeEntryMu`
   - 端点模式的入口请求转发第三方时删除客户端带来的 `anthropic-beta` 中 `oauth-` 前缀值（端点自定义头显式配置的以配置为准），并与订阅直通共用来源头名单，剔除 Cookie / Proxy-Authorization / Forwarded / X-Forwarded-* / Origin / Referer；主端口请求永远只走端点，来源头保持原样透传
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
@@ -117,9 +123,12 @@
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
 - `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta 与来源类头
 - `internal/proxy/claude_subscription.go` / `internal/proxy/handlers/claude_subscription_forward.go`：Claude Code 订阅直通分支（透明透传、追踪、复用端点管线的响应处理）与出站请求头策略
+- `internal/proxy/claude_subscription_ratelimit.go` / `claude_subscription_usage.go`：订阅额度响应头解析、`/api/oauth/usage` 查询与解析
+- `internal/proxy/claude_subscription_quota.go`：订阅额度内存状态、开关（入口启用且订阅直通）、请求结束后静默补查、节流 / 退避与查询凭据过期
+- `app_claude_subscription_rate_limit.go`：订阅额度 Wails API（读取 / 手动刷新）与事件
 - `internal/endpoint/claude_code_entry.go`：入口接入模式常量（含旧值归一）与入口上下文标记
 - `internal/proxy/claude_code_entry.go`：Claude Code 入口 handler（Host / Origin / 路径校验）、运行态与可热更新的入口策略
-- `internal/service/claude_code_entry_settings.go` / `app_claude_code_entry.go`：入口配置（受保护分类）与 Wails API
+- `internal/service/claude_code_entry_settings.go` / `app_claude_code_entry.go`：入口配置（受保护分类）与 Wails API；`applyClaudeCodeEntryLocked` 是应用入口配置的唯一入口，同时切换订阅额度开关
 - `internal/proxy/stream_processor.go`：流式 terminal / cancellation / tail drain 核心
 - `internal/tracking/tracker.go`：统一成本计算、倍率缓存、热池详情口径
 - `internal/tracking/archive_manager.go`：归档时成本计算口径
@@ -140,8 +149,8 @@
 - `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
 - `frontend/src/pages/claude/index.jsx`：「Claude 管理」页（「端点 / 客户端接入」两个页签，页签条 `components/layout/PageTabs.jsx` 与 Codex 管理共用）；端点页以 `embedded` 嵌入
-- `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`
-- `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）
+- `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`；订阅额度面板 `SubscriptionRateLimitPanel`、hook `useClaudeSubscriptionRateLimit` 与纯函数 `subscriptionRateLimit.js` 也在这里，由请求页 Claude 按钮使用
+- `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）；订阅直通模式下带额度角标与额度区
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
 - `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
 
@@ -264,12 +273,13 @@ cd frontend && npm run build
 - `frontend/src/pages/requests/utils/modelConsistency.js` / `ModelTag.jsx` / `RequestDetailModal.jsx`：`node --test frontend/src/pages/requests/utils/*.test.js`
 - `internal/service/codex_model_capabilities.go` / `frontend/src/pages/account-pool/utils/codexModelCatalog.js`（Codex 模型能力校验，前后端规则须同步，共用用例 `internal/service/testdata/codex_capabilities_cases.json`）：`go test ./internal/service -run Codex` + `node --test frontend/src/pages/account-pool/utils/codexModelCatalog.test.js`
 - `main.go` 的 `formatWailsError` / `frontend/src/utils/errors.js`：`go test . -run TestFormatWailsError` + `node --test frontend/src/utils/errors.test.js`
-- Claude Code 订阅直通（`internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `internal/proxy/claude_subscription.go` / `handlers/claude_subscription_forward.go` / `forwarder.go` / `app_claude_code_entry.go`）：`go test ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/claude/*.test.js frontend/src/pages/requests/utils/claudeRouteLabel.test.js frontend/src/pages/requests/utils/requestSource.test.js`
+- Claude Code 订阅直通（`internal/endpoint/claude_code_entry.go` / `internal/proxy/claude_code_entry.go` / `internal/proxy/claude_subscription.go` / `handlers/claude_subscription_forward.go` / `forwarder.go` / `app_claude_code_entry.go` / `claude_subscription_{ratelimit,usage,quota}.go` / `app_claude_subscription_rate_limit.go`）：`go test ./internal/endpoint ./internal/proxy ./internal/proxy/handlers ./internal/service .` + `node --test frontend/src/components/claude-code-entry/*.test.js frontend/src/pages/claude/*.test.js frontend/src/pages/requests/utils/claudeRouteLabel.test.js frontend/src/pages/requests/utils/requestSource.test.js`
 
 ## 调试提示
 
 - 请求追踪：用 `req-xxxxxxxx` 过滤日志
 - Claude Code 订阅直通问题优先看：请求是否来自入口端口（主端口永远走端点）、入口卡片的运行状态与接入模式、请求记录的 `upstream_type`（`subscription` 才是订阅直通）；订阅直通不进端点调度，调度快照里不会有它
+- 订阅额度不更新优先看：日志 `[订阅额度]`（补查只在订阅请求全部结束约 3 分钟后发生）、额度区刷新按钮的悬停提示（冷却 / 退避 / 凭据已过期）；角标只在接入模式为订阅直通时显示
 - 账号池问题优先看：
   - `group_key`
   - `is_active_selection / is_group_preferred`

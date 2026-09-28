@@ -118,6 +118,10 @@ export function GetClaudeRoutingState() {
   return window['go']['main']['App']['GetClaudeRoutingState']();
 }
 
+export function GetClaudeSubscriptionRateLimit() {
+  return window['go']['main']['App']['GetClaudeSubscriptionRateLimit']();
+}
+
 export function GetCodexModelCatalog() {
   return window['go']['main']['App']['GetCodexModelCatalog']();
 }
@@ -324,6 +328,10 @@ export function MoveUpstreamAccountToTier(arg1, arg2) {
 
 export function PinUpstreamAccountSelection(arg1) {
   return window['go']['main']['App']['PinUpstreamAccountSelection'](arg1);
+}
+
+export function RefreshClaudeSubscriptionRateLimit() {
+  return window['go']['main']['App']['RefreshClaudeSubscriptionRateLimit']();
 }
 
 export function RefreshUpstreamAccountProfile(arg1) {

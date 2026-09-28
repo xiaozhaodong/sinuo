@@ -62,6 +62,8 @@ export function GetClaudeCodeEntryStatus():Promise<main.ClaudeCodeEntryInfo>;
 
 export function GetClaudeRoutingState():Promise<main.ClaudeRoutingState>;
 
+export function GetClaudeSubscriptionRateLimit():Promise<main.ClaudeSubscriptionRateLimitInfo>;
+
 export function GetCodexModelCatalog():Promise<main.CodexModelCatalogInfo>;
 
 export function GetCodexSubscriptionProxyConfig():Promise<main.CodexSubscriptionProxyConfigInfo>;
@@ -165,6 +167,8 @@ export function MergeDefaultCodexModelCatalog():Promise<main.CodexModelCatalogIn
 export function MoveUpstreamAccountToTier(arg1:number,arg2:string):Promise<main.MoveUpstreamAccountToTierResult>;
 
 export function PinUpstreamAccountSelection(arg1:number):Promise<main.PinUpstreamAccountSelectionResult>;
+
+export function RefreshClaudeSubscriptionRateLimit():Promise<main.ClaudeSubscriptionRateLimitInfo>;
 
 export function RefreshUpstreamAccountProfile(arg1:number):Promise<main.RefreshUpstreamAccountProfileResult>;
 

@@ -266,6 +266,180 @@ export namespace main {
 	        this.available_endpoints = source["available_endpoints"];
 	    }
 	}
+	export class ClaudeSubscriptionExtraUsageInfo {
+	    enabled: boolean;
+	    used_percent?: number;
+	    used_credits?: number;
+	    monthly_limit?: number;
+	    currency: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionExtraUsageInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.used_percent = source["used_percent"];
+	        this.used_credits = source["used_credits"];
+	        this.monthly_limit = source["monthly_limit"];
+	        this.currency = source["currency"];
+	    }
+	}
+	export class ClaudeSubscriptionQuotaWindowInfo {
+	    used_percent?: number;
+	    reset_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionQuotaWindowInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.used_percent = source["used_percent"];
+	        this.reset_at = source["reset_at"];
+	    }
+	}
+	export class ClaudeSubscriptionHeaderQuotaInfo {
+	    status: string;
+	    representative_claim: string;
+	    reset_at: string;
+	    overage_status: string;
+	    five_hour: ClaudeSubscriptionQuotaWindowInfo;
+	    seven_day: ClaudeSubscriptionQuotaWindowInfo;
+	    captured_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionHeaderQuotaInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.representative_claim = source["representative_claim"];
+	        this.reset_at = source["reset_at"];
+	        this.overage_status = source["overage_status"];
+	        this.five_hour = this.convertValues(source["five_hour"], ClaudeSubscriptionQuotaWindowInfo);
+	        this.seven_day = this.convertValues(source["seven_day"], ClaudeSubscriptionQuotaWindowInfo);
+	        this.captured_at = source["captured_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ClaudeSubscriptionModelQuotaInfo {
+	    label: string;
+	    used_percent?: number;
+	    reset_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionModelQuotaInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.used_percent = source["used_percent"];
+	        this.reset_at = source["reset_at"];
+	    }
+	}
+	
+	export class ClaudeSubscriptionUsageInfo {
+	    five_hour: ClaudeSubscriptionQuotaWindowInfo;
+	    seven_day: ClaudeSubscriptionQuotaWindowInfo;
+	    model_weekly: ClaudeSubscriptionModelQuotaInfo[];
+	    extra_usage?: ClaudeSubscriptionExtraUsageInfo;
+	    fetched_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionUsageInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.five_hour = this.convertValues(source["five_hour"], ClaudeSubscriptionQuotaWindowInfo);
+	        this.seven_day = this.convertValues(source["seven_day"], ClaudeSubscriptionQuotaWindowInfo);
+	        this.model_weekly = this.convertValues(source["model_weekly"], ClaudeSubscriptionModelQuotaInfo);
+	        this.extra_usage = this.convertValues(source["extra_usage"], ClaudeSubscriptionExtraUsageInfo);
+	        this.fetched_at = source["fetched_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ClaudeSubscriptionRateLimitInfo {
+	    revision: number;
+	    headers?: ClaudeSubscriptionHeaderQuotaInfo;
+	    usage?: ClaudeSubscriptionUsageInfo;
+	    credential_available: boolean;
+	    refresh_available_at: string;
+	    last_queried_at: string;
+	    last_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClaudeSubscriptionRateLimitInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.revision = source["revision"];
+	        this.headers = this.convertValues(source["headers"], ClaudeSubscriptionHeaderQuotaInfo);
+	        this.usage = this.convertValues(source["usage"], ClaudeSubscriptionUsageInfo);
+	        this.credential_available = source["credential_available"];
+	        this.refresh_available_at = source["refresh_available_at"];
+	        this.last_queried_at = source["last_queried_at"];
+	        this.last_error = source["last_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class CodexModelEntryInfo {
 	    id: string;
 	    object: string;

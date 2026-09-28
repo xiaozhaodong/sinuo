@@ -4,17 +4,24 @@
 // ============================================
 // Claude Code 入口未启用时就是原来的端点策略切换器；启用后面板分「接入模式 / 端点策略」两页。
 // 接入模式只影响经入口的 Claude Code 请求，主端口始终使用端点策略。
+// 订阅直通模式下按钮角标显示剩余更少的额度窗口，「接入模式」页展示完整订阅额度。
 
 import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, Check, ChevronDown, Loader2, RefreshCw, Route } from 'lucide-react';
 import useClaudeCodeEntry from '@components/claude-code-entry/useClaudeCodeEntry.js';
+import useClaudeSubscriptionRateLimit from '@components/claude-code-entry/useClaudeSubscriptionRateLimit.js';
+import SubscriptionRateLimitPanel from '@components/claude-code-entry/SubscriptionRateLimitPanel.jsx';
 import {
   CLAUDE_CODE_ENTRY_MODE_OPTIONS,
   describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
   resolveClaudeAccessLabel
 } from '@components/claude-code-entry/claudeCodeEntryViewModel.js';
+import {
+  describeSubscriptionQuotaBadge,
+  describeSubscriptionQuotaSummary
+} from '@components/claude-code-entry/subscriptionRateLimit.js';
 import { resolveClaudeRouteLabel } from '../utils/claudeRouteLabel.js';
 import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
 import useAnchoredPanel from './useAnchoredPanel.js';
@@ -27,6 +34,7 @@ const PANEL_TABS = [
 const ClaudeAccessSwitcher = (props) => {
   const { routingState, modelRoutingEnabled = false, modelRouteBindings = [] } = props;
   const { info, loading, busy, error, refresh, setMode } = useClaudeCodeEntry();
+  const subscriptionQuota = useClaudeSubscriptionRateLimit();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('access');
   const triggerRef = useRef(null);
@@ -40,7 +48,10 @@ const ClaudeAccessSwitcher = (props) => {
   const { label, detail } = resolveClaudeAccessLabel({ info, loading, error, routeLabel });
   const entryState = describeClaudeCodeEntryState(info);
   const ready = info.running && !info.error;
-  const triggerTitle = `Claude 接入：${label}${detail ? `（${detail}）` : ''}；点击切换接入模式或调整端点策略`;
+  const subscriptionMode = info.mode === 'subscription';
+  const quotaBadge = subscriptionMode ? describeSubscriptionQuotaBadge(subscriptionQuota.quota, subscriptionQuota.nowMs) : null;
+  const quotaSummary = subscriptionMode ? describeSubscriptionQuotaSummary(subscriptionQuota.quota, subscriptionQuota.nowMs) : '';
+  const triggerTitle = `Claude 接入：${label}${detail ? `（${detail}）` : ''}${quotaSummary ? `；订阅额度 ${quotaSummary}` : ''}；点击切换接入模式或调整端点策略`;
 
   const chooseMode = (mode) => {
     if (busy || mode === info.mode) return;
@@ -61,6 +72,7 @@ const ClaudeAccessSwitcher = (props) => {
       >
         {busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${ready ? 'text-accent' : 'text-warn'}`} />}
         <span className="min-w-0 flex-1 truncate text-left">Claude: {label}</span>
+        {quotaBadge && <span className={`shrink-0 text-[10px] font-semibold ${quotaBadge.toneClass}`}>{quotaBadge.label} {quotaBadge.remainingPercent.toFixed(0)}%</span>}
         <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -105,6 +117,15 @@ const ClaudeAccessSwitcher = (props) => {
               </div>
               <p className="text-xs leading-relaxed text-fg-muted">{describeClaudeCodeEntryMode(info.mode).hint}</p>
               <p className="text-[11px] leading-relaxed text-fg-subtle">切换立即对新请求生效，进行中的请求不受影响；只影响经入口的 Claude Code 请求，主端口始终使用端点策略。</p>
+              {subscriptionMode && subscriptionQuota.available && (
+                <SubscriptionRateLimitPanel
+                  quota={subscriptionQuota.quota}
+                  error={subscriptionQuota.error}
+                  refreshing={subscriptionQuota.refreshing}
+                  nowMs={subscriptionQuota.nowMs}
+                  onRefresh={subscriptionQuota.refresh}
+                />
+              )}
             </div>
           ) : (
             <div>
