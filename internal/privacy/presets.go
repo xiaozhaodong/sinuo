@@ -28,11 +28,15 @@ func Presets() []Preset {
 			Name:        "常见 AI/API Key",
 			Description: "密码字段、通用密钥字段、OpenAI、Anthropic、GitHub PAT、AWS、Google、高德地图、Slack、JWT、私钥头",
 			Rules: []Rule{
-				presetRule("密码字段", `(?i)(?:\b(?:password|passwd|pwd|passphrase)\b|密码|口令)\s*[:=：]\s*['"]?(?P<redact>[^'"\s,;]{6,})['"]?`, "[密码]", 80),
-				presetRule("通用密钥字段", `(?i)(?:\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|client[_-]?secret|secret[_-]?key|secret)\b|密钥|令牌|访问令牌|刷新令牌|客户端密钥)\s*[:=：]\s*['"]?(?P<redact>[A-Za-z0-9._~+/=-]{12,})['"]?`, "[密钥]", 90),
-				presetRule("高德地图 Key", `(?i)\b(?:amap|gaode)[._-](?:web[._-]?service[._-]?)?(?:api[._-]?)?key\b\s*[:=：]\s*['"]?(?P<redact>[A-Za-z0-9]{16,64})['"]?`, "[高德地图密钥]", 92),
-				presetRule("Bearer Token", `(?i)\bBearer\s+(?P<redact>[A-Za-z0-9._~+/=-]{20,})`, "[Bearer令牌]", 95),
-				presetRule("Basic Auth Token", `(?i)\bBasic\s+(?P<redact>[A-Za-z0-9+/=]{16,})`, "[Basic认证]", 96),
+				// 字段类规则的键名只锚定结尾：DB_PASSWORD、OPENAI_API_KEY、dbPassword、spring.datasource.password
+				// 里关键词前面是 _ 或字母，\b 匹配不上；键名后允许一个引号，覆盖 JSON / YAML 的 "apiKey": "..."。
+				// 键值之间只允许同一行内的空白（[ \t]），命中不跨行，引擎可以只在含关键词的行上匹配
+				presetRule("密码字段", `(?i)(?:password|passwd|pwd|passphrase|密码|口令)['"]?[ \t]*[:=：][ \t]*['"]?(?P<redact>[^'"\s,;]{6,})['"]?`, "[密码]", 80),
+				// 值后必须是引号、空白、& 或行尾，排除 token = response.json()、apiKey = process.env.X; 这类代码引用
+				presetRule("通用密钥字段", `(?i)(?:api[_-]?key|access[_-]?key|secret[_-]?key|secret|token|密钥|令牌)['"]?[ \t]*[:=：][ \t]*['"]?(?P<redact>[A-Za-z0-9._~+/=-]{12,})(?:['"\x60 \t\r&]|(?m:$))`, "[密钥]", 90),
+				presetRule("高德地图 Key", `(?i)(?:amap|gaode)[._-](?:web[._-]?service[._-]?)?(?:api[._-]?)?key['"]?[ \t]*[:=：][ \t]*['"]?(?P<redact>[A-Za-z0-9]{16,64})['"]?`, "[高德地图密钥]", 92),
+				presetRule("Bearer Token", `(?i)\bBearer[ \t]+(?P<redact>[A-Za-z0-9._~+/=-]{20,})`, "[Bearer令牌]", 95),
+				presetRule("Basic Auth Token", `(?i)\bBasic[ \t]+(?P<redact>[A-Za-z0-9+/=]{16,})`, "[Basic认证]", 96),
 				presetRule("含凭据连接串", `(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|ftp)://[^:'"\s/@]+:[^@'"\s]+@[^'"\s]+`, "[含凭据连接串]", 98),
 				// Anthropic 必须排在 OpenAI 之前：sk-ant-... 同时满足 OpenAI 的宽松模式
 				presetRule("Anthropic API Key", `sk-ant-[A-Za-z0-9_-]{20,}`, "[Anthropic密钥]", 100),

@@ -76,12 +76,26 @@ func TestClaudeWalkerDoesNotScanToolsOrMetadata(t *testing.T) {
 		"tool_choice": {"type": "tool", "name": "secret-choice"},
 		"metadata": {"user_id": "secret-meta"},
 		"messages": [{"role": "user", "content": [
-			{"type": "tool_use", "id": "x", "name": "n", "input": {"text": "secret-in-tool-use-input"}}
+			{"type": "tool_use", "id": "secret-id", "name": "secret-name", "input": {}}
 		]}]
 	}`
 	segments := mustCollect(t, body, "/v1/messages")
 	if len(segments) != 0 {
 		t.Fatalf("expected no segments, got %v", segmentValues(segments))
+	}
+}
+
+func TestClaudeWalkerScansToolUseInputStringLeaves(t *testing.T) {
+	body := `{"messages": [{"role": "assistant", "content": [
+		{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "curl -H token", "timeout": 5, "run_in_background": false}},
+		{"type": "tool_use", "id": "t2", "name": "MultiEdit", "input": {"edits": [{"old_string": "old", "new_string": "new"}], "tags": ["a"]}},
+		{"type": "server_tool_use", "id": "t3", "name": "web_search", "input": {"query": "q"}}
+	]}]}`
+	segments := mustCollect(t, body, "/v1/messages")
+	got := segmentValues(segments)
+	want := []string{"curl -H token", "old", "new", "a", "q"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("segments = %v, want %v", got, want)
 	}
 }
 

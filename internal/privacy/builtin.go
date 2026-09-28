@@ -15,14 +15,21 @@ const (
 	BuiltinBankCardLuhn = "builtin:bank_card_luhn"
 )
 
-type builtinMatcher func(text string) [][2]int
+type builtinMatcher func(seg *segmentText) [][2]int
 
 var (
 	emailBuiltinRe               = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	emailImageScaleAssetSuffixRe = regexp.MustCompile(`(?i)@[1-9][0-9]*(?:\.[0-9]+)?x\.(?:png|jpe?g|webp|gif|svg|avif|heic|heif|bmp|tiff?)$`)
-	cnMobileBuiltinRe            = regexp.MustCompile(`(?:\+86)?(?:1740[0-5]\d{6}|1(?:[38]\d|4[57]|[59][0-35-9]|6[25-7]|7[0-35-8])\d{8})`)
-	cnIDCardBuiltinRe            = regexp.MustCompile(`[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]`)
-	bankCardBuiltinRe            = regexp.MustCompile(`\d{13,19}`)
+)
+
+// 手机号、身份证、银行卡都要求前后不紧邻数字，因此命中只可能是一整个极大数字串
+// （手机号可带紧邻的 +86，身份证可带紧邻的末位 X）。三者共用段内一次数字串扫描，
+// 不再各跑一遍没有字面量前缀、只能逐字节匹配的正则。
+const (
+	cnMobileDigits   = 11
+	cnIDCardDigits   = 18
+	bankCardMinDigit = 13
+	bankCardMaxDigit = 19
 )
 
 // BuiltinPIIRules 返回默认确定型 PII 内置规则定义。
@@ -63,7 +70,11 @@ func compileBuiltinMatcher(pattern string) (builtinMatcher, error) {
 	}
 }
 
-func matchBuiltinEmail(text string) [][2]int {
+func matchBuiltinEmail(seg *segmentText) [][2]int {
+	text := seg.text
+	if strings.IndexByte(text, '@') < 0 {
+		return nil
+	}
 	locs := emailBuiltinRe.FindAllStringIndex(text, -1)
 	out := make([][2]int, 0, len(locs))
 	for _, loc := range locs {
@@ -99,49 +110,93 @@ func isCommandAddressContext(text string, start, end int) bool {
 	return last == "ssh" || last == "scp"
 }
 
-func matchBuiltinCNMobile(text string) [][2]int {
-	locs := cnMobileBuiltinRe.FindAllStringIndex(text, -1)
-	out := make([][2]int, 0, len(locs))
-	for _, loc := range locs {
-		if hasDigitBoundary(text, loc[0], loc[1]) {
-			continue
+func matchBuiltinCNMobile(seg *segmentText) [][2]int {
+	text := seg.text
+	var out [][2]int
+	for _, run := range seg.digitRunSpans() {
+		start, end := run[0], run[1]
+		switch {
+		case end-start == cnMobileDigits && isCNMobileNumber(text[start:end]):
+			out = append(out, [2]int{start, end})
+		case end-start == cnMobileDigits+2 && hasPlusPrefix(text, start) &&
+			strings.HasPrefix(text[start:end], "86") && isCNMobileNumber(text[start+2:end]):
+			out = append(out, [2]int{start - 1, end})
 		}
-		out = append(out, [2]int{loc[0], loc[1]})
 	}
 	return out
 }
 
-func matchBuiltinCNIDCard(text string) [][2]int {
-	locs := cnIDCardBuiltinRe.FindAllStringIndex(text, -1)
-	out := make([][2]int, 0, len(locs))
-	for _, loc := range locs {
-		if hasDigitBoundary(text, loc[0], loc[1]) {
+// hasPlusPrefix 数字串紧跟在 + 之后，且 + 前面不是数字（+86 前缀本身也要满足数字边界）
+func hasPlusPrefix(text string, start int) bool {
+	return start > 0 && text[start-1] == '+' && (start == 1 || !isASCIIDigit(text[start-2]))
+}
+
+// isCNMobileNumber 11 位大陆手机号段：1740[0-5] 卫星号段，或 13x/15x/18x/19x 等常规号段
+func isCNMobileNumber(value string) bool {
+	if value[0] != '1' {
+		return false
+	}
+	if strings.HasPrefix(value, "1740") {
+		return value[4] <= '5'
+	}
+	second, third := value[1], value[2]
+	switch second {
+	case '3', '8':
+		return true
+	case '4':
+		return third == '5' || third == '7'
+	case '5', '9':
+		return third != '4'
+	case '6':
+		return third == '2' || (third >= '5' && third <= '7')
+	case '7':
+		return third != '4' && third != '9'
+	default:
+		return false
+	}
+}
+
+func matchBuiltinCNIDCard(seg *segmentText) [][2]int {
+	text := seg.text
+	var out [][2]int
+	for _, run := range seg.digitRunSpans() {
+		start, end := run[0], run[1]
+		switch {
+		case end-start == cnIDCardDigits:
+		case end-start == cnIDCardDigits-1 && end < len(text) && (text[end] == 'X' || text[end] == 'x') &&
+			(end+1 == len(text) || !isASCIIDigit(text[end+1])):
+			end++
+		default:
 			continue
 		}
-		value := text[loc[0]:loc[1]]
-		if !validCNIDCard(value) {
+		value := text[start:end]
+		if !validCNIDBirthCentury(value) || !validCNIDCard(value) {
 			continue
 		}
-		out = append(out, [2]int{loc[0], loc[1]})
+		out = append(out, [2]int{start, end})
 	}
 	return out
 }
 
-func matchBuiltinBankCardLuhn(text string) [][2]int {
-	locs := bankCardBuiltinRe.FindAllStringIndex(text, -1)
-	out := make([][2]int, 0, len(locs))
-	for _, loc := range locs {
-		if hasDigitBoundary(text, loc[0], loc[1]) {
+// validCNIDBirthCentury 出生年份限定 18xx / 19xx / 20xx
+func validCNIDBirthCentury(value string) bool {
+	century := value[6:8]
+	return century == "18" || century == "19" || century == "20"
+}
+
+func matchBuiltinBankCardLuhn(seg *segmentText) [][2]int {
+	text := seg.text
+	var out [][2]int
+	for _, run := range seg.digitRunSpans() {
+		length := run[1] - run[0]
+		if length < bankCardMinDigit || length > bankCardMaxDigit {
 			continue
 		}
-		value := text[loc[0]:loc[1]]
-		if !matchesKnownPaymentCardProfile(value) {
+		value := text[run[0]:run[1]]
+		if !matchesKnownPaymentCardProfile(value) || !validLuhn(value) {
 			continue
 		}
-		if !validLuhn(value) {
-			continue
-		}
-		out = append(out, [2]int{loc[0], loc[1]})
+		out = append(out, run)
 	}
 	return out
 }
@@ -259,10 +314,6 @@ func prefixInt(value string, length int) int {
 		return -1
 	}
 	return prefix
-}
-
-func hasDigitBoundary(text string, start, end int) bool {
-	return (start > 0 && isASCIIDigit(text[start-1])) || (end < len(text) && isASCIIDigit(text[end]))
 }
 
 func isASCIIDigit(b byte) bool {

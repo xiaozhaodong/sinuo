@@ -125,11 +125,16 @@ func isClaudeAttributionSegment(segment textSegment) bool {
 //  4. messages[].content[].text
 //  5. messages[].content[] 中 tool_result 的 content（字符串）
 //  6. messages[].content[] 中 tool_result 的 content[].text
+//  7. messages[].content[] 中 tool_use / server_tool_use 的 input 下任意深度的字符串值
+//     （历史里的 Bash 命令、Write / Edit 写入的内容每轮都会重发）
 //
-// 按字段结构匹配而非读取兄弟字段 type：合法请求里 text/content 字段
+// 按字段结构匹配而非读取兄弟字段 type：合法请求里 text/content/input 字段
 // 只出现在对应类型的块上，结构匹配等价且无需前瞻。
-// tools/tool_choice/metadata/model/stream 等路径天然不匹配。
+// thinking/signature/redacted_thinking.data、tools/tool_choice/metadata/model/stream 等路径天然不匹配。
 func matchClaudeMessagesTextPath(path []pathElem) bool {
+	if isClaudeToolUseInputPath(path) {
+		return true
+	}
 	switch len(path) {
 	case 1:
 		// system: "..."
@@ -156,6 +161,16 @@ func matchClaudeMessagesTextPath(path []pathElem) bool {
 	default:
 		return false
 	}
+}
+
+// isClaudeToolUseInputPath messages[i].content[j].input 下的字符串叶子（对象键不属于值，天然不改写）
+func isClaudeToolUseInputPath(path []pathElem) bool {
+	return len(path) >= 6 &&
+		path[0].Key == "messages" && path[0].Index < 0 &&
+		path[1].Index >= 0 &&
+		path[2].Key == "content" && path[2].Index < 0 &&
+		path[3].Index >= 0 &&
+		path[4].Key == "input" && path[4].Index < 0
 }
 
 // matchCodexResponsesTextPath 匹配 Codex /v1/responses 可扫描文本字段。
@@ -227,21 +242,23 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 	}
 
 	var (
-		stack    []*frame
+		stack    []frame
 		segments []textSegment
+		pathBuf  []pathElem
 	)
 	prevOffset := int64(0)
 
+	// currentPath 复用缓冲区构造当前路径；只有命中的段才复制保存
 	currentPath := func() []pathElem {
-		path := make([]pathElem, 0, len(stack))
+		pathBuf = pathBuf[:0]
 		for _, f := range stack {
 			if f.isObject {
-				path = append(path, pathElem{Key: f.key, Index: -1})
+				pathBuf = append(pathBuf, pathElem{Key: f.key, Index: -1})
 			} else {
-				path = append(path, pathElem{Index: f.index})
+				pathBuf = append(pathBuf, pathElem{Index: f.index})
 			}
 		}
-		return path
+		return pathBuf
 	}
 
 	// 值结束后推进所在容器的游标
@@ -249,7 +266,7 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 		if len(stack) == 0 {
 			return
 		}
-		top := stack[len(stack)-1]
+		top := &stack[len(stack)-1]
 		if top.isObject {
 			top.expectKey = true
 		} else {
@@ -275,17 +292,17 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 		case json.Delim:
 			switch tok {
 			case '{':
-				stack = append(stack, &frame{isObject: true, expectKey: true})
+				stack = append(stack, frame{isObject: true, expectKey: true})
 			case '[':
-				stack = append(stack, &frame{isObject: false, index: 0})
+				stack = append(stack, frame{isObject: false, index: 0})
 			case '}', ']':
 				stack = stack[:len(stack)-1]
 				advanceContainer()
 			}
 		case string:
-			top := (*frame)(nil)
+			var top *frame
 			if len(stack) > 0 {
-				top = stack[len(stack)-1]
+				top = &stack[len(stack)-1]
 			}
 			if top != nil && top.isObject && top.expectKey {
 				top.key = tok
@@ -307,7 +324,7 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 						End:    int(offset),
 						Value:  tok,
 						IsJSON: true,
-						Path:   path,
+						Path:   append([]pathElem(nil), path...),
 					})
 				}
 			}

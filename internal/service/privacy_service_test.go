@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -398,6 +399,24 @@ func TestPrivacyServiceRuntimeStatsDeduplicatesByRequestID(t *testing.T) {
 	}
 	if len(stats.RuleStats) != 1 || stats.RuleStats[0].HitCount != 1 {
 		t.Fatalf("duplicate rule stats not deduped: %+v", stats.RuleStats)
+	}
+}
+
+// 去重窗口滑出的请求连同其规则命中记录一起清掉，内存不随请求数增长
+func TestPrivacyServiceStatsDedupeWindowEvictsRuleHits(t *testing.T) {
+	svc := NewPrivacyService(nil)
+	result := privacy.ApplyResult{Action: privacy.ModeRedact, RuleHits: []privacy.RuleHit{{RuleID: 1, Count: 1}, {RuleID: 2, Count: 1}}}
+	for i := range privacyStatsDedupeWindow + 10 {
+		svc.recordStats(privacy.Request{RequestID: fmt.Sprintf("req-%d", i)}, result, nil)
+	}
+	if len(svc.seenRuleHits) != privacyStatsDedupeWindow || len(svc.seenRequests) != privacyStatsDedupeWindow {
+		t.Fatalf("dedupe maps should be bounded: rules=%d requests=%d", len(svc.seenRuleHits), len(svc.seenRequests))
+	}
+	if _, kept := svc.seenRuleHits["req-0"]; kept {
+		t.Fatal("evicted request should drop its rule-hit record")
+	}
+	if stats := svc.RuntimeStats(); stats.HitCount != int64(2*(privacyStatsDedupeWindow+10)) {
+		t.Fatalf("hit count = %d", stats.HitCount)
 	}
 }
 

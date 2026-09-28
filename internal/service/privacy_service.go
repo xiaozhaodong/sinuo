@@ -60,7 +60,7 @@ type PrivacyService struct {
 	seenRequests  map[string]struct{}
 	seenBlocked   map[string]struct{}
 	seenTruncated map[string]struct{}
-	seenRuleHits  map[string]struct{}
+	seenRuleHits  map[string]map[int64]struct{} // requestID -> 已计数的规则
 	seenOrder     []string
 }
 
@@ -72,7 +72,7 @@ func NewPrivacyService(st store.PrivacyStore) *PrivacyService {
 		seenRequests:  make(map[string]struct{}),
 		seenBlocked:   make(map[string]struct{}),
 		seenTruncated: make(map[string]struct{}),
-		seenRuleHits:  make(map[string]struct{}),
+		seenRuleHits:  make(map[string]map[int64]struct{}),
 	}
 	svc.status.Store(PrivacyStatusOK)
 	// 默认空快照（disabled），保证未初始化时热路径安全
@@ -576,6 +576,8 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 		Rules:        compiled,
 		LoadedAt:     time.Now(),
 		CompileError: strings.Join(compileErrors, "; "),
+		// 缓存随快照替换整体失效：规则、设置变化后旧的扫描结果不再适用
+		Cache: privacy.NewSegmentCache(privacy.DefaultSegmentCacheCapacity),
 	}
 	s.snapshot.Store(snapshot)
 	if degradedActive {
@@ -619,12 +621,8 @@ func (s *PrivacyService) recordStats(req privacy.Request, result privacy.ApplyRe
 		s.truncateCount++
 	}
 	for _, hit := range result.RuleHits {
-		if requestID != "" {
-			key := fmt.Sprintf("%s|%d", requestID, hit.RuleID)
-			if _, seen := s.seenRuleHits[key]; seen {
-				continue
-			}
-			s.seenRuleHits[key] = struct{}{}
+		if requestID != "" && !s.markRuleHitOnceLocked(requestID, hit.RuleID) {
+			continue
 		}
 		s.hitCount += int64(hit.Count)
 		entry := s.ruleHits[hit.RuleID]
@@ -647,7 +645,7 @@ func (s *PrivacyService) rememberStatsRequestLocked(requestID string) {
 		s.seenTruncated = make(map[string]struct{})
 	}
 	if s.seenRuleHits == nil {
-		s.seenRuleHits = make(map[string]struct{})
+		s.seenRuleHits = make(map[string]map[int64]struct{})
 	}
 	s.seenRequests[requestID] = struct{}{}
 	s.seenOrder = append(s.seenOrder, requestID)
@@ -659,12 +657,21 @@ func (s *PrivacyService) rememberStatsRequestLocked(requestID string) {
 	delete(s.seenRequests, evicted)
 	delete(s.seenBlocked, evicted)
 	delete(s.seenTruncated, evicted)
-	prefix := evicted + "|"
-	for key := range s.seenRuleHits {
-		if strings.HasPrefix(key, prefix) {
-			delete(s.seenRuleHits, key)
-		}
+	delete(s.seenRuleHits, evicted)
+}
+
+// markRuleHitOnceLocked 同一请求的同一规则只计一次（重试 / 换端点时不重复累计）
+func (s *PrivacyService) markRuleHitOnceLocked(requestID string, ruleID int64) bool {
+	rules := s.seenRuleHits[requestID]
+	if rules == nil {
+		rules = make(map[int64]struct{})
+		s.seenRuleHits[requestID] = rules
 	}
+	if _, seen := rules[ruleID]; seen {
+		return false
+	}
+	rules[ruleID] = struct{}{}
+	return true
 }
 
 func (s *PrivacyService) markStatsOnceLocked(seen map[string]struct{}, requestID string) bool {

@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -138,53 +137,7 @@ func validateSubscriptionPrivacyReplacement(original, rewritten []byte) error {
 	if err := validateSubscriptionJSON(rewritten); err != nil {
 		return err
 	}
-	var before, after any
-	if err := json.Unmarshal(original, &before); err != nil {
-		return err
-	}
-	if err := json.Unmarshal(rewritten, &after); err != nil {
-		return err
-	}
-	return validateSubscriptionNestedJSON(before, after)
-}
-
-func validateSubscriptionNestedJSON(before, after any) error {
-	original, _ := before.(map[string]any)
-	rewritten, _ := after.(map[string]any)
-	if wrapped, ok := original["response"].(map[string]any); ok {
-		original = wrapped
-		rewritten, _ = rewritten["response"].(map[string]any)
-	}
-	items, _ := original["input"].([]any)
-	updatedItems, _ := rewritten["input"].([]any)
-	if len(items) != len(updatedItems) {
-		return fmt.Errorf("privacy replacement changed input structure")
-	}
-	for index, item := range items {
-		entry, _ := item.(map[string]any)
-		updated, _ := updatedItems[index].(map[string]any)
-		field := ""
-		switch entry["type"] {
-		case "function_call":
-			field = "arguments"
-		case "custom_tool_call":
-			field = "input"
-		case "function_call_output", "custom_tool_call_output":
-			field = "output"
-		default:
-			continue
-		}
-		value, _ := entry[field].(string)
-		replacement, _ := updated[field].(string)
-		trimmed := strings.TrimSpace(value)
-		if value == replacement || len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') || !json.Valid([]byte(value)) {
-			continue
-		}
-		if err := validateSubscriptionJSONDocument([]byte(replacement)); err != nil {
-			return fmt.Errorf("privacy replacement invalidated nested tool JSON")
-		}
-	}
-	return nil
+	return validateSubscriptionReplayItems(original, rewritten)
 }
 
 func (f subscriptionPrivacyFilter) SnapshotVersion() int64 {

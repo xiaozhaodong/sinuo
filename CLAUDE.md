@@ -78,9 +78,16 @@
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
   - 规则存 SQLite（`privacy_settings` / `privacy_rules`），保存先编译后落库，原子热替换不重启
-  - 按 JSON 文本字段扫描（含 Claude `tool_result` 与 Codex `function_call_output.output`），offset-aware 替换保证零命中 byte-identical
+  - 按 JSON 文本字段扫描（含 Claude `tool_result`、`tool_use.input` 下任意深度的字符串值，Codex `function_call_output.output` 与回放的 `arguments` / `input`），offset-aware 替换保证零命中 byte-identical
+  - 命中重叠：命中统计仍按优先级先占位；脱敏区域取全部 redact 命中的并集、占位符用区域内优先级最高的 redact 规则（detect 规则不会挡住重叠的 redact 规则）
   - `PrivacyPolicyError` 短路：不进端点重试/failover、不冷却账号、不换号
   - requestID + scopeFingerprint attempt cache：重试不重复扫描、不重复计命中
+  - 热路径性能（`internal/privacy/`）：
+    - 跨请求文本段缓存 `SegmentCache`：随快照创建、随快照替换失效；键为 128 位哈希 + 长度 + 候选规则集指纹，只存命中偏移不存原文；≥256 字节的段才缓存，截断扫描的段不缓存
+    - `scan_max_bytes` 只约束未命中缓存的文本；未缓存段从新到旧扫描，超限时优先保证最新内容被扫描
+    - 内置手机号 / 身份证 / 银行卡共用一次数字串扫描（与原「正则 + 数字边界」逐项等价，有差分测试）；≥4 条字面量规则（精确敏感值）共用一个 Aho-Corasick 自动机
+    - 正则规则编译时从语法树推导必含字面量做预过滤；不可能跨行、且不含非多行 `^` / `$` 的正则只在含字面量的行上运行。字段类预设因此只接受同一行内的空白（`[ \t]`），改预设时保持这一点
+    - 预设正则调整后需在隐私页重新导入预设才会同步到已导入的规则
   - 只记录规则名/命中数/耗时，不记录命中原文
   - Claude 请求跳过 `system[0].text` 上的 attribution block（`x-anthropic-billing-header:` 开头）：官方只在它原样位于首位时剥离；thinking / signature / redacted_thinking 不在扫描范围
 
@@ -95,7 +102,8 @@
 - `app_api_openai_oauth.go`：ChatGPT OAuth API
 - `app_api_privacy.go`：隐私保护 Wails API
 - `app_image_generation.go`：图像生成设置校验与代理配置提供器
-- `internal/privacy/`：隐私规则纯引擎（编译、JSON walker、span 替换、预设）
+- `internal/privacy/`：隐私规则纯引擎（编译、JSON walker、span 替换、预设）；`scan.go` 单段扫描与重叠解析、`segment_cache.go` 跨请求段缓存、`literal_set.go` 字面量自动机、`prefilter.go` 必含字面量推导与单行判定、`segment_text.go` 段内共享的惰性上下文
+- `internal/proxy/subscription_privacy_replay.go`：订阅链路脱敏后的工具回放复验（按字节定位 input 条目，只解码有变化的条目）
 - `internal/service/privacy_service.go`：隐私规则编译先行、原子快照热替换、运行统计
 - `internal/store/privacy_rules.go`：`privacy_settings / privacy_rules` 存储层
 - `internal/proxy/handlers/privacy.go`：PrivacyFilter 接口、attempt cache、策略短路 helper
