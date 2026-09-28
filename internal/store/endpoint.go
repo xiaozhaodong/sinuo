@@ -298,14 +298,37 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	return nil
 }
 
-// Delete 删除端点
+// Delete 删除端点，并在同一事务内清理它的运行态。
+// 连接未启用外键，schema 里 endpoint_runtime_states 的 ON DELETE CASCADE 不会触发，必须显式删除。
+// 已处于 WithTx 事务中时沿用调用方事务，由调用方负责提交。
 func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	query := `DELETE FROM endpoints WHERE name = ?`
+	if s.tx != nil {
+		return deleteEndpointWithRuntimeStates(ctx, s.tx, name)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启删除端点事务失败: %w", err)
+	}
+	defer tx.Rollback()
+	if err := deleteEndpointWithRuntimeStates(ctx, tx, name); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交删除端点事务失败: %w", err)
+	}
+	return nil
+}
 
-	result, err := s.getQuerier().ExecContext(ctx, query, name)
+func deleteEndpointWithRuntimeStates(ctx context.Context, tx *sql.Tx, name string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM endpoint_runtime_states WHERE endpoint_id IN (SELECT id FROM endpoints WHERE name = ?)`, name); err != nil {
+		return fmt.Errorf("删除端点运行态失败: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM endpoints WHERE name = ?`, name)
 	if err != nil {
 		return fmt.Errorf("删除端点失败: %w", err)
 	}

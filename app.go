@@ -491,6 +491,13 @@ func (a *App) setupEndpointRuntimeStates(ctx context.Context, db *sql.DB) {
 		endpoint.SeedCooldownRevision(maxRevision)
 	}
 
+	// 清理已删除端点留下的运行态（旧版本依赖从未生效的外键级联）；放在播种之后，发号器仍覆盖被清理的 revision
+	if pruned, err := runtimeStateStore.PruneOrphans(ctx); err != nil {
+		a.logger.Warn("⚠️ 清理残留端点运行态失败", "error", err)
+	} else if pruned > 0 {
+		a.logger.Info("🧹 已清理已删除端点的残留运行态", "rows", pruned)
+	}
+
 	endpointIDByName := func(name string) (int64, bool) {
 		record, err := a.endpointStore.Get(context.Background(), name)
 		if err != nil || record == nil {

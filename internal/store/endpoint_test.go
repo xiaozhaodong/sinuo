@@ -45,6 +45,18 @@ func createTestDB(t *testing.T) *sql.DB {
 		CREATE INDEX idx_endpoints_priority ON endpoints(priority);
 		CREATE INDEX idx_endpoints_failover ON endpoints(failover_enabled);
 		CREATE INDEX idx_endpoints_availability ON endpoints(availability_enabled);
+		-- 与 schema.sql 一致：带外键子句，但连接未启用外键，级联删除不会触发
+		CREATE TABLE endpoint_runtime_states (
+			endpoint_id INTEGER NOT NULL,
+			scope TEXT NOT NULL CHECK (scope IN ('global', 'messages', 'count_tokens')),
+			state TEXT NOT NULL DEFAULT 'active',
+			cooldown_until DATETIME,
+			cooldown_reason TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (endpoint_id, scope),
+			FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
+		);
 	`)
 	if err != nil {
 		t.Fatalf("创建目标表失败: %v", err)
@@ -261,5 +273,86 @@ func TestEndpointSchemaHasNoLegacyChannelOrEnabled(t *testing.T) {
 	}
 	if !columns["availability_enabled"] || !columns["failover_enabled"] {
 		t.Fatalf("目标双状态列缺失: %+v", columns)
+	}
+}
+
+func insertRuntimeState(t *testing.T, db *sql.DB, endpointID int64, scope string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO endpoint_runtime_states (endpoint_id, scope, state) VALUES (?, ?, 'cooldown')`,
+		endpointID, scope,
+	); err != nil {
+		t.Fatalf("写入运行态失败: %v", err)
+	}
+}
+
+func countRuntimeStates(t *testing.T, db *sql.DB, endpointID int64) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM endpoint_runtime_states WHERE endpoint_id = ?`, endpointID).Scan(&count); err != nil {
+		t.Fatalf("统计运行态失败: %v", err)
+	}
+	return count
+}
+
+// 连接未启用外键，schema 的 ON DELETE CASCADE 不会触发：删除端点必须显式清理它的运行态
+func TestSQLiteEndpointStoreDeleteRemovesRuntimeStates(t *testing.T) {
+	db := createTestDB(t)
+	st := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+	doomed, err := st.Create(ctx, &EndpointRecord{Name: "doomed", URL: "https://doomed.example.com", Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := st.Create(ctx, &EndpointRecord{Name: "kept", URL: "https://kept.example.com", Priority: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertRuntimeState(t, db, doomed.ID, "global")
+	insertRuntimeState(t, db, doomed.ID, "messages")
+	insertRuntimeState(t, db, kept.ID, "messages")
+
+	if err := st.Delete(ctx, "doomed"); err != nil {
+		t.Fatalf("删除端点失败: %v", err)
+	}
+	if n := countRuntimeStates(t, db, doomed.ID); n != 0 {
+		t.Fatalf("已删除端点仍残留 %d 行运行态", n)
+	}
+	if n := countRuntimeStates(t, db, kept.ID); n != 1 {
+		t.Fatalf("其他端点的运行态被误删，剩余 %d 行", n)
+	}
+	if err := st.Delete(ctx, "doomed"); err == nil {
+		t.Fatal("删除不存在的端点应返回错误")
+	}
+}
+
+func TestSQLiteEndpointStoreDeleteUsesCallerTx(t *testing.T) {
+	db := createTestDB(t)
+	st := NewSQLiteEndpointStore(db)
+	ctx := context.Background()
+	record, err := st.Create(ctx, &EndpointRecord{Name: "rollback-me", URL: "https://rollback.example.com", Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertRuntimeState(t, db, record.ID, "messages")
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithTx(tx).Delete(ctx, "rollback-me"); err != nil {
+		t.Fatalf("事务内删除端点失败: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 沿用调用方事务、不自行提交：回滚后端点与运行态都还在
+	got, err := st.Get(ctx, "rollback-me")
+	if err != nil || got == nil {
+		t.Fatalf("调用方回滚后端点应仍存在: record=%+v err=%v", got, err)
+	}
+	if n := countRuntimeStates(t, db, record.ID); n != 1 {
+		t.Fatalf("调用方回滚后运行态应仍存在，实际 %d 行", n)
 	}
 }

@@ -13,24 +13,7 @@ import (
 func createRuntimeStateTestStore(t *testing.T) (*SQLiteEndpointRuntimeStateStore, *sql.DB, func()) {
 	t.Helper()
 	db := createTestDB(t)
-	cleanup := func() {}
-	schema := `
-		CREATE TABLE IF NOT EXISTS endpoint_runtime_states (
-			endpoint_id INTEGER NOT NULL,
-			scope TEXT NOT NULL CHECK (scope IN ('global', 'messages', 'count_tokens')),
-			state TEXT NOT NULL DEFAULT 'active',
-			cooldown_until DATETIME,
-			cooldown_reason TEXT NOT NULL DEFAULT '',
-			revision INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (endpoint_id, scope)
-		);
-	`
-	if _, err := db.Exec(schema); err != nil {
-		cleanup()
-		t.Fatalf("创建 endpoint_runtime_states 表失败: %v", err)
-	}
-	return NewSQLiteEndpointRuntimeStateStore(db), db, cleanup
+	return NewSQLiteEndpointRuntimeStateStore(db), db, func() {}
 }
 
 func runtimeStateRow(t *testing.T, db *sql.DB, endpointID int64, scope string) (state string, cooldownUntil sql.NullString, revision int64) {
@@ -294,5 +277,33 @@ func TestClearCooldownTombstonesRollbackOnSecondScopeFailure(t *testing.T) {
 		if state != "active" || cooldownUntil.Valid || revision != 10 {
 			t.Fatalf("重试后 scope=%s 应为 tombstone: state=%s until=%v revision=%d", scope, state, cooldownUntil, revision)
 		}
+	}
+}
+
+func TestPruneOrphansRemovesRowsOfDeletedEndpoints(t *testing.T) {
+	st, db, cleanup := createRuntimeStateTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	live, err := NewSQLiteEndpointStore(db).Create(ctx, &EndpointRecord{Name: "live", URL: "https://live.example.com", Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanID := live.ID + 100
+	insertRuntimeState(t, db, live.ID, "global")
+	insertRuntimeState(t, db, orphanID, "global")
+	insertRuntimeState(t, db, orphanID, "messages")
+
+	pruned, err := st.PruneOrphans(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned != 2 {
+		t.Fatalf("pruned = %d, want 2", pruned)
+	}
+	if n := countRuntimeStates(t, db, live.ID); n != 1 {
+		t.Fatalf("现存端点的运行态被误删，剩余 %d 行", n)
+	}
+	if again, err := st.PruneOrphans(ctx); err != nil || again != 0 {
+		t.Fatalf("重复清理应无操作: pruned=%d err=%v", again, err)
 	}
 }

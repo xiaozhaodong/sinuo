@@ -40,9 +40,10 @@ type EndpointRuntimeStateStore interface {
 	ListActiveCooldowns(ctx context.Context, now time.Time) ([]*EndpointRuntimeStateRecord, error)
 	// Clear 清除指定端点 scope 的运行态
 	Clear(ctx context.Context, endpointID int64, scope string) error
-	// DeleteByEndpoint 删除端点全部运行态。当前连接已启用外键（DSN _foreign_keys=1），
-	// 端点删除时由 ON DELETE CASCADE 级联清理；本方法仅作为级联不可用场景的显式兜底。
-	DeleteByEndpoint(ctx context.Context, endpointID int64) error
+	// PruneOrphans 删除所属端点已不存在的运行态，返回删除行数（启动时清理历史残留）。
+	// 连接未启用外键，schema 的 ON DELETE CASCADE 不会触发；删除端点时由 SQLiteEndpointStore.Delete
+	// 在同一事务内清理，本方法只兜底旧版本留下的残留
+	PruneOrphans(ctx context.Context) (int64, error)
 	// MaxRevision 返回全表最大 revision（空表为 0），用于启动播种 revision 发号器
 	MaxRevision(ctx context.Context) (int64, error)
 }
@@ -164,14 +165,19 @@ func (s *SQLiteEndpointRuntimeStateStore) Clear(ctx context.Context, endpointID 
 	return nil
 }
 
-// DeleteByEndpoint 删除端点全部运行态
-func (s *SQLiteEndpointRuntimeStateStore) DeleteByEndpoint(ctx context.Context, endpointID int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM endpoint_runtime_states WHERE endpoint_id = ?`, endpointID)
+// PruneOrphans 删除所属端点已不存在的运行态。
+// 旧版本删除端点时依赖从未生效的外键级联，留下了这类残留行
+func (s *SQLiteEndpointRuntimeStateStore) PruneOrphans(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM endpoint_runtime_states WHERE endpoint_id NOT IN (SELECT id FROM endpoints)`)
 	if err != nil {
-		return fmt.Errorf("删除端点运行态失败: %w", err)
+		return 0, fmt.Errorf("清理残留端点运行态失败: %w", err)
 	}
-	return nil
+	pruned, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("获取残留端点运行态清理行数失败: %w", err)
+	}
+	return pruned, nil
 }
 
 // MaxRevision 返回全表最大 revision（空表为 0）
