@@ -33,6 +33,8 @@ func newClaudeSubscriptionTestHandler(t *testing.T, subscriptionURL string) (*Ha
 	handler.SetMonitoringMiddleware(middleware.NewMonitoringMiddleware(manager))
 	handler.SetUsageTracker(tracker)
 	handler.claudeSubscriptionBaseURL = subscriptionURL
+	// 生产中订阅请求只会在入口已启用且处于订阅直通模式时到来，此时额度开关已打开
+	handler.SetClaudeSubscriptionQuotaActive(true)
 	return handler, &vendorHits, tracker
 }
 
@@ -41,6 +43,7 @@ type claudeSubscriptionRequest struct {
 	streaming bool
 	noAuth    bool
 	requestID string
+	userAgent string
 }
 
 // performClaudeSubscriptionRequest 模拟经处于订阅直通模式的 Claude Code 入口进入的请求
@@ -66,6 +69,9 @@ func performClaudeSubscriptionRequest(t *testing.T, handler *Handler, spec claud
 	}
 	if spec.streaming {
 		req.Header.Set("Accept", "text/event-stream")
+	}
+	if spec.userAgent != "" {
+		req.Header.Set("User-Agent", spec.userAgent)
 	}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)

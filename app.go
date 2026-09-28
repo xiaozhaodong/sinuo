@@ -99,6 +99,7 @@ type App struct {
 	claudeCodeEntryMu       sync.Mutex // 串行化「保存配置 + 应用运行态」
 	claudeCodeEntrySettings *service.ClaudeCodeEntrySettingsService
 	claudeCodeEntryRuntime  *proxy.ClaudeCodeEntryRuntime
+	claudeCodeEntryProxy    *proxy.Handler // 装配时记下，应用配置时切换订阅额度开关，免得在 claudeCodeEntryMu 下再拿 a.mu
 
 	// HTTP 代理服务器 (保留，监听配置的端口)
 	proxyServer   *http.Server
@@ -940,6 +941,7 @@ func (a *App) setupProxyHandler() {
 	a.proxyHandler.SetOnFailoverTriggered(func(event proxy.FailoverEvent) {
 		a.emitFailoverNotification(event)
 	})
+	a.proxyHandler.SetOnClaudeSubscriptionQuota(a.emitClaudeSubscriptionRateLimit)
 	// 🛡️ 注入出站隐私过滤（必须在 SetUsageTracker 之后，重建的 handler 会重新注入）
 	if a.privacyService != nil {
 		a.proxyHandler.SetPrivacyFilter(a.privacyService)

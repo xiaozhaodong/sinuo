@@ -10,8 +10,14 @@ import (
 	"cc-forwarder/internal/privacy"
 )
 
-// ClaudeSubscriptionUpstreamURL Claude Code 订阅直通的固定上游
-const ClaudeSubscriptionUpstreamURL = "https://api.anthropic.com"
+const (
+	// ClaudeSubscriptionUpstreamURL Claude Code 订阅直通的固定上游
+	ClaudeSubscriptionUpstreamURL = "https://api.anthropic.com"
+	// claudeSubscriptionUsagePath 官方订阅额度查询路径，与 Claude Code /usage 相同
+	claudeSubscriptionUsagePath = "/api/oauth/usage"
+	// claudeOAuthBeta claude.ai 登录凭据访问官方管理接口需要的 beta 标记
+	claudeOAuthBeta = "oauth-2025-04-20"
+)
 
 // claudeSubscriptionSkipHeaders 订阅直通复制客户端请求头时剔除的头：保留客户端 Authorization（OAuth token），
 // 其余沿用黑名单复制，另外剔除来源类头（isClientSourceHeader）。Claude Code 直连官方时本来就会发出其余头，
@@ -90,6 +96,30 @@ func copyClaudeSubscriptionHeaders(src, dst *http.Request, baseURL string) {
 		dst.Header.Set("Host", u.Host)
 		dst.Host = u.Host
 	}
+}
+
+// FetchClaudeSubscriptionUsage 带订阅直通请求留下的 OAuth 凭据查询官方订阅额度，与订阅直通共用出站 transport。
+// 请求头对齐 Claude Code 自己的 /usage：Bearer 凭据 + OAuth beta；UA 沿用客户端的。调用方负责关闭响应体。
+func (f *Forwarder) FetchClaudeSubscriptionUsage(ctx context.Context, baseURL, authorization, userAgent string) (*http.Response, error) {
+	if baseURL == "" {
+		baseURL = ClaudeSubscriptionUpstreamURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+claudeSubscriptionUsagePath, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", authorization)
+	req.Header.Set(anthropicBetaHeader, claudeOAuthBeta)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+	httpTransport, err := f.buildStreamingTransport()
+	if err != nil {
+		return nil, err
+	}
+	return (&http.Client{Transport: httpTransport}).Do(req)
 }
 
 // clientOAuthBetaPrefix Claude Code 订阅登录时 anthropic-beta 携带的 OAuth capability 前缀（值带日期后缀）

@@ -66,6 +66,8 @@ type Handler struct {
 	endpointDispatchPacer *endpointDispatchPacer
 	// claudeSubscriptionBaseURL Claude Code 订阅直通的上游；空值为 Anthropic 官方地址，仅测试注入本地上游
 	claudeSubscriptionBaseURL string
+	// claudeQuota 订阅直通的官方额度（只在内存）：响应头采集、请求结束后补查与查询凭据
+	claudeQuota *claudeSubscriptionQuota
 }
 
 type CodexModelListProvider interface {
@@ -107,6 +109,7 @@ func NewHandler(endpointManager *endpoint.Manager, cfg *config.Config) *Handler 
 		refreshTokenManager:   accountauth.NewOpenAIRefreshTokenManager(cfg),
 		endpointDispatchPacer: newEndpointDispatchPacer(temporaryVenlacyMinDispatchInterval),
 	}
+	h.claudeQuota = newClaudeSubscriptionQuota(h.fetchClaudeSubscriptionUsage, defaultClaudeUsagePolicy)
 
 	// 初始化 token analyzer
 	provider := &TokenParserProviderImpl{}

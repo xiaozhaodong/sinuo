@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
 
@@ -51,13 +52,14 @@ func (a *App) setupClaudeCodeEntry(ctx context.Context) {
 	defer a.claudeCodeEntryMu.Unlock()
 	a.claudeCodeEntrySettings = service.NewClaudeCodeEntrySettingsService(a.settingsStore)
 	a.claudeCodeEntryRuntime = proxy.NewClaudeCodeEntryRuntime(a.loggingMiddleware.Wrap(a.proxyHandler), a.logger)
+	a.claudeCodeEntryProxy = a.proxyHandler
 
 	cfg, err := a.claudeCodeEntrySettings.Load(ctx)
 	if err != nil {
 		a.logger.Error("❌ Claude Code 入口配置读取失败，未启动", "error", err)
 		return
 	}
-	if err := a.claudeCodeEntryRuntime.Apply(ctx, cfg.Enabled, cfg.ListenAddr(), claudeCodeEntryPolicy(cfg)); err != nil {
+	if err := a.applyClaudeCodeEntryLocked(ctx, cfg); err != nil {
 		a.logger.Error("❌ Claude Code 入口启动失败", "error", err)
 	}
 }
@@ -112,7 +114,7 @@ func (a *App) saveClaudeCodeEntryLocked(input service.ClaudeCodeEntryInput) (Cla
 	}
 	applyCtx, cancel := context.WithTimeout(ctx, claudeCodeEntryStopTimeout)
 	defer cancel()
-	if err := a.claudeCodeEntryRuntime.Apply(applyCtx, cfg.Enabled, cfg.ListenAddr(), claudeCodeEntryPolicy(cfg)); err != nil {
+	if err := a.applyClaudeCodeEntryLocked(applyCtx, cfg); err != nil {
 		a.logger.Error("❌ Claude Code 入口应用配置失败", "error", err)
 	}
 	info, err := a.claudeCodeEntryInfoLocked(ctx)
@@ -121,6 +123,20 @@ func (a *App) saveClaudeCodeEntryLocked(input service.ClaudeCodeEntryInput) (Cla
 	}
 	a.emitClaudeCodeEntryUpdate(info)
 	return info, nil
+}
+
+// applyClaudeCodeEntryLocked 应用入口配置；先切订阅额度开关再应用：切走时凭据立即丢弃、
+// 旧模式下还没切完的请求不再记凭据，切回时也不会漏记新请求。调用方须持有 claudeCodeEntryMu
+func (a *App) applyClaudeCodeEntryLocked(ctx context.Context, cfg service.ClaudeCodeEntryConfig) error {
+	if a.claudeCodeEntryProxy != nil {
+		a.claudeCodeEntryProxy.SetClaudeSubscriptionQuotaActive(claudeSubscriptionQuotaActive(cfg))
+	}
+	return a.claudeCodeEntryRuntime.Apply(ctx, cfg.Enabled, cfg.ListenAddr(), claudeCodeEntryPolicy(cfg))
+}
+
+// claudeSubscriptionQuotaActive 订阅额度只在入口已启用且处于订阅直通模式时工作
+func claudeSubscriptionQuotaActive(cfg service.ClaudeCodeEntryConfig) bool {
+	return cfg.Enabled && cfg.Mode == endpoint.ClaudeCodeEntryModeSubscription
 }
 
 // claudeCodeEntryInfoLocked 组合持久化配置与运行态；调用方须持有 claudeCodeEntryMu

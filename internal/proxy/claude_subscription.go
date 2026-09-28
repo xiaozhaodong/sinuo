@@ -37,6 +37,9 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 		writeClaudeCodeEntryError(w, http.StatusUnauthorized, "authentication_error", message)
 		return
 	}
+	// 额度查询用最近一次请求的凭据；请求全部结束一段时间后补查额度
+	h.claudeQuota.beginRequest(r.Header.Get("Authorization"), r.Header.Get("User-Agent"))
+	defer h.claudeQuota.endRequest()
 
 	lifecycleManager.UpdateStatus("forwarding", 0, 0)
 	resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardClaudeSubscription(
@@ -61,6 +64,8 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 		h.failClaudeSubscriptionTransport(ctx, w, r, lifecycleManager, forwardErr)
 		return
 	}
+	// 成功与 4xx / 5xx 都采集：429 带回的 status=rejected 正是额度用尽的信号
+	h.claudeQuota.recordHeaders(resp.Header)
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		slog.Warn(fmt.Sprintf("📥 [订阅直通] [%s] 官方返回 %d，原样透传", connID, resp.StatusCode))
