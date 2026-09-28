@@ -3,9 +3,7 @@ package tracking
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -90,10 +88,10 @@ func (eh *ErrorHandler) handleCorruptionError() bool {
 	}
 
 	if integrityResult != "ok" {
-		eh.logger.Error("Database integrity compromised", "result", integrityResult)
-
-		// 尝试备份和重建
-		return eh.attemptDatabaseRestore()
+		// 不自动用备份覆盖：两个连接池都开着库时替换文件不安全，WAL 下残留的 -wal 还会套到新文件上。
+		// 需要恢复时先退出 App，再手动用 usage.db.backup 替换（同时删除 -wal / -shm）
+		eh.logger.Error("Database integrity compromised, manual recovery required", "result", integrityResult)
+		return false
 	}
 
 	eh.logger.Info("Database integrity check passed")
@@ -153,50 +151,6 @@ func (eh *ErrorHandler) attemptReconnection() bool {
 
 	eh.logger.Error("All reconnection attempts failed")
 	return false
-}
-
-// attemptDatabaseRestore attempts to restore the database from backup
-func (eh *ErrorHandler) attemptDatabaseRestore() bool {
-	if eh.tracker == nil || eh.tracker.config == nil {
-		return false
-	}
-
-	dbPath := eh.tracker.config.DatabasePath
-	backupPath := dbPath + ".backup"
-	corruptedPath := dbPath + ".corrupted." + time.Now().Format("20060102-150405")
-
-	// 检查是否有备份文件
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		eh.logger.Error("No backup file found for restoration", "backup_path", backupPath)
-		return false
-	}
-
-	eh.logger.Info("Attempting database restoration from backup",
-		"backup_path", backupPath,
-		"corrupted_path", corruptedPath)
-
-	// 移动损坏的数据库文件
-	if err := os.Rename(dbPath, corruptedPath); err != nil {
-		eh.logger.Error("Failed to move corrupted database", "error", err)
-		return false
-	}
-
-	// 复制备份文件
-	if err := copyFile(backupPath, dbPath); err != nil {
-		eh.logger.Error("Failed to restore from backup", "error", err)
-		// 尝试恢复原文件
-		os.Rename(corruptedPath, dbPath)
-		return false
-	}
-
-	// 尝试重新连接到恢复的数据库
-	if !eh.attemptReconnection() {
-		eh.logger.Error("Failed to connect to restored database")
-		return false
-	}
-
-	eh.logger.Info("Database successfully restored from backup")
-	return true
 }
 
 // CreateBackup creates a backup of the current database
@@ -462,72 +416,4 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-// RestoreFromBackup 从备份恢复数据库
-func (eh *ErrorHandler) RestoreFromBackup() error {
-	if eh.tracker == nil || eh.tracker.config == nil {
-		return fmt.Errorf("tracker not initialized")
-	}
-
-	dbPath := eh.tracker.config.DatabasePath
-	backupPath := dbPath + ".backup"
-
-	// 检查备份文件是否存在
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		return fmt.Errorf("backup file not found: %s", backupPath)
-	}
-
-	eh.logger.Info("Restoring database from backup", "backup_path", backupPath)
-
-	// 关闭当前数据库连接
-	if eh.tracker.db != nil {
-		eh.tracker.db.Close()
-	}
-
-	// 复制备份文件到原位置
-	if err := copyFile(backupPath, dbPath); err != nil {
-		return fmt.Errorf("failed to restore from backup: %w", err)
-	}
-
-	// 重新建立数据库连接
-	if !eh.attemptReconnection() {
-		return fmt.Errorf("failed to reconnect after restore")
-	}
-
-	eh.logger.Info("Database successfully restored from backup")
-	return nil
-}
-
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	buf := make([]byte, 32*1024) // 32KB buffer
-	for {
-		n, err := sourceFile.Read(buf)
-		if n > 0 {
-			if _, writeErr := destFile.Write(buf[:n]); writeErr != nil {
-				return writeErr
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return err
-		}
-	}
-
-	return destFile.Sync()
 }

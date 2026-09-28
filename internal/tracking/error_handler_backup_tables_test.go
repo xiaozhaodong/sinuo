@@ -2,13 +2,14 @@ package tracking
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
+func TestCreateBackup_PreservesCoreTables(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "backup-restore.db")
 
@@ -60,19 +61,12 @@ func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
 		t.Fatalf("backup file missing: %v", err)
 	}
 
-	for _, table := range []string{
-		"request_logs",
-		"usage_summary",
-		"upstream_accounts",
-	} {
-		if _, err := tracker.db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
-			t.Fatalf("failed to clear %s before restore: %v", table, err)
-		}
+	// 自动文件级恢复已停用：直接只读打开备份核对内容
+	backupDB, err := sql.Open("sqlite", "file:"+backupPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("failed to open backup: %v", err)
 	}
-
-	if err := tracker.errorHandler.RestoreFromBackup(); err != nil {
-		t.Fatalf("failed to restore backup: %v", err)
-	}
+	defer backupDB.Close()
 
 	counts := map[string]int{
 		"request_logs":      1,
@@ -81,11 +75,11 @@ func TestCreateBackupAndRestore_PreservesCoreTables(t *testing.T) {
 	}
 	for table, expected := range counts {
 		var actual int
-		if err := tracker.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&actual); err != nil {
+		if err := backupDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&actual); err != nil {
 			t.Fatalf("failed to query %s count: %v", table, err)
 		}
 		if actual != expected {
-			t.Fatalf("expected %s count=%d after restore, got %d", table, expected, actual)
+			t.Fatalf("expected %s count=%d in backup, got %d", table, expected, actual)
 		}
 	}
 }

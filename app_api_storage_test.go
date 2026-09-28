@@ -235,7 +235,7 @@ func newEndpointStorageAPITestApp(t *testing.T) (*App, func()) {
 	}
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("open sqlite failed: %v", err)

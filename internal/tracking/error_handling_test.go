@@ -71,27 +71,6 @@ func TestErrorHandler(t *testing.T) {
 			t.Fatal("expected write database handle to be replaced after reconnect")
 		}
 	})
-
-	// Test recovery from backup
-	t.Run("RestoreFromBackup", func(t *testing.T) {
-		// First create some data
-		tracker.RecordRequestStart("req-error-test", "127.0.0.1", "error-agent", "POST", "/v1/messages", false)
-
-		// Wait for processing
-		time.Sleep(100 * time.Millisecond)
-
-		// Force a backup
-		err = tracker.errorHandler.CreateBackup()
-		if err != nil {
-			t.Fatalf("Failed to create backup for recovery test: %v", err)
-		}
-
-		// Verify backup can be restored
-		err = tracker.errorHandler.RestoreFromBackup()
-		if err != nil {
-			t.Errorf("Failed to restore from backup: %v", err)
-		}
-	})
 }
 
 func TestErrorHandlerDiskSpace(t *testing.T) {

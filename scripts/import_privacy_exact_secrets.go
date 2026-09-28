@@ -228,9 +228,10 @@ func dbFileExists(dbPath string) (bool, error) {
 }
 
 func openSQLite(dbPath string, readOnly bool) (*sql.DB, error) {
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_foreign_keys=1&_busy_timeout=60000"
+	// modernc 只识别 _pragma / _txlock；与运行中的 App 同时访问时靠 busy_timeout 等待
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	if readOnly {
-		dsn = dbPath + "?_foreign_keys=1&_busy_timeout=60000"
+		dsn = dbPath + "?_pragma=busy_timeout(5000)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

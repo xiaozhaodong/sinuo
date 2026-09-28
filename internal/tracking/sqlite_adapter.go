@@ -14,8 +14,6 @@ import (
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
-
-	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
@@ -63,13 +61,7 @@ func (s *SQLiteAdapter) Open() error {
 		}
 	}
 
-	// 构建SQLite连接字符串
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000"
-
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return fmt.Errorf("failed to open SQLite database: %w", err)
-	}
+	db := sql.OpenDB(newSQLiteConnector(dbPath + sqliteDSNParams))
 
 	// 设置连接池参数（SQLite建议少量连接）
 	db.SetMaxOpenConns(1) // SQLite写操作需要单一连接
@@ -84,12 +76,27 @@ func (s *SQLiteAdapter) Open() error {
 		db.Close()
 		return fmt.Errorf("failed to ping SQLite database: %w", err)
 	}
+	if dbPath != ":memory:" {
+		s.warnIfNotWAL(ctx, db, dbPath)
+	}
 
 	s.db = db
 
 	s.logger.Info("✅ SQLite数据库连接成功")
 
 	return nil
+}
+
+// warnIfNotWAL 校验 WAL 实际生效：无法切换时 SQLite 不报错，而是保持原模式
+func (s *SQLiteAdapter) warnIfNotWAL(ctx context.Context, db *sql.DB, dbPath string) {
+	var mode string
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		s.logger.Warn("读取SQLite journal_mode失败", "path", dbPath, "error", err)
+		return
+	}
+	if !strings.EqualFold(mode, "wal") {
+		s.logger.Warn("SQLite未进入WAL模式，外部读取可能阻塞写入", "path", dbPath, "journal_mode", mode)
+	}
 }
 
 // Close 关闭数据库连接
