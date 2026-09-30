@@ -37,6 +37,17 @@ test('getModelColorClasses reuses GPT-5.6 Sol / Luna colors for GPT-6 Sol / Luna
   assert.equal(getModelColorClasses('gpt-6'), tone('gpt'));
 });
 
+test('getModelColorClasses colors GPT tiers by tier name regardless of version', () => {
+  assert.equal(getModelColorClasses('gpt-6.1-sol'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-6.1-sol-2026-09-29'), tone('sol'));
+  assert.equal(getModelColorClasses('GPT-6.1-Sol'), tone('sol'));
+  assert.equal(getModelColorClasses('gpt-6.1-luna'), tone('luna'));
+  assert.equal(getModelColorClasses('gpt-6.1-astra'), tone('astra'));
+  assert.equal(getModelColorClasses('gpt-6-terra'), tone('terra'));
+  assert.equal(getModelColorClasses('gpt-6.1'), tone('gpt'));
+  assert.equal(getModelColorClasses('gpt-6-solar'), tone('gpt'));
+});
+
 test('getModelColorClasses keeps existing model family mappings', () => {
   assert.equal(getModelColorClasses('claude-sonnet-4'), tone('sonnet-4'));
   assert.equal(getModelColorClasses('claude-3-5-haiku'), tone('haiku'));

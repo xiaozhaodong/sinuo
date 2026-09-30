@@ -5,6 +5,11 @@ const DEFAULT_MODEL_CLASSES = 'tone-slate';
 
 const modelTone = (key) => `grad-tone model-tone-${key}`;
 
+// GPT 档位按档位名着色、不绑定版本号：gpt-5.6-sol / gpt-6-sol / gpt-6.1-sol 同色
+const GPT_TIER_PATTERN = /gpt-\d+(?:\.\d+)?-(sol|terra|luna|astra)(?![a-z])/;
+
+const gptTierOf = (modelName) => modelName.match(GPT_TIER_PATTERN)?.[1];
+
 const MODEL_COLOR_RULES = [
   {
     matches: (modelName) => modelName.includes('deepseek'),
@@ -43,19 +48,19 @@ const MODEL_COLOR_RULES = [
     classes: modelTone('opus')
   },
   {
-    matches: (modelName) => modelName === 'gpt-5.6' || modelName.startsWith('gpt-5.6-sol') || modelName.includes('gpt-6-sol'),
+    matches: (modelName) => modelName === 'gpt-5.6' || gptTierOf(modelName) === 'sol',
     classes: modelTone('sol')
   },
   {
-    matches: (modelName) => modelName.startsWith('gpt-5.6-terra'),
+    matches: (modelName) => gptTierOf(modelName) === 'terra',
     classes: modelTone('terra')
   },
   {
-    matches: (modelName) => modelName.startsWith('gpt-5.6-luna') || modelName.includes('gpt-6-luna'),
+    matches: (modelName) => gptTierOf(modelName) === 'luna',
     classes: modelTone('luna')
   },
   {
-    matches: (modelName) => modelName.includes('gpt-6-astra'),
+    matches: (modelName) => gptTierOf(modelName) === 'astra',
     classes: modelTone('astra')
   },
   {
