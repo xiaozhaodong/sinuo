@@ -518,13 +518,21 @@
 @keyframes motion-popover-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes motion-overlay-in { from { opacity: 0; } }
 @keyframes motion-dialog-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+/* 页面根节点：只给一个「换页了」的信号，不拖慢内容出现 */
+@keyframes motion-page-in { from { opacity: 0; } }
 
 /* 只在未开启「减弱动态效果」时播放 */
 @media (prefers-reduced-motion: no-preference) {
   .motion-popover { animation: motion-popover-in 150ms cubic-bezier(.22,1,.36,1); }
   .motion-overlay { animation: motion-overlay-in 180ms ease-out; }
   .motion-dialog { animation: motion-dialog-in 220ms cubic-bezier(.22,1,.36,1); }
+  .motion-page { animation: motion-page-in 150ms ease-out; }
 }
+
+/* 加载占位延迟露出：200ms 内完成的加载完全看不到转圈，切页时不再一闪而过。
+   延迟期间照常占位，内容到达时不产生布局跳动。只是透明度，不受「减弱动态效果」限制。 */
+@keyframes loading-reveal-in { from { opacity: 0; } }
+.loading-reveal { animation: loading-reveal-in 150ms ease-out 200ms both; }
 
 /* ============================================================
  * 请求追踪 —— 实时列表动效

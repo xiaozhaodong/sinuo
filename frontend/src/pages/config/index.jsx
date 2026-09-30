@@ -94,7 +94,7 @@ const ConfigPage = () => {
     : [];
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="space-y-8 motion-page">
       {/* 页面标题 */}
       <div className="flex justify-between items-end">
         <div>

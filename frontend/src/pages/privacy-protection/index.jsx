@@ -318,7 +318,7 @@ const PrivacyProtectionPage = () => {
   }
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4 motion-page">
       {/* 顶部工具条 */}
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-bold text-fg flex items-center gap-2">

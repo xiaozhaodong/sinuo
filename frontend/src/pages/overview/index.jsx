@@ -62,7 +62,7 @@ const OverviewPage = ({ onNavigate }) => {
   const caption = periodCaption(period);
 
   return (
-    <div className="animate-fade-in space-y-6">
+    <div className="motion-page space-y-6">
       {/* 页头 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>

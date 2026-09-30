@@ -592,7 +592,7 @@ const RequestsPage = () => {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in relative">
+    <div className="space-y-6 motion-page relative">
       <NoticeToast notice={notice} onClose={closeNotice} />
 
       {/* 页面标题 & 工具栏（单行） */}

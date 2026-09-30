@@ -245,7 +245,7 @@ export const LoadingSpinner = ({ size = 'md', text = '加载中...' }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center py-12">
+    <div className="loading-reveal flex flex-col items-center justify-center py-12">
       <div className={`${sizeClasses[size]} border-2 border-line border-t-accent rounded-full animate-spin`}></div>
       {text && <p className="mt-3 text-sm text-fg-muted">{text}</p>}
     </div>

@@ -156,7 +156,7 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null })
   if (error && endpoints.length === 0) return <ErrorMessage title="Claude 端点加载失败" message={error} onRetry={refresh} />;
 
   return (
-    <div className="animate-fade-in space-y-6">
+    <div className="motion-page space-y-6">
       {headerTarget ? (active && createPortal(actions, headerTarget)) : (
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           {!embedded && (

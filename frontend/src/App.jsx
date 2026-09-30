@@ -3,7 +3,7 @@
 // 2025-11-28 (Updated 2025-12-12)
 // ============================================
 
-import { useState, Suspense, lazy, useCallback, useEffect } from 'react';
+import { useState, Suspense, lazy, useCallback, useEffect, startTransition } from 'react';
 import Header from '@components/layout/Header.jsx';
 import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
@@ -13,23 +13,46 @@ import { getMigrationStatus } from '@utils/wailsApi.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 
-// 懒加载页面组件
-const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
-// Claude 管理页面（端点 + 客户端接入）
-const ClaudePage = lazy(() => import('@pages/claude/index.jsx'));
-const RequestsPage = lazy(() => import('@pages/requests/index.jsx'));
-const PricingPage = lazy(() => import('@pages/pricing/index.jsx'));
-// v5.1: 配置页面改为设置页面（可编辑）
-const SettingsPage = lazy(() => import('@pages/settings/index.jsx'));
-// 保留只读配置页面用于调试
-const ConfigPage = lazy(() => import('@pages/config/index.jsx'));
-// v5.1: 系统日志页面
-const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
-// Codex 管理页面（账号池 + 客户端接入）
-const CodexPage = lazy(() => import('@pages/codex/index.jsx'));
-// v6.1: 隐私保护页面
-const PrivacyProtectionPage = lazy(() => import('@pages/privacy-protection/index.jsx'));
+// 懒加载页面组件。加载函数单独列出，启动完成后统一预取（见 preloadPages）
+const PAGE_MODULES = {
+  overview: () => import('@pages/overview/index.jsx'),
+  // Claude 管理页面（端点 + 客户端接入）
+  claude: () => import('@pages/claude/index.jsx'),
+  requests: () => import('@pages/requests/index.jsx'),
+  pricing: () => import('@pages/pricing/index.jsx'),
+  // v5.1: 配置页面改为设置页面（可编辑）
+  settings: () => import('@pages/settings/index.jsx'),
+  // 保留只读配置页面用于调试
+  config: () => import('@pages/config/index.jsx'),
+  // v5.1: 系统日志页面
+  logs: () => import('@pages/log-viewer/index.jsx'),
+  // Codex 管理页面（账号池 + 客户端接入）
+  codex: () => import('@pages/codex/index.jsx'),
+  // v6.1: 隐私保护页面
+  privacy: () => import('@pages/privacy-protection/index.jsx')
+};
+
+const OverviewPage = lazy(PAGE_MODULES.overview);
+const ClaudePage = lazy(PAGE_MODULES.claude);
+const RequestsPage = lazy(PAGE_MODULES.requests);
+const PricingPage = lazy(PAGE_MODULES.pricing);
+const SettingsPage = lazy(PAGE_MODULES.settings);
+const ConfigPage = lazy(PAGE_MODULES.config);
+const LogsPage = lazy(PAGE_MODULES.logs);
+const CodexPage = lazy(PAGE_MODULES.codex);
+const PrivacyProtectionPage = lazy(PAGE_MODULES.privacy);
 const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index.jsx'));
+
+// 启动完成后稍等再预取，不与首屏数据加载抢主线程
+const PAGE_PRELOAD_DELAY_MS = 1500;
+
+// 预取只为提速：chunk 的拉取与解析提前做掉，首次切到某页时 transition 几乎立即完成。
+// 失败时静默，由真正切页时的 lazy 加载暴露错误。
+const preloadPages = () => {
+  Object.values(PAGE_MODULES).forEach((load) => {
+    load().catch(() => {});
+  });
+};
 
 // ============================================
 // App 组件
@@ -72,14 +95,24 @@ const AppRoutes = () => {
   // SSE 连接状态（用于全局状态指示）
   const { connectionStatus } = useSSE(handleRealtimeEvent, { events: 'status,notification' });
 
+  // 切页一律走 transition：新页面代码未就绪时保留当前页，而不是露出 Suspense 兜底。
+  // 兜底一旦露出，React 19 会让它至少停留 300ms 才换成内容，切页会显得拖沓。
+  const switchTab = useCallback((tab) => {
+    startTransition(() => setActiveTab(tab));
+  }, []);
+
   const navigateToCodexAccess = useCallback(() => {
-    setActiveCodexTab('client-access');
-    setActiveTab('account-pool');
+    startTransition(() => {
+      setActiveCodexTab('client-access');
+      setActiveTab('account-pool');
+    });
   }, []);
 
   const navigateToClaudeAccess = useCallback(() => {
-    setActiveClaudeTab('client-access');
-    setActiveTab('endpoints');
+    startTransition(() => {
+      setActiveClaudeTab('client-access');
+      setActiveTab('endpoints');
+    });
   }, []);
 
   useEffect(() => {
@@ -108,11 +141,18 @@ const AppRoutes = () => {
     };
   }, []);
 
+  const isReady = migrationStatus.state === 'ready';
+  useEffect(() => {
+    if (!isReady) return undefined;
+    const timer = window.setTimeout(preloadPages, PAGE_PRELOAD_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [isReady]);
+
   // 渲染当前页面
   const renderPage = () => {
     const pages = {
       // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
-      overview: <OverviewPage onNavigate={setActiveTab} />,
+      overview: <OverviewPage onNavigate={switchTab} />,
       endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} />,
       requests: <RequestsPage />,
       // v6.1: 隐私保护页面
@@ -130,7 +170,7 @@ const AppRoutes = () => {
     return pages[activeTab] || <OverviewPage />;
   };
 
-  if (migrationStatus.state !== 'ready') {
+  if (!isReady) {
     return <MigrationRecoveryPage status={migrationStatus} onStatusChange={setMigrationStatus} />;
   }
 
@@ -149,7 +189,7 @@ const AppRoutes = () => {
       {/* 顶部导航 */}
       <Header
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={switchTab}
         connectionStatus={connectionStatus}
         proxyStatus={proxyStatus}
       />

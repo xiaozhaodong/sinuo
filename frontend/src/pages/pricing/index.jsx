@@ -649,7 +649,7 @@ const PricingPage = () => {
   // 存储未启用
   if (!loading && storageStatus && !storageStatus.enabled) {
     return (
-      <div className="animate-fade-in">
+      <div className="motion-page">
         <div className="flex flex-col items-center justify-center py-20">
           <div className="p-4 bg-surface-mut rounded-full mb-4">
             <Database size={40} className="text-fg-subtle" />
@@ -689,7 +689,7 @@ const PricingPage = () => {
     : 0;
 
   return (
-    <div className="animate-fade-in">
+    <div className="motion-page">
       {/* 页面标题 */}
       <div className="flex justify-between items-end mb-8">
         <div>

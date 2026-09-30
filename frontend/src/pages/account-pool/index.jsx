@@ -428,7 +428,7 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
   );
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="space-y-6 motion-page">
       {headerTarget ? (active && createPortal(header, headerTarget)) : (!embedded && header)}
 
       <NoticeToast notice={active ? notice : null} onClose={closeNotice} />

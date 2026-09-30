@@ -36,7 +36,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
   };
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="space-y-4">
       <div className="flex items-center gap-3">
         <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
           <Layers3 size={20} />
