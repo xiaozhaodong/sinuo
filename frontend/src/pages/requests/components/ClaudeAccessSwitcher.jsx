@@ -68,7 +68,7 @@ const ClaudeAccessSwitcher = (props) => {
         aria-label={`Claude 接入与路由：${label}`}
         onClick={() => { if (!open) refresh(); setOpen((value) => !value); }}
         title={triggerTitle}
-        className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]"
+        className="flex h-9 w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]"
       >
         {busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${ready ? 'text-accent' : 'text-warn'}`} />}
         <span className="min-w-0 flex-1 truncate text-left">Claude: {label}</span>

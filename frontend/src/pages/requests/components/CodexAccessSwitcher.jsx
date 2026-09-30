@@ -84,7 +84,7 @@ const CodexAccessSwitcher = ({
 
   return (
     <>
-      <button ref={triggerRef} type="button" aria-expanded={open} aria-controls={menuId} aria-label={`Codex 接入与路由：${displayLabel}${displayDetail ? `（${displayDetail}）` : ''}`} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} title={triggerTitle} className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]">
+      <button ref={triggerRef} type="button" aria-expanded={open} aria-controls={menuId} aria-label={`Codex 接入与路由：${displayLabel}${displayDetail ? `（${displayDetail}）` : ''}`} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} title={triggerTitle} className="flex h-9 w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]">
         {loading || busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${triggerIconTone}`} />}
         <span className="min-w-0 flex-1 truncate text-left">Codex: {displayLabel}</span>
         <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />

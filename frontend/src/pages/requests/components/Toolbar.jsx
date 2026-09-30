@@ -102,12 +102,12 @@ const Toolbar = ({
       <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
 
       {/* 快捷时间范围选择 */}
-      <div className="hidden sm:flex shrink-0 items-center bg-surface border border-line rounded-lg p-1 shadow-sm">
+      <div className="hidden sm:flex h-9 shrink-0 items-center bg-surface border border-line rounded-lg p-1 shadow-sm">
         {TIME_RANGE_OPTIONS.map((range) => (
           <button
             key={range.value}
             onClick={() => onTimeRangeChange?.(range.value)}
-            className={`px-2 xl:px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            className={`h-full px-2 xl:px-3 text-xs font-medium rounded-md transition-all ${
               activeTimeRange === range.value
                 ? 'bg-accent-soft text-accent-fg shadow-sm'
                 : 'text-fg-muted hover:text-fg hover:bg-surface-sub'
@@ -123,7 +123,7 @@ const Toolbar = ({
       {/* 筛选按钮 */}
       <button
         onClick={onFilterToggle}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all shadow-sm border ${
+        className={`flex h-9 items-center gap-2 px-3 rounded-lg text-sm font-medium transition-all shadow-sm border ${
           isFilterOpen
             ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
             : 'bg-surface text-fg-body border-line hover:border-accent-line hover:text-accent'
@@ -141,7 +141,7 @@ const Toolbar = ({
       <div className="relative">
         <button
           onClick={onViewConfigToggle}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all shadow-sm border ${
+          className={`flex h-9 items-center gap-2 px-3 rounded-lg text-sm transition-all shadow-sm border ${
             isViewConfigOpen
               ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
               : 'bg-surface text-fg-body border-line hover:bg-surface-sub hover:text-accent hover:border-accent-line'
