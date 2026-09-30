@@ -3,9 +3,25 @@
 // 2025-11-28 (Updated 2025-12-12 for proxy status display)
 // ============================================
 
-import { Command, Moon, Sun } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import { isWailsEnvironment } from '@utils/wailsApi.js';
 import { useTheme } from '@contexts/ThemeContext.jsx';
+
+// 品牌标识：应用图标（build/appicon.png）中 S 的扁平单色版，沿中心线描摹、圆头描边
+const BrandMark = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className={className}
+  >
+    <path d="M19.12 2.5L11.61 2.5C7.79 2.5 6.23 4.67 6.23 7.01C6.23 9.96 8.66 11.35 12.91 12.22C17.34 13.13 18.21 15.17 18.21 17.42C18.21 20.03 16.12 21.5 12.74 21.5L4.88 21.5" />
+  </svg>
+);
 
 // 导航标签项
 const NavItem = ({ label, active, onClick }) => (
@@ -84,7 +100,7 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             onClick={() => onTabChange('overview')}
           >
             <div className="w-8 h-8 bg-inverted rounded-lg flex items-center justify-center text-fg-inverted shadow-lg">
-              <Command size={16} strokeWidth={3} />
+              <BrandMark className="w-[18px] h-[18px]" />
             </div>
             <span className="font-bold text-base xl:text-lg tracking-tight text-fg whitespace-nowrap">
               AI Switchboard
