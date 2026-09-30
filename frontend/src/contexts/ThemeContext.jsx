@@ -36,18 +36,14 @@ const subscribeSystemDark = (onChange) => {
   return () => mediaQuery.removeEventListener('change', onChange);
 };
 
-// preference 非 system 时不订阅系统外观；两个 subscribe 都需模块级稳定引用
-const subscribeNoop = () => () => {};
-
 export const ThemeProvider = ({ children }) => {
   // 初值同步可得：index.html 的内联脚本已按同一口径定妥 <html class>，此处不会造成首屏跳变
   const [preference, setPreferenceState] = useState(readStoredPreference);
-  const systemDark = useSyncExternalStore(
-    preference === 'system' ? subscribeSystemDark : subscribeNoop,
-    matchSystemDark
-  );
+  // 显式浅色 / 深色时也订阅：主题菜单要实时展示「跟随系统」会得到哪一种
+  const systemDark = useSyncExternalStore(subscribeSystemDark, matchSystemDark);
 
-  const resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+  const system = systemDark ? 'dark' : 'light';
+  const resolved = preference === 'system' ? system : preference;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -76,14 +72,9 @@ export const ThemeProvider = ({ children }) => {
     }
   }, []);
 
-  // 快捷开关：从当前生效态跳到反面，等同于显式选择 light / dark（脱离跟随系统）
-  const toggle = useCallback(() => {
-    setPreference(resolved === 'dark' ? 'light' : 'dark');
-  }, [resolved, setPreference]);
-
   const value = useMemo(
-    () => ({ preference, resolved, setPreference, toggle }),
-    [preference, resolved, setPreference, toggle]
+    () => ({ preference, resolved, system, setPreference }),
+    [preference, resolved, system, setPreference]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

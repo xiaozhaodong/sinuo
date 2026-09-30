@@ -24,7 +24,7 @@ import {
 } from '@components/claude-code-entry/subscriptionRateLimit.js';
 import { resolveClaudeRouteLabel } from '../utils/claudeRouteLabel.js';
 import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
-import useAnchoredPanel from './useAnchoredPanel.js';
+import useAnchoredPanel from '@hooks/useAnchoredPanel.js';
 
 const PANEL_TABS = [
   { id: 'access', label: '接入模式' },

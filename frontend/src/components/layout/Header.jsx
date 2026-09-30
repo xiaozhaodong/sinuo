@@ -3,9 +3,8 @@
 // 2025-11-28 (Updated 2025-12-12 for proxy status display)
 // ============================================
 
-import { Moon, Sun } from 'lucide-react';
 import { isWailsEnvironment } from '@utils/wailsApi.js';
-import { useTheme } from '@contexts/ThemeContext.jsx';
+import ThemeMenu from './ThemeMenu.jsx';
 
 // 品牌标识：应用图标（build/appicon.png）中 S 的扁平单色版，沿中心线描摹、圆头描边
 const BrandMark = ({ className }) => (
@@ -38,7 +37,6 @@ const NavItem = ({ label, active, onClick }) => (
 );
 
 const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
-  const { resolved, toggle } = useTheme();
   const tabs = [
     { name: 'overview', label: '概览' },
     { name: 'endpoints', label: 'Claude 管理' },
@@ -133,16 +131,8 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyS
             {status.text}
           </div>
 
-          {/* 主题开关：位于 no-drag 内层容器，Wails 下可正常点击 */}
-          <button
-            type="button"
-            onClick={toggle}
-            title={resolved === 'dark' ? '切换到浅色' : '切换到深色'}
-            aria-label="切换主题"
-            className="p-2 rounded-lg text-fg-muted hover:text-fg hover:bg-surface-mut transition-colors"
-          >
-            {resolved === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+          {/* 主题菜单：位于 no-drag 内层容器，Wails 下可正常点击 */}
+          <ThemeMenu />
 
           {/* 用户头像 */}
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border-2 border-surface shadow-md cursor-pointer hover:ring-2 ring-accent-line transition-all"></div>

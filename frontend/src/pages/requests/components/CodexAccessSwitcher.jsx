@@ -13,7 +13,7 @@ import { resolveCodexAccessLabel, resolveFallbackRouteLabel } from '../utils/acc
 import AccountPoolSwitcher from './AccountPoolSwitcher.jsx';
 import CodexModelRoutingSwitcher from './CodexModelRoutingSwitcher.jsx';
 import CodexModeConfirmDialog from './CodexModeConfirmDialog.jsx';
-import useAnchoredPanel from './useAnchoredPanel.js';
+import useAnchoredPanel from '@hooks/useAnchoredPanel.js';
 
 const CodexAccessSwitcher = ({
   codexModelRoutingEnabled = false, bindings = [], accounts = [], onPatch,
