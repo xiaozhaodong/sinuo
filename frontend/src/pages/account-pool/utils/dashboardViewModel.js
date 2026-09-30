@@ -29,7 +29,7 @@ const DEFAULT_FILTERS = {
   group: 'all',
   status: 'all',
   risk: 'all',
-  sort: 'risk_desc',
+  sort: 'recent_success_desc',
   savedView: 'all'
 };
 
@@ -315,11 +315,12 @@ const buildFilterOptions = (accounts, sortedPriorities) => {
   const groupOptions = [{ value: 'all', label: '全部组别' }];
   const statusOptions = [{ value: 'all', label: '全部状态' }];
   const riskOptions = [{ value: 'all', label: '全部风险' }];
+  // 第一项即页面默认排序
   const sortOptions = [
+    { value: 'recent_success_desc', label: '最近成功' },
     { value: 'risk_desc', label: '风险优先' },
     { value: 'group_asc', label: '组别优先' },
-    { value: 'name_asc', label: '账号名' },
-    { value: 'recent_success_desc', label: '最近成功' }
+    { value: 'name_asc', label: '账号名' }
   ];
 
   const authSeen = new Set();

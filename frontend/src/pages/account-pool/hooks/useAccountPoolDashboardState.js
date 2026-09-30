@@ -64,10 +64,11 @@ export const INVENTORY_BATCH_ACTIONS = [
 
 export const DEFAULT_INVENTORY_PAGE_SIZES = [20, 50, 100];
 
+// 第一项即默认排序（见 defaultFilterValuesFromConfigs）
 const DEFAULT_SORT_OPTIONS = [
+  { value: 'recent_success_desc', label: '最近成功' },
   { value: 'risk_desc', label: '风险优先' },
   { value: 'group_asc', label: '组别优先' },
-  { value: 'recent_success_desc', label: '最近成功' },
   { value: 'name_asc', label: '账号名' }
 ];
 
@@ -365,18 +366,24 @@ const matchesSavedView = (row, savedViewKey) => {
   }
 };
 
+const compareByName = (left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN');
+
+const compareByGroupThenName = (left, right) => groupRank(left) - groupRank(right) || compareByName(left, right);
+
 const sortRows = (rows, sortValue) => {
   const value = normalizeText(sortValue);
   const sorted = [...rows];
 
   sorted.sort((left, right) => {
     if (value === 'name_asc' || value === 'name' || value === '账号名') {
-      return String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN');
+      return compareByName(left, right);
     }
 
+    // 时间相同（含从未成功的账号）时按组别、账号名稳定排序
     if (value === 'recent_success_desc' || value === 'success' || value === '最近成功') {
       return parseTimestamp(right.detail?.lastSuccessAt, right.lastSuccessText)
-        - parseTimestamp(left.detail?.lastSuccessAt, left.lastSuccessText);
+        - parseTimestamp(left.detail?.lastSuccessAt, left.lastSuccessText)
+        || compareByGroupThenName(left, right);
     }
 
     if (value === 'refreshed' || value === '最近刷新') {
@@ -385,12 +392,10 @@ const sortRows = (rows, sortValue) => {
     }
 
     if (value === 'group_asc' || value === 'group' || value === '组别') {
-      return groupRank(left) - groupRank(right) || String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN');
+      return compareByGroupThenName(left, right);
     }
 
-    return getRiskRank(right) - getRiskRank(left)
-      || groupRank(left) - groupRank(right)
-      || String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN');
+    return getRiskRank(right) - getRiskRank(left) || compareByGroupThenName(left, right);
   });
 
   return sorted;
@@ -434,7 +439,7 @@ const defaultFilterValuesFromConfigs = (filterConfigs) => {
 
   filterConfigs.forEach((config) => {
     initial[config.key] = config.key === 'sort'
-      ? config.options[0]?.value || 'risk'
+      ? config.options[0]?.value || 'recent_success_desc'
       : ALL_FILTER_VALUE;
   });
 
