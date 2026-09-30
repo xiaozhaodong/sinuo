@@ -5,17 +5,19 @@
 
 import { useState, Suspense, lazy, useCallback, useEffect, startTransition } from 'react';
 import Header from '@components/layout/Header.jsx';
+import StartupScreen from '@components/layout/StartupScreen.jsx';
 import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
-import { getMigrationStatus } from '@utils/wailsApi.js';
+import { getMigrationStatus, getSystemStatus } from '@utils/wailsApi.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
+// 概览是启动首屏，直接打进入口：懒加载只会在启动时多出一段 Suspense 占位（React 19 至少停留 300ms）
+import OverviewPage from '@pages/overview/index.jsx';
 
-// 懒加载页面组件。加载函数单独列出，启动完成后统一预取（见 preloadPages）
+// 其余页面懒加载。加载函数单独列出，启动完成后统一预取（见 preloadPages）
 const PAGE_MODULES = {
-  overview: () => import('@pages/overview/index.jsx'),
   // Claude 管理页面（端点 + 客户端接入）
   claude: () => import('@pages/claude/index.jsx'),
   requests: () => import('@pages/requests/index.jsx'),
@@ -32,7 +34,6 @@ const PAGE_MODULES = {
   privacy: () => import('@pages/privacy-protection/index.jsx')
 };
 
-const OverviewPage = lazy(PAGE_MODULES.overview);
 const ClaudePage = lazy(PAGE_MODULES.claude);
 const RequestsPage = lazy(PAGE_MODULES.requests);
 const PricingPage = lazy(PAGE_MODULES.pricing);
@@ -45,6 +46,20 @@ const MigrationRecoveryPage = lazy(() => import('@pages/migration-recovery/index
 
 // 启动完成后稍等再预取，不与首屏数据加载抢主线程
 const PAGE_PRELOAD_DELAY_MS = 1500;
+
+// 启动状态轮询：正常启动后端只需百余毫秒，勤查以便就绪后立即进主界面；真正迁移与失败重试放缓
+const STARTUP_POLL_INTERVAL_MS = 100;
+const MIGRATING_POLL_INTERVAL_MS = 400;
+const FAILED_POLL_INTERVAL_MS = 1000;
+
+const pollIntervalFor = (state) => {
+  if (state === 'initializing') return STARTUP_POLL_INTERVAL_MS;
+  if (state === 'migration_failed') return FAILED_POLL_INTERVAL_MS;
+  return MIGRATING_POLL_INTERVAL_MS;
+};
+
+// initializing 只表示后端在做常规初始化，不是迁移；其余非 ready 状态都属于迁移 / 恢复流程
+const isMigrationFlowState = (state) => state !== 'initializing' && state !== 'ready';
 
 // 预取只为提速：chunk 的拉取与解析提前做掉，首次切到某页时 transition 几乎立即完成。
 // 失败时静默，由真正切页时的 lazy 加载暴露错误。
@@ -63,6 +78,13 @@ const AppRoutes = () => {
   const [activeCodexTab, setActiveCodexTab] = useState('accounts');
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
+  // 一旦进入迁移 / 恢复流程就停在迁移页直到就绪：重试与迁移收尾阶段后端也会短暂报 initializing，
+  // 不据此切回启动画面，避免两页来回切换
+  const [migrationFlowSeen, setMigrationFlowSeen] = useState(false);
+  const applyMigrationStatus = useCallback((status) => {
+    setMigrationStatus(status);
+    if (isMigrationFlowState(status.state)) setMigrationFlowSeen(true);
+  }, []);
   const { toasts, pendingCount, showToast, dismissToast } = useGlobalToasts();
   // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
   const [proxyStatus, setProxyStatus] = useState({
@@ -123,14 +145,14 @@ const AppRoutes = () => {
       try {
         const status = await getMigrationStatus();
         if (cancelled) return;
-        setMigrationStatus(status);
+        applyMigrationStatus(status);
         if (status.state !== 'ready') {
-          timer = window.setTimeout(pollMigrationStatus, status.state === 'migration_failed' ? 1000 : 400);
+          timer = window.setTimeout(pollMigrationStatus, pollIntervalFor(status.state));
         }
       } catch (error) {
         if (cancelled) return;
-        setMigrationStatus({ state: 'migration_failed', error: error?.message || '迁移状态读取失败', retryAllowed: true });
-        timer = window.setTimeout(pollMigrationStatus, 1000);
+        applyMigrationStatus({ state: 'migration_failed', error: error?.message || '迁移状态读取失败', retryAllowed: true });
+        timer = window.setTimeout(pollMigrationStatus, FAILED_POLL_INTERVAL_MS);
       }
     };
 
@@ -139,7 +161,7 @@ const AppRoutes = () => {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, []);
+  }, [applyMigrationStatus]);
 
   const isReady = migrationStatus.state === 'ready';
   useEffect(() => {
@@ -147,6 +169,17 @@ const AppRoutes = () => {
     const timer = window.setTimeout(preloadPages, PAGE_PRELOAD_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [isReady]);
+
+  // 就绪时主动拉一次代理状态：DOM 就绪时那次推送可能早于订阅、或被启动锁压到启动末尾，
+  // 定时推送又是 2 秒一次，不拉的话页头可能先显示「代理未运行」再变绿
+  useEffect(() => {
+    if (!isReady) return undefined;
+    let cancelled = false;
+    getSystemStatus()
+      .then((status) => { if (!cancelled) handleStatusUpdate(status); })
+      .catch(() => {}); // 拉取失败时仍有定时推送兜底
+    return () => { cancelled = true; };
+  }, [isReady, handleStatusUpdate]);
 
   // 渲染当前页面
   const renderPage = () => {
@@ -170,13 +203,17 @@ const AppRoutes = () => {
     return pages[activeTab] || <OverviewPage />;
   };
 
+  if (!isReady && !migrationFlowSeen) {
+    return <StartupScreen />;
+  }
+
   if (!isReady) {
-    return <MigrationRecoveryPage status={migrationStatus} onStatusChange={setMigrationStatus} />;
+    return <MigrationRecoveryPage status={migrationStatus} onStatusChange={applyMigrationStatus} />;
   }
 
   return (
     <TimezoneProvider>
-      <div className="h-screen overflow-hidden bg-canvas font-sans text-fg flex flex-col">
+      <div className="motion-app h-screen overflow-hidden bg-canvas font-sans text-fg flex flex-col">
       {/* 背景纹理 */}
       <div
         className="fixed inset-0 pointer-events-none opacity-[0.4]"

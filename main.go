@@ -104,8 +104,9 @@ func main() {
 
 		// 背景色 (窗口创建到 webview 首帧之间可见，数十 ms)
 		// Go 侧静态值，读不到 localStorage，无法随主题切换。
-		// 取中性深灰 #111827：暗色下贴近 canvas #0b1120，浅色下也比脚手架默认深蓝突兀感更低。
-		BackgroundColour: &options.RGBA{R: 17, G: 24, B: 39, A: 1},
+		// 取暗色 canvas #0b1120，暗色下与首帧无缝衔接；浅色下首帧前仍会先见一帧深色。
+		// A 的取值是 0~255：此前写 A: 1 等于近乎全透明，设定的颜色从未生效。
+		BackgroundColour: &options.RGBA{R: 11, G: 17, B: 32, A: 255},
 
 		// 生命周期回调
 		OnStartup:     app.startup,

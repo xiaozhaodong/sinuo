@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getConfig, subscribeToEvent } from '@utils/wailsApi.js';
+import StartupScreen from '@components/layout/StartupScreen.jsx';
 import {
   formatTimeOnly,
   formatMonthDayTime,
@@ -45,8 +46,9 @@ export const TimezoneProvider = ({ children }) => {
     };
   }, [reload, state.timezone]);
 
+  // 仅首次加载：紧接在启动画面之后，沿用同一画面，避免启动时一闪一行文字
   if (state.loading) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-fg-muted">正在加载活动时区…</div>;
+    return <StartupScreen />;
   }
   if (state.error || !value) {
     return (

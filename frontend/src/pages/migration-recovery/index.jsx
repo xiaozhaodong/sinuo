@@ -31,8 +31,8 @@ const MigrationRecoveryPage = ({ status = {}, onStatusChange }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f8fa] px-6 py-12 text-fg">
-      <div className="pointer-events-none fixed inset-0 opacity-40" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+    <div className="min-h-screen bg-canvas px-6 py-12 text-fg">
+      <div className="pointer-events-none fixed inset-0 opacity-40" style={{ backgroundImage: 'radial-gradient(var(--app-texture-dot) 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
       <main className="relative mx-auto max-w-4xl">
         <div className={`overflow-hidden rounded-3xl border bg-surface shadow-[0_30px_90px_rgba(15,23,42,0.12)] ${failed ? 'border-warn-line' : 'border-info-line'}`}>
           <div className={`border-b bg-gradient-to-r via-surface to-surface px-8 py-7 ${failed ? 'border-warn-line from-warn-soft' : 'border-info-line from-info-soft'}`}>
