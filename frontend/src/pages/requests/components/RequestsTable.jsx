@@ -215,7 +215,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
       return <span className={`inline-flex items-center rounded-md border px-2 py-[3px] text-xs leading-4 font-semibold ${family.className}`}><span>{family.label}</span></span>;
     }
     case 'upstreamName':
-      return <span className="block max-w-[190px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
+      return <span className="block max-w-[120px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
@@ -325,7 +325,7 @@ const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp
       {columns.map((col) => (
         <td
           key={col.id}
-          className={`px-3 py-3 ${col.align === 'right' ? 'text-right' : ''}`}
+          className={`px-2 py-3 ${col.align === 'right' ? 'text-right' : ''}`}
         >
           {renderCell(col.id, request, formatTimestamp)}
         </td>
@@ -409,7 +409,7 @@ const RequestsTable = ({
                 {visibleColumnConfigs.map(col => (
                   <th
                     key={col.id}
-                    className={`px-3 py-3 font-medium text-xs uppercase tracking-wider ${
+                    className={`px-2 py-3 font-medium text-xs uppercase tracking-wider ${
                       col.align === 'right' ? 'text-right' : ''
                     }`}
                   >

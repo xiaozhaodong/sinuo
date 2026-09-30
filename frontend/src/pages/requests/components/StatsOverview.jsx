@@ -55,15 +55,20 @@ const formatPercent = (value) => `${value.toFixed(1)}%`;
  * value 为有限数值时走 count-up；staticText 用于不适合滚动的指标
  * （平均耗时会在 ms / s 之间切换单位，滚动过程中单位跳变很难看，
  *  改成值变化时用 key 重挂载触发一次短高亮）。
+ * hint 只走 hover title，不占卡片高度：六张卡同排等高，任何一张多出一行
+ * 都会把整排撑高、其余卡片底部留白。
  */
-const KpiCard = ({ label, value, format, fallback, staticText, note, icon: Icon, tone }) => {
+const KpiCard = ({ label, value, format, fallback, staticText, hint, icon: Icon, tone }) => {
   const animatedValue = useCountUp(value);
   const isStatic = staticText !== undefined;
   const hasValue = Number.isFinite(animatedValue);
   const display = isStatic ? staticText : (hasValue ? format(animatedValue) : fallback);
 
   return (
-    <div className="bg-surface p-4 rounded-xl shadow-sm border border-line/60 hover:border-accent-line transition-all group">
+    <div
+      className="bg-surface p-4 rounded-xl shadow-sm border border-line/60 hover:border-accent-line transition-all group"
+      title={hint || undefined}
+    >
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-medium text-fg-muted">{label}</span>
         <div className={`p-1.5 rounded-md ${tone}`}>
@@ -78,7 +83,6 @@ const KpiCard = ({ label, value, format, fallback, staticText, note, icon: Icon,
           {display}
         </span>
       </div>
-      {note && <div className="mt-2 text-xs text-fg-muted">{note}</div>}
     </div>
   );
 };
@@ -109,7 +113,7 @@ const StatsOverview = ({ stats, total = 0, isBlurred = false }) => {
     { label: '总Token数 (M)', value: totalTokens, format: formatTokens, icon: FileText, tone: 'tone-indigo' },
     {
       label: '失败请求', value: failedRequests, format: formatCount, icon: XCircle, tone: 'tone-rose',
-      note: Number.isFinite(interruptedRequests) ? `另有 ${formatCount(interruptedRequests)} 次中断 · 不计为成功或失败` : null
+      hint: Number.isFinite(interruptedRequests) ? `另有 ${formatCount(interruptedRequests)} 次中断 · 不计为成功或失败` : null
     }
   ];
 

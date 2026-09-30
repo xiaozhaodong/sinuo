@@ -90,7 +90,7 @@ const ModelTag = ({ model, compact = false, alert = null }) => {
   return (
     <>
       <span
-        className={`inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-[3px] align-middle text-[13px] leading-4 font-mono transition-all ${compact ? 'max-w-[172px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${colorClasses}`}
+        className={`inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-[3px] align-middle text-[13px] leading-4 font-mono transition-all ${compact ? 'max-w-[152px] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-accent-soft' : ''} ${colorClasses}`}
         tabIndex={hasTooltip ? 0 : undefined}
         data-model-alert={isMismatch ? 'mismatch' : undefined}
         aria-describedby={tooltipAnchor ? tooltipId : undefined}

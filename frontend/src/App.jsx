@@ -159,7 +159,7 @@ const AppRoutes = () => {
 
       {/* 主内容区 */}
       <main id="app-scroll-container" className="flex-1 min-h-0 overflow-y-auto overscroll-none relative z-10">
-        <div className="max-w-7xl mx-auto px-6 pt-8 pb-20">
+        <div className="max-w-7xl mx-auto px-6 pt-8 pb-8">
           <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
             {renderPage()}
           </Suspense>
