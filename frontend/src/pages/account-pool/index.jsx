@@ -3,7 +3,7 @@
 // 2026-03-22
 // ============================================
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
@@ -80,7 +80,7 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
   return `${label}失败，失败 ${failedCount} 个${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}`;
 };
 
-const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null }) => {
+const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
   const { timezone } = useTimezone();
   const { notice, showNotice, closeNotice } = useNotice();
   const { accounts, loading, error, loadData } = useAccountPoolAccounts();
@@ -136,6 +136,15 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
   const [codexModelRoutingOpen, setCodexModelRoutingOpen] = useState(false);
   const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
+  const consumedModelRoutingRequestRef = useRef(null);
+
+  useEffect(() => {
+    const requestId = modelRoutingOpenRequest?.requestId;
+    if (!active || requestId === undefined || requestId === consumedModelRoutingRequestRef.current) return;
+    consumedModelRoutingRequestRef.current = requestId;
+    setCodexModelRoutingOpen(true);
+    onModelRoutingOpenRequestHandled?.();
+  }, [active, modelRoutingOpenRequest, onModelRoutingOpenRequestHandled]);
 
   const dashboardModel = useMemo(
     () => buildAccountPoolDashboardModel({ accounts, latestScheduleSnapshot, timezone }),

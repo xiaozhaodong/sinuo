@@ -1,146 +1,59 @@
-// ============================================
-// 请求追踪：Claude 模型路由快捷切换器（左模型列表 / 右端点策略）
-// 2026-09-04
-// ============================================
+import { useMemo, useState } from 'react';
+import { AlertCircle } from 'lucide-react';
+import { ENDPOINT_STATUS_LABELS, bindingDisplayName, isWebToolsBinding } from '../../endpoints/utils/modelRouting.js';
+import BindingList from './route-switcher/BindingList.jsx';
+import AutoScheduleRow from './route-switcher/AutoScheduleRow.jsx';
+import RouteTargetRow from './route-switcher/RouteTargetRow.jsx';
+import ManageFooter from './route-switcher/ManageFooter.jsx';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, LockKeyhole, RotateCcw, Route } from 'lucide-react';
-import { ENDPOINT_STATUS_LABELS, bindingDisplayName, isWebToolsBinding, routeModeLabel } from '../../endpoints/utils/modelRouting.js';
-
-const dotTone = (endpoint) => {
-  if (endpoint.status === 'ok') return 'bg-success-solid';
-  if (['cooldown', 'auto_schedule_disabled'].includes(endpoint.status)) return 'bg-warn';
-  return 'bg-danger-solid';
+const describeMode = (binding) => {
+  const count = (binding.endpoints || []).length;
+  if (binding.route_mode === 'manual_fixed') return `只用 ${binding.route_target || '指定端点'}，不可用时直接失败`;
+  if (binding.route_mode === 'manual_preferred') return `优先用 ${binding.route_target || '指定端点'}，不可用时回落到其余端点`;
+  return `在 ${count} 个端点里按优先级与健康状态挑选`;
 };
 
-const modeBadge = (binding) => {
-  if (!binding.enabled) return { text: '停用', cls: 'text-fg-subtle' };
-  if (binding.route_mode === 'manual_fixed') return { text: '固定', cls: 'text-rose-500' };
-  if (binding.route_mode === 'manual_preferred') return { text: '优选', cls: 'text-indigo-500' };
-  return { text: '自动', cls: 'text-fg-subtle' };
-};
-
-// embedded：嵌在 Claude 接入面板里，不渲染触发按钮，直接展开两栏内容
-const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false, embedded = false }) => {
-  const [open, setOpen] = useState(false);
+const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false, onOpenModelRouting }) => {
   const [selectedId, setSelectedId] = useState(null);
-  const ref = useRef(null);
+  const sorted = useMemo(() => [...bindings].sort((a, b) => Number(isWebToolsBinding(b)) - Number(isWebToolsBinding(a)) || Number(b.enabled) - Number(a.enabled) || bindingDisplayName(a).localeCompare(bindingDisplayName(b))), [bindings]);
+  const selected = sorted.find((binding) => binding.assignment_id === selectedId) || sorted[0] || null;
+  const patch = async (binding, change) => onPatch?.(binding, change);
 
-  // 联网工具映射是覆盖规则、优先于模型映射，置顶展示；其余按启用状态与模型名排序。
-  const sorted = useMemo(
-    () => [...bindings].sort(
-      (a, b) => Number(isWebToolsBinding(b)) - Number(isWebToolsBinding(a))
-        || Number(b.enabled) - Number(a.enabled)
-        || bindingDisplayName(a).localeCompare(bindingDisplayName(b))
-    ),
-    [bindings]
-  );
-  const modelCount = sorted.filter((b) => !isWebToolsBinding(b)).length;
-  const hasWebTools = sorted.some(isWebToolsBinding);
-  const manualCount = sorted.filter((b) => b.enabled && b.route_mode !== 'auto').length;
-  const selected = sorted.find((b) => b.assignment_id === selectedId) || sorted[0] || null;
-
-  useEffect(() => {
-    const close = (event) => { if (ref.current && !ref.current.contains(event.target)) setOpen(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, []);
-
-  const patch = async (binding, change) => {
-    await onPatch?.(binding, change);
-  };
+  if (!sorted.length) {
+    return <div><div className="flex items-center gap-2 px-4 py-6 text-sm text-fg-subtle"><AlertCircle className="h-4 w-4" />尚无模型映射，所有 Claude 请求都会返回未分配错误</div><ManageFooter description="增删映射、调整端点集合在「Claude 管理 → 端点」" onClick={onOpenModelRouting} /></div>;
+  }
 
   return (
-    <div ref={ref} className="relative">
-      {!embedded && <button
-        type="button"
-        disabled={loading}
-        onClick={() => setOpen((v) => !v)}
-        title="模型路由启用中，按请求模型选择上游端点；点击可调整每个模型的策略"
-        className="flex w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent disabled:opacity-50 lg:w-[190px] xl:w-[220px]"
-      >
-        <Route className="h-3.5 w-3.5 shrink-0 text-accent" />
-        <span className="min-w-0 flex-1 truncate text-left">Claude: 模型路由 · {modelCount} 模型{hasWebTools ? ' + 联网' : ''}</span>
-        {manualCount > 0 && <span className="shrink-0 text-[10px] text-fg-subtle">{manualCount} 手动</span>}
-      </button>}
-
-      {(embedded || open) && (
-        <div className={embedded ? 'overflow-x-auto' : 'absolute left-0 top-full z-50 mt-2 w-[540px] overflow-hidden rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline'}>
-          {sorted.length === 0 ? (
-            <div className="flex items-center gap-2 px-4 py-6 text-sm text-fg-subtle">
-              <AlertCircle className="h-4 w-4" />尚无模型映射，所有 Claude 请求都会返回未分配错误
-            </div>
-          ) : (
-            <div className={`flex max-h-[380px] ${embedded ? 'min-w-[520px]' : ''}`}>
-              {/* 左栏：模型列表 */}
-              <div className="w-[220px] shrink-0 overflow-y-auto border-r border-line-soft py-1">
-                {sorted.map((binding) => {
-                  const badge = modeBadge(binding);
-                  const active = selected?.assignment_id === binding.assignment_id;
-                  return (
-                    <button
-                      key={binding.assignment_id}
-                      type="button"
-                      onClick={() => setSelectedId(binding.assignment_id)}
-                      className={`flex w-full items-center gap-2 px-3 py-2 text-left ${active ? 'bg-accent-soft' : 'hover:bg-surface-sub'}`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className={`truncate text-xs ${isWebToolsBinding(binding) ? '' : 'font-mono'} ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={bindingDisplayName(binding)}>{bindingDisplayName(binding)}</div>
-                        <div className="truncate text-[10px] text-fg-subtle">
-                          {binding.enabled ? routeModeLabel(binding.route_mode, binding.route_target) : '已停用'}
-                          {binding.enabled && binding.last_effective_endpoint ? ` · 最近 ${binding.last_effective_endpoint}` : ''}
-                        </div>
-                      </div>
-                      <span className={`shrink-0 text-[10px] ${badge.cls}`}>{badge.text}</span>
-                    </button>
-                  );
-                })}
+    <div>
+      <div className="flex max-h-[380px]">
+        <BindingList
+          bindings={sorted}
+          selectedId={selected?.assignment_id}
+          onSelect={setSelectedId}
+          displayName={bindingDisplayName}
+          isWebTools={isWebToolsBinding}
+          modeOf={(binding) => binding.route_mode}
+          getSubtitle={(binding) => {
+            if (!binding.enabled) return '已停用';
+            if (binding.route_mode !== 'auto') return `→ ${binding.route_target || '未选择'}`;
+            return binding.last_effective_endpoint ? `自动 · 最近 ${binding.last_effective_endpoint}` : '自动';
+          }}
+        />
+        <div className="min-w-0 flex-1 max-h-[380px] overflow-y-auto">
+          {selected && !selected.enabled && <div className="px-4 py-4 text-xs text-fg-subtle">该映射已停用，请到端点页启用后再切换策略</div>}
+          {selected && selected.enabled && (
+            <>
+              <div className="px-4 pb-2 pt-3"><h3 className="text-sm font-semibold text-fg">{isWebToolsBinding(selected) ? '联网工具' : <span className="font-mono">{selected.model}</span>}</h3><p className="mt-0.5 text-[11px] text-fg-muted">{describeMode(selected)}</p></div>
+              <div className="px-2 pb-2">
+                <AutoScheduleRow isCurrent={selected.route_mode === 'auto'} onRestore={() => patch(selected, { route_mode: 'auto' })} loading={loading} />
+                {(selected.endpoints || []).length === 0 && <div className="px-2 py-3 text-xs text-fg-subtle">未选择任何端点</div>}
+                {(selected.endpoints || []).map((endpoint) => <RouteTargetRow key={endpoint.name} target={{ name: endpoint.name, title: endpoint.detail || endpoint.name, value: endpoint.name, priority: endpoint.priority, statusLabel: endpoint.status === 'ok' ? undefined : (ENDPOINT_STATUS_LABELS[endpoint.status] || endpoint.status), statusClass: endpoint.status === 'ok' ? 'text-success' : endpoint.status === 'cooldown' || endpoint.status === 'auto_schedule_disabled' ? 'text-warn' : 'text-danger', indicatorClass: endpoint.status === 'ok' ? 'bg-success-solid' : endpoint.status === 'cooldown' || endpoint.status === 'auto_schedule_disabled' ? 'bg-warn-solid' : 'bg-danger-solid', lastHit: selected.last_effective_endpoint === endpoint.name }} mode={selected.route_mode} isCurrent={selected.route_mode !== 'auto' && selected.route_target === endpoint.name} loading={loading} onCommit={(change) => patch(selected, change)} />)}
               </div>
-
-              {/* 右栏：所选模型的端点与策略 */}
-              <div className="min-w-0 flex-1 overflow-y-auto py-1">
-                {selected && !selected.enabled && (
-                  <div className="px-3 py-4 text-xs text-fg-subtle">该映射已停用，请到端点页启用后再切换策略</div>
-                )}
-                {selected && selected.enabled && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={() => patch(selected, { route_mode: 'auto' })}
-                      className={`mx-1 flex w-[calc(100%-8px)] items-center gap-2 rounded-lg px-2 py-2 text-left text-xs disabled:opacity-50 ${selected.route_mode === 'auto' ? 'bg-accent-soft text-accent-fg' : 'text-fg-body hover:bg-surface-sub'}`}
-                    >
-                      <RotateCcw size={13} className="shrink-0" />
-                      <span className="flex-1">自动调度</span>
-                      {selected.route_mode === 'auto' && <Check size={13} />}
-                    </button>
-                    <div className="mx-3 my-1 border-t border-line-soft" />
-                    {selected.endpoints.length === 0 && <div className="px-3 py-3 text-xs text-fg-subtle">未选择任何端点</div>}
-                    {selected.endpoints.map((endpoint) => {
-                      const preferred = selected.route_mode === 'manual_preferred' && selected.route_target === endpoint.name;
-                      const fixed = selected.route_mode === 'manual_fixed' && selected.route_target === endpoint.name;
-                      return (
-                        <div key={endpoint.name} className={`mx-1 flex items-center gap-2 rounded-lg px-2 py-1.5 ${preferred || fixed ? 'bg-surface-sub' : 'hover:bg-surface-sub'}`}>
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${dotTone(endpoint)}`} />
-                          <span className="min-w-0 flex-1 truncate text-xs text-fg-body" title={endpoint.detail || endpoint.name}>{endpoint.name}</span>
-                          {endpoint.status !== 'ok'
-                            ? <span className="shrink-0 text-[10px] text-warn">{ENDPOINT_STATUS_LABELS[endpoint.status] || endpoint.status}</span>
-                            : <span className="shrink-0 font-mono text-[10px] text-fg-subtle">P{endpoint.priority}</span>}
-                          <div className="flex shrink-0 gap-1">
-                            <button type="button" disabled={loading} title="优先用此端点，不可用时回落" onClick={() => patch(selected, { route_mode: 'manual_preferred', route_target: endpoint.name })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${preferred ? 'tone-indigo' : 'border-line text-fg-muted hover:border-accent-line hover:text-accent'}`}><Route size={11} />优选</button>
-                            <button type="button" disabled={loading} title="只用此端点，不可用时直接失败" onClick={() => patch(selected, { route_mode: 'manual_fixed', route_target: endpoint.name })} className={`inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] disabled:opacity-50 ${fixed ? 'tone-rose' : 'border-line text-fg-muted hover:border-rose-300 hover:text-rose-500'}`}><LockKeyhole size={11} />固定</button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
-            </div>
+            </>
           )}
-          <div className="border-t border-line-soft px-4 py-2 text-[11px] text-fg-subtle">新增、删除映射或调整端点集合，请前往「Claude 管理 → 端点 → 模型路由」</div>
         </div>
-      )}
+      </div>
+      <ManageFooter description="增删映射、调整端点集合在「Claude 管理 → 端点」" onClick={onOpenModelRouting} />
     </div>
   );
 };

@@ -5,7 +5,7 @@
 // 按钮与面板通过 `${idPrefix}-tab-${id}` / `${idPrefix}-panel-${id}` 关联，
 // 面板由页面自己渲染并设置 role="tabpanel"。
 
-const PageTabs = ({ tabs, activeTab, onChange, idPrefix, ariaLabel }) => (
+const PageTabs = ({ tabs, activeTab, onChange, idPrefix, ariaLabel, size = 'md' }) => (
   <div
     role="tablist"
     aria-label={ariaLabel}
@@ -14,6 +14,7 @@ const PageTabs = ({ tabs, activeTab, onChange, idPrefix, ariaLabel }) => (
     {tabs.map((tab) => {
       const Icon = tab.icon;
       const selected = activeTab === tab.id;
+      const sizeClass = size === 'sm' ? 'rounded-md px-3 py-1 text-xs' : 'rounded-md px-3 py-1.5 text-sm';
       return (
         <button
           key={tab.id}
@@ -23,13 +24,13 @@ const PageTabs = ({ tabs, activeTab, onChange, idPrefix, ariaLabel }) => (
           aria-selected={selected}
           aria-controls={`${idPrefix}-panel-${tab.id}`}
           onClick={() => onChange?.(tab.id)}
-          className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+          className={`inline-flex items-center gap-2 ${sizeClass} font-medium transition-colors ${
             selected
               ? 'bg-surface text-accent shadow-sm'
               : 'text-fg-muted hover:bg-surface/60 hover:text-fg-body'
           }`}
         >
-          <Icon size={15} className="shrink-0" />
+          {Icon && <Icon size={size === 'sm' ? 13 : 15} className="shrink-0" />}
           {tab.label}
         </button>
       );

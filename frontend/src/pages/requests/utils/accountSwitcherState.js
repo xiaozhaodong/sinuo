@@ -57,13 +57,16 @@ const resolveDisplayedActiveAccount = ({
 const resolveFallbackRouteLabel = ({
   modelRoutingEnabled = false,
   activeAccount = null,
-  modelRouteBindingCount = null
+  modelRouteBindingCount = null,
+  compact = false
 } = {}) => {
   if (modelRoutingEnabled) {
     if (!Number.isInteger(modelRouteBindingCount)) {
       return '模型路由';
     }
-    return modelRouteBindingCount > 0 ? `模型路由 · ${modelRouteBindingCount} 模型` : '模型路由 · 尚无绑定';
+    return compact
+      ? (modelRouteBindingCount > 0 ? `${modelRouteBindingCount} 模型` : '尚无绑定')
+      : (modelRouteBindingCount > 0 ? `模型路由 · ${modelRouteBindingCount} 模型` : '模型路由 · 尚无绑定');
   }
   const name = String(activeAccount?.account_name ?? activeAccount?.accountName ?? '').trim();
   return name || 'Auto';

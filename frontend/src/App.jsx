@@ -77,6 +77,8 @@ const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [activeCodexTab, setActiveCodexTab] = useState('accounts');
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
+  const [claudeModelRoutingOpenRequest, setClaudeModelRoutingOpenRequest] = useState(null);
+  const [codexModelRoutingOpenRequest, setCodexModelRoutingOpenRequest] = useState(null);
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   // 一旦进入迁移 / 恢复流程就停在迁移页直到就绪：重试与迁移收尾阶段后端也会短暂报 initializing，
   // 不据此切回启动画面，避免两页来回切换
@@ -137,6 +139,30 @@ const AppRoutes = () => {
     });
   }, []);
 
+  const navigateToClaudeModelRouting = useCallback(() => {
+    startTransition(() => {
+      setActiveClaudeTab('endpoints');
+      setClaudeModelRoutingOpenRequest({ requestId: Date.now() });
+      setActiveTab('endpoints');
+    });
+  }, []);
+
+  const navigateToCodexModelRouting = useCallback(() => {
+    startTransition(() => {
+      setActiveCodexTab('accounts');
+      setCodexModelRoutingOpenRequest({ requestId: Date.now() });
+      setActiveTab('account-pool');
+    });
+  }, []);
+
+  const clearClaudeModelRoutingOpenRequest = useCallback(() => {
+    setClaudeModelRoutingOpenRequest(null);
+  }, []);
+
+  const clearCodexModelRoutingOpenRequest = useCallback(() => {
+    setCodexModelRoutingOpenRequest(null);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -186,12 +212,12 @@ const AppRoutes = () => {
     const pages = {
       // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
       overview: <OverviewPage onNavigate={switchTab} />,
-      endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} />,
-      requests: <RequestsPage />,
+      endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} modelRoutingOpenRequest={claudeModelRoutingOpenRequest} onModelRoutingOpenRequestHandled={clearClaudeModelRoutingOpenRequest} />,
+      requests: <RequestsPage onOpenClaudeModelRouting={navigateToClaudeModelRouting} onOpenCodexModelRouting={navigateToCodexModelRouting} onNavigateToCodexAccess={navigateToCodexAccess} />,
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,
-      'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} />,
+      'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} modelRoutingOpenRequest={codexModelRoutingOpenRequest} onModelRoutingOpenRequestHandled={clearCodexModelRoutingOpenRequest} />,
       // v5.1: 设置页面（可编辑）
       settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} onNavigateToClaudeAccess={navigateToClaudeAccess} />,
       // 保留只读配置页面

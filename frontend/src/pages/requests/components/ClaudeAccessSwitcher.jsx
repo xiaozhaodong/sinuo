@@ -1,20 +1,10 @@
-// ============================================
-// 请求追踪：Claude 接入与路由快捷切换
-// 2026-09-24
-// ============================================
-// Claude Code 入口未启用时就是原来的端点策略切换器；启用后面板分「接入模式 / 端点策略」两页。
-// 接入模式只影响经入口的 Claude Code 请求，主端口始终使用端点策略。
-// 订阅直通模式下按钮角标显示剩余更少的额度窗口，「接入模式」页展示完整订阅额度。
-
 import { useId, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { AlertCircle, Check, ChevronDown, Loader2, RefreshCw, Route } from 'lucide-react';
+import { AlertCircle, Info, KeyRound, Route } from 'lucide-react';
 import useClaudeCodeEntry from '@components/claude-code-entry/useClaudeCodeEntry.js';
 import useClaudeSubscriptionRateLimit from '@components/claude-code-entry/useClaudeSubscriptionRateLimit.js';
 import SubscriptionRateLimitPanel from '@components/claude-code-entry/SubscriptionRateLimitPanel.jsx';
 import {
   CLAUDE_CODE_ENTRY_MODE_OPTIONS,
-  describeClaudeCodeEntryMode,
   describeClaudeCodeEntryState,
   resolveClaudeAccessLabel
 } from '@components/claude-code-entry/claudeCodeEntryViewModel.js';
@@ -24,6 +14,9 @@ import {
 } from '@components/claude-code-entry/subscriptionRateLimit.js';
 import { resolveClaudeRouteLabel } from '../utils/claudeRouteLabel.js';
 import ClaudeEndpointSwitcher from './ClaudeEndpointSwitcher.jsx';
+import SwitcherPanel from './route-switcher/SwitcherPanel.jsx';
+import SwitcherTrigger from './route-switcher/SwitcherTrigger.jsx';
+import ModeCard from './route-switcher/ModeCard.jsx';
 import useAnchoredPanel from '@hooks/useAnchoredPanel.js';
 
 const PANEL_TABS = [
@@ -31,8 +24,19 @@ const PANEL_TABS = [
   { id: 'endpoint', label: '端点策略' }
 ];
 
+const modeIcon = (value) => (value === 'subscription' ? KeyRound : Route);
+
+const resolveHostPort = (baseUrl) => {
+  if (!baseUrl) return '';
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return String(baseUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  }
+};
+
 const ClaudeAccessSwitcher = (props) => {
-  const { routingState, modelRoutingEnabled = false, modelRouteBindings = [] } = props;
+  const { endpoints = [], routingState, modelRoutingEnabled = false, modelRouteBindings = [], onOpenModelRouting } = props;
   const { info, loading, busy, error, refresh, setMode } = useClaudeCodeEntry();
   const subscriptionQuota = useClaudeSubscriptionRateLimit();
   const [open, setOpen] = useState(false);
@@ -40,101 +44,89 @@ const ClaudeAccessSwitcher = (props) => {
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   const menuId = useId();
-  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: 560 });
-
-  if (!info?.enabled) return <ClaudeEndpointSwitcher {...props} />;
-
-  const routeLabel = resolveClaudeRouteLabel({ modelRoutingEnabled, bindings: modelRouteBindings, routingState });
+  const hasAvailableEndpoints = Array.isArray(endpoints) && endpoints.some((endpoint) => endpoint.availabilityEnabled !== false);
+  const endpointStrategyActive = !info || !info.enabled || info.mode === 'endpoint';
+  const routeLabel = resolveClaudeRouteLabel({ modelRoutingEnabled, bindings: modelRouteBindings, routingState, compact: Boolean(info?.enabled), hasAvailableEndpoints });
   const { label, detail } = resolveClaudeAccessLabel({ info, loading, error, routeLabel });
   const entryState = describeClaudeCodeEntryState(info);
-  const ready = info.running && !info.error;
-  const subscriptionMode = info.mode === 'subscription';
+  const ready = Boolean(info?.running && !info?.error);
+  const subscriptionMode = info?.mode === 'subscription';
   const quotaBadge = subscriptionMode ? describeSubscriptionQuotaBadge(subscriptionQuota.quota, subscriptionQuota.nowMs) : null;
   const quotaSummary = subscriptionMode ? describeSubscriptionQuotaSummary(subscriptionQuota.quota, subscriptionQuota.nowMs) : '';
   const triggerTitle = `Claude 接入：${label}${detail ? `（${detail}）` : ''}${quotaSummary ? `；订阅额度 ${quotaSummary}` : ''}；点击切换接入模式或调整端点策略`;
+  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: !info?.enabled && !modelRoutingEnabled ? 400 : 560 });
+  const handleOpenModelRouting = () => {
+    setOpen(false);
+    onOpenModelRouting?.();
+  };
 
   const chooseMode = (mode) => {
-    if (busy || mode === info.mode) return;
+    if (busy || mode === info?.mode) return;
     setMode(mode);
   };
 
+  const accessTab = info?.enabled && (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center gap-2 text-xs text-fg-muted">
+        <span className={`h-1.5 w-1.5 rounded-full ${ready ? 'bg-success-solid' : info?.error ? 'bg-danger-solid' : 'bg-warn-solid'}`} />
+        {entryState.label}
+        {resolveHostPort(info?.baseUrl) && <><span className="text-fg-subtle">·</span><span className="font-mono text-fg-subtle">{resolveHostPort(info.baseUrl)}</span></>}
+      </div>
+      {error && <p role="alert" className="flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft p-3 text-xs text-danger"><AlertCircle size={15} className="shrink-0" /><span>{error}</span></p>}
+      {!ready && <p className="rounded-lg border border-warn-line bg-warn-soft p-3 text-xs leading-relaxed text-warn">{info?.error ? `入口未能启动：${info.error}` : '入口未在监听。'}请到「Claude 管理 → 客户端接入」检查；接入模式仍可先保存。</p>}
+      <div role="radiogroup" aria-label="接入模式" className="grid grid-cols-2 gap-2">
+        {CLAUDE_CODE_ENTRY_MODE_OPTIONS.map((option) => (
+          <ModeCard
+            key={option.value}
+            card={{ ...option, Icon: modeIcon(option.value) }}
+            selected={info?.mode === option.value}
+            disabled={busy}
+            meta={option.value === 'endpoint' ? `当前策略：${resolveClaudeRouteLabel({ modelRoutingEnabled, bindings: modelRouteBindings, routingState, hasAvailableEndpoints })}` : '不经端点与模型路由'}
+            onSelect={() => chooseMode(option.value)}
+          />
+        ))}
+      </div>
+      <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-fg-subtle" title="切换立即对新请求生效，进行中的请求不受影响"><Info size={12} className="mt-0.5 shrink-0" />只影响经入口的 Claude Code 请求，主端口始终走端点策略</p>
+      {subscriptionMode && subscriptionQuota.available && <SubscriptionRateLimitPanel quota={subscriptionQuota.quota} error={subscriptionQuota.error} refreshing={subscriptionQuota.refreshing} nowMs={subscriptionQuota.nowMs} onRefresh={subscriptionQuota.refresh} />}
+    </div>
+  );
+
+  const endpointTab = (
+    <div>
+      {subscriptionMode && <div className="flex items-center gap-2 border-b border-line-soft bg-surface-sub px-4 py-2 text-[11px] text-fg-muted"><Info size={12} className="shrink-0" />当前接入模式为订阅直通，这里的策略只影响主端口请求</div>}
+      <ClaudeEndpointSwitcher {...props} embedded onOpenModelRouting={handleOpenModelRouting} />
+    </div>
+  );
+
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-expanded={open}
-        aria-controls={menuId}
-        aria-label={`Claude 接入与路由：${label}`}
-        onClick={() => { if (!open) refresh(); setOpen((value) => !value); }}
+      <SwitcherTrigger
+        triggerRef={triggerRef}
+        menuId={menuId}
+        open={open}
+        brand="Claude"
+        label={label}
+        ariaLabel={`Claude 接入与路由：${label}${detail ? `（${detail}）` : ''}`}
+        warn={Boolean(error) || (Boolean(info?.enabled) && !ready) || (!modelRoutingEnabled && endpointStrategyActive && !hasAvailableEndpoints)}
+        busy={busy || (loading && !info)}
+        badge={quotaBadge ? { ...quotaBadge, text: `${quotaBadge.label} ${quotaBadge.remainingPercent.toFixed(0)}%` } : null}
         title={triggerTitle}
-        className="flex h-9 w-[170px] shrink-0 items-center gap-2 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-fg-body shadow-sm hover:border-accent-line hover:text-accent lg:w-[190px] xl:w-[220px]"
+        onClick={() => { if (!open) refresh(); setOpen((value) => !value); }}
+      />
+      <SwitcherPanel
+        open={open}
+        position={position}
+        panelRef={panelRef}
+        panelId={menuId}
+        title={info?.enabled ? 'Claude 接入' : 'Claude 路由'}
+        tabs={info?.enabled ? PANEL_TABS : null}
+        activeTab={tab}
+        onTabChange={setTab}
+        refresh={info?.enabled ? refresh : null}
+        refreshing={loading || busy}
       >
-        {busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : <Route size={14} className={`shrink-0 ${ready ? 'text-accent' : 'text-warn'}`} />}
-        <span className="min-w-0 flex-1 truncate text-left">Claude: {label}</span>
-        {quotaBadge && <span className={`shrink-0 text-[10px] font-semibold ${quotaBadge.toneClass}`}>{quotaBadge.label} {quotaBadge.remainingPercent.toFixed(0)}%</span>}
-        <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-
-      {open && position && createPortal(
-        <div ref={panelRef} id={menuId} style={position} className="fixed z-50 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl ring-1 ring-hairline motion-popover origin-top-left">
-          <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-surface-sub px-4 py-3">
-            <div><h2 className="text-sm font-semibold text-fg">Claude 接入与路由</h2><p className="mt-0.5 text-[11px] text-fg-subtle">Claude Code 入口接入模式 · 端点调度策略</p></div>
-            <button type="button" onClick={refresh} disabled={loading || busy} title="重新读取入口状态" aria-label="刷新 Claude Code 入口状态" className="rounded-lg border border-line p-1.5 text-fg-muted hover:bg-surface disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
-          </div>
-          <div className="flex gap-1 border-b border-line-soft p-2">
-            {PANEL_TABS.map((item) => <button key={item.id} type="button" aria-pressed={tab === item.id} onClick={() => setTab(item.id)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium ${tab === item.id ? 'bg-accent-soft text-accent-fg' : 'text-fg-muted hover:bg-surface-sub'}`}>{item.label}</button>)}
-          </div>
-
-          {error && <p role="alert" className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft p-3 text-xs text-danger"><AlertCircle size={15} className="shrink-0" /><span>{error}</span></p>}
-
-          {tab === 'access' ? (
-            <div className="space-y-3 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-muted">
-                <span>Claude Code 入口：<span className={ready ? 'text-success' : 'text-warn'}>{entryState.label}</span></span>
-                {info.baseUrl && <span className="font-mono text-fg-subtle">{info.baseUrl}</span>}
-              </div>
-              {!ready && (
-                <p className="rounded-lg border border-warn-line bg-warn-soft p-3 text-xs leading-relaxed text-warn">
-                  {info.error ? `入口未能启动：${info.error}` : '入口未在监听。'}请到「Claude 管理 → 客户端接入」检查；接入模式仍可先保存。
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                {CLAUDE_CODE_ENTRY_MODE_OPTIONS.map((option) => {
-                  const selected = info.mode === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      disabled={busy || selected}
-                      onClick={() => chooseMode(option.value)}
-                      className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold disabled:cursor-default ${selected ? 'border-accent-line bg-accent-soft text-accent-fg' : 'border-line text-fg-muted hover:bg-surface-sub disabled:opacity-50'}`}
-                    >
-                      {selected && <Check size={15} />}{option.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-xs leading-relaxed text-fg-muted">{describeClaudeCodeEntryMode(info.mode).hint}</p>
-              <p className="text-[11px] leading-relaxed text-fg-subtle">切换立即对新请求生效，进行中的请求不受影响；只影响经入口的 Claude Code 请求，主端口始终使用端点策略。</p>
-              {subscriptionMode && subscriptionQuota.available && (
-                <SubscriptionRateLimitPanel
-                  quota={subscriptionQuota.quota}
-                  error={subscriptionQuota.error}
-                  refreshing={subscriptionQuota.refreshing}
-                  nowMs={subscriptionQuota.nowMs}
-                  onRefresh={subscriptionQuota.refresh}
-                />
-              )}
-            </div>
-          ) : (
-            <div>
-              <p className="border-b border-line-soft px-4 py-3 text-[11px] leading-relaxed text-fg-muted">端点策略作用于主端口请求，以及接入模式为「端点」时的 Claude Code 请求；订阅直通不经过这里。</p>
-              <ClaudeEndpointSwitcher {...props} embedded />
-            </div>
-          )}
-        </div>, document.body
-      )}
+        {info?.enabled ? (tab === 'access' ? accessTab : endpointTab) : <ClaudeEndpointSwitcher {...props} embedded onOpenModelRouting={handleOpenModelRouting} />}
+      </SwitcherPanel>
     </>
   );
 };

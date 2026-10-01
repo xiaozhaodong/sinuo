@@ -17,7 +17,7 @@ test('Claude 管理页承载端点与客户端接入两个页签', async () => {
   assert.match(source, /label: '端点'/);
   assert.match(source, /label: '客户端接入'/);
   assert.match(source, /<PageTabs tabs=\{TABS\}/);
-  assert.match(source, /<EndpointsPage embedded active=\{activeTab === 'endpoints'\} headerTarget=\{endpointActionsTarget\} \/>/);
+  assert.match(source, /<EndpointsPage embedded active=\{activeTab === 'endpoints'\} headerTarget=\{endpointActionsTarget\}[^>]*\/>/);
   assert.match(source, /<ClaudeCodeEntryCard \/>/);
   assert.match(source, /hidden=\{activeTab !== 'endpoints'\}/);
   assert.match(source, /hidden=\{activeTab !== 'client-access'\}/);

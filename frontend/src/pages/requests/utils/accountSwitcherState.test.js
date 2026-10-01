@@ -91,6 +91,14 @@ test('resolveFallbackRouteLabel 说明独立入口未运行时请求实际走哪
   // 绑定数已知时随模型路由一起展示；没有绑定要说清楚，而不是显示 0 模型
   assert.equal(resolveFallbackRouteLabel({ modelRoutingEnabled: true, modelRouteBindingCount: 3 }), '模型路由 · 3 模型');
   assert.equal(resolveFallbackRouteLabel({ modelRoutingEnabled: true, modelRouteBindingCount: 0 }), '模型路由 · 尚无绑定');
+  assert.equal(
+    resolveFallbackRouteLabel({ modelRoutingEnabled: true, modelRouteBindingCount: 3, compact: true }),
+    '3 模型'
+  );
+  assert.equal(
+    resolveFallbackRouteLabel({ modelRoutingEnabled: true, modelRouteBindingCount: 0, compact: true }),
+    '尚无绑定'
+  );
   // 未开模型路由时绑定数不参与标签
   assert.equal(
     resolveFallbackRouteLabel({ modelRoutingEnabled: false, activeAccount: { account_name: 'primary-a' }, modelRouteBindingCount: 3 }),

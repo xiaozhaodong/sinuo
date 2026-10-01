@@ -52,7 +52,7 @@ import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
 // Requests 页面
 // ============================================
 
-const RequestsPage = () => {
+const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNavigateToCodexAccess }) => {
   // ==================== 状态管理 ====================
   const { notice, showNotice, closeNotice } = useNotice();
 
@@ -634,6 +634,9 @@ const RequestsPage = () => {
             onClaudeEndpointSwitch={handleClaudeEndpointSwitch}
             onRestoreClaudeAuto={handleRestoreClaudeAuto}
             onClearRouteCache={handleClearRouteCache}
+            onOpenClaudeModelRouting={onOpenClaudeModelRouting}
+            onOpenCodexModelRouting={onOpenCodexModelRouting}
+            onNavigateToCodexAccess={onNavigateToCodexAccess}
             routeSwitching={routeSwitching}
             accounts={accounts}
             activeAccount={activeAccount}

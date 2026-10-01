@@ -13,6 +13,11 @@ export const SUBSCRIPTION_PROXY_MODE_OPTIONS = [
   { value: 'pool', label: '账号池' }
 ];
 
+export const SUBSCRIPTION_PROXY_MODE_SHORT_HINTS = {
+  subscription: '客户端自带凭据直连 ChatGPT Codex 后端',
+  pool: 'Responses 发往池上游，剥离客户端身份头'
+};
+
 // 池模式不能暗示“输入内容全部匿名”：只剥离客户端身份头，正文仍按当前隐私设置处理。
 export const SUBSCRIPTION_PROXY_MODE_HINTS = {
   subscription: 'Responses 使用客户端自带的本次凭据直连 ChatGPT Codex 后端，不经过账号池。',

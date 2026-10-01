@@ -12,8 +12,8 @@ test('AccountPoolSwitcher uses explicit group semantics instead of legacy tier l
 
   assert.match(source, /group_key|groupKey/);
   assert.match(source, /Auto\s*\/\s*按编排|按编排自动调度|切回 Auto/);
-  assert.match(source, /bg-sky-400|bg-sky-500|bg-cyan-400|bg-cyan-500/);
-  assert.doesNotMatch(source, /const activeIndicatorClass = isAutoMode \? 'bg-slate-400'/);
+  assert.match(source, /AutoScheduleRow/);
+  assert.doesNotMatch(source, /activeIndicatorClass|activeIndicatorPingClass/);
   assert.match(source, /组内顺序/);
   assert.doesNotMatch(source, /const activePriority/);
   assert.doesNotMatch(source, /顺序 \{activePriority\}/);
@@ -21,4 +21,6 @@ test('AccountPoolSwitcher uses explicit group semantics instead of legacy tier l
   assert.doesNotMatch(source, /compareAccountsByManualPriority/);
   assert.doesNotMatch(source, /P\$\{priority\}/);
   assert.doesNotMatch(source, /第 \$\{index \+ 1\} 层/);
+  assert.match(source, /SEARCH_THRESHOLD = 8/);
+  assert.doesNotMatch(source, /tone-indigo|tone-cyan|tone-violet/);
 });

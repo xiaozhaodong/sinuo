@@ -62,6 +62,9 @@ const Toolbar = ({
   onClaudeEndpointSwitch,
   onRestoreClaudeAuto,
   onClearRouteCache,
+  onOpenClaudeModelRouting,
+  onOpenCodexModelRouting,
+  onNavigateToCodexAccess,
   routeSwitching = false,
   accounts = [],
   activeAccount = null,
@@ -83,6 +86,7 @@ const Toolbar = ({
         onSwitch={onClaudeEndpointSwitch}
         onRestoreAuto={onRestoreClaudeAuto}
         onClearRouteCache={onClearRouteCache}
+        onOpenModelRouting={onOpenClaudeModelRouting}
         loading={routeSwitching}
       />
 
@@ -97,6 +101,8 @@ const Toolbar = ({
         onSwitch={onAccountSwitch}
         onSwitchAuto={onEnableAutoSelection}
         accountSwitching={accountSwitching}
+        onOpenModelRouting={onOpenCodexModelRouting}
+        onNavigateToCodexAccess={onNavigateToCodexAccess}
       />
 
       <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>

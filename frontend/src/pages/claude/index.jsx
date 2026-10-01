@@ -22,7 +22,7 @@ const TABS = [
   }
 ];
 
-const ClaudePage = ({ activeTab = 'endpoints', onTabChange }) => {
+const ClaudePage = ({ activeTab = 'endpoints', onTabChange, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
   const [endpointActionsTarget, setEndpointActionsTarget] = useState(null);
 
   return (
@@ -51,7 +51,7 @@ const ClaudePage = ({ activeTab = 'endpoints', onTabChange }) => {
         aria-labelledby="claude-tab-endpoints"
         hidden={activeTab !== 'endpoints'}
       >
-        <EndpointsPage embedded active={activeTab === 'endpoints'} headerTarget={endpointActionsTarget} />
+        <EndpointsPage embedded active={activeTab === 'endpoints'} headerTarget={endpointActionsTarget} modelRoutingOpenRequest={modelRoutingOpenRequest} onModelRoutingOpenRequestHandled={onModelRoutingOpenRequestHandled} />
       </section>
 
       <section

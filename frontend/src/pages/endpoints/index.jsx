@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, AlertTriangle, Boxes, Database, Info, Plus, RefreshCw, Route, Split } from 'lucide-react';
 import { Button, ErrorMessage, LoadingSpinner } from '@components/ui';
@@ -34,7 +34,7 @@ const readStoredViewMode = () => {
 
 // embedded：嵌在「Claude 管理」页签内，标题交给外层，操作按钮渲染到 headerTarget；
 // active=false（切到其他页签）时暂停快照轮询、收起抽屉与弹窗
-const EndpointsPage = ({ embedded = false, active = true, headerTarget = null }) => {
+const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
@@ -50,6 +50,16 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null })
   const [busyKey, setBusyKey] = useState('');
   const [actionError, setActionError] = useState('');
   const [viewMode, setViewMode] = useState(readStoredViewMode);
+  const consumedModelRoutingRequestRef = useRef(null);
+
+  useEffect(() => {
+    const requestId = modelRoutingOpenRequest?.requestId;
+    if (!active || requestId === undefined || requestId === consumedModelRoutingRequestRef.current) return;
+    consumedModelRoutingRequestRef.current = requestId;
+    // 这是一次性导航请求的消费点；请求来自父级路由状态，不能在渲染阶段直接打开抽屉。
+    setRoutingOpen(true);
+    onModelRoutingOpenRequestHandled?.();
+  }, [active, modelRoutingOpenRequest, onModelRoutingOpenRequestHandled]);
 
   const changeViewMode = (mode) => {
     setViewMode(mode);

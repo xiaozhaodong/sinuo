@@ -7,11 +7,13 @@ export const CLAUDE_CODE_ENTRY_MODE_OPTIONS = [
   {
     value: 'subscription',
     label: '订阅直通',
+    shortHint: '用 claude.ai 登录直连 Anthropic 官方',
     hint: '全部请求带 Claude Code 自己的 claude.ai 登录直连 Anthropic，官方 5h / 周额度照常显示；不经过端点与模型路由。'
   },
   {
     value: 'endpoint',
     label: '端点',
+    shortHint: '与主端口相同，转发到第三方端点',
     hint: '与主端口相同，按全局路由或模型路由使用第三方端点；订阅额度用完或暂停订阅时切到这里。'
   }
 ];
@@ -72,5 +74,5 @@ export const resolveClaudeAccessLabel = ({ info = null, loading = false, error =
   if (info.error) return { label: '入口启动失败', detail: info.error };
   if (!info.running) return { label: '入口未运行', detail: '' };
   if (info.mode === 'endpoint') return { label: `端点 · ${routeLabel}`, detail: '' };
-  return { label: describeClaudeCodeEntryMode(info.mode).label, detail: '' };
+  return { label: '订阅', detail: '' };
 };

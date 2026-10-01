@@ -22,7 +22,7 @@ const TABS = [
   }
 ];
 
-const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
+const CodexPage = ({ activeTab = 'accounts', onTabChange, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
   // 客户端入口首次访问后保持挂载，页签切换不会清掉只展示一次的明文密钥；
   // 离开整个 Codex 管理页时组件仍会卸载，避免扩大明文留存范围。
   const [clientAccessVisited, setClientAccessVisited] = useState(activeTab === 'client-access');
@@ -61,7 +61,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
         aria-labelledby="codex-tab-accounts"
         hidden={activeTab !== 'accounts'}
       >
-        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} />
+        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} modelRoutingOpenRequest={modelRoutingOpenRequest} onModelRoutingOpenRequestHandled={onModelRoutingOpenRequestHandled} />
       </section>
 
       <section

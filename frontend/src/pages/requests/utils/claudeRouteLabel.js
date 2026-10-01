@@ -7,11 +7,12 @@ import { isWebToolsBinding } from '../../endpoints/utils/modelRouting.js';
  * @param {{modelRoutingEnabled?:boolean, bindings?:Array, routingState?:object}} state
  * @returns {string}
  */
-export const resolveClaudeRouteLabel = ({ modelRoutingEnabled = false, bindings = [], routingState = {} } = {}) => {
+export const resolveClaudeRouteLabel = ({ modelRoutingEnabled = false, bindings = [], routingState = {}, compact = false, hasAvailableEndpoints } = {}) => {
   if (modelRoutingEnabled) {
     const modelCount = bindings.filter((binding) => !isWebToolsBinding(binding)).length;
-    return `模型路由 · ${modelCount} 模型`;
+    return compact ? `${modelCount} 模型` : `模型路由 · ${modelCount} 模型`;
   }
+  if (hasAvailableEndpoints === false) return '无可用端点';
   const state = routingState || {};
   const mode = state.mode || 'auto';
   if (mode === 'auto') {
