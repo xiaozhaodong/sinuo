@@ -38,7 +38,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
   return (
     <div className="bg-surface rounded-2xl border border-line/60 shadow-sm flex flex-col overflow-hidden">
       <div className="flex flex-col gap-2 p-5 pb-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <div className="p-1.5 tone-violet rounded-md">
               <Boxes size={16} />
@@ -53,7 +53,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
           type="button"
           onClick={() => openRequests({})}
           disabled={!canOpen}
-          className="inline-flex items-center gap-1 self-start text-xs font-medium text-accent hover:text-accent-fg"
+          className="inline-flex shrink-0 items-center gap-1 self-start whitespace-nowrap text-xs font-medium text-accent hover:text-accent-fg"
         >
           查看请求明细
           <ExternalLink size={12} />
