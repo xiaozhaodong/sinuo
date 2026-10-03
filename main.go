@@ -94,6 +94,7 @@ func main() {
 		Description:  fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
 		Icon:         icon,
 		MarshalError: marshalWailsError,
+		ShouldQuit:   app.shouldQuit,
 		ErrorHandler: func(err error) {
 			if app.logger != nil {
 				app.logger.Error("Wails 运行时错误", "error", err)
@@ -105,8 +106,10 @@ func main() {
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Mac: application.MacOptions{
-			ApplicationShouldTerminateAfterLastWindowClosed: true,
+			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
+		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true},
+		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 	})
 	app.wailsApp = wailsApp
 	if runtime.GOOS == "darwin" {
@@ -123,6 +126,7 @@ func main() {
 		Height:    800,
 		MinWidth:  1024,
 		MinHeight: 600,
+		Hidden:    runtime.GOOS == "windows",
 		// 背景色在窗口创建到 WebView 首帧之间可见；v3 默认构建下透明配置为空操作，
 		// 因此保持窗口不透明并使用暗色 canvas #0b1120，避免首帧前显示 clearColor。
 		BackgroundColour: application.NewRGBA(11, 17, 32, 255),
@@ -144,6 +148,7 @@ func main() {
 	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
 		app.domReady()
 	})
+	app.setupTray(window)
 	wailsApp.RegisterService(application.NewService(app))
 
 	if err := wailsApp.Run(); err != nil {

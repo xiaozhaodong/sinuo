@@ -108,6 +108,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 	svc := &SettingsService{
 		store: store,
 		categoryLabels: map[string]CategoryInfo{
+			CategoryDesktop: {Name: CategoryDesktop, Label: "桌面", Description: "窗口关闭与系统托盘", Icon: "🖥️", Order: 11},
 			CategoryAuth: {
 				Name:        CategoryAuth,
 				Label:       "访问鉴权",
@@ -424,6 +425,7 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 	var defaults []*store.SettingRecord
 
 	defaults = append(defaults, codexIdentityDefaults()...)
+	defaults = append(defaults, desktopDefaults()...)
 
 	// Server 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryServer)...)
@@ -463,6 +465,8 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 // getDefaultsForCategory 获取分类的默认设置
 func (s *SettingsService) getDefaultsForCategory(category string) []*store.SettingRecord {
 	switch category {
+	case CategoryDesktop:
+		return desktopDefaults()
 	case CategoryCodexIdentity:
 		return codexIdentityDefaults()
 	case CategoryServer:

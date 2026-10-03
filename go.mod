@@ -15,6 +15,7 @@ require (
 	github.com/wailsapp/wails/v3 v3.0.0-beta.27
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
+	golang.org/x/text v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.44.3
 )

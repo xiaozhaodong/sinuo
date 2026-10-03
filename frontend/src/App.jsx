@@ -10,7 +10,8 @@ import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
-import { getMigrationStatus, getSystemStatus } from '@utils/wailsApi.js';
+import { getMigrationStatus, getSystemStatus, isWailsEnvironment } from '@utils/wailsApi.js';
+import { connectTrayNavigation } from '@utils/trayNavigation.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 // 概览是启动首屏，直接打进入口：懒加载只会在启动时多出一段 Suspense 占位（React 19 至少停留 300ms）
@@ -161,6 +162,19 @@ const AppRoutes = () => {
 
   const clearCodexModelRoutingOpenRequest = useCallback(() => {
     setCodexModelRoutingOpenRequest(null);
+  }, []);
+
+  useEffect(() => {
+    if (!isWailsEnvironment()) return undefined;
+    return connectTrayNavigation(() => import('@wailsio/runtime'), (route) => {
+      startTransition(() => {
+        setActiveTab(route.tab);
+        if (route.claudeTab) setActiveClaudeTab(route.claudeTab);
+        if (route.codexTab) setActiveCodexTab(route.codexTab);
+        if (route.modelRouting === 'claude') setClaudeModelRoutingOpenRequest({ requestId: Date.now() });
+        if (route.modelRouting === 'codex') setCodexModelRoutingOpenRequest({ requestId: Date.now() });
+      });
+    }, (error) => console.error('托盘导航初始化失败:', error));
   }, []);
 
   useEffect(() => {

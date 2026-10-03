@@ -19,7 +19,8 @@ import {
   Hash,
   Archive,
   ImageIcon,
-  TerminalSquare
+  TerminalSquare,
+  Monitor
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
 import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
@@ -31,8 +32,10 @@ import {
   getAllSettings,
   batchUpdateSettings,
   resetCategorySettings,
-  getPortInfo
+  getPortInfo,
+  subscribeToEvent
 } from '@utils/wailsApi.js';
+import { resolveErrorMessage } from '@utils/errors.js';
 import {
   fetchSettingCategories,
   fetchAllSettings,
@@ -52,7 +55,8 @@ const CATEGORY_ICONS = {
   token_counting: Hash,
   retention: Archive,
   image_generation: ImageIcon,
-  codex_identity: TerminalSquare
+  codex_identity: TerminalSquare,
+  desktop: Monitor
 };
 
 // ============================================
@@ -112,10 +116,26 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
     loadSettings();
   }, [loadSettings]);
 
+  useEffect(() => {
+    if (!isWails) return undefined;
+    let cancelled = false;
+    const unsubscribe = subscribeToEvent('desktop:settings-update', () => {
+      getAllSettings().then((updated) => {
+        if (cancelled) return;
+        // 只同步托盘设置，保留设置页尚未保存的其他编辑。
+        setSettings((current) => current.map((item) => item.category === 'desktop'
+          ? (updated.find((next) => next.category === item.category && next.key === item.key) || item)
+          : item));
+      }).catch((error) => { if (!cancelled) setSaveMessage({ type: 'error', text: resolveErrorMessage(error) }); });
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [isWails]);
+
   // 按分类组织设置
   const settingsByCategory = useMemo(() => {
     const grouped = {};
     for (const setting of settings) {
+      if (setting.category === 'desktop' && setting.key === 'tray_hint_shown') continue;
       if (!grouped[setting.category]) {
         grouped[setting.category] = [];
       }

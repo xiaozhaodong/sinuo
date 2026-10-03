@@ -32,6 +32,9 @@ type wailsRequestBroadcaster struct {
 // emit 是 Go 侧唯一的 Wails 事件出口。应用尚未完成 v3 runtime 初始化时静默跳过，
 // 保留旧版 ctx nil 判断的语义。
 func (a *App) emit(name string, data any) {
+	if a != nil {
+		a.notifyTray(name)
+	}
 	if a == nil || a.closing.Load() || a.ctx == nil || a.wailsApp == nil || a.wailsApp.Event == nil {
 		return
 	}

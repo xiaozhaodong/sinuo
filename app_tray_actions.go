@@ -1,0 +1,116 @@
+package main
+
+import (
+	"fmt"
+	"strconv"
+
+	"cc-forwarder/internal/tray"
+)
+
+// executeTrayAction 只调用现有写入方法，不直接操作服务或数据库。
+func (a *App) executeTrayAction(action tray.Action) error {
+	switch action.Kind {
+	case "claude":
+		if action.Mode == "auto" {
+			_, err := a.ClearClaudeRoutingOverride()
+			return err
+		}
+		_, err := a.SetClaudeRoutingOverride(SetClaudeRoutingOverrideInput{
+			Mode: action.Mode, EndpointName: action.Target, FallbackEnabled: action.Mode == "manual_preferred",
+		})
+		return err
+	case "claude_binding":
+		return updateTrayClaudeBinding(a, action)
+	case "codex_binding":
+		return updateTrayCodexBinding(a, action)
+	case "entry":
+		_, err := a.SetClaudeCodeEntryMode(action.Mode)
+		return err
+	case "codex":
+		if action.Mode == "auto" {
+			result, err := a.EnableAutomaticAccountSelection()
+			return trayActionResult(result.Success, result.Message, err)
+		}
+		result, err := a.PinUpstreamAccountSelection(action.ID)
+		return trayActionResult(result.Success, result.Message, err)
+	case "close_to_tray":
+		current, err := a.readTraySetting("close_to_tray", true)
+		if err != nil {
+			return err
+		}
+		return a.UpdateSetting(UpdateSettingInput{Category: "desktop", Key: "close_to_tray", Value: strconv.FormatBool(!current)})
+	}
+	return fmt.Errorf("未知托盘操作: %s", action.Kind)
+}
+
+func trayActionResult(success bool, message string, err error) error {
+	if err != nil {
+		return err
+	}
+	if !success {
+		return fmt.Errorf("操作未生效: %s", message)
+	}
+	return nil
+}
+
+type trayBindingAPI interface {
+	ListModelRouteBindings() ([]ModelRouteBindingInfo, error)
+	UpdateModelRouteBinding(int64, ModelRouteBindingInput) error
+	ListCodexModelRouteBindings() ([]CodexModelRouteBindingInfo, error)
+	UpdateCodexModelRouteBinding(int64, CodexModelRouteBindingInput) error
+}
+
+func updateTrayClaudeBinding(api trayBindingAPI, action tray.Action) error {
+	bindings, err := api.ListModelRouteBindings()
+	if err != nil {
+		return err
+	}
+	for _, b := range bindings {
+		if b.AssignmentID != action.ID {
+			continue
+		}
+		if !b.Enabled {
+			return fmt.Errorf("模型映射已停用，请到主窗口启用")
+		}
+		names := make([]string, 0, len(b.Endpoints))
+		for _, ep := range b.Endpoints {
+			names = append(names, ep.Name)
+		}
+		target := action.Target
+		if action.Mode == "auto" {
+			target = ""
+		}
+		return api.UpdateModelRouteBinding(b.AssignmentID, ModelRouteBindingInput{
+			Kind: b.Kind, Model: b.Model, Endpoints: names, Enabled: b.Enabled, Note: b.Note,
+			RouteMode: action.Mode, RouteTarget: target,
+		})
+	}
+	return fmt.Errorf("模型映射已被删除，请重新打开托盘菜单")
+}
+
+func updateTrayCodexBinding(api trayBindingAPI, action tray.Action) error {
+	bindings, err := api.ListCodexModelRouteBindings()
+	if err != nil {
+		return err
+	}
+	for _, b := range bindings {
+		if b.AssignmentID != action.ID {
+			continue
+		}
+		if !b.Enabled {
+			return fmt.Errorf("模型绑定已停用，请到主窗口启用")
+		}
+		target := int64(0)
+		if action.Mode != "auto" {
+			target, err = strconv.ParseInt(action.Target, 10, 64)
+			if err != nil || target <= 0 {
+				return fmt.Errorf("无效的托盘账号目标")
+			}
+		}
+		return api.UpdateCodexModelRouteBinding(b.AssignmentID, CodexModelRouteBindingInput{
+			Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, Enabled: b.Enabled, Note: b.Note,
+			RouteMode: action.Mode, RouteTargetID: target,
+		})
+	}
+	return fmt.Errorf("模型绑定已被删除，请重新打开托盘菜单")
+}

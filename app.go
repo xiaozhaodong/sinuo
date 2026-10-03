@@ -39,6 +39,7 @@ type App struct {
 	// Wails v3 应用与生命周期上下文
 	ctx      context.Context
 	wailsApp *application.App
+	tray     *appTray
 
 	// startupMu 串行化首次异步启动与前端重试，避免迁移/组件初始化重入。
 	startupMu   sync.Mutex
@@ -158,6 +159,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 // 因此使用独立的关闭上下文保留原有超时与关闭顺序。
 func (a *App) ServiceShutdown() error {
 	a.closing.Store(true)
+	a.stopTray()
 	if a.startupDone != nil {
 		<-a.startupDone
 	}
@@ -948,6 +950,7 @@ func (a *App) setupProxyHandler() {
 	// 创建中间件
 	a.loggingMiddleware = middleware.NewLoggingMiddleware(a.logger)
 	a.monitoringMiddleware = middleware.NewMonitoringMiddleware(a.endpointManager)
+	a.attachTrayMetrics(a.monitoringMiddleware.GetMetrics())
 	a.authMiddleware = middleware.NewAuthMiddleware(a.config.Auth)
 
 	// 连接组件
@@ -1240,6 +1243,7 @@ func (a *App) setupSettingsStore() {
 	// 设置配置变更回调 - 热更新
 	a.settingsService.SetOnChangeCallback(func() {
 		a.applySettingsToConfig()
+		a.notifyTray(EventConfigReloaded)
 	})
 
 	// 初始化默认设置（如果表为空）

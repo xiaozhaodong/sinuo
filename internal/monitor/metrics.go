@@ -54,6 +54,7 @@ type Metrics struct {
 	// Connection metrics
 	ActiveConnections map[string]*ConnectionInfo
 	ConnectionHistory []*ConnectionInfo
+	activeListeners   map[chan struct{}]struct{}
 
 	// System metrics
 	StartTime time.Time
@@ -203,6 +204,7 @@ func (m *Metrics) RecordRequest(endpoint, clientIP, userAgent, method, path stri
 	}
 
 	m.ActiveConnections[connID] = conn
+	m.notifyActiveConnectionsLocked()
 
 	return connID
 }
@@ -282,6 +284,7 @@ func (m *Metrics) RecordResponse(connID string, statusCode int, responseTime tim
 		// Move to history and remove from active
 		m.ConnectionHistory = append(m.ConnectionHistory, conn)
 		delete(m.ActiveConnections, connID)
+		m.notifyActiveConnectionsLocked()
 
 		// Limit history size
 		if len(m.ConnectionHistory) > 1000 {
@@ -953,6 +956,7 @@ func (m *Metrics) RecordRequestSuspendTimeout(connID string) {
 		// Move to history since the request failed due to timeout
 		m.ConnectionHistory = append(m.ConnectionHistory, conn)
 		delete(m.ActiveConnections, connID)
+		m.notifyActiveConnectionsLocked()
 
 		// Limit history size
 		if len(m.ConnectionHistory) > 1000 {
