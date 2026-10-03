@@ -1,8 +1,8 @@
 #!/bin/bash
-# 更新 wails dev 开发模式下的应用图标
+# 更新 wails3 dev 开发模式下的应用图标
 
 PNG_ICON="build/appicon.png"
-APP_ICON="build/bin/AI-Switchboard.app/Contents/Resources/iconfile.icns"
+APP_ICON="bin/AI-Switchboard.app/Contents/Resources/icons.icns"
 ICONSET_DIR="build/tmp.iconset"
 
 echo "🎨 更新开发模式应用图标..."
@@ -33,4 +33,4 @@ rm -rf ~/Library/Caches/com.apple.iconservices.store
 killall Dock 2>/dev/null
 
 echo "✅ 图标更新完成！Dock 已刷新"
-echo "💡 请重启应用: 先 Ctrl+C 停止 wails dev，然后重新运行"
+echo "💡 请重启应用: 先 Ctrl+C 停止 wails3 dev，然后重新运行"

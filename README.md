@@ -107,8 +107,8 @@ AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌�
 ### 方式二：从源码构建
 
 ```bash
-# 1. 安装 Wails CLI
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+# 1. 安装 Wails v3 CLI
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
 
 # 2. 克隆项目
 git clone https://github.com/xiaozhaodong/cc-forwarder-desktop.git
@@ -118,10 +118,10 @@ cd cc-forwarder-desktop
 cd frontend && npm install && cd ..
 
 # 4. 开发模式运行
-wails dev
+wails3 dev -config ./build/config.yml -port 9245
 
 # 5. 构建生产版本
-wails build
+wails3 task build
 ```
 
 ### 配置 Claude Code

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.25'
   NODE_VERSION: '20'
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
 
       - name: Install frontend dependencies
         run: |
@@ -61,13 +61,13 @@ jobs:
         run: |
           PLATFORM="${{ matrix.platform }}"
           ARCH="${PLATFORM#*/}"
-          wails build -platform ${{ matrix.platform }} -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
+          wails3 task darwin:package ARCH="$ARCH" LDFLAGS="-w -s -X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         run: |
           PLATFORM="${{ matrix.platform }}"
           ARCH="${PLATFORM#*/}"
-          cd build/bin
+          cd bin
 
           # 创建 ZIP
           if [ -d "AI-Switchboard.app" ]; then
@@ -78,7 +78,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ai-switchboard-darwin-${{ matrix.platform == 'darwin/amd64' && 'amd64' || 'arm64' }}
-          path: build/bin/*.zip
+          path: bin/*.zip
 
   build-windows:
     name: Build Windows
@@ -98,7 +98,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
 
       - name: Install frontend dependencies
         run: |
@@ -120,22 +120,22 @@ jobs:
           echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Build
-        run: wails build -platform windows/amd64 -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
+        run: wails3 task windows:build ARCH=amd64 LDFLAGS="-w -s -H windowsgui -X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path "build/bin/AI-Switchboard.exe" -DestinationPath "build/bin/AI-Switchboard-windows-amd64.zip"
+          Compress-Archive -Path "bin/AI-Switchboard.exe" -DestinationPath "bin/AI-Switchboard-windows-amd64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ai-switchboard-windows-amd64
-          path: build/bin/*.zip
+          path: bin/*.zip
 
   build-linux:
     name: Build Linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -153,10 +153,10 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.0-dev
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
 
       - name: Install frontend dependencies
         run: |
@@ -177,18 +177,18 @@ jobs:
           echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Build
-        run: wails build -platform linux/amd64 -ldflags "-X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
+        run: wails3 task linux:build ARCH=amd64 LDFLAGS="-w -s -X main.Version=${{ env.VERSION_NUM }} -X main.Commit=${{ env.COMMIT }} -X main.BuildTime=${{ env.BUILD_TIME }}"
 
       - name: Package
         run: |
-          cd build/bin
+          cd bin
           tar -czf "AI-Switchboard-linux-amd64.tar.gz" "AI-Switchboard"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ai-switchboard-linux-amd64
-          path: build/bin/*.tar.gz
+          path: bin/*.tar.gz
 
   release:
     name: Create Release

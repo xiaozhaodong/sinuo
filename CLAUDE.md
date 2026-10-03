@@ -6,9 +6,9 @@
 
 **AI Switchboard**（工程代号 cc-forwarder-desktop） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
 
-- 技术栈：Go + Wails v2 + React + Vite + SQLite
+- 技术栈：Go + Wails v3 + React + Vite + SQLite
 - 平台：macOS / Windows / Linux
-- 版本号以 `main.go` 与 `wails.json` 为准，不在此文档中硬编码
+- 版本号以 `main.go` 与 `build/config.yml` 为准，不在此文档中硬编码
 
 ### 当前核心能力
 
@@ -161,7 +161,7 @@
 - `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`；订阅额度面板 `SubscriptionRateLimitPanel`、hook `useClaudeSubscriptionRateLimit` 与纯函数 `subscriptionRateLimit.js` 也在这里，由请求页 Claude 按钮使用
 - `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）；订阅直通模式下带额度角标与额度区
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
-- `frontend/src/wailsjs/go/*`：Wails 生成的前端绑定
+- `frontend/src/bindings/*`：Wails v3 生成的前端绑定
 
 ## 关键数据流
 
@@ -230,13 +230,14 @@
 ## 常用命令
 
 ```bash
-# Wails 开发
-wails dev
+# Wails v3 开发
+wails3 dev -config ./build/config.yml -port 9245
 
 # 直接运行 Go 程序
 go run . -config config/config.yaml
 
-# 构建
+# Wails v3 构建
+wails3 task build
 go build ./...
 cd frontend && npm run build
 ```

@@ -11,7 +11,7 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 # 2. 复制可执行文件
-cp build/bin/AI-Switchboard.exe "$DIST_DIR/"
+cp bin/AI-Switchboard.exe "$DIST_DIR/"
 echo "  ✅ 复制可执行文件"
 
 # 3. 创建配置目录和示例配置

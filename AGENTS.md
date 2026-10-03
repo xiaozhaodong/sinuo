@@ -19,7 +19,7 @@
 ## 构建、测试与开发命令
 - `go build -o ai-switchboard`：构建本地二进制，默认启用当前平台。
 - `go run . -config config/config.yaml`：快速本地验证，支持 `--no-tui`。
-- `wails dev`：桌面端联调主入口。
+- `wails3 dev -config ./build/config.yml -port 9245`：桌面端联调主入口。
 - `cd frontend && npm run build`：验证前端与 Wails 绑定改动是否可打包。
 - `./scripts/build.sh vX.Y.Z`：多平台交叉编译并打包 dist，生成校验和。
 - `./scripts/run_tests.sh` 或 `--unit` / `--integration`：执行测试矩阵并输出 `test_reports`。
