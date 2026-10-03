@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 	"testing"
@@ -213,5 +214,75 @@ func TestTray_FullscreenCloseOnlyUsesDeferredHideOnMac(t *testing.T) {
 	}
 	if shouldLeaveTrayFullscreen("darwin", false) || shouldLeaveTrayFullscreen("windows", true) {
 		t.Fatal("非 macOS 或非全屏不应走退出全屏分支")
+	}
+}
+
+type fakeIconSetter struct{ frames [][]byte }
+
+func (f *fakeIconSetter) SetFrame(png []byte, _ bool) { f.frames = append(f.frames, png) }
+
+func TestTray_IconAnimatesDuringRequestsAndRefreshesHealthAfter(t *testing.T) {
+	metrics := monitor.NewMetrics()
+	setter := &fakeIconSetter{}
+	tc := &appTray{app: NewApp(), refresh: make(chan struct{}, 1), icon: newTrayIcon(setter)}
+	tc.icon.mac = true
+	tc.icon.motion = func() tray.Motion { return tray.MotionFlow }
+	tc.metrics.Store(metrics)
+	start := time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC)
+
+	connID := metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	if wait := tc.stepIcon(start); wait != tray.StartDelay || len(setter.frames) != 1 {
+		t.Fatalf("请求刚开始应保持静态并等待起播: wait=%v frames=%d", wait, len(setter.frames))
+	}
+	if wait := tc.stepIcon(start.Add(tray.StartDelay)); wait != tray.FrameInterval {
+		t.Fatalf("满 300ms 应开始逐帧: wait=%v", wait)
+	}
+	if want, _ := tray.IconFrame(tray.IconNormal, 0, true); !bytes.Equal(setter.frames[len(setter.frames)-1], want) {
+		t.Fatal("起播后应下发流光第 0 帧")
+	}
+	// 同一帧不重复下发
+	before := len(setter.frames)
+	tc.applyIcon(tray.IconNormal, 0)
+	if len(setter.frames) != before {
+		t.Fatal("相同的状态与帧不应重复设置图标")
+	}
+
+	metrics.RecordResponse(connID, 200, time.Millisecond, 0, "test")
+	now := start.Add(tray.StartDelay)
+	for i := 0; i < 100; i++ {
+		now = now.Add(tray.FrameInterval)
+		if tc.stepIcon(now) == 0 {
+			break
+		}
+	}
+	if want, _ := tray.IconFrame(tray.IconNormal, -1, true); !bytes.Equal(setter.frames[len(setter.frames)-1], want) {
+		t.Fatal("请求结束、尾巴过后应回到静态图标")
+	}
+	select {
+	case <-tc.refresh:
+	default:
+		t.Fatal("一段请求结束后应补算一次图标状态")
+	}
+}
+
+func TestTray_IconStatusChangeWakesIconLoop(t *testing.T) {
+	tc := &appTray{app: NewApp(), icon: newTrayIcon(&fakeIconSetter{})}
+	status := tc.setIconStatus(tray.Snapshot{Running: true, Endpoints: []tray.Endpoint{{Name: "a", Status: "冷却中", Available: true}}})
+	if status.State != tray.IconDegraded || !tc.icon.running.Load() {
+		t.Fatalf("应判为降级并记录代理运行: %+v", status)
+	}
+	select {
+	case <-tc.icon.wake:
+	default:
+		t.Fatal("状态变化应唤醒图标循环换图")
+	}
+	tc.setIconStatus(tray.Snapshot{Running: true, Endpoints: []tray.Endpoint{{Name: "a", Status: "冷却中", Available: true}}})
+	select {
+	case <-tc.icon.wake:
+		t.Fatal("状态不变不应重复唤醒")
+	default:
+	}
+	if got := trayTooltip("代理运行中 · 127.0.0.1:8088", status); got != "AI Switchboard · 代理运行中 · 127.0.0.1:8088 · Claude 没有可用端点" {
+		t.Fatalf("悬停提示应带降级原因: %s", got)
 	}
 }

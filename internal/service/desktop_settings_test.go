@@ -15,7 +15,7 @@ func TestDesktopSettings_DefaultsPersistenceAndMetadata(t *testing.T) {
 	if category == nil || category.Label != "桌面" {
 		t.Fatal("桌面分类未注册")
 	}
-	for key, want := range map[string]string{"close_to_tray": "true", "tray_hint_shown": "false"} {
+	for key, want := range map[string]string{"close_to_tray": "true", "request_animation": "true", "tray_hint_shown": "false"} {
 		row, err := svc.Get(ctx, CategoryDesktop, key)
 		if err != nil || row == nil || row.Value != want || row.ValueType != ValueTypeBool || row.RequiresRestart {
 			t.Fatalf("默认设置 %s 错误: %+v %v", key, row, err)
@@ -34,7 +34,7 @@ func TestDesktopSettings_DefaultsPersistenceAndMetadata(t *testing.T) {
 		t.Fatal("重启初始化不能覆盖已保存设置")
 	}
 	rows, err := svc.GetByCategory(ctx, CategoryDesktop)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("第一期只能注册两个桌面设置: %v %v", rows, err)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("桌面设置应为关窗驻留、请求动画与提示标记三项: %v %v", rows, err)
 	}
 }

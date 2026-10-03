@@ -32,6 +32,8 @@ type appTray struct {
 	stats                                            UsageSummary
 	statsAt                                          time.Time
 	statsErr                                         error
+	icon                                             trayIcon
+	tooltip                                          string // 只由刷新循环读写
 }
 
 type trayIconSetter struct{ native *application.SystemTray }
@@ -45,10 +47,12 @@ func (s trayIconSetter) SetFrame(png []byte, template bool) {
 }
 
 func (a *App) setupTray(window *application.WebviewWindow) {
-	t := &appTray{app: a, window: window, native: a.wailsApp.SystemTray.New(), menu: application.NewMenu(),
-		refresh: make(chan struct{}, 1), immediate: make(chan struct{}, 1), open: make(chan struct{}, 1), done: make(chan struct{})}
+	native := a.wailsApp.SystemTray.New()
+	t := &appTray{app: a, window: window, native: native, menu: application.NewMenu(),
+		refresh: make(chan struct{}, 1), immediate: make(chan struct{}, 1), open: make(chan struct{}, 1), done: make(chan struct{}),
+		icon: newTrayIcon(trayIconSetter{native})}
 	a.tray = t
-	tray.SetNormalIcon(trayIconSetter{t.native}, runtime.GOOS == "darwin")
+	t.applyIcon(tray.IconStopped, -1)
 	t.native.SetTooltip("AI Switchboard · 正在启动")
 	t.appendMenu(t.menu, tray.Build(tray.Snapshot{StartupState: "正在启动"}))
 	t.native.SetMenu(t.menu)
@@ -71,6 +75,7 @@ func (a *App) setupTray(window *application.WebviewWindow) {
 	a.wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		application.InvokeSync(installTrayPlatformHooks)
 		go t.refreshLoop()
+		go t.iconLoop()
 		t.signal(t.immediate)
 	})
 }
@@ -137,8 +142,10 @@ func (t *appTray) refreshLoop() {
 func (t *appTray) rebuild(open, force bool) {
 	snapshot := t.snapshot()
 	model := tray.Build(snapshot)
+	tooltip := trayTooltip(model[0].Label, t.setIconStatus(snapshot))
 	changed := force || !reflect.DeepEqual(t.model, model)
-	if t.closed.Load() || (!changed && !open) {
+	tooltipChanged := tooltip != t.tooltip
+	if t.closed.Load() || (!changed && !open && !tooltipChanged) {
 		return
 	}
 	application.InvokeSync(func() {
@@ -154,13 +161,15 @@ func (t *appTray) rebuild(open, force bool) {
 				t.appendMenu(t.menu, model)
 				t.native.SetMenu(t.menu)
 			}
-			t.native.SetTooltip("AI Switchboard · " + model[0].Label)
+		}
+		if tooltipChanged {
+			t.native.SetTooltip(tooltip)
 		}
 		if open && runtime.GOOS != "linux" {
 			t.native.OpenMenu()
 		}
 	})
-	t.model = model
+	t.model, t.tooltip = model, tooltip
 }
 
 func sameTrayMenuShape(previous, next []tray.Item) bool {
@@ -274,6 +283,7 @@ func (a *App) attachTrayMetrics(metrics *monitor.Metrics) {
 }
 
 func (t *appTray) handleActiveConnectionChange() {
+	t.signal(t.icon.wake)
 	active := t.activeCount()
 	if t.quit.Waiting() {
 		t.signal(t.refresh)

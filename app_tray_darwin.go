@@ -41,6 +41,10 @@ static int trayIsPowerOff(void) { return atomic_load(&trayPowerOff); }
 static void trayActivateForDialog(void) {
     [NSApp activateIgnoringOtherApps:YES];
 }
+
+static int trayReduceMotion(void) {
+    return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion] ? 1 : 0;
+}
 */
 import "C"
 
@@ -49,6 +53,7 @@ import "github.com/wailsapp/wails/v3/pkg/application"
 func installTrayPlatformHooks() { C.trayObservePowerOff() }
 func traySystemEnding() bool    { return C.trayIsPowerOff() != 0 }
 func trayActivateForDialog()    { C.trayActivateForDialog() }
+func trayReduceMotion() bool    { return C.trayReduceMotion() != 0 }
 
 func setTrayWindowVisible(window *application.WebviewWindow, visible bool) {
 	value := C.int(0)

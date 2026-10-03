@@ -60,6 +60,7 @@ func (a *App) emitSystemStatus() {
 
 	status := a.GetSystemStatus()
 	a.emit(EventSystemStatus, status)
+	a.notifyTrayRunning(status.ProxyRunning)
 }
 
 // emitEndpointUpdate 发送端点状态更新到前端

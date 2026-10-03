@@ -120,4 +120,7 @@ func (a *App) setMigrationStatus(status migration.Status) {
 	a.migrationMu.Lock()
 	a.migrationStatus = status
 	a.migrationMu.Unlock()
+	if a.tray != nil {
+		a.tray.signal(a.tray.refresh)
+	}
 }
