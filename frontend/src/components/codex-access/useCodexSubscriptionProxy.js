@@ -3,7 +3,8 @@ import {
   getCodexSubscriptionProxyConfig,
   getCodexSubscriptionProxyStatus,
   isWailsEnvironment,
-  saveCodexSubscriptionProxyConfig
+  saveCodexSubscriptionProxyConfig,
+  subscribeToEvent
 } from '@utils/wailsApi.js';
 import { createSubscriptionProxyController } from './subscriptionProxyOperations.js';
 
@@ -20,14 +21,11 @@ const useCodexSubscriptionProxy = () => {
     let cancelled = false;
     let unsubscribe;
     if (isWailsEnvironment()) {
-      import('@wailsjs/runtime/runtime').then(({ EventsOn }) => {
-        if (cancelled) return;
-        unsubscribe = EventsOn('codex-subscription-proxy:status', () => {
+      if (!cancelled) {
+        unsubscribe = subscribeToEvent('codex-subscription-proxy:status', () => {
           controller.refresh({ silent: true });
         });
-      }).catch((error) => {
-        if (!cancelled) controller.reportEventError(error);
-      });
+      }
     }
     return () => {
       cancelled = true;

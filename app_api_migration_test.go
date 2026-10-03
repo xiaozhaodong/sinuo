@@ -176,3 +176,56 @@ func TestGetMigrationStatusDoesNotWaitForAppLock(t *testing.T) {
 		t.Fatal("GetMigrationStatus blocked on the global app lock")
 	}
 }
+
+func TestGetSystemStatusDoesNotWaitForStartupAppLock(t *testing.T) {
+	app := NewApp()
+	app.configPath = "/tmp/config.yaml"
+
+	app.mu.Lock()
+	status := app.GetSystemStatus()
+	app.mu.Unlock()
+
+	if status.Version != Version || status.ConfigPath != "/tmp/config.yaml" || status.ProxyRunning {
+		t.Fatalf("startup snapshot = %+v", status)
+	}
+}
+
+func TestGetSystemStatusWaitsForAppLockAfterStartup(t *testing.T) {
+	app := NewApp()
+	close(app.startupDone)
+	app.mu.Lock()
+
+	done := make(chan SystemStatus, 1)
+	go func() {
+		done <- app.GetSystemStatus()
+	}()
+
+	select {
+	case status := <-done:
+		t.Fatalf("running status returned before app lock was released: %+v", status)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	app.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("GetSystemStatus did not resume after app lock was released")
+	}
+}
+
+func TestRetryStartupMigrationReturnsCurrentStatusWhileStartupBusy(t *testing.T) {
+	app := NewApp()
+	app.setMigrationStatus(migration.Status{State: migration.StartupInitializing})
+
+	app.startupMu.Lock()
+	status, err := app.RetryStartupMigration()
+	app.startupMu.Unlock()
+
+	if err != nil {
+		t.Fatalf("retry while startup is busy: %v", err)
+	}
+	if status.State != migration.StartupInitializing {
+		t.Fatalf("busy startup status = %+v", status)
+	}
+}

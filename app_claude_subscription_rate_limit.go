@@ -11,8 +11,6 @@ import (
 	"errors"
 
 	"cc-forwarder/internal/proxy"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // EventClaudeSubscriptionRateLimit 订阅额度状态变化后推送给前端
@@ -107,7 +105,7 @@ func (a *App) emitClaudeSubscriptionRateLimit(state proxy.ClaudeSubscriptionQuot
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventClaudeSubscriptionRateLimit, toClaudeSubscriptionRateLimitInfo(state))
+	a.emit(EventClaudeSubscriptionRateLimit, toClaudeSubscriptionRateLimitInfo(state))
 }
 
 func toClaudeSubscriptionRateLimitInfo(state proxy.ClaudeSubscriptionQuotaState) ClaudeSubscriptionRateLimitInfo {

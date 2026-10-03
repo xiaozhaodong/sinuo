@@ -10,8 +10,6 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const EventClaudeRoutingUpdate = "claude-routing:update"
@@ -326,7 +324,7 @@ func (a *App) emitClaudeRoutingUpdate(state ClaudeRoutingState) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventClaudeRoutingUpdate, state)
+	a.emit(EventClaudeRoutingUpdate, state)
 }
 
 func formatRouteTime(t time.Time) string {

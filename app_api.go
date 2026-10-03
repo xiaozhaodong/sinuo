@@ -50,7 +50,29 @@ type SystemStatus struct {
 
 // GetSystemStatus 获取系统状态
 func (a *App) GetSystemStatus() SystemStatus {
-	a.mu.RLock()
+	// 仅在 ServiceStartup 尚未完成时允许锁竞争降级为启动快照；运行期间
+	// 配置热重载持有写锁时必须等待，避免短暂返回 proxy_running=false。
+	startupPending := true
+	if a.startupDone != nil {
+		select {
+		case <-a.startupDone:
+			startupPending = false
+		default:
+		}
+	}
+	if startupPending && !a.mu.TryRLock() {
+		uptime := time.Since(a.startTime)
+		return SystemStatus{
+			Version:       Version,
+			Uptime:        formatDuration(uptime),
+			UptimeSeconds: int64(uptime.Seconds()),
+			StartTime:     formatAPITime(a.startTime),
+			ConfigPath:    a.configPath,
+		}
+	}
+	if !startupPending {
+		a.mu.RLock()
+	}
 	defer a.mu.RUnlock()
 
 	uptime := time.Since(a.startTime)

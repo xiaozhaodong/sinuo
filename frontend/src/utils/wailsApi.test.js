@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildEndpointRecordPayload,
   buildUpstreamAccountPayload,
+  isWailsEnvironment,
   mapEndpointRecord,
   mapUsageStats,
   normalizeUpstreamAccount,
@@ -15,6 +16,26 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
+
+test('Wails 环境识别覆盖 v3 的自定义协议与 Windows host', () => {
+  const originalWindow = globalThis.window;
+  try {
+    globalThis.window = { location: { protocol: 'wails:', hostname: 'wails' } };
+    assert.equal(isWailsEnvironment(), true);
+
+    globalThis.window = { location: { protocol: 'http:', hostname: 'wails.localhost' } };
+    assert.equal(isWailsEnvironment(), true);
+
+    globalThis.window = { location: { protocol: 'http:', hostname: 'localhost' } };
+    assert.equal(isWailsEnvironment(), false);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
 
 test('请求统计保留独立中断计数，不从总请求数猜测缺失字段', () => {
   const mapped = mapUsageStats({

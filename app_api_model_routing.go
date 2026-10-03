@@ -9,8 +9,6 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/service"
 	"cc-forwarder/internal/store"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const EventModelRoutingUpdate = "model-routing:update"
@@ -487,5 +485,5 @@ func (a *App) emitModelRoutingUpdate() {
 	if err != nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventModelRoutingUpdate, settings)
+	a.emit(EventModelRoutingUpdate, settings)
 }

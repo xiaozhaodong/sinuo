@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-forwarder/config"
@@ -29,14 +30,19 @@ import (
 	"cc-forwarder/internal/transport"
 	"cc-forwarder/internal/utils"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App 是 Wails 应用的核心结构
 // 它封装了所有业务组件，并暴露方法给前端调用
 type App struct {
-	// Wails 上下文
-	ctx context.Context
+	// Wails v3 应用与生命周期上下文
+	ctx      context.Context
+	wailsApp *application.App
+
+	// startupMu 串行化首次异步启动与前端重试，避免迁移/组件初始化重入。
+	startupMu   sync.Mutex
+	startupDone chan struct{}
 
 	// 核心组件
 	config               *config.Config
@@ -114,6 +120,7 @@ type App struct {
 	// 并发控制
 	mu        sync.RWMutex
 	isRunning bool
+	closing   atomic.Bool
 
 	// OpenAI OAuth 临时会话（用于授权链接 -> 回调URL换RT）
 	oauthSessionMu sync.Mutex
@@ -133,15 +140,36 @@ func NewApp() *App {
 	return &App{
 		startTime:              time.Now(),
 		logger:                 slog.Default(),
+		startupDone:            make(chan struct{}),
 		oauthSessions:          make(map[string]openAIOAuthSession),
 		cooldownPersistPending: make(map[string]cooldownPersistPendingEntry),
 	}
 }
 
-// startup 在 Wails 应用启动时调用
-// 这里初始化所有组件并启动代理服务器
-func (a *App) startup(ctx context.Context) {
+// ServiceStartup 只保存 v3 生命周期上下文，并异步执行数据库迁移与业务组件初始化。
+// 迁移期间前端仍可通过 GetMigrationStatus 显示恢复/进度页面。
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
+	go a.startup(ctx)
+	return nil
+}
+
+// ServiceShutdown 在 v3 应用退出时调用。v3 会在调用前取消应用上下文，
+// 因此使用独立的关闭上下文保留原有超时与关闭顺序。
+func (a *App) ServiceShutdown() error {
+	a.closing.Store(true)
+	if a.startupDone != nil {
+		<-a.startupDone
+	}
+	a.shutdown(context.Background())
+	return nil
+}
+
+// startup 在后台初始化所有组件并启动代理服务器。
+func (a *App) startup(ctx context.Context) {
+	a.startupMu.Lock()
+	defer a.startupMu.Unlock()
+	defer close(a.startupDone)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -407,22 +435,16 @@ func (a *App) shutdown(ctx context.Context) {
 	a.logger.Info("✅ AI Switchboard 已关闭")
 }
 
-// domReady 在前端 DOM 准备就绪时调用
-func (a *App) domReady(ctx context.Context) {
+// domReady 在 v3 WindowRuntimeReady 事件触发时调用。
+func (a *App) domReady() {
 	// 发送初始状态给前端
 	a.emitSystemStatus()
-}
-
-// beforeClose 在窗口关闭前调用，返回 true 阻止关闭
-func (a *App) beforeClose(ctx context.Context) bool {
-	// 可以在这里询问用户是否确认关闭
-	// 或者最小化到托盘而不是关闭
-	return false
 }
 
 // setupLogger 设置日志
 func (a *App) setupLogger() {
 	logger, broadcastHandler := setupLogger(a.config.Logging)
+	broadcastHandler.Emitter.SetEmitFunc(a.emit)
 	a.logger = logger
 	slog.SetDefault(logger)
 
@@ -1092,6 +1114,7 @@ func (a *App) setupConfigReload() {
 
 		// 更新日志
 		newLogger, newBroadcastHandler := setupLogger(newCfg.Logging)
+		newBroadcastHandler.Emitter.SetEmitFunc(a.emit)
 		slog.SetDefault(newLogger)
 		a.logger = newLogger
 		a.logHandler = newBroadcastHandler
@@ -1183,7 +1206,7 @@ func (a *App) startHistoryCollector() {
 // emitError 发送错误通知到前端
 func (a *App) emitError(title, message string) {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "error", map[string]string{
+		a.emit("error", map[string]string{
 			"title":   title,
 			"message": message,
 		})
@@ -1193,7 +1216,7 @@ func (a *App) emitError(title, message string) {
 // emitConfigReloaded 通知前端配置已重载
 func (a *App) emitConfigReloaded() {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "config:reloaded", nil)
+		a.emit("config:reloaded", nil)
 	}
 }
 

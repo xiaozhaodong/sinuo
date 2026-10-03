@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -19,11 +20,8 @@ import (
 	"cc-forwarder/internal/logging"
 	"cc-forwarder/internal/utils"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // 版本信息
@@ -89,79 +87,91 @@ func main() {
 		}
 	})
 
-	// 运行 Wails 应用
-	err := wails.Run(&options.App{
+	// 创建 v3 应用实例。ServiceStartup 只登记上下文并异步初始化业务组件，
+	// 这样迁移恢复页可以在后台启动期间正常显示。
+	wailsApp := application.New(application.Options{
+		Name:         "AI Switchboard",
+		Description:  fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
+		Icon:         icon,
+		MarshalError: marshalWailsError,
+		ErrorHandler: func(err error) {
+			if app.logger != nil {
+				app.logger.Error("Wails 运行时错误", "error", err)
+				return
+			}
+			slog.Default().Error("Wails 运行时错误", "error", err)
+		},
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
+		},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+	})
+	app.wailsApp = wailsApp
+	if runtime.GOOS == "darwin" {
+		menu := wailsApp.NewMenu()
+		menu.AddRole(application.AppMenu)
+		menu.AddRole(application.EditMenu)
+		menu.AddRole(application.WindowMenu)
+		wailsApp.Menu.Set(menu)
+	}
+
+	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "",
 		Width:     1280,
 		Height:    800,
 		MinWidth:  1024,
 		MinHeight: 600,
-
-		// 资源服务器
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-
-		// 背景色 (窗口创建到 webview 首帧之间可见，数十 ms)
-		// Go 侧静态值，读不到 localStorage，无法随主题切换。
-		// 取暗色 canvas #0b1120，暗色下与首帧无缝衔接；浅色下首帧前仍会先见一帧深色。
-		// A 的取值是 0~255：此前写 A: 1 等于近乎全透明，设定的颜色从未生效。
-		BackgroundColour: &options.RGBA{R: 11, G: 17, B: 32, A: 255},
-
-		// 生命周期回调
-		OnStartup:     app.startup,
-		OnDomReady:    app.domReady,
-		OnBeforeClose: app.beforeClose,
-		OnShutdown:    app.shutdown,
-
-		// 绑定到前端的方法
-		Bind: []interface{}{
-			app,
-		},
-
-		// 后端 error 回传前端的格式
-		ErrorFormatter: formatWailsError,
-
-		// macOS 配置
-		Mac: &mac.Options{
-			TitleBar: &mac.TitleBar{
-				TitlebarAppearsTransparent: true,
-				HideTitle:                  true,
-				HideTitleBar:               false,
-				FullSizeContent:            true,
-				UseToolbar:                 false,
+		// 背景色在窗口创建到 WebView 首帧之间可见；v3 默认构建下透明配置为空操作，
+		// 因此保持窗口不透明并使用暗色 canvas #0b1120，避免首帧前显示 clearColor。
+		BackgroundColour: application.NewRGBA(11, 17, 32, 255),
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropNormal,
+			TitleBar: application.MacTitleBar{
+				AppearsTransparent: true,
+				HideTitle:          true,
+				FullSizeContent:    true,
+				UseToolbar:         false,
 			},
-			About: &mac.AboutInfo{
-				Title:   "AI Switchboard",
-				Message: fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
-				Icon:    icon,
-			},
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  false,
 		},
-
-		// Windows 配置
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			DisableWindowIcon:    false,
+		Windows: application.WindowsWindow{
+			DisableIcon:  false,
+			BackdropType: application.None,
 		},
+		URL: "/",
 	})
+	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
+		app.domReady()
+	})
+	wailsApp.RegisterService(application.NewService(app))
 
-	if err != nil {
+	if err := wailsApp.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// formatWailsError 让前端 catch 到的错误带上可读文案。
-// Wails 默认只回传 err.Error() 字符串，前端拿到的不是 Error 实例，
-// err.message 恒为 undefined，所有 `err.message || '操作失败'` 都会丢掉真实原因。
-func formatWailsError(err error) any {
+// formatWailsError 提供给 MarshalError 的错误字段结构。
+// v3 前端最终收到的是 Error 实例，message 来自 err.Error()。
+func formatWailsError(err error) map[string]any {
 	if err == nil {
 		return nil
 	}
 	return map[string]any{"message": err.Error()}
+}
+
+// marshalWailsError：v3 前端收到的是 Error 实例，message 来自 err.Error()；
+// MarshalError 只决定序列化后的 cause 字段。
+func marshalWailsError(err error) []byte {
+	if err == nil {
+		return nil
+	}
+	payload, marshalErr := json.Marshal(formatWailsError(err))
+	if marshalErr != nil {
+		return nil
+	}
+	return payload
 }
 
 // ============================================================

@@ -31,7 +31,8 @@ import {
   normalizeCodexSubscriptionProxyStatus,
   rotateCodexSubscriptionProxyAccess,
   saveCodexSubscriptionProxyConfig,
-  setCodexSubscriptionProxyEnabled
+  setCodexSubscriptionProxyEnabled,
+  subscribeToEvent
 } from '@utils/wailsApi.js';
 import {
   SUBSCRIPTION_PROXY_MODE_HINTS,
@@ -183,19 +184,13 @@ const CodexSubscriptionProxyCard = () => {
     let unsubscribe = null;
     let cancelled = false;
 
-    (async () => {
-      try {
-        const { EventsOn } = await import('@wailsjs/runtime/runtime');
-        if (cancelled) return;
-        unsubscribe = EventsOn('codex-subscription-proxy:status', (payload) => {
-          if (busyRef.current) return;
-          setStatus(normalizeCodexSubscriptionProxyStatus(payload || {}));
-          setStatusError('');
-        });
-      } catch {
-        // 事件订阅失败不影响读取与保存：运行态仍可用刷新按钮独立读回。
-      }
-    })();
+    if (!cancelled) {
+      unsubscribe = subscribeToEvent('codex-subscription-proxy:status', (payload) => {
+        if (busyRef.current) return;
+        setStatus(normalizeCodexSubscriptionProxyStatus(payload || {}));
+        setStatusError('');
+      });
+    }
 
     return () => {
       cancelled = true;

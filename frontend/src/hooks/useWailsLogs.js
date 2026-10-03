@@ -1,14 +1,15 @@
 // useWailsLogs.js - Wails 日志流 Hook
 // 提供实时日志查看功能
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { EventsOn, EventsOff } from '@wailsjs/runtime';
 import { resolveErrorMessage } from '../utils/errors.js';
 import {
-  GetRecentLogs,
-  StartLogStream,
-  StopLogStream,
-  GetLogStreamStatus
-} from '@wailsjs/go/main/App';
+  getRecentLogs,
+  getLogStreamStatus,
+  startLogStream,
+  stopLogStream,
+  subscribeToEvent,
+  unsubscribeFromEvent
+} from '@utils/wailsApi.js';
 
 /**
  * useWailsLogs Hook
@@ -50,7 +51,7 @@ export function useWailsLogs(options = {}) {
     try {
       setLoading(true);
       setError(null);
-      const recentLogs = await GetRecentLogs(maxLogs);
+      const recentLogs = await getRecentLogs(maxLogs);
       if (isMountedRef.current) {
         setLogs(filterLogs(recentLogs || []));
       }
@@ -77,9 +78,9 @@ export function useWailsLogs(options = {}) {
 
     try {
       // 检查是否已经在流式传输
-      const status = await GetLogStreamStatus();
+      const status = await getLogStreamStatus();
       if (!status) {
-        await StartLogStream();
+        await startLogStream();
       }
 
       // 组件已卸载，不继续订阅
@@ -90,12 +91,12 @@ export function useWailsLogs(options = {}) {
 
       // ⚠️ 关键修复：在订阅之前取消所有现有订阅
       // 放在异步操作之后，确保取消的是已经存在的订阅
-      EventsOff('log:batch');
+      unsubscribeFromEvent('log:batch');
       unsubscribeRef.current = null;
 
       // 订阅日志事件（批量）
       const currentInstanceId = instanceIdRef.current;
-      const unsubscribe = EventsOn('log:batch', (batchLogs) => {
+      const unsubscribe = subscribeToEvent('log:batch', (batchLogs) => {
         // 检查是否仍是当前实例且组件未卸载
         if (!isMountedRef.current || instanceIdRef.current !== currentInstanceId) {
           return;
@@ -129,14 +130,14 @@ export function useWailsLogs(options = {}) {
       // 更新实例 ID，使旧的回调失效
       instanceIdRef.current = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-      // 用 EventsOff 显式取消所有 log:batch 订阅
-      EventsOff('log:batch');
+      // 通过适配层显式取消所有 log:batch 订阅
+      unsubscribeFromEvent('log:batch');
       unsubscribeRef.current = null;
 
       // 再停止后端流（检查是否正在运行）
-      const isRunning = await GetLogStreamStatus();
+      const isRunning = await getLogStreamStatus();
       if (isRunning) {
-        await StopLogStream();
+        await stopLogStream();
       }
 
       if (isMountedRef.current) {
@@ -177,7 +178,7 @@ export function useWailsLogs(options = {}) {
     return () => {
       isMountedRef.current = false;
       // 取消所有订阅
-      EventsOff('log:batch');
+      unsubscribeFromEvent('log:batch');
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BrowserOpenURL } from '@wailsjs/runtime/runtime';
+import { isWailsEnvironment, openExternalURL as openWailsExternalURL } from '@utils/wailsApi.js';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
 import {
   enableAutomaticAccountSelection,
@@ -47,8 +47,10 @@ const openExternalURL = (url = '') => {
   const target = String(url || '').trim();
   if (!target) return false;
 
-  if (typeof window !== 'undefined' && window.runtime?.BrowserOpenURL) {
-    BrowserOpenURL(target);
+  if (isWailsEnvironment()) {
+    void openWailsExternalURL(target).catch(() => {
+      window.open(target, '_blank', 'noopener,noreferrer');
+    });
     return true;
   }
 

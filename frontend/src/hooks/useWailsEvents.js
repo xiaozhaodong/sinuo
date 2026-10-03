@@ -5,7 +5,7 @@
 // ============================================
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { isWailsEnvironment, initWails } from '@utils/wailsApi.js';
+import { isWailsEnvironment, initWails, subscribeToEvent } from '@utils/wailsApi.js';
 
 // Wails 事件名称（与后端 app_events.go 对应）
 const WAILS_EVENTS = {
@@ -78,9 +78,6 @@ const useWailsEvents = (onDataUpdate, options = {}) => {
         return;
       }
 
-      // 动态导入 runtime
-      const { EventsOn } = await import('@wailsjs/runtime/runtime');
-
       // 订阅请求的事件
       const eventTypes = events.split(',').map(e => e.trim());
 
@@ -91,7 +88,7 @@ const useWailsEvents = (onDataUpdate, options = {}) => {
           return;
         }
 
-        const unsubscribe = EventsOn(wailsEventName, (data) => {
+        const unsubscribe = subscribeToEvent(wailsEventName, (data) => {
           console.log(`📡 [Wails Events] 收到 ${eventType} 事件:`, data);
 
           if (onDataUpdateRef.current) {

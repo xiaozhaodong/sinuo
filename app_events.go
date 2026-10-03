@@ -7,8 +7,6 @@ import (
 	"fmt"
 
 	"cc-forwarder/internal/proxy"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // 事件名称常量
@@ -31,15 +29,24 @@ type wailsRequestBroadcaster struct {
 	app *App
 }
 
+// emit 是 Go 侧唯一的 Wails 事件出口。应用尚未完成 v3 runtime 初始化时静默跳过，
+// 保留旧版 ctx nil 判断的语义。
+func (a *App) emit(name string, data any) {
+	if a == nil || a.closing.Load() || a.ctx == nil || a.wailsApp == nil || a.wailsApp.Event == nil {
+		return
+	}
+	a.wailsApp.Event.Emit(name, data)
+}
+
 func (b *wailsRequestBroadcaster) BroadcastEvent(eventType string, data map[string]interface{}) {
 	if eventType != "request" || b == nil || b.app == nil || b.app.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(b.app.ctx, EventRequestUpdate, data)
+	b.app.emit(EventRequestUpdate, data)
 }
 
 func (b *wailsRequestBroadcaster) IsEventManagerActive() bool {
-	return b != nil && b.app != nil && b.app.ctx != nil
+	return b != nil && b.app != nil && b.app.ctx != nil && b.app.wailsApp != nil
 }
 
 // emitSystemStatus 发送系统状态更新到前端
@@ -49,7 +56,7 @@ func (a *App) emitSystemStatus() {
 	}
 
 	status := a.GetSystemStatus()
-	runtime.EventsEmit(a.ctx, EventSystemStatus, status)
+	a.emit(EventSystemStatus, status)
 }
 
 // emitEndpointUpdate 发送端点状态更新到前端
@@ -68,7 +75,7 @@ func (a *App) emitEndpointUpdate() {
 		a.logger.Info("📡 [Wails Event] 推送端点更新", "count", len(endpoints))
 	}
 
-	runtime.EventsEmit(a.ctx, EventEndpointUpdate, data)
+	a.emit(EventEndpointUpdate, data)
 }
 
 // emitUsageUpdate 发送使用统计更新到前端
@@ -78,7 +85,7 @@ func (a *App) emitUsageUpdate() {
 	}
 
 	summary, _ := a.GetUsageSummary("", "")
-	runtime.EventsEmit(a.ctx, EventUsageUpdate, summary)
+	a.emit(EventUsageUpdate, summary)
 }
 
 // emitNotification 发送通知到前端
@@ -135,5 +142,5 @@ func (a *App) emitNotificationData(data map[string]interface{}) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventNotification, data)
+	a.emit(EventNotification, data)
 }

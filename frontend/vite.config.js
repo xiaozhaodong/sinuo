@@ -10,7 +10,7 @@ export default defineConfig({
     tailwindcss()
   ],
 
-  // 开发服务器配置 (Wails dev 模式)
+  // 开发服务器配置 (Wails v3 dev 模式)
   server: {
     port: 5173,
     strictPort: true,
@@ -58,7 +58,7 @@ export default defineConfig({
       '@hooks': path.resolve(__dirname, './src/hooks'),
       '@contexts': path.resolve(__dirname, './src/contexts'),
       '@utils': path.resolve(__dirname, './src/utils'),
-      '@wailsjs': path.resolve(__dirname, './src/wailsjs')
+      '@wailsjs': path.resolve(__dirname, './src/bindings')
     }
   },
 

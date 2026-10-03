@@ -9,7 +9,16 @@ import { toError } from './errors.js';
 
 // 检测是否在 Wails 环境中运行
 export const isWailsEnvironment = () => {
-  return typeof window !== 'undefined' && window.go !== undefined;
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    window.location?.protocol === 'wails:' ||
+    window.location?.hostname === 'wails.localhost' ||
+    window._wails?.invoke ||
+    window._wails?.environment?.OS ||
+    window.chrome?.webview?.postMessage ||
+    window.webkit?.messageHandlers?.external?.postMessage ||
+    window.wails?.invoke
+  );
 };
 
 // 动态导入 Wails 绑定（避免在非 Wails 环境中报错）
@@ -28,8 +37,7 @@ const wrapWailsBinding = (method) => async (...args) => {
   }
 };
 
-// wrapWailsBindings 把绑定模块（或 window.go.main.App 这类运行时对象）里的
-// 全部函数包一层错误归一化；非函数成员原样保留。
+// wrapWailsBindings 把绑定模块里的全部函数包一层错误归一化；非函数成员原样保留。
 export const wrapWailsBindings = (bindings) => {
   if (!bindings || typeof bindings !== 'object') return bindings;
   const wrapped = {};
@@ -46,8 +54,8 @@ const loadWailsBindings = async () => {
   }
 
   try {
-    WailsApp = wrapWailsBindings(await import('@wailsjs/go/main/App'));
-    WailsRuntime = await import('@wailsjs/runtime/runtime');
+    WailsApp = wrapWailsBindings(await import('@wailsjs/cc-forwarder/app.js'));
+    WailsRuntime = await import('@wailsio/runtime');
     return true;
   } catch (error) {
     console.warn('Failed to load Wails bindings:', error);
@@ -75,10 +83,6 @@ const getWailsMethod = (methodName, { optional = false } = {}) => {
   const method = WailsApp?.[methodName];
   if (typeof method === 'function') {
     return method;
-  }
-  const runtimeMethod = typeof window !== 'undefined' ? window?.go?.main?.App?.[methodName] : null;
-  if (typeof runtimeMethod === 'function') {
-    return wrapWailsBinding(runtimeMethod);
   }
   if (optional) {
     return null;
@@ -137,7 +141,8 @@ export const subscribeToEvent = (eventName, callback) => {
     }
 
     console.log(`📡 [subscribeToEvent] 注册事件监听: ${eventName}`);
-    unsubscribeFunc = WailsRuntime.EventsOn(eventName, (data) => {
+    unsubscribeFunc = WailsRuntime.Events.On(eventName, (event) => {
+      const data = event && Object.prototype.hasOwnProperty.call(event, 'data') ? event.data : event;
       console.log(`📡 [subscribeToEvent] 收到事件 ${eventName}:`, data);
       callback(data);
     });
@@ -172,6 +177,39 @@ export const unsubscribeAll = () => {
     });
   });
   eventListeners.clear();
+};
+
+export const unsubscribeFromEvent = (eventName) => {
+  if (WailsRuntime?.Events?.Off) {
+    WailsRuntime.Events.Off(eventName);
+  }
+  eventListeners.delete(eventName);
+};
+
+export const openExternalURL = async (url) => {
+  await initWails();
+  if (!WailsRuntime?.Browser?.OpenURL) throw new Error('Wails not available');
+  return WailsRuntime.Browser.OpenURL(url);
+};
+
+export const getRecentLogs = async (limit) => {
+  await initWails();
+  return getWailsMethod('GetRecentLogs')(limit);
+};
+
+export const startLogStream = async () => {
+  await initWails();
+  return getWailsMethod('StartLogStream')();
+};
+
+export const stopLogStream = async () => {
+  await initWails();
+  return getWailsMethod('StopLogStream')();
+};
+
+export const getLogStreamStatus = async () => {
+  await initWails();
+  return getWailsMethod('GetLogStreamStatus')();
 };
 
 // ============================================

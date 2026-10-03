@@ -14,8 +14,6 @@ import (
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // claudeCodeEntryStopTimeout 停用或改端口时等待在途请求的上限，超时后强制关闭
@@ -163,7 +161,7 @@ func (a *App) emitClaudeCodeEntryUpdate(info ClaudeCodeEntryInfo) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventClaudeCodeEntryUpdate, info)
+	a.emit(EventClaudeCodeEntryUpdate, info)
 }
 
 // claudeCodeEntryPolicy 把持久化配置转换为运行态策略

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -531,7 +532,7 @@ func buildOAuthCallbackError(code, description string) error {
 	if strings.EqualFold(strings.TrimSpace(code), "invalid_scope") {
 		msg += "（当前 OAuth Client 不允许该 scope，请重新生成授权链接后重试）"
 	}
-	return fmt.Errorf(msg)
+	return errors.New(msg)
 }
 
 func (a *App) logOAuthInfo(msg string, args ...any) {

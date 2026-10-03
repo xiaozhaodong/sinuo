@@ -13,8 +13,6 @@ import (
 
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/service"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // setupCodexSubscriptionProxy 装配新入口；必须在 setupProxyHandler 之后调用。
@@ -126,5 +124,5 @@ func (a *App) emitCodexSubscriptionProxyStatus() {
 		a.logger.Warn("⚠️ Codex 订阅代理状态读取失败", "error", err)
 		return
 	}
-	runtime.EventsEmit(a.ctx, EventCodexSubscriptionProxyStatus, status)
+	a.emit(EventCodexSubscriptionProxyStatus, status)
 }

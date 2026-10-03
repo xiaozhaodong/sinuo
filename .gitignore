@@ -60,6 +60,12 @@ data/
 docs/TECHNICAL_ARCHITECTURE.md
 docs/REFACTOR_PLAN.md
 cc-forwarder
+/bin/
+.task/
+# Wails v3 bindings use the Go module name as a generated directory.
+!frontend/src/bindings/
+!frontend/src/bindings/cc-forwarder/
+!frontend/src/bindings/cc-forwarder/**
 /logs
 
 # OpenSpec directory
@@ -74,6 +80,8 @@ internal/web/static/dist/
 # Wails 构建输出（保留资源文件）
 build/bin/
 build/dist/
+# Wails v3 每次构建由 build/appicon.png 生成
+build/darwin/icons.icns
 build.log
 
 # 废弃代码

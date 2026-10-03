@@ -32,6 +32,12 @@ func (a *App) GetMigrationStatus() migration.Status {
 
 // RetryStartupMigration 仅重试协调器允许的幂等阶段；成功后启动此前被阻断的运行态组件。
 func (a *App) RetryStartupMigration() (migration.Status, error) {
+	// 首次 ServiceStartup 在后台运行时直接返回当前状态，避免与迁移/组件初始化重入。
+	if !a.startupMu.TryLock() {
+		return a.GetMigrationStatus(), nil
+	}
+	defer a.startupMu.Unlock()
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	coordinator, fallback := a.migrationState()
@@ -41,11 +47,15 @@ func (a *App) RetryStartupMigration() (migration.Status, error) {
 	if a.isRunning {
 		return a.GetMigrationStatus(), nil
 	}
-	if err := a.prepareMigratedRuntime(a.ctx, coordinator); err != nil {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.prepareMigratedRuntime(ctx, coordinator); err != nil {
 		return a.failStartup(err), err
 	}
 	a.setupLogger()
-	a.startOperationalComponentsLocked(a.ctx)
+	a.startOperationalComponentsLocked(ctx)
 	return a.GetMigrationStatus(), nil
 }
 
