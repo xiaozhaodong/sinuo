@@ -4,6 +4,8 @@ package main
 
 import "github.com/wailsapp/wails/v3/pkg/application"
 
+const trayMenuIcons = false
+
 func installTrayPlatformHooks()                                 {}
 func traySystemEnding() bool                                    { return false }
 func trayActivateForDialog()                                    {}

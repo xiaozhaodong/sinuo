@@ -86,26 +86,94 @@ func TestMenu_ClaudeModelsPreserveMembersAndSortWebFirst(t *testing.T) {
 	}
 }
 
-func TestMenu_ClaudeEntryModes(t *testing.T) {
+func TestMenu_ClaudeEntryStates(t *testing.T) {
 	for _, tc := range []struct {
-		enabled bool
-		mode    string
-		quota   bool
-	}{{false, "subscription", false}, {true, "endpoint", false}, {true, "subscription", true}} {
+		name                 string
+		enabled, running     bool
+		mode, state, toggle  string
+		quota, listenFailure bool
+	}{
+		{"停用仍显示并可启用", false, false, "subscription", "已停用", "entry_enable", false, false},
+		{"端点模式", true, true, "endpoint", "端点", "entry_disable", false, false},
+		{"订阅直通带额度", true, true, "subscription", "订阅直通", "entry_disable", true, false},
+		{"监听失败显示原因", true, false, "subscription", "监听失败", "entry_disable", true, true},
+	} {
 		s := runningSnapshot()
-		s.EntryEnabled, s.EntryMode, s.EntryQuota = tc.enabled, tc.mode, "5h 剩 62% · d7 剩 81%"
+		s.EntryEnabled, s.EntryRunning, s.EntryMode, s.EntryPort = tc.enabled, tc.running, tc.mode, 18088
+		s.EntryQuota, s.EntryListenError = "5h 剩 62% · d7 剩 81%", "端口被占用"
 		items := Build(s)
-		if hasItem(items, "接入方式") != tc.enabled || hasItem(items, "订阅额度") != tc.quota {
-			t.Fatalf("入口模式展示错误: %+v", tc)
+		entry := menuItem(t, items, "Claude Code 入口")
+		if entry.Label != "Claude Code 入口  "+tc.state+" · :18088" || hasItem(items, "订阅额度") != tc.quota {
+			t.Fatalf("%s: 入口行展示错误: %q", tc.name, entry.Label)
 		}
-		if tc.enabled {
-			choices := menuItem(t, items, "接入方式").Children
-			for _, choice := range choices {
-				if choice.Checked != (choice.Action.Mode == tc.mode) {
-					t.Fatal("接入方式勾选错误")
-				}
+		if hasItem(entry.Children, "端口被占用") != tc.listenFailure {
+			t.Fatalf("%s: 监听失败原因展示错误: %+v", tc.name, entry.Children)
+		}
+		for _, choice := range entry.Children {
+			if choice.Action.Kind == "entry" && choice.Checked != (choice.Action.Mode == tc.mode) {
+				t.Fatalf("%s: 接入模式勾选错误", tc.name)
 			}
 		}
+		if last := entry.Children[len(entry.Children)-1]; last.Action.Kind != tc.toggle {
+			t.Fatalf("%s: 启停项错误: %+v", tc.name, last)
+		}
+		note := hasItem(menuItem(t, items, "Claude").Children, "Claude Code 入口为订阅直通")
+		if note != (tc.enabled && tc.running && tc.mode == "subscription") {
+			t.Fatalf("%s: 主端口策略说明错误", tc.name)
+		}
+	}
+	s := runningSnapshot()
+	s.EntryError = "设置读取失败"
+	if entry := menuItem(t, Build(s), "Claude Code 入口"); !entry.Disabled || len(entry.Children) != 0 {
+		t.Fatalf("入口读取失败时不得提供写入: %+v", entry)
+	}
+}
+
+func TestMenu_CodexEntryStates(t *testing.T) {
+	s := runningSnapshot()
+	s.CodexEntryState, s.CodexEntryMode, s.CodexEntryPort, s.CodexEntryRevision = CodexEntryReady, "subscription", 28088, 7
+	items := Build(s)
+	// 订阅直通时账号池策略仍要保留（主端口在用），并说明只影响主端口
+	menuItem(t, menuItem(t, items, "Codex  ").Children, "Codex 入口为订阅直通")
+	entry := menuItem(t, items, "Codex 入口")
+	subscription, pool := menuItem(t, entry.Children, "订阅直通"), menuItem(t, entry.Children, "账号池")
+	if entry.Label != "Codex 入口  订阅直通 · :28088" || !subscription.Checked || !subscription.Disabled || pool.Disabled ||
+		pool.Action != (Action{Kind: "codex_entry", Mode: "pool", ID: 7}) {
+		t.Fatalf("运行中应可切到另一模式并带上 revision: %+v", entry)
+	}
+	if last := entry.Children[len(entry.Children)-1]; last.Action != (Action{Kind: "codex_entry_disable", ID: 7}) {
+		t.Fatalf("运行中应可停用: %+v", last)
+	}
+
+	s.CodexEntryState = CodexEntryStopped
+	entry = menuItem(t, Build(s), "Codex 入口")
+	if entry.Label != "Codex 入口  已停用 · :28088" || !menuItem(t, entry.Children, "账号池").Disabled ||
+		entry.Children[len(entry.Children)-1].Action.Kind != "codex_entry_enable" {
+		t.Fatalf("停用后只能启用，不能切换模式: %+v", entry)
+	}
+
+	s.CodexEntryState, s.CodexEntryLabel = CodexEntryUnavailable, "启动失败"
+	entry = menuItem(t, Build(s), "Codex 入口")
+	if len(entry.Children) != 0 || entry.Action != (Action{Kind: "navigate", Target: "codex-access"}) {
+		t.Fatalf("状态不明时只能跳主窗口: %+v", entry)
+	}
+
+	s.CodexEntryState = CodexEntryHidden
+	if hasItem(Build(s), "Codex 入口") {
+		t.Fatal("未初始化的独立入口不应显示")
+	}
+}
+
+func TestMenu_ReadErrorsAndWaiting(t *testing.T) {
+	s := runningSnapshot()
+	s.CodexError, s.ClaudeError, s.SettingsError = "账号读取失败", "映射读取失败", "设置读取失败"
+	items := Build(s)
+	if menuItem(t, items, "Claude").Children[0].Action.Kind != "" || !menuItem(t, items, "关闭窗口").Disabled {
+		t.Fatal("读取失败时不得伪造可操作状态")
+	}
+	s.Waiting, s.Active = true, 3
+	if Build(s)[0].Label != "退出中，等待 3 个请求" {
+		t.Fatal("等待退出状态没有显示实时请求数")
 	}
 }
 
@@ -169,24 +237,6 @@ func TestMenu_CodexModelPausedAndInvalidAccounts(t *testing.T) {
 	}
 	if !fixed[0].Checked || preferred[0].Checked {
 		t.Fatal("勾选只能在当前模式列表")
-	}
-}
-
-func TestMenu_CodexSubscriptionAndErrors(t *testing.T) {
-	s := runningSnapshot()
-	s.CodexReadOnly, s.CodexAccess = true, "订阅直通"
-	item := menuItem(t, Build(s), "Codex")
-	if len(item.Children) != 0 || item.Action.Kind != "navigate" || item.Action.Target != "codex-access" {
-		t.Fatalf("订阅直通不能写入: %+v", item)
-	}
-	s.CodexReadOnly, s.CodexError, s.ClaudeError, s.SettingsError = false, "账号读取失败", "映射读取失败", "设置读取失败"
-	items := Build(s)
-	if menuItem(t, items, "Claude").Children[0].Action.Kind != "" || !menuItem(t, items, "关闭窗口").Disabled {
-		t.Fatal("读取失败时不得伪造可操作状态")
-	}
-	s.Waiting, s.Active = true, 3
-	if Build(s)[0].Label != "退出中，等待 3 个请求" {
-		t.Fatal("等待退出状态没有显示实时请求数")
 	}
 }
 

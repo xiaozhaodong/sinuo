@@ -34,13 +34,32 @@ HOLLOW_RATIO = 0.42
 
 STATIC_NAMES = ("normal-template.png", "degraded-template.png", "stopped-template.png", "normal-color.png")
 
+# 菜单项图标：16pt @2x 画布，与前端同一版本的 lucide 图标（ISC 许可）。
+# 文件名即 lucide 图标名，与 internal/tray/menu_icons.go 的常量一一对应；
+# 只是黑色透明图，macOS 打开菜单时由 App 标记为模板图，深色、高亮、置灰由系统着色。
+MENU_CANVAS = 32
+LUCIDE_ICONS = ROOT / "frontend/node_modules/lucide-react/dist/esm/icons"
+# lucide 默认描边 2 在 16pt 下比菜单文字笔画重，减到 1.75（约 1.17pt）
+LUCIDE_STROKE_WIDTH = 1.75
+MENU_LUCIDE = ("activity", "chart-no-axes-column", "sparkle", "plug", "key-round", "route", "gauge", "code-xml",
+               "waypoints", "scroll-text", "panel-top", "power", "wand-sparkles", "star", "pin", "box", "globe",
+               "settings-2", "circle-alert", "info", "circle-play", "circle-stop", "user-round")
+# 「打开 AI Switchboard」用 BrandMark：字形高 12pt；描边 2.4 单位约 2.6px，
+# 比相邻 lucide 图标（约 2.3px）略重一档，保留品牌字形的分量
+MENU_BRAND_GLYPH_HEIGHT = 24
+MENU_BRAND_STROKE_WIDTH = 2.4
+
 
 def flow_names():
     return [f"flow/{kind}-{i:02d}.png" for kind in ("normal", "degraded") for i in range(FLOW_FRAMES)]
 
 
+def menu_names():
+    return ["menu/brand.png"] + [f"menu/{name}.png" for name in MENU_LUCIDE]
+
+
 def all_names():
-    return list(STATIC_NAMES) + flow_names()
+    return list(STATIC_NAMES) + flow_names() + menu_names()
 
 
 def brand_path():
@@ -79,12 +98,12 @@ def sample_path(d, steps=400):
 class Geometry:
     """BrandMark 24 单位坐标 → 超采样画布像素的变换，所有图标共用，切换状态时字形不跳动。"""
 
-    def __init__(self, points, glyph_height, stroke_width):
+    def __init__(self, points, glyph_height, stroke_width, canvas=CANVAS):
         xs, ys = [p[0] for p in points], [p[1] for p in points]
         half = stroke_width / 2
         left, top = min(xs) - half, min(ys) - half
         width, height = max(xs) + half - left, max(ys) + half - top
-        size = CANVAS * SUPERSAMPLE
+        size = canvas * SUPERSAMPLE
         self.scale = glyph_height * SUPERSAMPLE / height
         self.tx = (size - width * self.scale) / 2 - left * self.scale
         self.ty = (size - height * self.scale) / 2 - top * self.scale
@@ -138,13 +157,71 @@ def flow_segment(points, frame):
     return [at(lo)] + [p for p, s in zip(points, lengths) if lo < s < hi] + [at(hi)]
 
 
-def render(directory, name, layers):
-    size = CANVAS * SUPERSAMPLE
+def render(directory, name, layers, canvas=CANVAS, keep_density=False):
+    """keep_density 保留 144dpi（pHYs）：菜单项图片不经缩放，NSImage 按它把 32px 认作 16pt。"""
+    size = canvas * SUPERSAMPLE
     target = directory / name
     target.parent.mkdir(parents=True, exist_ok=True)
+    density = ["-define", "png:include-chunk=pHYs"] if keep_density else []
     subprocess.run(["magick", "-size", f"{size}x{size}", "canvas:none", *layers,
-                    "-resize", f"{CANVAS}x{CANVAS}", "-strip", "-define", "png:exclude-chunks=date,time",
+                    "-resize", f"{canvas}x{canvas}", "-strip", "-define", "png:exclude-chunks=date,time", *density,
                     "-units", "PixelsPerInch", "-density", "144", "PNG32:" + str(target)], check=True)
+
+
+def lucide_nodes(name):
+    """读取 lucide-react 图标文件中的 __iconNode：[(标签, 属性), ...]。"""
+    path = LUCIDE_ICONS / f"{name}.js"
+    if not path.exists():
+        raise RuntimeError(f"找不到 lucide 图标 {name}，请先在 frontend 目录执行 npm install")
+    block = re.search(r"const __iconNode = \[(.*?)\];", path.read_text(), re.S)
+    if not block:
+        raise RuntimeError(f"无法解析 lucide 图标 {name}")
+    nodes = [(tag, dict(re.findall(r'(\w+): "([^"]*)"', attrs)))
+             for tag, attrs in re.findall(r'\[\s*"(\w+)",\s*\{(.*?)\}\s*\]', block.group(1), re.S)]
+    if not nodes:
+        raise RuntimeError(f"lucide 图标 {name} 没有图形节点")
+    return nodes
+
+
+def lucide_primitive(tag, attrs):
+    """把 lucide 的 SVG 节点换成 ImageMagick draw 图元，坐标保持 24 单位网格。"""
+    a = {k: float(v) for k, v in attrs.items() if k not in ("key", "d", "points", "fill")}
+    if tag == "path":
+        return f"path '{attrs['d']}'"
+    if tag == "circle":
+        return f"circle {a['cx']},{a['cy']} {a['cx'] + a['r']},{a['cy']}"
+    if tag == "ellipse":
+        return f"ellipse {a['cx']},{a['cy']} {a['rx']},{a['ry']} 0,360"
+    if tag == "line":
+        return f"line {a['x1']},{a['y1']} {a['x2']},{a['y2']}"
+    if tag in ("polyline", "polygon"):
+        return f"{tag} " + " ".join(re.findall(r"-?[\d.]+,-?[\d.]+", re.sub(r"\s+", ",", attrs["points"].strip())))
+    if tag == "rect":
+        x0, y0 = a.get("x", 0.0), a.get("y", 0.0)
+        x1, y1 = x0 + a["width"], y0 + a["height"]
+        rx = a.get("rx", a.get("ry", 0.0))
+        if rx:
+            return f"roundrectangle {x0},{y0} {x1},{y1} {rx},{a.get('ry', rx)}"
+        return f"rectangle {x0},{y0} {x1},{y1}"
+    raise RuntimeError(f"lucide 图标含有不支持的节点: {tag}")
+
+
+def lucide_layers(name):
+    scale = MENU_CANVAS * SUPERSAMPLE / 24
+    prefix = f"scale {scale:.5f},{scale:.5f} stroke-linecap round stroke-linejoin round"
+    layers = []
+    for tag, attrs in lucide_nodes(name):
+        fill = "black" if attrs.get("fill") == "currentColor" else "none"
+        layers += ["-fill", fill, "-stroke", "black", "-strokewidth", str(LUCIDE_STROKE_WIDTH),
+                   "-draw", f"{prefix} {lucide_primitive(tag, attrs)}"]
+    return layers
+
+
+def generate_menu(directory, points, glyph):
+    geo = Geometry(points, MENU_BRAND_GLYPH_HEIGHT, MENU_BRAND_STROKE_WIDTH, MENU_CANVAS)
+    render(directory, "menu/brand.png", stroke(geo, glyph), MENU_CANVAS, keep_density=True)
+    for name in MENU_LUCIDE:
+        render(directory, f"menu/{name}.png", lucide_layers(name), MENU_CANVAS, keep_density=True)
 
 
 def generate(directory, glyph_height=GLYPH_HEIGHT, stroke_width=STROKE_WIDTH):
@@ -166,6 +243,7 @@ def generate(directory, glyph_height=GLYPH_HEIGHT, stroke_width=STROKE_WIDTH):
             layers += stroke(geo, polyline(segment))
         render(directory, f"flow/normal-{frame:02d}.png", layers)
         render(directory, f"flow/degraded-{frame:02d}.png", layers + degraded_dot(geo))
+    generate_menu(directory, points, glyph)
     subprocess.run(["magick", str(ROOT / "build/appicon.png"), "-resize", "48x48", "-strip",
                     "-define", "png:exclude-chunks=date,time", "PNG32:" + str(directory / "normal-color.png")],
                    check=True)

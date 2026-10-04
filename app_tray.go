@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"runtime"
 	"sync"
@@ -156,7 +157,7 @@ func (t *appTray) rebuild(open, force bool) {
 			if sameTrayMenuShape(t.model, model) {
 				updateTrayMenu(t.menu, model)
 			} else {
-				// 拓扑变化才替换菜单项；统计、勾选与标签变化保留正在展开的子菜单。
+				// 拓扑或图标变化才替换菜单项；统计、勾选与标签变化保留正在展开的子菜单。
 				t.menu.Destroy()
 				t.appendMenu(t.menu, model)
 				t.native.SetMenu(t.menu)
@@ -178,8 +179,9 @@ func sameTrayMenuShape(previous, next []tray.Item) bool {
 	}
 	for i, item := range next {
 		old := previous[i]
+		// 图标只在创建菜单项时设置：展开中换图会换上未标模板的图片，因此图标变化也整体重建。
 		if old.Separator != item.Separator || old.Checkable != item.Checkable || old.Action != item.Action ||
-			!sameTrayMenuShape(old.Children, item.Children) {
+			old.Icon != item.Icon || !sameTrayMenuShape(old.Children, item.Children) {
 			return false
 		}
 	}
@@ -202,14 +204,16 @@ func updateTrayMenu(menu *application.Menu, items []tray.Item) {
 	}
 }
 
+// appendMenu 只填充空菜单，菜单项下标与模型一致（updateTrayMenu 同样依赖这一点）。
 func (t *appTray) appendMenu(menu *application.Menu, items []tray.Item) {
-	for _, item := range items {
+	for i, item := range items {
 		if item.Separator {
 			menu.AddSeparator()
 			continue
 		}
 		if len(item.Children) > 0 {
 			t.appendMenu(menu.AddSubmenu(item.Label), item.Children)
+			setTrayMenuIcon(menu.ItemAt(i), item.Icon)
 			continue
 		}
 		var native *application.MenuItem
@@ -218,6 +222,7 @@ func (t *appTray) appendMenu(menu *application.Menu, items []tray.Item) {
 		} else {
 			native = menu.Add(item.Label)
 		}
+		setTrayMenuIcon(native, item.Icon)
 		native.SetEnabled(!item.Disabled)
 		if item.Shortcut != "" {
 			native.SetAccelerator(item.Shortcut)
@@ -226,6 +231,17 @@ func (t *appTray) appendMenu(menu *application.Menu, items []tray.Item) {
 			action := item.Action
 			native.OnClick(func(*application.Context) { go t.runAction(action) })
 		}
+	}
+}
+
+// setTrayMenuIcon 只在 macOS 生效：打开菜单前由平台钩子标成模板图，随深色、高亮与置灰着色；
+// Windows / Linux 菜单的深浅色不受我们控制，黑色图标可能看不清，保持无图标。
+func setTrayMenuIcon(native *application.MenuItem, name string) {
+	if !trayMenuIcons || native == nil || name == "" {
+		return
+	}
+	if icon := tray.MenuIcon(name); icon != nil {
+		native.SetBitmap(icon)
 	}
 }
 
@@ -243,12 +259,36 @@ func (t *appTray) runAction(action tray.Action) {
 	}
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	if err := t.app.executeTrayAction(action); err != nil {
+	if err := t.app.executeTrayAction(action, t.confirm); err != nil {
 		t.showError(err)
 	}
-	// 包括失败后的读回，清除原生 checkbox 在回调前自行切换的显示状态。
+	// 包括失败或取消后的读回，清除原生 checkbox 在回调前自行切换的显示状态。
 	t.signal(t.immediate)
 	t.app.emit("desktop:settings-update", nil)
+}
+
+// confirm 弹出原生确认框并等待选择；在 runAction 的 actionMu 内调用，确认期间其他托盘写入排队。
+func (t *appTray) confirm(c trayConfirm) bool {
+	if t.closed.Load() {
+		return false
+	}
+	t.activateForDialog()
+	choice := make(chan bool, 1)
+	dialog := t.app.wailsApp.Dialog.Question().SetTitle(c.Title).SetMessage(c.Message)
+	ok := dialog.AddButton(c.Confirm).OnClick(func() { choice <- true })
+	cancel := dialog.AddButton("取消").SetAsCancel().OnClick(func() { choice <- false })
+	if c.Destructive {
+		cancel.SetAsDefault()
+	} else {
+		ok.SetAsDefault()
+	}
+	dialog.Show()
+	select {
+	case confirmed := <-choice:
+		return confirmed
+	case <-t.done:
+		return false
+	}
 }
 
 func (t *appTray) showError(err error) {
@@ -256,6 +296,11 @@ func (t *appTray) showError(err error) {
 		return
 	}
 	t.activateForDialog()
+	var warning trayWarning
+	if errors.As(err, &warning) {
+		t.app.wailsApp.Dialog.Warning().SetTitle("AI Switchboard").SetMessage(warning.message).Show()
+		return
+	}
 	t.app.wailsApp.Dialog.Error().SetTitle("AI Switchboard").SetMessage(err.Error()).Show()
 }
 

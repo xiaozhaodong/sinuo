@@ -7,8 +7,8 @@ import (
 	"cc-forwarder/internal/tray"
 )
 
-// executeTrayAction 只调用现有写入方法，不直接操作服务或数据库。
-func (a *App) executeTrayAction(action tray.Action) error {
+// executeTrayAction 只调用现有写入方法，不直接操作服务或数据库；confirm 用于停用入口、切换 Codex 模式前的确认。
+func (a *App) executeTrayAction(action tray.Action, confirm trayConfirmFunc) error {
 	switch action.Kind {
 	case "claude":
 		if action.Mode == "auto" {
@@ -26,6 +26,12 @@ func (a *App) executeTrayAction(action tray.Action) error {
 	case "entry":
 		_, err := a.SetClaudeCodeEntryMode(action.Mode)
 		return err
+	case "entry_enable", "entry_disable":
+		return setTrayClaudeEntryEnabled(a, action.Kind == "entry_enable", confirm)
+	case "codex_entry":
+		return switchTrayCodexEntryMode(a, action, confirm)
+	case "codex_entry_enable", "codex_entry_disable":
+		return setTrayCodexEntryEnabled(a, action, action.Kind == "codex_entry_enable", confirm)
 	case "codex":
 		if action.Mode == "auto" {
 			result, err := a.EnableAutomaticAccountSelection()

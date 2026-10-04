@@ -40,12 +40,12 @@ func (t *appTray) snapshot() tray.Snapshot {
 	}
 	entry, err := a.GetClaudeCodeEntryStatus()
 	s.EntryError = trayError(err)
-	s.EntryEnabled, s.EntryMode = entry.Enabled, entry.Mode
+	s.EntryEnabled, s.EntryRunning, s.EntryMode, s.EntryPort, s.EntryListenError = entry.Enabled, entry.Running, entry.Mode, entry.ListenPort, entry.Error
 	if entry.Enabled && entry.Mode == "subscription" {
 		s.EntryQuota = trayClaudeQuota(a.GetClaudeSubscriptionRateLimit(), time.Now())
 	}
-	t.readCodexAccess(&s)
-	if !s.CodexReadOnly && s.CodexError == "" {
+	t.readCodexEntry(&s)
+	if s.CodexError == "" {
 		t.readCodexRoute(&s)
 	}
 	return s
@@ -143,43 +143,6 @@ func (t *appTray) readCodexRoute(s *tray.Snapshot) {
 	}
 	if recent.HasSnapshot {
 		s.RecentAccountID = recent.SelectedAccountID
-	}
-}
-
-func (t *appTray) readCodexAccess(s *tray.Snapshot) {
-	config, err := t.app.GetCodexSubscriptionProxyConfig()
-	if err != nil {
-		s.CodexAccess, s.CodexReadOnly = "配置读取失败", true
-		return
-	}
-	if !config.Initialized {
-		return
-	}
-	status, err := t.app.GetCodexSubscriptionProxyStatus()
-	if err != nil {
-		s.CodexAccess, s.CodexReadOnly = "状态未知", true
-		return
-	}
-	if !config.Enabled && status.State == "stopped" {
-		return
-	}
-	s.CodexReadOnly = true
-	if status.State != "running" {
-		labels := map[string]string{"stopped": "未运行", "starting": "启动中", "draining": "停用中", "failed": "启动失败"}
-		s.CodexAccess = labels[status.State]
-		if s.CodexAccess == "" {
-			s.CodexAccess = "状态未知"
-		}
-		return
-	}
-	if !config.AccessConfigured || config.Revision < 1 || !config.Enabled || !status.Enabled ||
-		status.Revision != config.Revision || status.Mode != config.Mode || (config.Mode != "pool" && config.Mode != "subscription") {
-		s.CodexAccess = "状态待确认"
-		return
-	}
-	s.CodexAccess = "订阅直通"
-	if config.Mode == "pool" {
-		s.CodexAccess, s.CodexReadOnly = "账号池", false
 	}
 }
 

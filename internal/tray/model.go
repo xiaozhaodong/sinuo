@@ -16,7 +16,7 @@ type Action struct {
 }
 
 type Item struct {
-	Label, Shortcut                         string
+	Label, Shortcut, Icon                   string
 	Disabled, Checked, Checkable, Separator bool
 	Action                                  Action
 	Children                                []Item
@@ -57,14 +57,39 @@ type Snapshot struct {
 	ClaudeModels                                            bool
 	Endpoints                                               []Endpoint
 	ClaudeBindings                                          []Binding
-	EntryEnabled                                            bool
-	EntryMode, EntryQuota, EntryError                       string
-	CodexModels                                             bool
-	CodexBindings                                           []Binding
-	Accounts                                                []Account
-	RecentAccountID                                         int64
-	CodexAccess, CodexError                                 string
-	CodexReadOnly                                           bool
+	// Claude Code 入口：与主端口分开监听；EntryError 是配置读取失败，EntryListenError 是监听失败
+	EntryEnabled, EntryRunning                          bool
+	EntryMode, EntryQuota, EntryError, EntryListenError string
+	EntryPort                                           int
+	CodexModels                                         bool
+	CodexBindings                                       []Binding
+	Accounts                                            []Account
+	RecentAccountID                                     int64
+	CodexError                                          string
+	// Codex 独立入口：State 见 CodexEntry* 常量；Label 是不可操作时的状态文案；
+	// Revision 随写入动作带回，执行时与最新配置比对，防止按过期菜单写入
+	CodexEntryState, CodexEntryLabel, CodexEntryMode string
+	CodexEntryPort                                   int
+	CodexEntryRevision                               int64
+}
+
+const (
+	CodexEntryHidden      = ""            // 未初始化：不显示
+	CodexEntryReady       = "ready"       // 运行中且配置与运行态一致：可切换模式、可停用
+	CodexEntryStopped     = "stopped"     // 用户已停用且已停稳：可启用
+	CodexEntryUnavailable = "unavailable" // 启动中、失败、读取失败等：只读，跳主窗口
+)
+
+// codexPoolBypassed：Codex 独立入口在用且不是账号池模式时，账号池只服务主端口，
+// 托盘图标不因它降级（与第 2 期口径一致）。
+func (s Snapshot) codexPoolBypassed() bool {
+	switch s.CodexEntryState {
+	case CodexEntryHidden, CodexEntryStopped:
+		return false
+	case CodexEntryReady:
+		return s.CodexEntryMode != "pool"
+	}
+	return true
 }
 
 func info(label string) Item { return Item{Label: label, Disabled: true} }
@@ -73,8 +98,19 @@ func navigate(label, target string) Item {
 	return Item{Label: label, Action: Action{Kind: "navigate", Target: target}}
 }
 
+// manage 是跳到主窗口管理页的入口，统一用设置图标。
+func manage(label, target string) Item { return navigate(label, target).withIcon(iconManage) }
+
 func choice(label string, checked, disabled bool, action Action) Item {
 	return Item{Label: label, Checked: checked, Checkable: true, Disabled: disabled, Action: action}
+}
+
+// operationMenu 是「优选到 / 固定到」的目标子菜单；目标项本身不带图标，状态由勾选表达。
+func operationMenu(mode string, targets []Item) Item {
+	if mode == "manual_fixed" {
+		return Item{Label: "固定到", Icon: iconPin, Children: targets}
+	}
+	return Item{Label: "优选到", Icon: iconPrefer, Children: targets}
 }
 
 func routeLabel(mode, target, last string) string {

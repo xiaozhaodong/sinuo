@@ -84,6 +84,16 @@ func (a *App) SaveClaudeCodeEntrySettings(input ClaudeCodeEntryInput) (ClaudeCod
 // SetClaudeCodeEntryMode 只切换接入模式，启用状态与端口沿用已保存的配置；
 // 供请求页快捷切换使用，避免用页面上可能过期的端口等字段覆盖配置
 func (a *App) SetClaudeCodeEntryMode(mode string) (ClaudeCodeEntryInfo, error) {
+	return a.updateClaudeCodeEntry(func(input *service.ClaudeCodeEntryInput) { input.Mode = mode })
+}
+
+// setClaudeCodeEntryEnabled 只切换启用状态，供托盘使用；不导出，不生成前端绑定
+func (a *App) setClaudeCodeEntryEnabled(enabled bool) (ClaudeCodeEntryInfo, error) {
+	return a.updateClaudeCodeEntry(func(input *service.ClaudeCodeEntryInput) { input.Enabled = enabled })
+}
+
+// updateClaudeCodeEntry 在已保存配置的基础上只改一项，在同一把锁内读取和保存
+func (a *App) updateClaudeCodeEntry(change func(*service.ClaudeCodeEntryInput)) (ClaudeCodeEntryInfo, error) {
 	a.claudeCodeEntryMu.Lock()
 	defer a.claudeCodeEntryMu.Unlock()
 	if a.claudeCodeEntrySettings == nil || a.claudeCodeEntryRuntime == nil {
@@ -93,11 +103,9 @@ func (a *App) SetClaudeCodeEntryMode(mode string) (ClaudeCodeEntryInfo, error) {
 	if err != nil {
 		return ClaudeCodeEntryInfo{}, err
 	}
-	return a.saveClaudeCodeEntryLocked(service.ClaudeCodeEntryInput{
-		Enabled:    current.Enabled,
-		ListenPort: current.ListenPort,
-		Mode:       mode,
-	})
+	input := service.ClaudeCodeEntryInput{Enabled: current.Enabled, ListenPort: current.ListenPort, Mode: current.Mode}
+	change(&input)
+	return a.saveClaudeCodeEntryLocked(input)
 }
 
 // saveClaudeCodeEntryLocked 保存、应用并推送最新状态；调用方须持有 claudeCodeEntryMu

@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-// 图标与流光帧由 scripts/generate-tray-icons.py 从 BrandMark 同一路径生成。
+// 托盘图标与流光帧由 scripts/generate-tray-icons.py 从 BrandMark 同一路径生成，菜单项图标见 menu_icons.go。
 //
-//go:embed assets/*.png assets/flow/*.png
+//go:embed assets/*.png assets/flow/*.png assets/menu/*.png
 var assets embed.FS
 
 // FlowFrameCount 是流光一个周期的帧数，与生成脚本的 FLOW_FRAMES 一致。

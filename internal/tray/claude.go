@@ -4,10 +4,10 @@ import "sort"
 
 func claudeMenu(s Snapshot) Item {
 	if s.ClaudeError != "" {
-		return Item{Label: "Claude  读取失败", Children: []Item{info(s.ClaudeError), navigate("在主窗口管理端点…", "endpoints")}}
+		return Item{Label: "Claude  读取失败", Icon: iconClaude, Children: []Item{info(s.ClaudeError).withIcon(iconAlert), manage("在主窗口管理端点…", "endpoints")}}
 	}
 	if s.ClaudeModels {
-		return Item{Label: "Claude  模型路由", Children: claudeBindings(s.ClaudeBindings)}
+		return Item{Label: "Claude  模型路由", Icon: iconClaude, Children: scopeNote("Claude Code", s.claudeEntrySubscription(), claudeBindings(s.ClaudeBindings))}
 	}
 	endpoints := make([]Endpoint, 0, len(s.Endpoints))
 	for _, ep := range s.Endpoints {
@@ -24,10 +24,11 @@ func claudeMenu(s Snapshot) Item {
 	})
 	items := endpointChoices(Binding{Mode: s.ClaudeMode, Target: s.ClaudeTarget, LastTarget: s.ClaudeLastTarget, Endpoints: endpoints}, "claude")
 	if len(endpoints) == 0 {
-		items = []Item{info("无可用 Claude 端点")}
+		items = []Item{info("无可用 Claude 端点").withIcon(iconAlert)}
 	}
-	items = append(items, separator(), navigate("在主窗口管理端点…", "endpoints"))
-	return Item{Label: "Claude  " + routeLabel(s.ClaudeMode, s.ClaudeTarget, s.ClaudeLastTarget), Children: items}
+	items = append(items, separator(), manage("在主窗口管理端点…", "endpoints"))
+	return Item{Label: "Claude  " + routeLabel(s.ClaudeMode, s.ClaudeTarget, s.ClaudeLastTarget), Icon: iconClaude,
+		Children: scopeNote("Claude Code", s.claudeEntrySubscription(), items)}
 }
 
 func claudeBindings(bindings []Binding) []Item {
@@ -45,22 +46,25 @@ func claudeBindings(bindings []Binding) []Item {
 	})
 	items := []Item{}
 	for _, b := range sorted {
-		label := b.Name + "  " + routeLabel(b.Mode, b.Target, b.LastTarget)
+		label, icon := b.Name+"  "+routeLabel(b.Mode, b.Target, b.LastTarget), iconModel
+		if b.Kind == "web_tools" {
+			icon = iconWebTools
+		}
 		if !b.Enabled {
-			items = append(items, info(b.Name+" · 已停用"))
+			items = append(items, info(b.Name+" · 已停用").withIcon(icon))
 			continue
 		}
-		items = append(items, Item{Label: label, Children: endpointChoices(b, "claude_binding")})
+		items = append(items, Item{Label: label, Icon: icon, Children: endpointChoices(b, "claude_binding")})
 	}
 	if len(items) == 0 {
-		items = append(items, info("尚无模型映射，Claude 请求将返回未分配错误"))
+		items = append(items, info("尚无模型映射，Claude 请求将返回未分配错误").withIcon(iconAlert))
 	}
-	return append(items, separator(), navigate("管理模型映射…", "claude-model-routing"))
+	return append(items, separator(), manage("管理模型映射…", "claude-model-routing"))
 }
 
 func endpointChoices(b Binding, kind string) []Item {
 	auto := b.Mode == "auto" || b.Mode == ""
-	items := []Item{choice("自动调度", auto, auto, Action{Kind: kind, ID: b.ID, Mode: "auto"}), separator()}
+	items := []Item{choice("自动调度", auto, auto, Action{Kind: kind, ID: b.ID, Mode: "auto"}).withIcon(iconAuto), separator()}
 	for _, mode := range []string{"manual_preferred", "manual_fixed"} {
 		targets := []Item{}
 		// 模型成员保留 API 顺序；健康、冷却、硬停用只标注，不增加页面没有的禁用条件。
@@ -77,11 +81,7 @@ func endpointChoices(b Binding, kind string) []Item {
 		if len(targets) == 0 {
 			targets = append(targets, info("未选择任何端点"))
 		}
-		label := "优选到"
-		if mode == "manual_fixed" {
-			label = "固定到"
-		}
-		items = append(items, Item{Label: label, Children: targets})
+		items = append(items, operationMenu(mode, targets))
 	}
 	return items
 }

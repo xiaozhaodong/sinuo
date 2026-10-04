@@ -8,14 +8,11 @@ import (
 )
 
 func codexMenu(s Snapshot) Item {
-	if s.CodexReadOnly {
-		return navigate("Codex  "+s.CodexAccess+"（在主窗口查看）", "codex-access")
-	}
 	if s.CodexError != "" {
-		return Item{Label: "Codex  读取失败", Children: []Item{info(s.CodexError), navigate("在主窗口管理账号池…", "account-pool")}}
+		return Item{Label: "Codex  读取失败", Icon: iconCodex, Children: []Item{info(s.CodexError).withIcon(iconAlert), manage("在主窗口管理账号池…", "account-pool")}}
 	}
 	if s.CodexModels {
-		return Item{Label: "Codex  模型路由", Children: codexBindings(s)}
+		return Item{Label: "Codex  模型路由", Icon: iconCodex, Children: scopeNote("Codex", s.codexEntrySubscription(), codexBindings(s))}
 	}
 	label, pinned := "自动", int64(0)
 	for _, account := range s.Accounts {
@@ -27,16 +24,13 @@ func codexMenu(s Snapshot) Item {
 			label = "自动 → " + account.Name
 		}
 	}
-	items := []Item{choice("自动调度（按编排）", pinned == 0, pinned == 0, Action{Kind: "codex", Mode: "auto"}), separator(),
-		{Label: "固定到", Children: accountChoices(s.Accounts, pinned, s.RecentAccountID)}}
+	items := []Item{choice("自动调度（按编排）", pinned == 0, pinned == 0, Action{Kind: "codex", Mode: "auto"}).withIcon(iconAuto), separator(),
+		operationMenu("manual_fixed", accountChoices(s.Accounts, pinned, s.RecentAccountID))}
 	if len(s.Accounts) == 0 {
-		items = []Item{info("无可用 Codex 账号")}
+		items = []Item{info("无可用 Codex 账号").withIcon(iconAlert)}
 	}
-	if s.CodexAccess != "" {
-		items = append(items, navigate("接入模式  "+s.CodexAccess+"（在主窗口查看）", "codex-access"))
-	}
-	items = append(items, separator(), navigate("在主窗口管理账号池…", "account-pool"))
-	return Item{Label: "Codex  " + label, Children: items}
+	items = append(items, separator(), manage("在主窗口管理账号池…", "account-pool"))
+	return Item{Label: "Codex  " + label, Icon: iconCodex, Children: scopeNote("Codex", s.codexEntrySubscription(), items)}
 }
 
 func accountGroup(a Account) int {
@@ -121,22 +115,19 @@ func codexBindings(s Snapshot) []Item {
 	items := []Item{}
 	for _, b := range bindings {
 		if !b.Enabled {
-			items = append(items, info(b.Name+" · 已停用"))
+			items = append(items, info(b.Name+" · 已停用").withIcon(iconModel))
 			continue
 		}
 		target := ""
 		if b.TargetID != 0 {
 			target = modelAccountName(accounts, b.TargetID)
 		}
-		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Children: modelAccountChoices(b, accounts)})
+		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Icon: iconModel, Children: modelAccountChoices(b, accounts)})
 	}
 	if len(items) == 0 {
-		items = append(items, info("尚无模型绑定，匹配不到模型的请求将返回未分配错误"))
+		items = append(items, info("尚无模型绑定，匹配不到模型的请求将返回未分配错误").withIcon(iconAlert))
 	}
-	if s.CodexAccess != "" {
-		items = append(items, navigate("接入模式  "+s.CodexAccess+"（在主窗口查看）", "codex-access"))
-	}
-	return append(items, separator(), navigate("管理模型映射…", "codex-model-routing"))
+	return append(items, separator(), manage("管理模型映射…", "codex-model-routing"))
 }
 
 func modelAccountName(accounts map[int64]Account, id int64) string {
@@ -147,7 +138,7 @@ func modelAccountName(accounts map[int64]Account, id int64) string {
 }
 
 func modelAccountChoices(b Binding, accounts map[int64]Account) []Item {
-	items := []Item{choice("自动调度", b.Mode == "auto", b.Mode == "auto", Action{Kind: "codex_binding", ID: b.ID, Mode: "auto"}), separator()}
+	items := []Item{choice("自动调度", b.Mode == "auto", b.Mode == "auto", Action{Kind: "codex_binding", ID: b.ID, Mode: "auto"}).withIcon(iconAuto), separator()}
 	for _, mode := range []string{"manual_preferred", "manual_fixed"} {
 		targets := []Item{}
 		for _, id := range b.AccountIDs {
@@ -164,11 +155,7 @@ func modelAccountChoices(b Binding, accounts map[int64]Account) []Item {
 		if len(targets) == 0 {
 			targets = append(targets, info("未选择任何账号"))
 		}
-		label := "优选到"
-		if mode == "manual_fixed" {
-			label = "固定到"
-		}
-		items = append(items, Item{Label: label, Children: targets})
+		items = append(items, operationMenu(mode, targets))
 	}
 	return items
 }

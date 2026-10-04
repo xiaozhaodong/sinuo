@@ -37,7 +37,7 @@ func EvaluateIcon(s Snapshot) IconStatus {
 			return IconStatus{State: IconDegraded, Reason: reason}
 		}
 	}
-	if !s.CodexReadOnly && s.CodexError == "" {
+	if !s.codexPoolBypassed() && s.CodexError == "" {
 		reason := codexPoolDown(s.Accounts)
 		if s.CodexModels {
 			reason = codexBindingsDown(s.CodexBindings, s.Accounts)

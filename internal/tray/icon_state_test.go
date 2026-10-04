@@ -57,9 +57,18 @@ func TestEvaluateIcon(t *testing.T) {
 		}, IconNormal},
 		{"账号池有可调度账号", func(s *Snapshot) { s.Accounts = []Account{authFailed, good} }, IconNormal},
 		{"账号池全部不可调度", func(s *Snapshot) { s.Accounts = []Account{authFailed, coolingAccount} }, IconDegraded},
-		{"订阅直通只读不判定账号", func(s *Snapshot) {
-			s.CodexReadOnly, s.Accounts = true, []Account{authFailed}
+		{"Codex 入口订阅直通时不判定账号", func(s *Snapshot) {
+			s.CodexEntryState, s.CodexEntryMode, s.Accounts = CodexEntryReady, "subscription", []Account{authFailed}
 		}, IconNormal},
+		{"Codex 入口状态不明时不判定账号", func(s *Snapshot) {
+			s.CodexEntryState, s.Accounts = CodexEntryUnavailable, []Account{authFailed}
+		}, IconNormal},
+		{"Codex 入口账号池模式仍判定账号", func(s *Snapshot) {
+			s.CodexEntryState, s.CodexEntryMode, s.Accounts = CodexEntryReady, "pool", []Account{authFailed}
+		}, IconDegraded},
+		{"Codex 入口已停用时判定账号", func(s *Snapshot) {
+			s.CodexEntryState, s.CodexEntryMode, s.Accounts = CodexEntryStopped, "subscription", []Account{authFailed}
+		}, IconDegraded},
 		{"Codex 映射固定账号冷却", func(s *Snapshot) {
 			s.CodexModels, s.Accounts = true, []Account{good, coolingAccount}
 			s.CodexBindings = []Binding{{Name: "gpt", Enabled: true, Mode: "manual_fixed", TargetID: 3,
