@@ -51,7 +51,7 @@ func defaultCodexSubscriptionProxyInput() CodexSubscriptionProxyConfigInput {
 		Enabled:       false,
 		Mode:          CodexSubscriptionProxyModeSubscription,
 		ListenHost:    "127.0.0.1",
-		ListenPort:    18089,
+		ListenPort:    28088,
 		WSCompression: CodexSubscriptionProxyCompressionAuto,
 	}
 }
@@ -66,7 +66,7 @@ func TestCodexSubscriptionProxySettings_LoadMissingRowReturnsDefaults(t *testing
 		t.Fatal("expected uninitialized state")
 	}
 	if state.Config.Enabled || state.Config.Mode != CodexSubscriptionProxyModeSubscription ||
-		state.Config.ListenHost != "127.0.0.1" || state.Config.ListenPort != 18089 ||
+		state.Config.ListenHost != "127.0.0.1" || state.Config.ListenPort != 28088 ||
 		state.Config.WSCompression != CodexSubscriptionProxyCompressionAuto || state.Config.AccessConfigured() {
 		t.Fatalf("unexpected defaults: %+v", state.Config)
 	}
@@ -293,7 +293,7 @@ func TestCodexSubscriptionProxySettings_InputValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize failed: %v", err)
 	}
-	if normalized.Mode != CodexSubscriptionProxyModePool || normalized.ListenHost != "::1" || normalized.ListenPort != 18089 || normalized.WSCompression != CodexSubscriptionProxyCompressionDisabled {
+	if normalized.Mode != CodexSubscriptionProxyModePool || normalized.ListenHost != "::1" || normalized.ListenPort != 28088 || normalized.WSCompression != CodexSubscriptionProxyCompressionDisabled {
 		t.Fatalf("unexpected normalization: %+v", normalized)
 	}
 }

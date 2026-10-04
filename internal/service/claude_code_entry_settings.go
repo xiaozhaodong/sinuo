@@ -30,7 +30,7 @@ const (
 
 	// ClaudeCodeEntryListenHost 固定回环地址
 	ClaudeCodeEntryListenHost = "127.0.0.1"
-	// ClaudeCodeEntryDefaultPort 默认端口（Codex 订阅代理默认 18089）
+	// ClaudeCodeEntryDefaultPort 默认端口（Codex 订阅代理默认 28088，两者错开）
 	ClaudeCodeEntryDefaultPort = 18088
 )
 

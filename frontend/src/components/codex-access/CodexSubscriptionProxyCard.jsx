@@ -63,7 +63,7 @@ const NOTICE_CLASSES = {
   info: 'bg-surface-sub text-fg-body border-line'
 };
 
-const DEFAULT_FORM = { mode: 'subscription', listenHost: '127.0.0.1', listenPort: '18089' };
+const DEFAULT_FORM = { mode: 'subscription', listenHost: '127.0.0.1', listenPort: '28088' };
 
 const formFromConfig = (config) => ({
   mode: config?.mode || DEFAULT_FORM.mode,

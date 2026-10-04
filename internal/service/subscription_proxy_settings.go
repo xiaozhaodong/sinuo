@@ -39,7 +39,7 @@ const (
 	CodexSubscriptionProxyCompressionDisabled = "disabled"
 
 	CodexSubscriptionProxyDefaultListenHost = "127.0.0.1"
-	CodexSubscriptionProxyDefaultListenPort = 18089
+	CodexSubscriptionProxyDefaultListenPort = 28088
 
 	// CodexSubscriptionProxyCapabilityPrefix / Suffix 组成 Codex 接入地址：
 	// http://<host>:<port>/subscription/<secret>/backend-api/codex

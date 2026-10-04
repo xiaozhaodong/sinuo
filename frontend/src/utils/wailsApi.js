@@ -2444,7 +2444,7 @@ const normalizeCodexSubscriptionProxyConfig = (config = {}) => ({
   enabled: config.enabled === true,
   mode: config.mode || 'subscription',
   listenHost: config.listen_host || '127.0.0.1',
-  listenPort: Number(config.listen_port ?? 18089),
+  listenPort: Number(config.listen_port ?? 28088),
   wsCompression: config.ws_compression || 'auto',
   revision: Number(config.revision ?? 0),
   accessConfigured: config.access_configured === true
@@ -2483,7 +2483,7 @@ export const saveCodexSubscriptionProxyConfig = async (input = {}, expectedRevis
     enabled: input.enabled === true,
     mode: String(input.mode ?? 'subscription'),
     listen_host: String(input.listen_host ?? input.listenHost ?? '127.0.0.1'),
-    listen_port: Number(input.listen_port ?? input.listenPort ?? 18089),
+    listen_port: Number(input.listen_port ?? input.listenPort ?? 28088),
     ws_compression: String(input.ws_compression ?? input.wsCompression ?? 'auto')
   }, Number(expectedRevision ?? 0));
   return normalizeCodexSubscriptionProxySaveResult(result);
