@@ -29,6 +29,21 @@ const FAILURE_ACTION_OPTIONS = [
   { value: 'reject', label: 'reject - 直接拒绝返回错误' }
 ];
 
+// 菜单栏文字（仅 macOS），取值与后端 tray.MenuBar* 常量一致
+const MENUBAR_LABEL_OPTIONS = [
+  { value: 'off', label: '不显示' },
+  { value: 'today_cost', label: '今日花费' },
+  { value: 'claude_quota', label: 'Claude 订阅剩余' },
+  { value: 'codex_quota', label: 'Codex 账号剩余' }
+];
+
+// 用下拉框编辑的设置：category.key → 选项
+const SELECT_SETTING_OPTIONS = {
+  'strategy.type': STRATEGY_OPTIONS,
+  'request.failure_action': FAILURE_ACTION_OPTIONS,
+  'desktop.menubar_label': MENUBAR_LABEL_OPTIONS
+};
+
 const CODEX_IDENTITY_MODE_OPTIONS = [
   { value: 'auto', label: '自动（推荐）' },
   { value: 'disabled', label: '强制关闭（排障）' },
@@ -159,9 +174,10 @@ const SettingItem = ({
     );
   }
 
-  // 策略类型使用下拉选择
-  if (setting.key === 'type' && setting.category === 'strategy') {
-    const handleStrategyChange = (newValue) => {
+  // 策略类型、失败处理动作、菜单栏文字使用下拉选择
+  const selectOptions = SELECT_SETTING_OPTIONS[`${setting.category}.${setting.key}`];
+  if (selectOptions) {
+    const handleSelectChange = (newValue) => {
       setLocalValue(newValue);
       onChange(setting.category, setting.key, newValue);
     };
@@ -183,43 +199,9 @@ const SettingItem = ({
           )}
         </div>
         <CustomSelect
-          options={STRATEGY_OPTIONS}
+          options={selectOptions}
           value={localValue}
-          onChange={handleStrategyChange}
-          disabled={disabled}
-          size="md"
-        />
-      </div>
-    );
-  }
-
-  // 失败处理动作使用下拉选择
-  if (setting.key === 'failure_action' && setting.category === 'request') {
-    const handleActionChange = (newValue) => {
-      setLocalValue(newValue);
-      onChange(setting.category, setting.key, newValue);
-    };
-
-    return (
-      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
-        <div className="flex-1 min-w-0 pr-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
-            {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
-                <AlertTriangle size={10} className="mr-0.5" />
-                重启生效
-              </span>
-            )}
-          </div>
-          {setting.description && (
-            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
-          )}
-        </div>
-        <CustomSelect
-          options={FAILURE_ACTION_OPTIONS}
-          value={localValue}
-          onChange={handleActionChange}
+          onChange={handleSelectChange}
           disabled={disabled}
           size="md"
         />

@@ -44,6 +44,11 @@ func (a *App) executeTrayAction(action tray.Action, confirm trayConfirmFunc) err
 		return a.ClearEndpointCooldown(action.Target)
 	case "account_cooldown":
 		return a.ClearUpstreamAccountCooldown(action.ID)
+	case "menubar_label":
+		if tray.NormalizeMenuBarMode(action.Mode) != action.Mode {
+			return fmt.Errorf("未知的菜单栏文字模式: %s", action.Mode)
+		}
+		return a.UpdateSetting(UpdateSettingInput{Category: "desktop", Key: "menubar_label", Value: action.Mode})
 	case "close_to_tray":
 		current, err := a.readTraySetting("close_to_tray", true)
 		if err != nil {

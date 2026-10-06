@@ -15,19 +15,14 @@ func codexMenu(s Snapshot) Item {
 	if s.CodexModels {
 		return Item{Label: "Codex  模型路由", Icon: iconCodex, Children: scopeNote("Codex", s.codexEntrySubscription(), codexBindings(s))}
 	}
-	label, pinned, current := "自动", int64(0), -1
-	for i, account := range s.Accounts {
+	label, pinned := "自动", int64(0)
+	if account, ok := s.currentCodexAccount(); ok {
+		label = "自动 → " + account.Name
 		if account.Pinned {
-			pinned, label, current = account.ID, "固定 → "+account.Name, i
-			break
+			label, pinned = "固定 → "+account.Name, account.ID
 		}
-		if account.ID == s.RecentAccountID {
-			label, current = "自动 → "+account.Name, i
-		}
-	}
-	if current >= 0 {
-		if quota := tightestQuota(s.Accounts[current]); quota != "" {
-			label += " · " + quota
+		if name, left, ok := tightestWindow(account); ok {
+			label += fmt.Sprintf(" · %s 剩 %.0f%%", name, left)
 		}
 	}
 	items := []Item{choice("自动调度（按编排）", pinned == 0, pinned == 0, Action{Kind: "codex", Mode: "auto"}).withIcon(iconAuto), separator(),
@@ -105,10 +100,28 @@ func accountQuota(a Account) string {
 	return "5h " + remaining(a.FiveHourUsed) + " · d7 " + remaining(a.WeeklyUsed)
 }
 
-// tightestQuota 取剩余更少的额度窗口，与请求页角标同一口径；api_key 与读数未知时为空。
-func tightestQuota(a Account) string {
+// currentCodexAccount：全局账号池模式下的当前账号，固定账号优先，否则取最近一次调度命中的账号。
+func (s Snapshot) currentCodexAccount() (Account, bool) {
+	var recent *Account
+	for i, account := range s.Accounts {
+		if account.Pinned {
+			return account, true
+		}
+		if account.ID == s.RecentAccountID {
+			recent = &s.Accounts[i]
+		}
+	}
+	if recent == nil {
+		return Account{}, false
+	}
+	return *recent, true
+}
+
+// tightestWindow 取剩余更少的额度窗口（相同时取 5h），与请求页角标同一口径；
+// free 只有 d7，api_key 无限额与读数未知时返回 false。
+func tightestWindow(a Account) (name string, left float64, ok bool) {
 	if a.Provider == "api_key" {
-		return ""
+		return "", 0, false
 	}
 	windows := []struct {
 		name string
@@ -117,19 +130,15 @@ func tightestQuota(a Account) string {
 	if strings.EqualFold(a.Plan, "free") {
 		windows = windows[1:]
 	}
-	label, least := "", 0.0
 	for _, window := range windows {
 		if window.used == nil {
 			continue
 		}
-		if left := remainingPercent(*window.used); label == "" || left < least {
-			label, least = window.name, left
+		if value := remainingPercent(*window.used); !ok || value < left {
+			name, left, ok = window.name, value, true
 		}
 	}
-	if label == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s 剩 %.0f%%", label, least)
+	return name, left, ok
 }
 
 func codexBindings(s Snapshot) []Item {

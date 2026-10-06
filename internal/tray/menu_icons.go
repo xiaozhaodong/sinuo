@@ -32,6 +32,9 @@ const (
 	// 解除冷却与复制接入地址
 	iconClearCooldown = "timer-reset"
 	iconCopy          = "copy"
+	// 最近切换与菜单栏文字
+	iconHistory     = "history"
+	iconMenuBarText = "type"
 )
 
 var menuIcons = loadMenuIcons()

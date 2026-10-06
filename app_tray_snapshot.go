@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +35,14 @@ func (t *appTray) snapshot() tray.Snapshot {
 		return s
 	}
 	s.MainURL = trayLocalURL(status.ProxyHost, status.ProxyPort)
-	var err error
-	s.CloseToTray, err = a.readTraySetting("close_to_tray", true)
-	s.SettingsError = trayError(err)
+	t.readDesktopSettings(&s)
 	t.readTrayStats(&s)
+	if policy, err := a.activeTimezonePolicy(); err == nil {
+		s.Location = policy.Location()
+	}
+	t.failoverMu.Lock()
+	s.Failovers = append([]tray.FailoverEntry(nil), t.failovers...)
+	t.failoverMu.Unlock()
 	routing, err := a.GetModelRoutingSettings()
 	if err != nil {
 		s.ClaudeError, s.CodexError = "模型路由状态读取失败: "+err.Error(), "模型路由状态读取失败: "+err.Error()
@@ -52,7 +57,8 @@ func (t *appTray) snapshot() tray.Snapshot {
 		s.EntryURL = entry.BaseURL
 	}
 	if entry.Enabled && entry.Mode == "subscription" {
-		s.EntryQuota = trayClaudeQuota(a.GetClaudeSubscriptionRateLimit(), time.Now())
+		quota := a.GetClaudeSubscriptionRateLimit()
+		s.EntryQuota, s.EntryQuotaShort = trayClaudeQuota(quota, s.Now), trayClaudeQuotaShort(quota, s.Now)
 	}
 	t.readCodexEntry(&s)
 	if s.CodexError == "" {
@@ -68,39 +74,64 @@ func trayError(err error) string {
 	return err.Error()
 }
 
-func (t *appTray) readTrayStats(s *tray.Snapshot) {
-	if time.Since(t.statsAt) >= trayStatsCacheTTL {
-		t.stats, t.statsErr = t.app.GetUsageSummary("", "")
-		if t.statsErr == nil {
-			t.failed, t.statsErr = t.app.trayTodayFailed()
-		}
-		t.statsAt = time.Now()
+// readDesktopSettings 读桌面设置；读取失败时按默认值处理，并在菜单里置灰相关开关。
+func (t *appTray) readDesktopSettings(s *tray.Snapshot) {
+	a := t.app
+	var errs [3]error
+	s.CloseToTray, errs[0] = a.readTraySetting("close_to_tray", true)
+	notify, err := a.readTraySetting("system_notifications", true)
+	errs[1] = err
+	t.notify.setEnabled(notify)
+	if runtime.GOOS == "darwin" {
+		var mode string
+		mode, errs[2] = a.readTraySettingValue("menubar_label")
+		s.MenuBarLabel = tray.NormalizeMenuBarMode(mode)
 	}
-	s.TodayRequests, s.TodayFailed, s.TodayCost, s.StatsError = t.stats.TodayRequests, t.failed, t.stats.TodayCost, trayError(t.statsErr)
+	for _, err := range errs {
+		if err != nil {
+			s.SettingsError = err.Error()
+			break
+		}
+	}
 }
 
-// trayTodayFailed 统计今日状态为 failed 的请求数，与请求页「已失败」筛选同一口径；
-// UsageSummary.FailedRequests 是本次启动以来的内存计数，不是今日，不能用。
-// 日期范围与 GetUsageSummary 的今日统计相同，按配置的时区取业务日。
-func (a *App) trayTodayFailed() (int64, error) {
+func (t *appTray) readTrayStats(s *tray.Snapshot) {
+	if t.statsStale.Swap(false) || time.Since(t.statsAt) >= trayStatsCacheTTL {
+		t.stats, t.statsErr = t.app.trayTodayStats()
+		t.statsAt = time.Now()
+	}
+	s.TodayRequests, s.TodayFailed, s.TodayCost, s.StatsError = t.stats.requests, t.stats.failed, t.stats.cost, trayError(t.statsErr)
+}
+
+// trayTodayStats 是托盘统计行与菜单栏文字用的今日数字。
+type trayTodayStats struct {
+	requests, failed int64
+	cost             float64
+}
+
+// trayTodayStats 一条按业务日的索引查询取齐今日请求数、花费与失败数：请求数和花费与
+// GetUsageSummary 的今日统计同一口径（同表、同时区日界），但不像它那样顺带扫全部历史；
+// 失败只计 status = 'failed'，与请求页「已失败」筛选一致（UsageSummary.FailedRequests 是启动以来的内存计数）。
+func (a *App) trayTodayStats() (trayTodayStats, error) {
+	var stats trayTodayStats
 	db := a.coreDB()
 	if db == nil {
-		return 0, nil
+		return stats, nil
 	}
 	policy, err := a.activeTimezonePolicy()
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
 	start, end, err := policy.DayRange(policy.BusinessDate(time.Now()))
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var failed int64
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM request_logs WHERE status = 'failed' AND start_time >= ? AND start_time < ?",
-		timezonepolicy.FormatStorage(start), timezonepolicy.FormatStorage(end)).Scan(&failed)
-	return failed, err
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(total_cost_usd), 0), COUNT(CASE WHEN status = 'failed' THEN 1 END)
+		FROM request_logs WHERE start_time >= ? AND start_time < ?`,
+		timezonepolicy.FormatStorage(start), timezonepolicy.FormatStorage(end)).Scan(&stats.requests, &stats.cost, &stats.failed)
+	return stats, err
 }
 
 // trayLocalURL 是给本机客户端用的地址：监听在全部网卡时换成回环地址。
@@ -204,11 +235,9 @@ func (t *appTray) readCodexRoute(s *tray.Snapshot) {
 	}
 }
 
-// trayClaudeQuota 与请求页一致：逐窗口取较新来源，缺读数时取另一来源；过期读数不当作当前额度。
-func trayClaudeQuota(q *ClaudeSubscriptionRateLimitInfo, now time.Time) string {
-	if q == nil || (q.Headers == nil && q.Usage == nil) {
-		return "尚无额度数据"
-	}
+// trayClaudeQuotaWindows 与请求页一致：逐窗口取较新来源，缺读数时取另一来源；
+// 重置时间已过的读数不当作当前额度。返回 5h / d7 的剩余百分比（未知或已重置时为 nil）与是否已重置。
+func trayClaudeQuotaWindows(q *ClaudeSubscriptionRateLimitInfo, now time.Time) (left [2]*float64, reset [2]bool) {
 	var header, usage [2]ClaudeSubscriptionQuotaWindowInfo
 	var headerAt, usageAt time.Time
 	if q.Headers != nil {
@@ -223,33 +252,76 @@ func trayClaudeQuota(q *ClaudeSubscriptionRateLimitInfo, now time.Time) string {
 	if usageAt.After(headerAt) {
 		primary, secondary = usage, header
 	}
-	labels := [2]string{}
 	for i, value := range primary {
 		if value.UsedPercent == nil {
 			value = secondary[i]
 		}
-		labels[i] = "未知"
-		reset, _ := time.Parse(time.RFC3339Nano, value.ResetAt)
-		if !reset.IsZero() && !reset.After(now) {
-			labels[i] = "已重置，待更新"
+		if at, _ := time.Parse(time.RFC3339Nano, value.ResetAt); !at.IsZero() && !at.After(now) {
+			reset[i] = true
 			continue
 		}
 		if value.UsedPercent != nil {
-			labels[i] = fmt.Sprintf("剩 %.0f%%", math.Max(0, math.Min(100, 100-*value.UsedPercent)))
+			remaining := math.Max(0, math.Min(100, 100-*value.UsedPercent))
+			left[i] = &remaining
+		}
+	}
+	return left, reset
+}
+
+func trayClaudeQuota(q *ClaudeSubscriptionRateLimitInfo, now time.Time) string {
+	if q == nil || (q.Headers == nil && q.Usage == nil) {
+		return "尚无额度数据"
+	}
+	left, reset := trayClaudeQuotaWindows(q, now)
+	labels := [2]string{}
+	for i := range labels {
+		switch {
+		case reset[i]:
+			labels[i] = "已重置，待更新"
+		case left[i] != nil:
+			labels[i] = fmt.Sprintf("剩 %.0f%%", *left[i])
+		default:
+			labels[i] = "未知"
 		}
 	}
 	return "5h " + labels[0] + " · d7 " + labels[1]
 }
 
-func (a *App) readTraySetting(key string, fallback bool) (bool, error) {
+// trayClaudeQuotaShort 是菜单栏文字：剩余更少的窗口（相同时取 5h），与请求页角标同一口径；没有有效读数时为空。
+func trayClaudeQuotaShort(q *ClaudeSubscriptionRateLimitInfo, now time.Time) string {
+	if q == nil || (q.Headers == nil && q.Usage == nil) {
+		return ""
+	}
+	left, _ := trayClaudeQuotaWindows(q, now)
+	names, tightest := [2]string{"5h", "d7"}, -1
+	for i := range left {
+		if left[i] != nil && (tightest < 0 || *left[i] < *left[tightest]) {
+			tightest = i
+		}
+	}
+	if tightest < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s %.0f%%", names[tightest], *left[tightest])
+}
+
+func (a *App) readTraySettingValue(key string) (string, error) {
 	record, err := a.GetSetting("desktop", key)
+	if err != nil {
+		return "", err
+	}
+	return record.Value, nil
+}
+
+func (a *App) readTraySetting(key string, fallback bool) (bool, error) {
+	raw, err := a.readTraySettingValue(key)
 	if err != nil {
 		return fallback, err
 	}
-	if record.Value == "" {
+	if raw == "" {
 		return fallback, nil
 	}
-	value, err := strconv.ParseBool(record.Value)
+	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fallback, fmt.Errorf("桌面设置 %s 无效: %w", key, err)
 	}

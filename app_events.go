@@ -102,17 +102,14 @@ func (a *App) emitNotification(level, title, message string) {
 }
 
 // emitFailoverNotification 将请求级故障转移转换为窗口内全局 Toast 事件。
-// 不调用任何 macOS/系统通知 API，避免在桌面之外产生额外打扰。
+// 系统通知由托盘另发（app_tray_notify.go）：只在主窗口隐藏或最小化时发，且同类 10 分钟内只发一次。
 func (a *App) emitFailoverNotification(event proxy.FailoverEvent) {
 	laneLabel := "CC 端点"
 	if event.Lane == proxy.FailoverLaneCodex {
 		laneLabel = "Codex 账号"
 	}
 
-	reason := event.ReasonLabel
-	if reason == "" {
-		reason = proxy.FailoverReasonLabel(event.ReasonCode)
-	}
+	reason := failoverReasonLabel(event)
 	if event.ReasonDetail != "" {
 		reason = fmt.Sprintf("%s（%s）", reason, event.ReasonDetail)
 	}

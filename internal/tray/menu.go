@@ -31,6 +31,9 @@ func Build(s Snapshot) []Item {
 	for _, problem := range Diagnose(s) {
 		items = append(items, problemItem(problem, s.Now))
 	}
+	if len(s.Failovers) > 0 {
+		items = append(items, recentFailovers(s))
+	}
 	items = append(items, separator(), claudeMenu(s))
 	items = append(items, claudeEntryItems(s)...)
 	items = append(items, separator(), codexMenu(s))
@@ -42,6 +45,9 @@ func Build(s Snapshot) []Item {
 	}
 	items = append(items, separator())
 	items = append(items, choice("关闭窗口后保留在菜单栏", s.CloseToTray, s.SettingsError != "", Action{Kind: "close_to_tray"}).withIcon(iconMenuBar))
+	if s.MenuBarLabel != "" {
+		items = append(items, menuBarMenu(s))
+	}
 	return append(items, quit)
 }
 

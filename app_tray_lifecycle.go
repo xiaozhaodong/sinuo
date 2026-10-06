@@ -25,6 +25,8 @@ func (t *appTray) setupWindowEvents() {
 		}
 		go t.closeWindow()
 	})
+	// 隐藏到托盘或最小化后才需要系统通知，第一次发生时申请权限
+	t.window.OnWindowEvent(events.Common.WindowMinimise, func(*application.WindowEvent) { t.notify.authorize() })
 	t.app.wailsApp.Event.RegisterApplicationEventHook(events.Mac.ApplicationShouldHandleReopen, func(event *application.ApplicationEvent) {
 		event.Cancel()
 		t.showWindow("")
@@ -139,6 +141,7 @@ func (t *appTray) hideWindow() {
 		t.window.Hide()
 		setTrayWindowVisible(t.window, false)
 	})
+	t.notify.authorize()
 }
 
 func (t *appTray) leaveFullscreenThenClose() {

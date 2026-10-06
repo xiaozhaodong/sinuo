@@ -58,6 +58,12 @@ type Snapshot struct {
 	TodayRequests, TodayFailed              int64
 	TodayCost                               float64
 	StatsError                              string
+	// Location 是显示时间用的时区（配置的 timezone）；为空时用系统时区
+	Location *time.Location
+	// MenuBarLabel 是菜单栏文字模式；为空表示平台不支持（非 macOS）
+	MenuBarLabel string
+	// Failovers 是本次运行以来最近的故障转移，新的在前
+	Failovers []FailoverEntry
 	// 复制用的接入地址：主端口总有；Claude Code 入口只在启用且监听中时才有
 	MainURL, EntryURL                                       string
 	ClaudeMode, ClaudeTarget, ClaudeLastTarget, ClaudeError string
@@ -67,6 +73,7 @@ type Snapshot struct {
 	// Claude Code 入口：与主端口分开监听；EntryError 是配置读取失败，EntryListenError 是监听失败
 	EntryEnabled, EntryRunning                          bool
 	EntryMode, EntryQuota, EntryError, EntryListenError string
+	EntryQuotaShort                                     string // 菜单栏文字用：剩余更少的窗口，如「5h 62%」
 	EntryPort                                           int
 	CodexModels                                         bool
 	CodexBindings                                       []Binding

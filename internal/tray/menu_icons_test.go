@@ -16,6 +16,8 @@ func iconSnapshots() map[string]Snapshot {
 	global.EntryEnabled, global.EntryRunning, global.EntryMode, global.EntryPort = true, true, "subscription", 18088
 	global.CodexEntryState, global.CodexEntryMode, global.CodexEntryPort = CodexEntryReady, "subscription", 18089
 	global.MainURL, global.EntryURL = "http://127.0.0.1:8088", "http://127.0.0.1:18088"
+	global.MenuBarLabel = MenuBarCost
+	global.Failovers = []FailoverEntry{{Key: "a", Text: "Claude 临时改用 b（原 a · 触发限流）", Count: 2}}
 	// 降级：Claude 固定到冷却端点（单个目标直接解除）、Codex 整池冷却（多个目标先选操作）
 	degraded := runningSnapshot()
 	degraded.ClaudeMode, degraded.ClaudeTarget = "manual_fixed", "relay"

@@ -969,9 +969,11 @@ func (a *App) setupProxyHandler() {
 	if a.codexModelRoutingService != nil {
 		a.proxyHandler.SetCodexModelRouter(a.codexModelRoutingService)
 	}
-	// 请求级故障转移只推送到应用窗口内的全局 Toast，不触发系统通知中心。
+	// 请求级故障转移推送到窗口内的全局 Toast；托盘同时记入「最近切换」，
+	// 并在主窗口隐藏或最小化时发节流后的系统通知（回调在请求路径上，两者都不阻塞）。
 	a.proxyHandler.SetOnFailoverTriggered(func(event proxy.FailoverEvent) {
 		a.emitFailoverNotification(event)
+		a.trayFailover(event)
 	})
 	a.proxyHandler.SetOnClaudeSubscriptionQuota(a.emitClaudeSubscriptionRateLimit)
 	// 🛡️ 注入出站隐私过滤（必须在 SetUsageTracker 之后，重建的 handler 会重新注入）

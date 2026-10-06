@@ -2,6 +2,7 @@ package tray
 
 import (
 	"bytes"
+	"fmt"
 	"image/png"
 	"reflect"
 	"strings"
@@ -350,7 +351,11 @@ func TestMenu_CodexRowShowsTightestQuota(t *testing.T) {
 		{"读数未知", Account{}, ""},
 		{"超额按 0 显示", Account{FiveHourUsed: used(120)}, "5h 剩 0%"},
 	} {
-		if got := tightestQuota(tc.account); got != tc.want {
+		got := ""
+		if name, left, ok := tightestWindow(tc.account); ok {
+			got = fmt.Sprintf("%s 剩 %.0f%%", name, left)
+		}
+		if got != tc.want {
 			t.Errorf("%s: %q，期望 %q", tc.name, got, tc.want)
 		}
 	}

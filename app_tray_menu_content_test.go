@@ -50,7 +50,7 @@ func TestTray_CooldownActionsCallExistingWriters(t *testing.T) {
 	}
 }
 
-func TestTray_TodayFailedCountsOnlyTodayFailures(t *testing.T) {
+func TestTray_TodayStatsUseBusinessDayAndCountOnlyFailed(t *testing.T) {
 	core, err := tracking.OpenCoreDatabase(tracking.DatabaseConfig{Type: "sqlite", DatabasePath: ":memory:"})
 	if err != nil {
 		t.Fatal(err)
@@ -72,23 +72,24 @@ func TestTray_TodayFailedCountsOnlyTodayFailures(t *testing.T) {
 	rows := []struct {
 		id, status string
 		at         time.Time
+		cost       float64
 	}{
-		{"req-today-1", "failed", start.Add(time.Second)},
-		{"req-today-2", "failed", start.Add(time.Minute)},
-		{"req-today-ok", "completed", start.Add(time.Second)},
-		{"req-today-cancel", "cancelled", start.Add(time.Second)},
-		{"req-yesterday", "failed", start.Add(-time.Second)},
+		{"req-today-1", "failed", start.Add(time.Second), 0},
+		{"req-today-2", "failed", start.Add(time.Minute), 0},
+		{"req-today-ok", "completed", start.Add(time.Second), 1.25},
+		{"req-today-cancel", "cancelled", start.Add(time.Second), 0.25},
+		{"req-yesterday", "failed", start.Add(-time.Second), 9},
 	}
 	for _, row := range rows {
-		if _, err := core.DB().Exec(`INSERT INTO request_logs (request_id, start_time, status) VALUES (?, ?, ?)`,
-			row.id, timezonepolicy.FormatStorage(row.at), row.status); err != nil {
+		if _, err := core.DB().Exec(`INSERT INTO request_logs (request_id, start_time, status, total_cost_usd) VALUES (?, ?, ?, ?)`,
+			row.id, timezonepolicy.FormatStorage(row.at), row.status, row.cost); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if failed, err := a.trayTodayFailed(); err != nil || failed != 2 {
-		t.Fatalf("只计今日 failed: failed=%d err=%v", failed, err)
+	if stats, err := a.trayTodayStats(); err != nil || stats != (trayTodayStats{requests: 4, failed: 2, cost: 1.5}) {
+		t.Fatalf("今日 4 次、花费 1.5、失败只计 failed: %+v err=%v", stats, err)
 	}
-	if failed, err := NewApp().trayTodayFailed(); err != nil || failed != 0 {
-		t.Fatalf("数据库未就绪时按 0 处理: failed=%d err=%v", failed, err)
+	if stats, err := NewApp().trayTodayStats(); err != nil || stats != (trayTodayStats{}) {
+		t.Fatalf("数据库未就绪时按 0 处理: %+v err=%v", stats, err)
 	}
 }
