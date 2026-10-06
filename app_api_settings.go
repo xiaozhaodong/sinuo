@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -151,7 +152,8 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 	for _, r := range records {
 		// 受保护分类（Codex 订阅代理）由专用设置页独占：通用列表不返回，
 		// 既不让它混进通用表单，也不让单行 JSON 配置走普通读取路径。
-		if service.IsProtectedSettingsCategory(r.Category) {
+		// 桌面内部标记与当前平台不生效的桌面设置同样不返回。
+		if service.IsProtectedSettingsCategory(r.Category) || !service.SettingVisible(r.Category, r.Key, runtime.GOOS) {
 			continue
 		}
 		result = append(result, a.settingRecordToInfo(r))
@@ -179,6 +181,9 @@ func (a *App) GetSettingsByCategory(category string) ([]SettingInfo, error) {
 
 	result := make([]SettingInfo, 0, len(records))
 	for _, r := range records {
+		if !service.SettingVisible(r.Category, r.Key, runtime.GOOS) {
+			continue
+		}
 		result = append(result, a.settingRecordToInfo(r))
 	}
 

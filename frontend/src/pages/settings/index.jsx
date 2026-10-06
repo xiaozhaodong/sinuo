@@ -135,7 +135,6 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
   const settingsByCategory = useMemo(() => {
     const grouped = {};
     for (const setting of settings) {
-      if (setting.category === 'desktop' && setting.key === 'tray_hint_shown') continue;
       if (!grouped[setting.category]) {
         grouped[setting.category] = [];
       }

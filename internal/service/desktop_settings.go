@@ -18,3 +18,18 @@ func desktopDefaults() []*store.SettingRecord {
 			Label: "已提示托盘驻留", Description: "内部标记，不在设置页展示", DisplayOrder: 9},
 	}
 }
+
+// macOnlyDesktopSettings 只在 macOS 生效：其他平台的托盘动画、系统通知与菜单栏文字都未实现。
+var macOnlyDesktopSettings = map[string]bool{"request_animation": true, "system_notifications": true, "menubar_label": true}
+
+// SettingVisible 决定设置是否出现在设置页：桌面内部标记不展示，仅 macOS 生效的桌面设置在其他平台隐藏。
+// 默认值仍在所有平台注册，托盘按默认值读取不会出错。
+func SettingVisible(category, key, goos string) bool {
+	if category != CategoryDesktop {
+		return true
+	}
+	if key == "tray_hint_shown" {
+		return false
+	}
+	return goos == "darwin" || !macOnlyDesktopSettings[key]
+}

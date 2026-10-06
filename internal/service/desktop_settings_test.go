@@ -43,3 +43,19 @@ func TestDesktopSettings_DefaultsPersistenceAndMetadata(t *testing.T) {
 		t.Fatalf("桌面设置应为关窗驻留、请求动画、系统通知、菜单栏文字与提示标记五项: %v %v", rows, err)
 	}
 }
+
+func TestDesktopSettings_VisibleOnlyWhereSupported(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		if !SettingVisible(CategoryDesktop, "close_to_tray", goos) || SettingVisible(CategoryDesktop, "tray_hint_shown", goos) {
+			t.Fatalf("%s: 关窗驻留应展示，内部提示标记不展示", goos)
+		}
+		for _, key := range []string{"request_animation", "system_notifications", "menubar_label"} {
+			if got := SettingVisible(CategoryDesktop, key, goos); got != (goos == "darwin") {
+				t.Fatalf("%s: %s 只在 macOS 展示，得到 %v", goos, key, got)
+			}
+		}
+	}
+	if !SettingVisible(CategoryStrategy, "tray_hint_shown", "linux") {
+		t.Fatal("其他分类不受桌面过滤影响")
+	}
+}
