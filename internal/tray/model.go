@@ -4,6 +4,7 @@ package tray
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"golang.org/x/text/collate"
 	"golang.org/x/text/language"
@@ -23,9 +24,10 @@ type Item struct {
 }
 
 type Endpoint struct {
-	Name, Status string
-	Priority     int
-	Available    bool
+	Name, Status  string
+	Priority      int
+	Available     bool
+	CooldownUntil time.Time // 只用于显示剩余时间；是否冷却以 Status 为准
 }
 
 type Binding struct {
@@ -44,15 +46,20 @@ type Account struct {
 	Priority                                int
 	Enabled, Pinned, HasCredential, Cooling bool
 	FiveHourUsed, WeeklyUsed                *float64
+	CooldownUntil                           time.Time
 }
 
 type Snapshot struct {
-	Running, Recovery, Waiting, CloseToTray                 bool
-	Address, StartupState, SettingsError                    string
-	Active                                                  int
-	TodayRequests                                           int64
-	TodayCost                                               float64
-	StatsError                                              string
+	// Now 是读取快照的时刻，冷却剩余时间按它计算，菜单构建不直接读系统时钟
+	Now                                     time.Time
+	Running, Recovery, Waiting, CloseToTray bool
+	Address, StartupState, SettingsError    string
+	Active                                  int
+	TodayRequests, TodayFailed              int64
+	TodayCost                               float64
+	StatsError                              string
+	// 复制用的接入地址：主端口总有；Claude Code 入口只在启用且监听中时才有
+	MainURL, EntryURL                                       string
 	ClaudeMode, ClaudeTarget, ClaudeLastTarget, ClaudeError string
 	ClaudeModels                                            bool
 	Endpoints                                               []Endpoint
@@ -134,7 +141,44 @@ func remaining(used *float64) string {
 	if used == nil {
 		return "未知"
 	}
-	return fmt.Sprintf("剩 %.0f%%", math.Max(0, math.Min(100, 100-*used)))
+	return fmt.Sprintf("剩 %.0f%%", remainingPercent(*used))
+}
+
+func remainingPercent(used float64) float64 { return math.Max(0, math.Min(100, 100-used)) }
+
+// cooldownLeft 返回冷却剩余时间（分钟向上取整）；截止时间未知或已过时为空。
+func cooldownLeft(until, now time.Time) string {
+	if until.IsZero() || now.IsZero() || !until.After(now) {
+		return ""
+	}
+	left := until.Sub(now)
+	if left < time.Minute {
+		return "剩不到 1 分钟"
+	}
+	minutes := int(math.Ceil(left.Minutes()))
+	if minutes < 60 {
+		return fmt.Sprintf("剩 %d 分钟", minutes)
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("剩 %d 小时", minutes/60)
+	}
+	return fmt.Sprintf("剩 %d 小时 %d 分钟", minutes/60, minutes%60)
+}
+
+// withLeft 在文案后附上冷却剩余时间，例如「解除 relay 的冷却（剩 3 分钟）」；剩余时间未知时原样返回。
+func withLeft(label string, until, now time.Time) string {
+	if left := cooldownLeft(until, now); left != "" {
+		return label + "（" + left + "）"
+	}
+	return label
+}
+
+// withCooldown 只给「冷却中」状态附上剩余时间，其他状态原样返回。
+func withCooldown(status string, until, now time.Time) string {
+	if status != cooldownStatus {
+		return status
+	}
+	return withLeft(status, until, now)
 }
 
 // 与 localeCompare 一样使用语言排序，避免纯字节排序把大写名称排到小写前面。

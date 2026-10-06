@@ -29,6 +29,9 @@ const (
 	iconEnable    = "circle-play"
 	iconDisable   = "circle-stop"
 	iconPool      = "user-round"
+	// 解除冷却与复制接入地址
+	iconClearCooldown = "timer-reset"
+	iconCopy          = "copy"
 )
 
 var menuIcons = loadMenuIcons()

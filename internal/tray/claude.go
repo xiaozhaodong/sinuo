@@ -1,13 +1,16 @@
 package tray
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 func claudeMenu(s Snapshot) Item {
 	if s.ClaudeError != "" {
 		return Item{Label: "Claude  读取失败", Icon: iconClaude, Children: []Item{info(s.ClaudeError).withIcon(iconAlert), manage("在主窗口管理端点…", "endpoints")}}
 	}
 	if s.ClaudeModels {
-		return Item{Label: "Claude  模型路由", Icon: iconClaude, Children: scopeNote("Claude Code", s.claudeEntrySubscription(), claudeBindings(s.ClaudeBindings))}
+		return Item{Label: "Claude  模型路由", Icon: iconClaude, Children: scopeNote("Claude Code", s.claudeEntrySubscription(), claudeBindings(s.ClaudeBindings, s.Now))}
 	}
 	endpoints := make([]Endpoint, 0, len(s.Endpoints))
 	for _, ep := range s.Endpoints {
@@ -22,7 +25,7 @@ func claudeMenu(s Snapshot) Item {
 		}
 		return order.CompareString(endpoints[i].Name, endpoints[j].Name) < 0
 	})
-	items := endpointChoices(Binding{Mode: s.ClaudeMode, Target: s.ClaudeTarget, LastTarget: s.ClaudeLastTarget, Endpoints: endpoints}, "claude")
+	items := endpointChoices(Binding{Mode: s.ClaudeMode, Target: s.ClaudeTarget, LastTarget: s.ClaudeLastTarget, Endpoints: endpoints}, "claude", s.Now)
 	if len(endpoints) == 0 {
 		items = []Item{info("无可用 Claude 端点").withIcon(iconAlert)}
 	}
@@ -31,7 +34,7 @@ func claudeMenu(s Snapshot) Item {
 		Children: scopeNote("Claude Code", s.claudeEntrySubscription(), items)}
 }
 
-func claudeBindings(bindings []Binding) []Item {
+func claudeBindings(bindings []Binding, now time.Time) []Item {
 	sorted := append([]Binding(nil), bindings...)
 	order := nameOrder()
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -54,7 +57,7 @@ func claudeBindings(bindings []Binding) []Item {
 			items = append(items, info(b.Name+" · 已停用").withIcon(icon))
 			continue
 		}
-		items = append(items, Item{Label: label, Icon: icon, Children: endpointChoices(b, "claude_binding")})
+		items = append(items, Item{Label: label, Icon: icon, Children: endpointChoices(b, "claude_binding", now)})
 	}
 	if len(items) == 0 {
 		items = append(items, info("尚无模型映射，Claude 请求将返回未分配错误").withIcon(iconAlert))
@@ -62,7 +65,7 @@ func claudeBindings(bindings []Binding) []Item {
 	return append(items, separator(), manage("管理模型映射…", "claude-model-routing"))
 }
 
-func endpointChoices(b Binding, kind string) []Item {
+func endpointChoices(b Binding, kind string, now time.Time) []Item {
 	auto := b.Mode == "auto" || b.Mode == ""
 	items := []Item{choice("自动调度", auto, auto, Action{Kind: kind, ID: b.ID, Mode: "auto"}).withIcon(iconAuto), separator()}
 	for _, mode := range []string{"manual_preferred", "manual_fixed"} {
@@ -74,7 +77,7 @@ func endpointChoices(b Binding, kind string) []Item {
 				label += " · 最近命中"
 			}
 			if ep.Status != "" {
-				label += " · " + ep.Status
+				label += " · " + withCooldown(ep.Status, ep.CooldownUntil, now)
 			}
 			targets = append(targets, choice(label, b.Mode == mode && b.Target == ep.Name, false, Action{Kind: kind, ID: b.ID, Mode: mode, Target: ep.Name}))
 		}

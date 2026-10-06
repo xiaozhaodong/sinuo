@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func codexMenu(s Snapshot) Item {
@@ -14,18 +15,23 @@ func codexMenu(s Snapshot) Item {
 	if s.CodexModels {
 		return Item{Label: "Codex  模型路由", Icon: iconCodex, Children: scopeNote("Codex", s.codexEntrySubscription(), codexBindings(s))}
 	}
-	label, pinned := "自动", int64(0)
-	for _, account := range s.Accounts {
+	label, pinned, current := "自动", int64(0), -1
+	for i, account := range s.Accounts {
 		if account.Pinned {
-			pinned, label = account.ID, "固定 → "+account.Name
+			pinned, label, current = account.ID, "固定 → "+account.Name, i
 			break
 		}
 		if account.ID == s.RecentAccountID {
-			label = "自动 → " + account.Name
+			label, current = "自动 → "+account.Name, i
+		}
+	}
+	if current >= 0 {
+		if quota := tightestQuota(s.Accounts[current]); quota != "" {
+			label += " · " + quota
 		}
 	}
 	items := []Item{choice("自动调度（按编排）", pinned == 0, pinned == 0, Action{Kind: "codex", Mode: "auto"}).withIcon(iconAuto), separator(),
-		operationMenu("manual_fixed", accountChoices(s.Accounts, pinned, s.RecentAccountID))}
+		operationMenu("manual_fixed", accountChoices(s.Accounts, pinned, s.RecentAccountID, s.Now))}
 	if len(s.Accounts) == 0 {
 		items = []Item{info("无可用 Codex 账号").withIcon(iconAlert)}
 	}
@@ -51,7 +57,7 @@ func accountGroup(a Account) int {
 	return 2
 }
 
-func accountChoices(accounts []Account, pinned, recent int64) []Item {
+func accountChoices(accounts []Account, pinned, recent int64, now time.Time) []Item {
 	sorted := append([]Account(nil), accounts...)
 	order := nameOrder()
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -78,11 +84,11 @@ func accountChoices(accounts []Account, pinned, recent int64) []Item {
 		if !a.Enabled {
 			label += " · 已停用"
 		}
-		authDisabled := strings.ToLower(strings.TrimSpace(a.State)) == "disabled_auth"
+		authDisabled := strings.ToLower(strings.TrimSpace(a.State)) == accountAuthDisabled
 		if authDisabled {
 			label += " · 鉴权失效"
 		} else if a.Cooling {
-			label += " · 冷却中"
+			label += " · " + withCooldown(cooldownStatus, a.CooldownUntil, now)
 		}
 		items = append(items, choice(label, a.ID == pinned, !a.Enabled || authDisabled, Action{Kind: "codex", Mode: "manual_fixed", ID: a.ID}))
 	}
@@ -97,6 +103,33 @@ func accountQuota(a Account) string {
 		return "d7 " + remaining(a.WeeklyUsed)
 	}
 	return "5h " + remaining(a.FiveHourUsed) + " · d7 " + remaining(a.WeeklyUsed)
+}
+
+// tightestQuota 取剩余更少的额度窗口，与请求页角标同一口径；api_key 与读数未知时为空。
+func tightestQuota(a Account) string {
+	if a.Provider == "api_key" {
+		return ""
+	}
+	windows := []struct {
+		name string
+		used *float64
+	}{{"5h", a.FiveHourUsed}, {"d7", a.WeeklyUsed}}
+	if strings.EqualFold(a.Plan, "free") {
+		windows = windows[1:]
+	}
+	label, least := "", 0.0
+	for _, window := range windows {
+		if window.used == nil {
+			continue
+		}
+		if left := remainingPercent(*window.used); label == "" || left < least {
+			label, least = window.name, left
+		}
+	}
+	if label == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s 剩 %.0f%%", label, least)
 }
 
 func codexBindings(s Snapshot) []Item {
@@ -122,7 +155,7 @@ func codexBindings(s Snapshot) []Item {
 		if b.TargetID != 0 {
 			target = modelAccountName(accounts, b.TargetID)
 		}
-		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Icon: iconModel, Children: modelAccountChoices(b, accounts)})
+		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Icon: iconModel, Children: modelAccountChoices(b, accounts, s.Now)})
 	}
 	if len(items) == 0 {
 		items = append(items, info("尚无模型绑定，匹配不到模型的请求将返回未分配错误").withIcon(iconAlert))
@@ -137,7 +170,7 @@ func modelAccountName(accounts map[int64]Account, id int64) string {
 	return fmt.Sprintf("账号 %d", id)
 }
 
-func modelAccountChoices(b Binding, accounts map[int64]Account) []Item {
+func modelAccountChoices(b Binding, accounts map[int64]Account, now time.Time) []Item {
 	items := []Item{choice("自动调度", b.Mode == "auto", b.Mode == "auto", Action{Kind: "codex_binding", ID: b.ID, Mode: "auto"}).withIcon(iconAuto), separator()}
 	for _, mode := range []string{"manual_preferred", "manual_fixed"} {
 		targets := []Item{}
@@ -147,7 +180,7 @@ func modelAccountChoices(b Binding, accounts map[int64]Account) []Item {
 			if enabled, ok := b.MemberEnabled[id]; ok {
 				paused = !enabled
 			}
-			label := fmt.Sprintf("%s #%d · %s", modelAccountName(accounts, id), id, modelAccountState(account, exists, paused))
+			label := fmt.Sprintf("%s #%d · %s", modelAccountName(accounts, id), id, modelAccountState(account, exists, paused, now))
 			// 与 CodexModelRoutingSwitcher 一致：仅暂停成员不能优选，其他状态由写入 API 校验。
 			targets = append(targets, choice(label, b.Mode == mode && b.TargetID == id, mode == "manual_preferred" && paused,
 				Action{Kind: "codex_binding", ID: b.ID, Mode: mode, Target: strconv.FormatInt(id, 10)}))
@@ -160,21 +193,21 @@ func modelAccountChoices(b Binding, accounts map[int64]Account) []Item {
 	return items
 }
 
-func modelAccountState(a Account, exists, paused bool) string {
+func modelAccountState(a Account, exists, paused bool, now time.Time) string {
 	if paused {
 		return "未参与自动调度"
 	}
 	if !exists {
 		return "账号不存在"
 	}
-	if !a.Enabled || a.State == "disabled_auth" {
+	if !a.Enabled || a.State == accountAuthDisabled {
 		return "已停用"
 	}
 	if !a.HasCredential {
 		return "无凭据"
 	}
 	if a.Cooling {
-		return "冷却中"
+		return withCooldown(cooldownStatus, a.CooldownUntil, now)
 	}
 	return "可参与"
 }

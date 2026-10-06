@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tray"
 )
 
+// trayStatsCacheTTL：今日统计要查库，菜单频繁重建时复用 30 秒内的结果。
+const trayStatsCacheTTL = 30 * time.Second
+
 func (t *appTray) snapshot() tray.Snapshot {
 	a := t.app
-	s := tray.Snapshot{Active: t.activeCount(), Waiting: t.quit.Waiting(), CloseToTray: true}
+	s := tray.Snapshot{Now: time.Now(), Active: t.activeCount(), Waiting: t.quit.Waiting(), CloseToTray: true}
 	migration := a.GetMigrationStatus()
 	if migration.State != "ready" {
 		s.Recovery = migration.State != "initializing"
@@ -27,6 +33,7 @@ func (t *appTray) snapshot() tray.Snapshot {
 	if !s.Running {
 		return s
 	}
+	s.MainURL = trayLocalURL(status.ProxyHost, status.ProxyPort)
 	var err error
 	s.CloseToTray, err = a.readTraySetting("close_to_tray", true)
 	s.SettingsError = trayError(err)
@@ -41,6 +48,9 @@ func (t *appTray) snapshot() tray.Snapshot {
 	entry, err := a.GetClaudeCodeEntryStatus()
 	s.EntryError = trayError(err)
 	s.EntryEnabled, s.EntryRunning, s.EntryMode, s.EntryPort, s.EntryListenError = entry.Enabled, entry.Running, entry.Mode, entry.ListenPort, entry.Error
+	if err == nil && entry.Enabled && entry.Running {
+		s.EntryURL = entry.BaseURL
+	}
 	if entry.Enabled && entry.Mode == "subscription" {
 		s.EntryQuota = trayClaudeQuota(a.GetClaudeSubscriptionRateLimit(), time.Now())
 	}
@@ -59,11 +69,56 @@ func trayError(err error) string {
 }
 
 func (t *appTray) readTrayStats(s *tray.Snapshot) {
-	if time.Since(t.statsAt) >= 30*time.Second {
+	if time.Since(t.statsAt) >= trayStatsCacheTTL {
 		t.stats, t.statsErr = t.app.GetUsageSummary("", "")
+		if t.statsErr == nil {
+			t.failed, t.statsErr = t.app.trayTodayFailed()
+		}
 		t.statsAt = time.Now()
 	}
-	s.TodayRequests, s.TodayCost, s.StatsError = t.stats.TodayRequests, t.stats.TodayCost, trayError(t.statsErr)
+	s.TodayRequests, s.TodayFailed, s.TodayCost, s.StatsError = t.stats.TodayRequests, t.failed, t.stats.TodayCost, trayError(t.statsErr)
+}
+
+// trayTodayFailed 统计今日状态为 failed 的请求数，与请求页「已失败」筛选同一口径；
+// UsageSummary.FailedRequests 是本次启动以来的内存计数，不是今日，不能用。
+// 日期范围与 GetUsageSummary 的今日统计相同，按配置的时区取业务日。
+func (a *App) trayTodayFailed() (int64, error) {
+	db := a.coreDB()
+	if db == nil {
+		return 0, nil
+	}
+	policy, err := a.activeTimezonePolicy()
+	if err != nil {
+		return 0, err
+	}
+	start, end, err := policy.DayRange(policy.BusinessDate(time.Now()))
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var failed int64
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM request_logs WHERE status = 'failed' AND start_time >= ? AND start_time < ?",
+		timezonepolicy.FormatStorage(start), timezonepolicy.FormatStorage(end)).Scan(&failed)
+	return failed, err
+}
+
+// trayLocalURL 是给本机客户端用的地址：监听在全部网卡时换成回环地址。
+func trayLocalURL(host string, port int) string {
+	switch strings.TrimSpace(host) {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port))
+}
+
+// trayTime 解析 API 返回的时间文本；为空或无法解析时返回零值（菜单只显示「冷却中」）。
+func trayTime(raw string) time.Time {
+	value, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return value
 }
 
 func (t *appTray) readClaudeRoute(s *tray.Snapshot) {
@@ -78,7 +133,8 @@ func (t *appTray) readClaudeRoute(s *tray.Snapshot) {
 			binding := tray.Binding{ID: b.AssignmentID, Name: name, Kind: b.Kind, Enabled: b.Enabled,
 				Mode: b.RouteMode, Target: b.RouteTarget, LastTarget: b.LastEffective}
 			for _, ep := range b.Endpoints {
-				binding.Endpoints = append(binding.Endpoints, tray.Endpoint{Name: ep.Name, Priority: ep.Priority, Available: ep.AvailabilityEnabled, Status: trayEndpointStatus(ep.Status)})
+				binding.Endpoints = append(binding.Endpoints, tray.Endpoint{Name: ep.Name, Priority: ep.Priority, Available: ep.AvailabilityEnabled,
+					Status: trayEndpointStatus(ep.Status), CooldownUntil: trayTime(ep.CooldownUntil)})
 			}
 			s.ClaudeBindings = append(s.ClaudeBindings, binding)
 		}
@@ -102,7 +158,8 @@ func (t *appTray) readClaudeRoute(s *tray.Snapshot) {
 		case !ep.Healthy:
 			state = "不健康"
 		}
-		s.Endpoints = append(s.Endpoints, tray.Endpoint{Name: ep.Name, Priority: ep.Priority, Available: ep.AvailabilityEnabled, Status: state})
+		s.Endpoints = append(s.Endpoints, tray.Endpoint{Name: ep.Name, Priority: ep.Priority, Available: ep.AvailabilityEnabled,
+			Status: state, CooldownUntil: trayTime(ep.CooldownUntil)})
 	}
 }
 
@@ -122,10 +179,11 @@ func (t *appTray) readCodexRoute(s *tray.Snapshot) {
 		return
 	}
 	for _, a := range accounts {
-		until, _ := time.Parse(time.RFC3339Nano, a.CooldownUntil)
+		until := trayTime(a.CooldownUntil)
 		s.Accounts = append(s.Accounts, tray.Account{ID: a.ID, Name: a.AccountName, Group: a.GroupKey, State: a.State,
 			Provider: a.ProviderType, Plan: a.PlanType, Priority: a.Priority, Enabled: a.Enabled, Pinned: a.IsActiveSelection,
-			HasCredential: a.HasCredential, Cooling: until.After(time.Now()), FiveHourUsed: a.Quota5HUsedPercent, WeeklyUsed: a.QuotaWeeklyUsedPercent})
+			HasCredential: a.HasCredential, Cooling: until.After(s.Now), CooldownUntil: until,
+			FiveHourUsed: a.Quota5HUsedPercent, WeeklyUsed: a.QuotaWeeklyUsedPercent})
 	}
 	if s.CodexModels {
 		bindings, err := t.app.ListCodexModelRouteBindings()

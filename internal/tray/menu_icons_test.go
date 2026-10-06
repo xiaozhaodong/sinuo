@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// iconSnapshots 覆盖菜单的各个分支：停止、全局端点、模型路由、两个入口的运行 / 停用 / 监听失败 / 只读、读取失败。
+// iconSnapshots 覆盖菜单的各个分支：停止、全局端点、模型路由、两个入口的运行 / 停用 / 监听失败 / 只读、读取失败、降级与就地修复。
 func iconSnapshots() map[string]Snapshot {
 	stopped := runningSnapshot()
 	stopped.Running = false
@@ -15,6 +15,15 @@ func iconSnapshots() map[string]Snapshot {
 	global.ClaudeMode, global.ClaudeTarget = "manual_fixed", "relay"
 	global.EntryEnabled, global.EntryRunning, global.EntryMode, global.EntryPort = true, true, "subscription", 18088
 	global.CodexEntryState, global.CodexEntryMode, global.CodexEntryPort = CodexEntryReady, "subscription", 18089
+	global.MainURL, global.EntryURL = "http://127.0.0.1:8088", "http://127.0.0.1:18088"
+	// 降级：Claude 固定到冷却端点（单个目标直接解除）、Codex 整池冷却（多个目标先选操作）
+	degraded := runningSnapshot()
+	degraded.ClaudeMode, degraded.ClaudeTarget = "manual_fixed", "relay"
+	degraded.Endpoints = []Endpoint{{Name: "relay", Available: true, Status: "冷却中"}}
+	degraded.Accounts = []Account{{ID: 1, Name: "a", Enabled: true, HasCredential: true, Cooling: true},
+		{ID: 2, Name: "b", Enabled: true, HasCredential: true, Cooling: true}}
+	unfixable := runningSnapshot()
+	unfixable.Endpoints = []Endpoint{{Name: "relay", Available: true, Status: "不健康"}}
 	models := runningSnapshot()
 	models.ClaudeModels, models.CodexModels = true, true
 	models.ClaudeBindings = []Binding{{ID: 1, Name: "联网工具", Kind: "web_tools", Enabled: true, Endpoints: []Endpoint{{Name: "web"}}},
@@ -29,7 +38,8 @@ func iconSnapshots() map[string]Snapshot {
 	failed.ClaudeError, failed.CodexError = "映射读取失败", "账号读取失败"
 	readOnly := runningSnapshot()
 	readOnly.CodexEntryState, readOnly.CodexEntryLabel = CodexEntryUnavailable, "启动失败"
-	return map[string]Snapshot{"stopped": stopped, "global": global, "models": models, "empty": empty, "failed": failed, "readOnly": readOnly}
+	return map[string]Snapshot{"stopped": stopped, "global": global, "models": models, "empty": empty, "failed": failed, "readOnly": readOnly,
+		"degraded": degraded, "unfixable": unfixable}
 }
 
 func walkItems(items []Item, visit func(Item)) {

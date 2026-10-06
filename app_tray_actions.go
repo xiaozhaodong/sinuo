@@ -8,6 +8,7 @@ import (
 )
 
 // executeTrayAction 只调用现有写入方法，不直接操作服务或数据库；confirm 用于停用入口、切换 Codex 模式前的确认。
+// 解除冷却与端点页、账号页一致，一键执行、不弹确认。
 func (a *App) executeTrayAction(action tray.Action, confirm trayConfirmFunc) error {
 	switch action.Kind {
 	case "claude":
@@ -39,6 +40,10 @@ func (a *App) executeTrayAction(action tray.Action, confirm trayConfirmFunc) err
 		}
 		result, err := a.PinUpstreamAccountSelection(action.ID)
 		return trayActionResult(result.Success, result.Message, err)
+	case "endpoint_cooldown":
+		return a.ClearEndpointCooldown(action.Target)
+	case "account_cooldown":
+		return a.ClearUpstreamAccountCooldown(action.ID)
 	case "close_to_tray":
 		current, err := a.readTraySetting("close_to_tray", true)
 		if err != nil {

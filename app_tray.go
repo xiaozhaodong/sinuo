@@ -31,6 +31,7 @@ type appTray struct {
 	navigationReady                                  bool
 	pendingNavigation                                string
 	stats                                            UsageSummary
+	failed                                           int64 // 今日失败数，与 stats 同一缓存周期
 	statsAt                                          time.Time
 	statsErr                                         error
 	icon                                             trayIcon
@@ -252,6 +253,12 @@ func (t *appTray) runAction(action tray.Action) {
 	switch action.Kind {
 	case "navigate":
 		t.showWindow(action.Target)
+		return
+	case "copy":
+		// 只写剪贴板，不改任何状态，不进写入锁
+		if !t.app.wailsApp.Clipboard.SetText(action.Target) {
+			t.showError(errors.New("复制到剪贴板失败"))
+		}
 		return
 	case "quit":
 		t.app.wailsApp.Quit()

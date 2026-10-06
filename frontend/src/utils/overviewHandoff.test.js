@@ -63,3 +63,11 @@ test('模型行交接包含精确时间、请求族与上游类型，消费后�
   setPendingRequestsFilters({ sourceView: 'invalid' });
   assert.equal(consumePendingRequestsFilters(), null);
 });
+
+test('托盘带过来的状态筛选只交接具体状态，「全部状态」视为无交接', () => {
+  setPendingRequestsFilters({ status: 'failed' });
+  assert.deepEqual(consumePendingRequestsFilters(), { status: 'failed' });
+
+  setPendingRequestsFilters({ status: 'all' });
+  assert.equal(consumePendingRequestsFilters(), null);
+});

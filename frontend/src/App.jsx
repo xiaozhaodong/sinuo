@@ -12,6 +12,7 @@ import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
 import { getMigrationStatus, getSystemStatus, isWailsEnvironment } from '@utils/wailsApi.js';
 import { connectTrayNavigation } from '@utils/trayNavigation.js';
+import { setPendingRequestsFilters } from '@utils/overviewHandoff.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 // 概览是启动首屏，直接打进入口：懒加载只会在启动时多出一段 Suspense 占位（React 19 至少停留 300ms）
@@ -80,6 +81,8 @@ const AppRoutes = () => {
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
   const [claudeModelRoutingOpenRequest, setClaudeModelRoutingOpenRequest] = useState(null);
   const [codexModelRoutingOpenRequest, setCodexModelRoutingOpenRequest] = useState(null);
+  // 请求页只在挂载时消费一次筛选交接；托盘带条件跳转时若已停在请求页，换 key 让它重新挂载
+  const [requestsPageKey, setRequestsPageKey] = useState(0);
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
   // 一旦进入迁移 / 恢复流程就停在迁移页直到就绪：重试与迁移收尾阶段后端也会短暂报 initializing，
   // 不据此切回启动画面，避免两页来回切换
@@ -173,6 +176,10 @@ const AppRoutes = () => {
         if (route.codexTab) setActiveCodexTab(route.codexTab);
         if (route.modelRouting === 'claude') setClaudeModelRoutingOpenRequest({ requestId: Date.now() });
         if (route.modelRouting === 'codex') setCodexModelRoutingOpenRequest({ requestId: Date.now() });
+        if (route.requestsFilters) {
+          setPendingRequestsFilters(route.requestsFilters);
+          setRequestsPageKey((key) => key + 1);
+        }
       });
     }, (error) => console.error('托盘导航初始化失败:', error));
   }, []);
@@ -227,7 +234,7 @@ const AppRoutes = () => {
       // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
       overview: <OverviewPage onNavigate={switchTab} />,
       endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} modelRoutingOpenRequest={claudeModelRoutingOpenRequest} onModelRoutingOpenRequestHandled={clearClaudeModelRoutingOpenRequest} />,
-      requests: <RequestsPage onOpenClaudeModelRouting={navigateToClaudeModelRouting} onOpenCodexModelRouting={navigateToCodexModelRouting} onNavigateToCodexAccess={navigateToCodexAccess} />,
+      requests: <RequestsPage key={requestsPageKey} onOpenClaudeModelRouting={navigateToClaudeModelRouting} onOpenCodexModelRouting={navigateToCodexModelRouting} onNavigateToCodexAccess={navigateToCodexAccess} />,
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,

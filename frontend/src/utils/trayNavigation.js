@@ -2,6 +2,8 @@
 export const resolveTrayNavigation = (target) => {
   switch (target) {
     case 'requests': case 'logs': return { tab: target };
+    // 统计行：今日有失败时直接筛到今日失败（不带日期，请求页默认今天）
+    case 'requests-failed': return { tab: 'requests', requestsFilters: { status: 'failed' } };
     case 'endpoints': return { tab: 'endpoints', claudeTab: 'endpoints' };
     case 'account-pool': return { tab: 'account-pool', codexTab: 'accounts' };
     case 'codex-access': return { tab: 'account-pool', codexTab: 'client-access' };
