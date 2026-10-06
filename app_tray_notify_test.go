@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/proxy"
 	"cc-forwarder/internal/tray"
+
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 func TestTray_FailoverNoticeMatchesToastWording(t *testing.T) {
@@ -134,5 +137,28 @@ func TestTray_ProblemsComparableSkipsIncompleteSnapshots(t *testing.T) {
 		if problemsComparable(s) {
 			t.Errorf("%s: 清单不完整，不应拿来比较（否则会误报已恢复）", name)
 		}
+	}
+}
+
+func TestTray_NoticeClickTargetOnlyForDefaultAction(t *testing.T) {
+	click := func(action string, userInfo map[string]interface{}) notifications.NotificationResult {
+		return notifications.NotificationResult{Response: notifications.NotificationResponse{ActionIdentifier: action, UserInfo: userInfo}}
+	}
+	if target, ok := noticeClickTarget(click(notifications.DefaultActionIdentifier, map[string]interface{}{"target": "requests"})); !ok || target != "requests" {
+		t.Fatalf("点击通知本身应打开对应页面: %q %v", target, ok)
+	}
+	if target, ok := noticeClickTarget(click(notifications.DefaultActionIdentifier, nil)); !ok || target != "" {
+		t.Fatalf("没有 target 时只打开窗口: %q %v", target, ok)
+	}
+	// Wails 回调前已把 Apple 原始值归一成 DEFAULT_ACTION，原始值与关闭动作都不应处理
+	for _, action := range []string{"com.apple.UNNotificationDefaultActionIdentifier", "com.apple.UNNotificationDismissActionIdentifier", ""} {
+		if _, ok := noticeClickTarget(click(action, map[string]interface{}{"target": "requests"})); ok {
+			t.Fatalf("动作 %q 不应打开窗口", action)
+		}
+	}
+	failed := click(notifications.DefaultActionIdentifier, map[string]interface{}{"target": "requests"})
+	failed.Error = errors.New("notification response error")
+	if _, ok := noticeClickTarget(failed); ok {
+		t.Fatal("回调出错时不应打开窗口")
 	}
 }

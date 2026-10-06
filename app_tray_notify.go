@@ -19,9 +19,6 @@ import (
 const (
 	// trayFailoverQueue：故障转移回调在请求路径上，只入队不等待；队列满时丢弃（节流后本来也只会发一条）。
 	trayFailoverQueue = 64
-	// noticeDefaultAction 是用户点击通知本身（而不是关闭或按钮）时的动作标识；
-	// Wails 只在 darwin 实现里导出这个常量，这里自己定义，避免其他平台编译失败。
-	noticeDefaultAction = "com.apple.UNNotificationDefaultActionIdentifier"
 )
 
 // trayNotify 在主窗口隐藏或最小化时，把故障转移与「请求一定会失败」发成系统通知（仅 macOS）；
@@ -164,11 +161,19 @@ func (n *trayNotify) authorize() {
 
 // handleResponse 只处理点击通知本身；回调可能在主线程上，打开窗口放到后台。
 func (n *trayNotify) handleResponse(result notifications.NotificationResult) {
-	if result.Error != nil || result.Response.ActionIdentifier != noticeDefaultAction {
-		return
+	if target, ok := noticeClickTarget(result); ok {
+		go n.tray.showWindow(target)
+	}
+}
+
+// noticeClickTarget 取点击通知本身（而不是关闭或按钮）时要打开的页面。
+// Wails 在回调前已把 Apple 的 com.apple.UNNotificationDefaultActionIdentifier 归一成跨平台的 DEFAULT_ACTION。
+func noticeClickTarget(result notifications.NotificationResult) (string, bool) {
+	if result.Error != nil || result.Response.ActionIdentifier != notifications.DefaultActionIdentifier {
+		return "", false
 	}
 	target, _ := result.Response.UserInfo["target"].(string)
-	go n.tray.showWindow(target)
+	return target, true
 }
 
 // windowHidden：主窗口已隐藏到托盘或最小化。查询会派发到主线程，只在后台 goroutine 调用。
