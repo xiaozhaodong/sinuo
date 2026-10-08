@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildUpstreamFilterOptions,
   filterUpstreamOptionsByFamily,
   getRequestFamilyMeta,
   normalizeRequestSource,
@@ -113,4 +114,53 @@ test('单条请求的上游筛选候选与列表候选同口径（右键「只�
     { value: 'chatgpt-subscription', label: '订阅直通 · Codex' }
   );
   assert.equal(resolveUpstreamFilterOption({ request_family: 'claude', upstream_name: '' }), null, '合成标签不可筛选');
+});
+
+// 回归：候选曾只按当前页生成，最近一页全是订阅直通时下拉里只剩「订阅直通」，选中一个上游后也切不到别的上游
+test('上游筛选候选合并后端范围查询结果与当前页', () => {
+  const catalog = [
+    { request_family: 'claude', upstream_type: 'endpoint', upstream_name: 'duckcoding' },
+    { request_family: 'claude', upstream_type: 'subscription', upstream_name: 'claude-subscription' },
+    { request_family: 'codex', upstream_type: 'account', upstream_name: 'acct-1' }
+  ];
+  const pageRows = [
+    { request_family: 'claude', upstream_type: 'subscription', upstream_name: 'claude-subscription' },
+    // 在途请求或刚出现的新上游：后端查询结果里还没有
+    { request_family: 'claude', upstream_type: 'endpoint', upstream_name: 'new-endpoint' }
+  ];
+
+  assert.deepEqual(
+    buildUpstreamFilterOptions({ catalog, requests: pageRows, family: 'claude' }),
+    [
+      { value: 'claude-subscription', label: '订阅直通' },
+      { value: 'duckcoding', label: 'duckcoding' },
+      { value: 'new-endpoint', label: 'new-endpoint' }
+    ]
+  );
+  assert.deepEqual(
+    buildUpstreamFilterOptions({ catalog, requests: pageRows, family: 'all' }).map((option) => option.value).sort(),
+    ['acct-1', 'claude-subscription', 'duckcoding', 'new-endpoint']
+  );
+});
+
+test('上游筛选候选在后端不可用时退回当前页', () => {
+  const pageRows = [{ request_family: 'claude', upstream_name: 'ep-a' }];
+  assert.deepEqual(buildUpstreamFilterOptions({ catalog: null, requests: pageRows }), [{ value: 'ep-a', label: 'ep-a' }]);
+});
+
+test('当前选中的上游不在候选里时补一项', () => {
+  assert.deepEqual(
+    buildUpstreamFilterOptions({ catalog: [], requests: [], family: 'claude', selected: 'gone-endpoint' }),
+    [{ value: 'gone-endpoint', label: 'gone-endpoint' }]
+  );
+  assert.deepEqual(
+    buildUpstreamFilterOptions({ catalog: [], requests: [], family: 'all', selected: 'chatgpt-subscription' }),
+    [{ value: 'chatgpt-subscription', label: '订阅直通 · Codex' }]
+  );
+  assert.deepEqual(
+    buildUpstreamFilterOptions({ catalog: [{ request_family: 'claude', upstream_name: 'ep-a' }], selected: 'ep-a' }),
+    [{ value: 'ep-a', label: 'ep-a' }],
+    '已在候选里时不重复'
+  );
+  assert.deepEqual(buildUpstreamFilterOptions({ catalog: [], selected: 'all' }), [], '「全部上游」不补');
 });

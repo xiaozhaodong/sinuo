@@ -25,6 +25,7 @@ import {
 } from '@pages/account-pool/utils.js';
 import {
   fetchRequests,
+  fetchRequestUpstreamOptions,
   fetchModels,
   fetchUsageStats,
   fetchEndpoints,
@@ -59,7 +60,7 @@ import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 import { buildChipPatch, buildClearChipsPatch, countActiveChips, resolveStoredPageSize } from './utils/filterBar.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
-import { filterUpstreamOptionsByFamily, resolveUpstreamFilterOption } from './utils/requestSource.js';
+import { buildUpstreamFilterOptions, resolveUpstreamFilterOption } from './utils/requestSource.js';
 import { prefersReducedMotion } from '@utils/motion.js';
 import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
 
@@ -88,6 +89,8 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState(null);
   const [models, setModels] = useState([]);
+  // 上游筛选候选：范围内实际出现过的上游（后端查询）；null 表示不可用，只按当前页生成
+  const [upstreamCatalog, setUpstreamCatalog] = useState(null);
   const [endpoints, setEndpoints] = useState([]);
   const [claudeRoutingState, setClaudeRoutingState] = useState({ mode: 'auto', endpointName: '', fallbackEnabled: true });
   const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false });
@@ -173,7 +176,12 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     return [...accounts].sort(compareAccountsByManualPriority);
   }, [accounts]);
 
-  const upstreamOptions = useMemo(() => filterUpstreamOptionsByFamily(requests, filters.requestFamily), [filters.requestFamily, requests]);
+  const upstreamOptions = useMemo(() => buildUpstreamFilterOptions({
+    catalog: upstreamCatalog,
+    requests,
+    family: filters.requestFamily,
+    selected: filters.upstreamName
+  }), [filters.requestFamily, filters.upstreamName, requests, upstreamCatalog]);
 
   const recentSelectedAccountId = useMemo(() => {
     const hasSnapshot = latestScheduleSnapshot?.hasSnapshot === true || latestScheduleSnapshot?.has_snapshot === true;
@@ -264,8 +272,12 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
       setError(null);
 
       // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, codexModelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
+      const [, upstreamCatalogData, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, codexModelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
         refreshRequestData(),
+        fetchRequestUpstreamOptions(appliedQueryParams).catch((err) => {
+          console.error('❌ 加载上游筛选候选失败:', err);
+          return null;
+        }),
         fetchModels(),
         fetchEndpoints(),
         fetchClaudeRoutingState().catch((err) => {
@@ -304,6 +316,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
         return;
       }
 
+      setUpstreamCatalog(Array.isArray(upstreamCatalogData) ? upstreamCatalogData : null);
       setModels(Array.isArray(modelsData) ? modelsData : []);
 
       const endpointsList = endpointsData.endpoints || endpointsData || [];
@@ -333,7 +346,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
         setRefreshing(false);
       }
     }
-  }, [refreshRequestData, showNotice]);
+  }, [appliedQueryParams, refreshRequestData, showNotice]);
 
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
   // 包一层标记 live，使事件驱动的新行才播入场动画。

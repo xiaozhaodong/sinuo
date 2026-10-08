@@ -88,3 +88,22 @@ export const filterUpstreamOptionsByFamily = (requests = [], family = 'all') => 
   }
   return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
 };
+
+// 当前选中值不在候选里时补一项（范围内已无该上游的数据），保证菜单里能看到勾选项；
+// 订阅直通的固定标识仍按「订阅直通」展示。
+const selectedUpstreamOption = (value, withFamily) => {
+  const family = Object.keys(SUBSCRIPTION_UPSTREAM_NAMES).find((key) => SUBSCRIPTION_UPSTREAM_NAMES[key] === value);
+  return family
+    ? resolveUpstreamFilterOption({ request_family: family, upstream_type: 'subscription' }, { withFamily })
+    : { value, label: value };
+};
+
+// 上游筛选候选：后端按查询范围查出的上游（catalog）+ 当前页出现的上游 + 当前选中值。
+// 当前页补上在途请求与刚出现的新上游；catalog 为 null（HTTP 环境或查询失败）时只剩当前页。
+export const buildUpstreamFilterOptions = ({ catalog = null, requests = [], family = 'all', selected = '' } = {}) => {
+  const options = filterUpstreamOptionsByFamily([...(catalog || []), ...requests], family);
+  if (!selected || selected === 'all' || options.some((option) => option.value === selected)) {
+    return options;
+  }
+  return [...options, selectedUpstreamOption(selected, family === 'all')];
+};

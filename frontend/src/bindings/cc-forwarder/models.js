@@ -1014,6 +1014,14 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
+ * RequestUpstreamOption 请求页上游筛选候选：查询范围内实际出现过的上游
+ * @typedef {Object} RequestUpstreamOption
+ * @property {string} request_family
+ * @property {string} upstream_type - endpoint/account/subscription
+ * @property {string} upstream_name - 账号名/端点名；订阅直通为固定标识
+ */
+
+/**
  * @typedef {Object} SaveCodexModelCatalogInput
  * @property {boolean} enabled
  * @property {string} mode

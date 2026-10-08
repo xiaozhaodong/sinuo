@@ -379,6 +379,19 @@ export const fetchRequests = async (params = {}) => {
 };
 
 /**
+ * 获取请求页上游筛选候选（查询范围内实际出现过的上游）。
+ * 目前只有桌面端 Wails 绑定提供；HTTP 环境返回 null，由调用方退回按当前页生成候选。
+ * @param {Object} params - 与 fetchRequests 相同；只用 start_date/end_date/request_family/source_view/include_compaction
+ * @returns {Promise<Array|null>} [{ request_family, upstream_type, upstream_name }]
+ */
+export const fetchRequestUpstreamOptions = async (params = {}) => {
+  if (!isWailsEnvironment()) {
+    return null;
+  }
+  return await WailsApi.getRequestUpstreamOptions(params);
+};
+
+/**
  * 安全解析 JSON 字符串，失败返回 null。
  */
 export const safeParseJson = (value) => {

@@ -1239,27 +1239,44 @@ export const getUsageSummary = async (startTime = '', endTime = '') => {
   };
 };
 
+// 请求列表与上游筛选候选共用的范围参数：时间 / 请求族 / 来源 / 种类
+// 注意：前端 buildQueryParams() 返回 start_date/end_date（带下划线）
+const buildRequestScopeParams = (params = {}) => {
+  const scopeParams = {
+    start_date: params.start_date || params.start_time || params.startDate || '',
+    end_date: params.end_date || params.end_time || params.endDate || '',
+    request_family: params.request_family || params.requestFamily || '',
+    source_view: params.source_view || params.sourceView || 'all'
+  };
+  // 概览跳转的「仅生成」口径：只在显式收窄时下传，缺省由后端承载全部落库记录。
+  if (params.include_compaction === false) {
+    scopeParams.include_compaction = false;
+  }
+  return scopeParams;
+};
+
+// 请求页上游筛选候选：范围内实际出现过的上游，不受分页与上游 / 模型 / 状态筛选影响
+export const getRequestUpstreamOptions = async (params = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const rows = await WailsApp.GetRequestUpstreamOptions(buildRequestScopeParams(params));
+  return Array.isArray(rows) ? rows : [];
+};
+
 export const getRequests = async (params = {}) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
   // 构建 Wails 绑定参数对象
-  // 注意：前端 buildQueryParams() 返回 start_date/end_date（带下划线）
   const queryParams = {
     page: parseInt(params.page || 1),
     page_size: parseInt(params.limit || params.pageSize || 50),
-    start_date: params.start_date || params.start_time || params.startDate || '',
-    end_date: params.end_date || params.end_time || params.endDate || '',
+    ...buildRequestScopeParams(params),
     status: params.status || '',
     model: params.model || '',
-    request_family: params.request_family || params.requestFamily || '',
-    upstream_name: params.upstream_name || params.upstreamName || '',
-    source_view: params.source_view || params.sourceView || 'all'
+    upstream_name: params.upstream_name || params.upstreamName || ''
   };
-  // 概览跳转的「仅生成」口径：只在显式收窄时下传，缺省由后端承载全部落库记录。
-  if (params.include_compaction === false) {
-    queryParams.include_compaction = false;
-  }
 
   console.log('🔍 [Wails] GetRequests 参数:', queryParams);
   const result = await WailsApp.GetRequests(queryParams);

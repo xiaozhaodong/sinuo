@@ -386,6 +386,11 @@ import * as $models from "./models.js";
  */
 
 /**
+ * RequestUpstreamOption 请求页上游筛选候选：查询范围内实际出现过的上游
+ * @typedef {$models.RequestUpstreamOption} RequestUpstreamOption
+ */
+
+/**
  * @typedef {$models.SaveCodexModelCatalogInput} SaveCodexModelCatalogInput
  */
 

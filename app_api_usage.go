@@ -335,56 +335,14 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 	if err != nil {
 		return RequestListResult{}, err
 	}
-
-	var startTime, endTime time.Time
-
-	// 解析开始时间
-	if params.StartDate != "" {
-		startTime, err = policy.ParseInput(params.StartDate)
-		if err != nil {
-			return RequestListResult{}, err
-		}
+	opts, err := resolveRequestQueryOptions(policy, params)
+	if err != nil {
+		return RequestListResult{}, err
 	}
-	// 解析结束时间
-	if params.EndDate != "" {
-		endTime, err = policy.ParseInput(params.EndDate)
-		if err != nil {
-			return RequestListResult{}, err
-		}
-	}
-
-	// 如果没有传时间参数，默认查询今天
-	if startTime.IsZero() {
-		startTime, endTime, err = policy.DayRange(policy.BusinessDate(time.Now()))
-		if err != nil {
-			return RequestListResult{}, err
-		}
-	}
-	if endTime.IsZero() {
-		_, endTime, err = policy.DayRange(policy.BusinessDate(time.Now()))
-		if err != nil {
-			return RequestListResult{}, err
-		}
-	}
+	opts.Limit = pageSize
+	opts.Offset = offset
 
 	// 使用热池+数据库双源查询（与 HTTP API 一致）
-	opts := &tracking.QueryOptions{
-		StartDate:     &startTime,
-		EndDate:       &endTime,
-		ModelName:     params.Model,
-		RequestFamily: params.RequestFamily,
-		UpstreamName:  params.UpstreamName,
-		Status:        params.Status,
-		Limit:         pageSize,
-		Offset:        offset,
-	}
-	opts.UpstreamType = sourceViewToUpstreamType(params.SourceView)
-	if params.IncludeCompaction != nil && !*params.IncludeCompaction {
-		opts.RequestKinds = tracking.GenerationMetricRequestKinds()
-	} else {
-		opts.RequestKinds = tracking.UsageMetricRequestKinds()
-	}
-
 	requests, total, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
 	if err != nil {
 		return RequestListResult{}, err
@@ -402,6 +360,49 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 	}
 
 	return result, nil
+}
+
+// resolveRequestQueryOptions 请求列表与上游筛选候选共用的查询条件（不含分页）。
+// 未传开始时间时查今天，未传结束时间时截至今天结束；include_compaction 显式 false 时只保留生成口径。
+func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQueryParams) (*tracking.QueryOptions, error) {
+	var startTime, endTime time.Time
+	var err error
+
+	if params.StartDate != "" {
+		if startTime, err = policy.ParseInput(params.StartDate); err != nil {
+			return nil, err
+		}
+	}
+	if params.EndDate != "" {
+		if endTime, err = policy.ParseInput(params.EndDate); err != nil {
+			return nil, err
+		}
+	}
+	if startTime.IsZero() {
+		if startTime, endTime, err = policy.DayRange(policy.BusinessDate(time.Now())); err != nil {
+			return nil, err
+		}
+	}
+	if endTime.IsZero() {
+		if _, endTime, err = policy.DayRange(policy.BusinessDate(time.Now())); err != nil {
+			return nil, err
+		}
+	}
+
+	opts := &tracking.QueryOptions{
+		StartDate:     &startTime,
+		EndDate:       &endTime,
+		ModelName:     params.Model,
+		RequestFamily: params.RequestFamily,
+		UpstreamName:  params.UpstreamName,
+		UpstreamType:  sourceViewToUpstreamType(params.SourceView),
+		Status:        params.Status,
+		RequestKinds:  tracking.UsageMetricRequestKinds(),
+	}
+	if params.IncludeCompaction != nil && !*params.IncludeCompaction {
+		opts.RequestKinds = tracking.GenerationMetricRequestKinds()
+	}
+	return opts, nil
 }
 
 // requestDetailToRecord 将 tracking.RequestDetail 映射为 Wails RequestRecord。
