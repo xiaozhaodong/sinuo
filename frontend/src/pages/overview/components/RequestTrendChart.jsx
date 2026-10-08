@@ -5,6 +5,7 @@
 // 移除组件内 30 秒定时器与 chartUpdate 监听；
 // 数据源换成 request_logs 时间分桶（GetRequestTrendData），不再是进程内累计计数器
 // 2026-10-07 桌面化：改为面板样式，时间范围选择移到窗口工具栏
+// 2026-10-08 图表区随同行的模型调用表等高，不再在汇总行下留白
 // ============================================
 
 import { RefreshCw } from 'lucide-react';
@@ -61,45 +62,49 @@ const RequestTrendChart = ({ data, period, loading, error, onRetry }) => {
       )}
       bodyClassName="flex flex-col px-3 pb-2.5 pt-3"
     >
-      <div className="h-[220px] w-full">
-        {loading ? (
-          <div className="h-full flex items-center justify-center text-fg-subtle">
-            <RefreshCw size={24} className="animate-spin mr-2" />
-            加载中...
-          </div>
-        ) : error ? (
-          <div className="h-full flex items-center justify-center">
-            <SectionError error={error} onRetry={onRetry} compact />
-          </div>
-        ) : chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-fg-subtle">
-            暂无请求数据
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={chart.series.total} stopOpacity={0.1} />
-                  <stop offset="95%" stopColor={chart.series.total} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chart.grid} />
-              <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: chart.axis, fontSize: 12 }} dy={10} minTickGap={24} />
-              <YAxis
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: chart.axis, fontSize: 12 }}
-                tickFormatter={formatTokenCount}
-                width={48}
-              />
-              <Tooltip {...chart.tooltip} />
-              <Area type="monotone" dataKey="total" stroke={chart.series.total} strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" name="总请求" />
-              <Area type="monotone" dataKey="success" stroke={chart.series.success} strokeWidth={2} fillOpacity={0} fill="transparent" name="成功" />
-              <Area type="monotone" dataKey="fail" stroke={chart.series.fail} strokeWidth={2} fillOpacity={0} fill="transparent" name="失败" />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
+      {/* 与右侧模型表同行等高：图表区填满剩余高度、至少 220px。
+          图表放在绝对定位层里，避免 SVG 的像素高度反过来撑住行高，模型变少后卡片缩不回去 */}
+      <div className="relative min-h-[220px] w-full flex-1">
+        <div className="absolute inset-0">
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-fg-subtle">
+              <RefreshCw size={24} className="animate-spin mr-2" />
+              加载中...
+            </div>
+          ) : error ? (
+            <div className="h-full flex items-center justify-center">
+              <SectionError error={error} onRetry={onRetry} compact />
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-fg-subtle">
+              暂无请求数据
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={chart.series.total} stopOpacity={0.1} />
+                    <stop offset="95%" stopColor={chart.series.total} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chart.grid} />
+                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: chart.axis, fontSize: 12 }} dy={10} minTickGap={24} />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: chart.axis, fontSize: 12 }}
+                  tickFormatter={formatTokenCount}
+                  width={48}
+                />
+                <Tooltip {...chart.tooltip} />
+                <Area type="monotone" dataKey="total" stroke={chart.series.total} strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" name="总请求" />
+                <Area type="monotone" dataKey="success" stroke={chart.series.success} strokeWidth={2} fillOpacity={0} fill="transparent" name="成功" />
+                <Area type="monotone" dataKey="fail" stroke={chart.series.fail} strokeWidth={2} fillOpacity={0} fill="transparent" name="失败" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
       {/* 分桶口径：各桶之和就是窗口内总量 */}
