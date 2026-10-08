@@ -84,8 +84,6 @@ const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [activeCodexTab, setActiveCodexTab] = useState('accounts');
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
-  const [claudeModelRoutingOpenRequest, setClaudeModelRoutingOpenRequest] = useState(null);
-  const [codexModelRoutingOpenRequest, setCodexModelRoutingOpenRequest] = useState(null);
   // 请求页只在挂载时消费一次筛选交接；托盘带条件跳转时若已停在请求页，换 key 让它重新挂载
   const [requestsPageKey, setRequestsPageKey] = useState(0);
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
@@ -153,26 +151,16 @@ const AppRoutes = () => {
 
   const navigateToClaudeModelRouting = useCallback(() => {
     startTransition(() => {
-      setActiveClaudeTab('endpoints');
-      setClaudeModelRoutingOpenRequest({ requestId: Date.now() });
+      setActiveClaudeTab('routing');
       setActiveTab('endpoints');
     });
   }, []);
 
   const navigateToCodexModelRouting = useCallback(() => {
     startTransition(() => {
-      setActiveCodexTab('accounts');
-      setCodexModelRoutingOpenRequest({ requestId: Date.now() });
+      setActiveCodexTab('routing');
       setActiveTab('account-pool');
     });
-  }, []);
-
-  const clearClaudeModelRoutingOpenRequest = useCallback(() => {
-    setClaudeModelRoutingOpenRequest(null);
-  }, []);
-
-  const clearCodexModelRoutingOpenRequest = useCallback(() => {
-    setCodexModelRoutingOpenRequest(null);
   }, []);
 
   useEffect(() => {
@@ -182,8 +170,6 @@ const AppRoutes = () => {
         setActiveTab(route.tab);
         if (route.claudeTab) setActiveClaudeTab(route.claudeTab);
         if (route.codexTab) setActiveCodexTab(route.codexTab);
-        if (route.modelRouting === 'claude') setClaudeModelRoutingOpenRequest({ requestId: Date.now() });
-        if (route.modelRouting === 'codex') setCodexModelRoutingOpenRequest({ requestId: Date.now() });
         if (route.requestsFilters) {
           setPendingRequestsFilters(route.requestsFilters);
           setRequestsPageKey((key) => key + 1);
@@ -241,12 +227,12 @@ const AppRoutes = () => {
     const pages = {
       // 概览页的模型表需要带筛选条件跳到请求追踪页，因此拿到切页能力
       overview: <OverviewPage onNavigate={switchTab} />,
-      endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} modelRoutingOpenRequest={claudeModelRoutingOpenRequest} onModelRoutingOpenRequestHandled={clearClaudeModelRoutingOpenRequest} />,
+      endpoints: <ClaudePage activeTab={activeClaudeTab} onTabChange={setActiveClaudeTab} />,
       requests: <RequestsPage key={requestsPageKey} onOpenClaudeModelRouting={navigateToClaudeModelRouting} onOpenCodexModelRouting={navigateToCodexModelRouting} onNavigateToCodexAccess={navigateToCodexAccess} />,
       // v6.1: 隐私保护页面
       'privacy-protection': <PrivacyProtectionPage />,
       pricing: <PricingPage />,
-      'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} modelRoutingOpenRequest={codexModelRoutingOpenRequest} onModelRoutingOpenRequestHandled={clearCodexModelRoutingOpenRequest} />,
+      'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} />,
       // v5.1: 设置页面（可编辑）
       settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} onNavigateToClaudeAccess={navigateToClaudeAccess} />,
       // 保留只读配置页面

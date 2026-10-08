@@ -4,7 +4,7 @@
 // 2026-10-07 桌面化：左侧账号列表（范围条 + 表格 + 状态栏）、右侧常驻检查器（原详情抽屉）
 // ============================================
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isWailsEnvironment, openExternalURL as openWailsExternalURL } from '@utils/wailsApi.js';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
@@ -18,29 +18,10 @@ import {
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import {
-  AccountDetailsDrawer,
-  AccountFormDialog,
-  AccountInventorySection,
-  DeleteAccountDialog,
-  NoticeToast,
-  PageHeader,
-  SchedulerDrawer
-} from './components';
-import CodexModelRoutingDrawer from './components/CodexModelRoutingDrawer.jsx';
-import {
-  buildAccountPoolDashboardModel,
-  isValidAccountId,
-  resolveAccountId
-} from './utils.js';
+import { AccountDetailsDrawer, AccountFormDialog, AccountInventorySection, DeleteAccountDialog, NoticeToast, PageHeader, SchedulerDrawer } from './components';
+import { buildAccountPoolDashboardModel, isValidAccountId, resolveAccountId } from './utils.js';
 import { partitionRowsByTargetTier } from './utils/batchMove.js';
-import {
-  useAccountPoolAccounts,
-  useAccountPoolActions,
-  useAccountPoolForm,
-  useLatestScheduleSnapshot,
-  useNotice
-} from './hooks';
+import { useAccountPoolAccounts, useAccountPoolActions, useAccountPoolForm, useLatestScheduleSnapshot, useNotice } from './hooks';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const openExternalURL = (url = '') => {
@@ -82,7 +63,7 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
   return `${label}失败，失败 ${failedCount} 个${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}`;
 };
 
-const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
+const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null }) => {
   const { timezone } = useTimezone();
   const { notice, showNotice, closeNotice } = useNotice();
   const { accounts, loading, error, loadData } = useAccountPoolAccounts();
@@ -134,18 +115,8 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
 
   const [sharedDrawerRowId, setSharedDrawerRowId] = useState(null);
   const [schedulerDrawerOpen, setSchedulerDrawerOpen] = useState(false);
-  const [codexModelRoutingOpen, setCodexModelRoutingOpen] = useState(false);
   const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
-  const consumedModelRoutingRequestRef = useRef(null);
-
-  useEffect(() => {
-    const requestId = modelRoutingOpenRequest?.requestId;
-    if (!active || requestId === undefined || requestId === consumedModelRoutingRequestRef.current) return;
-    consumedModelRoutingRequestRef.current = requestId;
-    setCodexModelRoutingOpen(true);
-    onModelRoutingOpenRequestHandled?.();
-  }, [active, modelRoutingOpenRequest, onModelRoutingOpenRequestHandled]);
 
   const dashboardModel = useMemo(
     () => buildAccountPoolDashboardModel({ accounts, latestScheduleSnapshot, timezone }),
@@ -434,7 +405,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
       onCreate={openCreateAccount}
       onRefresh={handleRefreshAll}
       onOpenScheduler={() => setSchedulerDrawerOpen(true)}
-      onOpenCodexModelRouting={() => setCodexModelRoutingOpen(true)}
     />
   );
 
@@ -490,13 +460,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
         onEnableAutoSelection={handleSchedulerEnableAutoSelection}
         onViewInInventory={handleViewGroupInInventory}
         busyKey={schedulerBusyKey}
-      />
-
-      <CodexModelRoutingDrawer
-        open={active && codexModelRoutingOpen}
-        onClose={() => setCodexModelRoutingOpen(false)}
-        accounts={accounts}
-        showNotice={showNotice}
       />
 
       <AccountFormDialog

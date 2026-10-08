@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectTrayNavigation, resolveTrayNavigation } from './trayNavigation.js';
 
-test('托盘导航覆盖请求、今日失败、日志、管理页、模型抽屉与 Codex 接入', () => {
+test('托盘导航覆盖请求、今日失败、日志、管理页、模型路由页签与 Codex 接入', () => {
   const expected = {
     requests: { tab: 'requests' }, logs: { tab: 'logs' },
     'requests-failed': { tab: 'requests', requestsFilters: { status: 'failed' } },
     endpoints: { tab: 'endpoints', claudeTab: 'endpoints' },
     'account-pool': { tab: 'account-pool', codexTab: 'accounts' },
     'codex-access': { tab: 'account-pool', codexTab: 'client-access' },
-    'claude-model-routing': { tab: 'endpoints', claudeTab: 'endpoints', modelRouting: 'claude' },
-    'codex-model-routing': { tab: 'account-pool', codexTab: 'accounts', modelRouting: 'codex' }
+    'claude-model-routing': { tab: 'endpoints', claudeTab: 'routing' },
+    'codex-model-routing': { tab: 'account-pool', codexTab: 'routing' }
   };
   for (const [target, route] of Object.entries(expected)) assert.deepEqual(resolveTrayNavigation(target), route);
   for (const invalid of [null, undefined, '', {}, '/logs', 'https://example.com']) assert.equal(resolveTrayNavigation(invalid), null);

@@ -7,8 +7,8 @@ export const resolveTrayNavigation = (target) => {
     case 'endpoints': return { tab: 'endpoints', claudeTab: 'endpoints' };
     case 'account-pool': return { tab: 'account-pool', codexTab: 'accounts' };
     case 'codex-access': return { tab: 'account-pool', codexTab: 'client-access' };
-    case 'claude-model-routing': return { tab: 'endpoints', claudeTab: 'endpoints', modelRouting: 'claude' };
-    case 'codex-model-routing': return { tab: 'account-pool', codexTab: 'accounts', modelRouting: 'codex' };
+    case 'claude-model-routing': return { tab: 'endpoints', claudeTab: 'routing' };
+    case 'codex-model-routing': return { tab: 'account-pool', codexTab: 'routing' };
     default: return null;
   }
 };

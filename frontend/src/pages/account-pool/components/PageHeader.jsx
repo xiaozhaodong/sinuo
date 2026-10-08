@@ -4,10 +4,10 @@
 // 2026-10-07：嵌入 Codex 管理页时投送到统一工具栏，按钮改为工具栏按钮
 // ============================================
 
-import { GitBranch, Plus, RefreshCw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Plus, RefreshCw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { ToolbarButton, ToolbarSeparator } from '@components/layout/ToolbarButton.jsx';
 
-const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModelRouting }) => (
+const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, onOpenScheduler }) => (
   <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
     {!embedded && (
       <div className="flex items-center gap-3">
@@ -22,7 +22,6 @@ const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, on
     )}
     <div className="flex items-center gap-1">
       <ToolbarButton variant="bordered" icon={SlidersHorizontal} label="调度编排" onClick={onOpenScheduler} />
-      <ToolbarButton variant="bordered" icon={GitBranch} label="模型路由" onClick={onOpenCodexModelRouting} />
       <ToolbarSeparator />
       <ToolbarButton icon={RefreshCw} title="刷新数据" onClick={onRefresh} loading={loading} />
       <ToolbarButton icon={Plus} title="新增账号" onClick={onCreate} />

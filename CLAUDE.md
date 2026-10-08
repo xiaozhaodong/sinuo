@@ -32,7 +32,7 @@
   - 独立 upstream context
   - tail drain 补齐 terminal event / usage
   - 已完成后的 `context canceled` 按 `completed` 处理
-- Wails 前端页面：概览、Claude 管理（端点 / 客户端接入）、Codex 管理（账号池 / 客户端接入）、请求追踪、配置、日志
+- Wails 前端页面：概览、Claude 管理（端点 / 模型路由 / 模型目录 / 客户端接入）、Codex 管理（账号池 / 模型路由 / 模型目录 / 客户端接入）、请求追踪、配置、日志
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
 - Codex 账号池：单账号测试、启动批量连通性检查、分组编排、冷却、鉴权失效处理
 - 账号池编排：主组 / 备组 / 冷备、组内首选账号、全局固定账号、最近一次调度快照
@@ -155,9 +155,12 @@
 - `frontend/src/utils/api.js`：HTTP/Wails 统一 API 封装
 - `frontend/src/utils/wailsApi.js`：Wails 绑定适配层
 - `frontend/src/utils/errors.js`：错误归一化（Error / `{message}` / 字符串三态），错误提示取文案统一走 `resolveErrorMessage`，勿直接写 `err.message ||`
-- `frontend/src/pages/endpoints/components/model-routing/`：模型路由抽屉（`ModelRoutingDrawer`）、映射行、编辑弹窗、端点多选器与试算面板
+- `frontend/src/components/model-routing/`：Claude / Codex 共用模型路由工作区（工具栏、开关、列表、状态栏、试算检查器与编辑生命周期）；`routingView.js` 放纯函数，`use*.js` 放加载、写入及交互 hook，协议页面只提供 API、组件和差异配置
+- `frontend/src/pages/claude/routing/`：Claude 专属工作区配置、表格、检查器与策略补丁；加载端点，保留联网工具映射、旧组提示和目标策略
+- `frontend/src/pages/codex/routing/`：Codex 专属工作区配置、表格、检查器与账号映射纯函数；加载账号，保留账号顺序、成员开关和目标策略
+- `frontend/src/pages/endpoints/components/model-routing/`：Claude 映射编辑 Sheet、端点多选器与试算面板；Codex 编辑 Sheet 与试算面板仍位于 `account-pool/components/`，两个试算面板通过 `presentation="inspector"` 复用检查器分组样式，默认保持表单样式
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
-- `frontend/src/pages/claude/index.jsx`：「Claude 管理」页（「端点 / 客户端接入」两个页签，页签条 `components/layout/PageTabs.jsx` 与 Codex 管理共用）；端点页以 `embedded` 嵌入
+- `frontend/src/pages/claude/index.jsx` / `frontend/src/pages/codex/index.jsx`：四个管理页签，页签条 `components/layout/PageTabs.jsx` 共用；模型路由与模型目录首次访问挂载，操作投送到统一工具栏；请求页与托盘入口直接切到 `routing` 页签
 - `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`；订阅额度面板 `SubscriptionRateLimitPanel`、hook `useClaudeSubscriptionRateLimit` 与纯函数 `subscriptionRateLimit.js` 也在这里，由请求页 Claude 按钮使用
 - `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）；订阅直通模式下带额度角标与额度区
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用

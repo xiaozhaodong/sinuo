@@ -4,9 +4,9 @@
 // ============================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Database, Plus, RefreshCw, Route, Split } from 'lucide-react';
+import { Activity, AlertTriangle, Database, Plus, RefreshCw, Route } from 'lucide-react';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
-import { ToolbarButton, ToolbarSeparator } from '@components/layout/ToolbarButton.jsx';
+import { ToolbarButton } from '@components/layout/ToolbarButton.jsx';
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import { DeleteConfirmDialog, EndpointForm, EndpointScheduleDrawer, resolveSnapshotOutcome } from './components';
 import EndpointsTable from './components/EndpointsTable.jsx';
@@ -19,7 +19,6 @@ import { copyTextToClipboard } from '@pages/requests/components/clipboard.js';
 import { fetchLatestEndpointScheduleSnapshot } from '@utils/endpointScheduleApi.js';
 import { resolveErrorMessage, toError } from '@utils/errors.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import ModelRoutingDrawer from './components/model-routing/ModelRoutingDrawer.jsx';
 import {
   clearClaudeRoutingOverride,
   createEndpointRecord,
@@ -38,7 +37,7 @@ const ROUTE_MODE_LABELS = { auto: '自动调度', manual_preferred: '手动优�
 
 // embedded：嵌在「Claude 管理」页签内，标题交给外层，操作按钮渲染到 headerTarget；
 // active=false（切到其他页签）时暂停快照轮询、收起抽屉与弹窗
-const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
+const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, onOpenModelRouting }) => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
@@ -46,7 +45,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, m
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [routingOpen, setRoutingOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -56,16 +54,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, m
   const [selectedName, setSelectedName] = useState(null);
   const listRef = useRef(null);
   const { contextMenu, openContextMenu } = useContextMenu();
-  const consumedModelRoutingRequestRef = useRef(null);
-
-  useEffect(() => {
-    const requestId = modelRoutingOpenRequest?.requestId;
-    if (!active || requestId === undefined || requestId === consumedModelRoutingRequestRef.current) return;
-    consumedModelRoutingRequestRef.current = requestId;
-    // 这是一次性导航请求的消费点；请求来自父级路由状态，不能在渲染阶段直接打开抽屉。
-    setRoutingOpen(true);
-    onModelRoutingOpenRequestHandled?.();
-  }, [active, modelRoutingOpenRequest, onModelRoutingOpenRequestHandled]);
 
   const loadRouting = useCallback(async () => {
     if (!isWailsEnvironment()) return;
@@ -178,8 +166,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, m
 
   const actions = (
     <div className="flex items-center gap-1">
-      <ToolbarButton variant="bordered" icon={Split} label={modelRoutingEnabled ? `模型路由 · ${modelRoutingSettings.binding_count || 0}` : '模型路由'} onClick={() => setRoutingOpen(true)} />
-      <ToolbarSeparator />
       <ToolbarButton icon={RefreshCw} title="刷新" onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'} />
       <ToolbarButton icon={Activity} title="批量测试连通性" onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'} />
       <ToolbarButton icon={Route} title="调度快照" onClick={() => setDrawerOpen(true)} />
@@ -233,7 +219,7 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, m
           <StatusItem label="未检测" value={stats.unchecked} />
           <StatusItem label="冷却中" value={stats.cooldown} valueClassName={stats.cooldown > 0 ? 'text-warn' : 'text-fg-body'} />
           <StatusSpacer />
-          <button type="button" onClick={() => setRoutingOpen(true)} className="truncate hover:text-fg" title="打开模型路由">{routeSummary}</button>
+          <button type="button" onClick={onOpenModelRouting} className="truncate hover:text-fg" title="打开模型路由页签">{routeSummary}</button>
           {lastUpdate && <StatusItem label="更新于" value={lastUpdate} />}
         </StatusBar>
       </div>
@@ -254,7 +240,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, m
 
       {contextMenu}
       <EndpointScheduleDrawer open={active && drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
-      <ModelRoutingDrawer open={active && routingOpen} onClose={() => { setRoutingOpen(false); loadRouting().catch(() => {}); }} endpoints={endpoints} />
       {active && formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
       {active && deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>

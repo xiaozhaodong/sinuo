@@ -10,22 +10,29 @@ import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
 import AccountPoolPage from '@pages/account-pool/index.jsx';
 import CodexModelsPage from './models/CodexModelsPage.jsx';
+import CodexRoutingPage from './routing/CodexRoutingPage.jsx';
 
 const TABS = [
   { id: 'accounts', label: '账号池' },
+  { id: 'routing', label: '模型路由' },
   { id: 'models', label: '模型目录' },
   { id: 'client-access', label: '客户端接入' }
 ];
 
-const CodexPage = ({ activeTab = 'accounts', onTabChange, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
+const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
   // 客户端入口首次访问后保持挂载，页签切换不会清掉只展示一次的明文密钥；
   // 离开整个 Codex 管理页时组件仍会卸载，避免扩大明文留存范围。
   const [clientAccessVisited, setClientAccessVisited] = useState(activeTab === 'client-access');
   const [accountActionsTarget, setAccountActionsTarget] = useState(null);
+  const [routingActionsTarget, setRoutingActionsTarget] = useState(null);
+  const [routingVisited, setRoutingVisited] = useState(activeTab === 'routing');
   const [modelsActionsTarget, setModelsActionsTarget] = useState(null);
   const [modelsVisited, setModelsVisited] = useState(activeTab === 'models');
+  // 接住托盘和请求页直接切页签，访问后保持挂载。
+  if (activeTab === 'routing' && !routingVisited) setRoutingVisited(true);
 
   const handleTabChange = (nextTab) => {
+    if (nextTab === 'routing') setRoutingVisited(true);
     if (nextTab === 'models') setModelsVisited(true);
     if (nextTab === 'client-access') {
       setClientAccessVisited(true);
@@ -39,6 +46,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange, modelRoutingOpenReques
         <PageTabs tabs={TABS} activeTab={activeTab} onChange={handleTabChange} idPrefix="codex" ariaLabel="Codex 管理" />
         {/* 操作仍由账号池页面管理，投送到工具栏右侧。 */}
         <div ref={setAccountActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'accounts'} />
+        <div ref={setRoutingActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'routing'} />
         <div ref={setModelsActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'models'} />
       </PageToolbar>
 
@@ -49,7 +57,11 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange, modelRoutingOpenReques
         hidden={activeTab !== 'accounts'}
         className="flex min-h-0 flex-1"
       >
-        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} modelRoutingOpenRequest={modelRoutingOpenRequest} onModelRoutingOpenRequestHandled={onModelRoutingOpenRequestHandled} />
+        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} />
+      </section>
+
+      <section id="codex-panel-routing" role="tabpanel" aria-labelledby="codex-tab-routing" hidden={activeTab !== 'routing'} className="flex min-h-0 flex-1">
+        {routingVisited && <CodexRoutingPage active={activeTab === 'routing'} headerTarget={routingActionsTarget} />}
       </section>
 
       <section
