@@ -2,9 +2,11 @@
 // 模型调用情况表（概览页主网格右侧）
 // 2026-09-09 概览改版：按模型聚合请求数 / 成功率 / 平均耗时 / Token / 成本
 // 数据来自 GetModelUsageStats，口径与请求追踪页一致，不在前端二次聚合
+// 2026-10-07 桌面化：面板样式，表头去掉全大写小字
 // ============================================
 
-import { Boxes, ExternalLink, Filter } from 'lucide-react';
+import { ExternalLink, Filter } from 'lucide-react';
+import Panel from '@components/desktop/Panel.jsx';
 import SectionError from './SectionError.jsx';
 import { buildModelRows, formatCount, formatCostUSD, isUnresolvedModelName } from '../utils/overviewViewModel.js';
 
@@ -36,39 +38,31 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
   };
 
   return (
-    <div className="bg-surface rounded-2xl border border-line/60 shadow-sm flex flex-col overflow-hidden">
-      <div className="flex flex-col gap-2 p-5 pb-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 tone-violet rounded-md">
-              <Boxes size={16} />
-            </div>
-            <h3 className="font-semibold text-fg">模型调用情况</h3>
-          </div>
-          <p className="text-xs text-fg-muted mt-1">
-            按模型聚合请求、成功率、耗时与成本 · 次数仅计生成，用量含独立压缩{periodCaption ? ` · ${periodCaption}` : ''}
-          </p>
-        </div>
+    <Panel
+      title="模型调用"
+      subtitle={`${periodCaption ? `${periodCaption} · ` : ''}次数仅计生成，用量含独立压缩`}
+      actions={(
         <button
           type="button"
           onClick={() => openRequests({})}
           disabled={!canOpen}
-          className="inline-flex shrink-0 items-center gap-1 self-start whitespace-nowrap text-xs font-medium text-accent hover:text-accent-fg"
+          className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-accent hover:text-accent-fg"
         >
           查看请求明细
           <ExternalLink size={12} />
         </button>
-      </div>
-
+      )}
+      bodyClassName="flex flex-col"
+    >
       {hasSummary && !loading && !error && (
-        <div className="flex flex-wrap items-center gap-2 px-5 pb-3">
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-1 pt-2.5">
           {/* 家族计数是生成口径：跳转收窄为「仅生成」，列表行数才能与数字对齐 */}
           {FAMILY_PILLS.map((pill) => (
             <button
               key={pill.key}
               type="button"
               onClick={() => openRequests({ requestFamily: pill.key, includeCompaction: false })}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-sub px-2.5 py-1 text-[11px] font-semibold text-fg-body hover:border-accent-line hover:text-accent"
+              className="inline-flex h-6 items-center gap-1.5 rounded-md border border-line bg-surface px-2 text-[11.5px] font-medium text-fg-body shadow-xs hover:border-accent-line hover:text-accent"
               title={`只看 ${pill.label} 请求`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${pill.dotClass}`} />
@@ -86,7 +80,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
 
       <div className="flex-1 min-h-[220px]">
         {loading ? (
-          <div className="space-y-2 p-5 pt-2">
+          <div className="space-y-2 p-3">
             {[0, 1, 2, 3].map((index) => (
               <div key={index} className="h-9 animate-pulse rounded-lg bg-surface-mut" />
             ))}
@@ -101,13 +95,13 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
           <div className="max-h-[340px] overflow-auto">
             {/* table-fixed：模型列固定占 38%，剩余 5 列等分，避免 auto 布局把
                 多余宽度摊给数字列、把模型名挤到只剩省略号 */}
-            <table className="w-full min-w-[440px] table-fixed border-collapse">
+            <table className="w-full min-w-[400px] table-fixed border-collapse">
               <thead className="sticky top-0 z-10 bg-surface">
                 <tr>
                   {['模型', '请求数', '成功率', '平均耗时', 'Token', '成本'].map((label, index) => (
                     <th
                       key={label}
-                      className={`whitespace-nowrap border-b border-line-soft px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle ${index === 0 ? 'w-[38%] text-left' : 'text-right'}`}
+                      className={`h-7 whitespace-nowrap border-b border-line px-2 text-xs font-medium text-fg-muted first:pl-3 last:pr-3 ${index === 0 ? 'w-[38%] text-left' : 'text-right'}`}
                     >
                       {label}
                     </th>
@@ -117,7 +111,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.key} className="border-b border-line-soft last:border-b-0 hover:bg-surface-sub">
-                    <td className="px-2 py-2.5 text-left">
+                    <td className="py-2 pl-3 pr-2 text-left">
                       <button
                         type="button"
                         onClick={() => openRequests({ model: row.rawModelName, requestFamily: row.requestFamily, sourceView: row.upstreamType })}
@@ -129,11 +123,11 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
                       </button>
                       <span className="mt-0.5 block truncate text-[10px] text-fg-muted">{row.sourceLabel}</span>
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-right font-mono text-[11px] text-fg-body">{row.requestCountText}</td>
-                    <td className={`whitespace-nowrap px-2 py-2.5 text-right font-mono text-[11px] ${SUCCESS_TONE_CLASSES[row.successRateTone] || SUCCESS_TONE_CLASSES.neutral}`}>{row.successRateText}</td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-right font-mono text-[11px] text-fg-body">{row.durationText}</td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-right font-mono text-[11px] text-fg-body">{row.tokensText}</td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-right font-mono text-[11px] font-semibold text-fg">{row.costText}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.requestCountText}</td>
+                    <td className={`whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] ${SUCCESS_TONE_CLASSES[row.successRateTone] || SUCCESS_TONE_CLASSES.neutral}`}>{row.successRateText}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.durationText}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.tokensText}</td>
+                    <td className="whitespace-nowrap py-2 pl-2 pr-3 text-right font-mono text-[11px] font-semibold text-fg">{row.costText}</td>
                   </tr>
                 ))}
               </tbody>
@@ -143,7 +137,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
       </div>
 
       {!loading && !error && (rows.length > 0 || unresolvedRequestCount > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-soft px-5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-soft px-3 py-2">
           <span className="text-[11px] text-fg-subtle">
             {modelUsage?.truncated ? `Top ${rows.length} · 按请求数排序` : `共 ${rows.length} 个模型`}
             {unresolvedRequestCount > 0 ? ` · ${formatCount(unresolvedRequestCount)} 个请求未解析模型` : ''}
@@ -158,7 +152,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
           </button>
         </div>
       )}
-    </div>
+    </Panel>
   );
 };
 

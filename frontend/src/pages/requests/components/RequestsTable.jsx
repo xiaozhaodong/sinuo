@@ -1,7 +1,8 @@
 // ============================================
 // RequestsTable - 请求列表表格（支持动态列配置）
 // 2025-12-01 10:31:09
-// 更新：添加双击查看详情功能
+// 2026-10-07 桌面化：贴边 desk-table；单击选中（详情在底部面板），双击打开面板，右键菜单由页面提供。
+//            外框、标题行与分页已移出（分页与统计在页面状态栏）。
 // ============================================
 
 import React from 'react';
@@ -10,12 +11,9 @@ import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import useCountUp from '@hooks/useCountUp.js';
 import { RequestTraceCell } from './TraceRail.jsx';
 import LiveElapsedPill from './LiveElapsedPill.jsx';
 import ModelTag from './ModelTag.jsx';
-import Pagination from './Pagination.jsx';
-import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
@@ -39,23 +37,6 @@ const FINAL_ENTER_ANIMATION = 'request-row-edge-tick';
 // 没派发（或标签页在后台、动画根本不推进），class 与 --enter-delay 就会永久
 // 留在 DOM 上，下次任何 animation 中断恢复都会重播一次入场。
 const ENTER_TEARDOWN_MS = 900;
-
-/**
- * TotalCountBadge - 总条数徽章
- *
- * count-up 的 rAF 每帧 setState。挂在 RequestsTable 顶层会连带重建整个 tbody
- * 的 element 树（20 行 element + 20 次 memo 比较，约 15 帧），而 total 变化的
- * 时刻正是新行入场动画在跑的时刻 —— 那是主线程最不该被占的时候。抽成叶子隔离。
- */
-const TotalCountBadge = ({ total }) => {
-  const animatedTotal = useCountUp(total);
-
-  return (
-    <span className="px-2 py-0.5 bg-surface-mut text-fg-muted text-xs rounded-full font-medium tabular-nums">
-      共 {Math.round(animatedTotal).toLocaleString()} 条
-    </span>
-  );
-};
 
 const RequestStreamIcon = ({ request }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
@@ -189,7 +170,7 @@ const ValueCell = ({ pending, tone, children }) => (
  * ⚠️ 每个分支必须返回单一根元素，且该元素不能是非替换的行内盒
  * （见 ValueCell 的注释）—— 由静态扫描用例锁定。
  */
-const renderCell = (columnId, request, formatTimestamp) => {
+const renderCell = (columnId, request, formatTime) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
   const usagePending = pending || request.usageKnown === false;
@@ -204,7 +185,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
         </div>
       );
     case 'timestamp':
-      return <span className="inline-block text-xs text-fg-subtle">{formatTimestamp(request.timestamp)}</span>;
+      return <span className="inline-block text-xs tabular-nums text-fg-subtle">{formatTime(request.timestamp)}</span>;
     case 'status':
       return <RequestTraceCell request={request} />;
     case 'model':
@@ -212,7 +193,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
     case 'requestFamily': {
       const family = getRequestFamilyMeta(request.requestFamily);
       // 文字包一层 span：grad-tone 的渐变字只作用于内层 span
-      return <span className={`inline-flex items-center rounded-md border px-2 py-[3px] text-xs leading-4 font-semibold ${family.className}`}><span>{family.label}</span></span>;
+      return <span className={`inline-flex items-center rounded-md border px-1.5 py-[3px] text-xs leading-4 font-semibold ${family.className}`}><span>{family.label}</span></span>;
     }
     case 'upstreamName':
       return <span className="block max-w-[120px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
@@ -234,7 +215,7 @@ const renderCell = (columnId, request, formatTimestamp) => {
 };
 
 /**
- * RequestRow - 单行请求数据（支持单击复制、双击查看详情）
+ * RequestRow - 单行请求数据（单击选中、双击打开详情面板、右键菜单）
  *
  * columns 收的是列配置对象数组（不是 id 数组），与表头同一个引用。
  *
@@ -242,22 +223,9 @@ const renderCell = (columnId, request, formatTimestamp) => {
  * 「新的 requestId」等价于「新挂载的 RequestRow」。固化之后，
  * 后续任何 re-render 都不会重播入场动画。
  */
-const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp, enterAnimation }) => {
-  const clickCountRef = React.useRef(0);
-  const clickTimerRef = React.useRef(null);
+const RequestRow = ({ request, columns, selected, onSelect, onOpen, onContextMenu, formatTime, enterAnimation }) => {
   const enterTimerRef = React.useRef(null);
   const [entering, setEntering] = React.useState(() => Boolean(enterAnimation));
-
-  React.useEffect(() => () => {
-    if (clickTimerRef.current) {
-      clearTimeout(clickTimerRef.current);
-      clickTimerRef.current = null;
-    }
-    if (enterTimerRef.current) {
-      clearTimeout(enterTimerRef.current);
-      enterTimerRef.current = null;
-    }
-  }, []);
 
   // 入场跑完就摘 class：它只在挂载那一次有意义，留在 DOM 上没有价值，
   // 且一旦将来有规则中断 animation（例如给 hover 加 animation:none），
@@ -285,37 +253,17 @@ const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp
     }
   }, []);
 
-  const handleRowClick = () => {
-    const nextCount = clickCountRef.current + 1;
-    clickCountRef.current = nextCount;
-
-    if (clickTimerRef.current) {
-      clearTimeout(clickTimerRef.current);
-      clickTimerRef.current = null;
-    }
-
-    if (nextCount === 1) {
-      clickTimerRef.current = window.setTimeout(() => {
-        onCopyId?.(request.requestId);
-        clickCountRef.current = 0;
-        clickTimerRef.current = null;
-      }, 250);
-      return;
-    }
-
-    if (nextCount === 2) {
-      onDoubleClick?.(request);
-      clickCountRef.current = 0;
-    }
-  };
-
   return (
     <tr
-      className={`hover:bg-surface-sub transition-colors group cursor-pointer ${entering ? 'request-row-enter' : ''}`}
+      data-row-id={request.requestId}
+      aria-selected={selected}
+      className={`group ${entering ? 'request-row-enter' : ''}`}
       // 走 CSS 变量而非行内 animation-delay：入场由两条动画组成
       // （单元格位移 + 左缘亮线），行内 delay 只能套到其中一条上。
       style={entering && enterAnimation?.delayMs ? { '--enter-delay': `${enterAnimation.delayMs}ms` } : undefined}
-      onClick={handleRowClick}
+      onClick={() => onSelect?.(request)}
+      onDoubleClick={() => onOpen?.(request)}
+      onContextMenu={(event) => onContextMenu?.(event, request)}
       onAnimationEnd={handleAnimationEnd}
     >
       {/* 与表头同源：都遍历 visibleColumnConfigs。曾经这里走的是 visibleColumns
@@ -323,11 +271,8 @@ const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp
           才对得上 —— 一旦 TABLE_COLUMNS 调整顺序，表头就会盖在错误的数据列上，
           且勾一下任意列就会自愈，只在首屏错。 */}
       {columns.map((col) => (
-        <td
-          key={col.id}
-          className={`px-2 py-3 ${col.align === 'right' ? 'text-right' : ''}`}
-        >
-          {renderCell(col.id, request, formatTimestamp)}
+        <td key={col.id} className={col.align === 'right' ? 'text-right' : undefined}>
+          {renderCell(col.id, request, formatTime)}
         </td>
       ))}
     </tr>
@@ -336,122 +281,92 @@ const RequestRow = ({ request, columns, onCopyId, onDoubleClick, formatTimestamp
 
 // memo 生效的前提是 index.jsx 用 mergeRequestRows 保持了未变化行的对象引用。
 // enterAnimation 已在挂载时固化，比较它没有意义，故排除在外。
+// 选中态变化只重渲染新旧两行；三个回调由页面 useCallback 保持稳定。
 const MemoizedRequestRow = React.memo(RequestRow, (prev, next) => (
   prev.request === next.request
   && prev.columns === next.columns
-  && prev.onCopyId === next.onCopyId
-  && prev.onDoubleClick === next.onDoubleClick
-  && prev.formatTimestamp === next.formatTimestamp
+  && prev.selected === next.selected
+  && prev.onSelect === next.onSelect
+  && prev.onOpen === next.onOpen
+  && prev.onContextMenu === next.onContextMenu
+  && prev.formatTime === next.formatTime
 ));
 
 /**
  * RequestsTable - 请求列表表格组件（支持动态列）
+ * 滚动容器、键盘导航与右键菜单由页面负责；这里只渲染表格本身。
  * @param {Object} props
  * @param {Array} props.requests - 请求列表
- * @param {boolean} props.loading - 加载状态
- * @param {Object} props.pagination - 分页信息
- * @param {Function} props.onPageChange - 页码变更回调
- * @param {Function} props.onPageSizeChange - 每页条数变更回调
+ * @param {boolean} props.loading - 首次加载（整表换成加载指示）
  * @param {Array} props.visibleColumns - 可见列ID数组（与 columnConfigs 求交后决定渲染哪些列）
  * @param {Array} props.columnConfigs - 列配置数组，其顺序即渲染顺序
- * @param {Function} props.onRowDoubleClick - 双击行回调
+ * @param {string|null} props.selectedId - 选中行的 requestId
+ * @param {Function} props.onSelect - 单击行 (request) => void
+ * @param {Function} props.onOpen - 双击行 (request) => void
+ * @param {Function} props.onRowContextMenu - 右键行 (event, request) => void
+ * @param {Function} props.onHeaderContextMenu - 右键表头 (event) => void
  * @param {Map<string, {delayMs:number}>} props.enterAnimations
  *        本批次新增行的入场编排，由 index.jsx 在拿到新旧两批数据时算好传入
  */
 const RequestsTable = ({
   requests = [],
   loading = false,
-  refreshing = false,
   enterAnimations = NO_ROW_ANIMATIONS,
-  pagination = { page: 1, pageSize: 10, total: 0 },
-  onPageChange,
-  onPageSizeChange,
   visibleColumns = [],
   columnConfigs = [],
-  onRowDoubleClick
+  selectedId = null,
+  onSelect,
+  onOpen,
+  onRowContextMenu,
+  onHeaderContextMenu
 }) => {
-  const { formatTimestamp } = useTimezone();
-
-  // 引用必须稳定，否则 MemoizedRequestRow 的比较恒为 false。
-  const handleCopyId = React.useCallback(async (id) => {
-    await copyTextToClipboard(id, '请求 ID');
-  }, []);
+  // 时间列：当天只显示时分秒（完整日期在详情面板标题行）
+  const { formatListTimestamp } = useTimezone();
 
   const visibleColumnConfigs = React.useMemo(
     () => columnConfigs.filter(col => visibleColumns.includes(col.id)),
     [columnConfigs, visibleColumns]
   );
 
+  if (loading) {
+    return <LoadingSpinner text="加载请求数据..." />;
+  }
+
   return (
-    <div className="bg-surface rounded-xl shadow-sm border border-line overflow-hidden">
-      {/* 刷新进度条：占位高度恒定，表格不因刷新而位移 */}
-      <div className="h-0.5 overflow-hidden">
-        {refreshing && <div className="indeterminate-bar h-full w-1/3 bg-accent-ring/70" />}
-      </div>
-
-      {/* 表头 */}
-      <div className="px-4 py-4 border-b border-line-soft flex justify-between items-center bg-surface-sub">
-        <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-fg">请求明细</h3>
-          <TotalCountBadge total={pagination.total} />
-        </div>
-        <span className="text-xs text-fg-subtle">单击复制 ID · 双击查看详情</span>
-      </div>
-
-      {/* 表格 */}
-      {loading ? (
-        <LoadingSpinner text="加载请求数据..." />
-      ) : (
-        <div className="overflow-x-auto min-h-[300px]">
-          <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-surface-sub text-fg-muted border-b border-line-soft">
-              <tr>
-                {visibleColumnConfigs.map(col => (
-                  <th
-                    key={col.id}
-                    className={`px-2 py-3 font-medium text-xs uppercase tracking-wider ${
-                      col.align === 'right' ? 'text-right' : ''
-                    }`}
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line-soft">
-              {requests.length === 0 ? (
-                <tr>
-                  <td colSpan={visibleColumnConfigs.length} className="px-5 py-12 text-center text-fg-muted">
-                    暂无请求数据
-                  </td>
-                </tr>
-              ) : (
-                requests.map((req) => (
-                  <MemoizedRequestRow
-                    key={req.requestId}
-                    request={req}
-                    columns={visibleColumnConfigs}
-                    onCopyId={handleCopyId}
-                    onDoubleClick={onRowDoubleClick}
-                    formatTimestamp={formatTimestamp}
-                    enterAnimation={enterAnimations.get(req.requestId) || null}
-                  />
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* 分页 */}
-      <Pagination
-        currentPage={pagination.page}
-        pageSize={pagination.pageSize}
-        total={pagination.total}
-        onPageChange={onPageChange}
-        onPageSizeChange={onPageSizeChange}
-      />
-    </div>
+    <table className="desk-table desk-dense">
+      <thead onContextMenu={onHeaderContextMenu}>
+        <tr>
+          {visibleColumnConfigs.map(col => (
+            <th key={col.id} className={col.align === 'right' ? 'text-right' : undefined}>
+              {col.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {requests.length === 0 ? (
+          <tr>
+            <td colSpan={visibleColumnConfigs.length} className="h-24 text-center text-fg-subtle">
+              暂无请求数据
+            </td>
+          </tr>
+        ) : (
+          requests.map((req) => (
+            <MemoizedRequestRow
+              key={req.requestId}
+              request={req}
+              columns={visibleColumnConfigs}
+              selected={selectedId === req.requestId}
+              onSelect={onSelect}
+              onOpen={onOpen}
+              onContextMenu={onRowContextMenu}
+              formatTime={formatListTimestamp}
+              enterAnimation={enterAnimations.get(req.requestId) || null}
+            />
+          ))
+        )}
+      </tbody>
+    </table>
   );
 };
 

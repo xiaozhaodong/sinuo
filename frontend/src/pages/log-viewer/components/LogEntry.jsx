@@ -1,6 +1,16 @@
 // LogEntry.jsx - 单条日志显示组件
+// 2026-10-07：控制台式单行（时间 / 级别 / 消息 / 附加属性四列对齐），错误行淡红底
 import { LOG_LEVELS } from '../constants';
+import { splitByKeyword } from '../utils/highlight.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
+
+const MAX_ATTRS = 3;
+const MAX_ATTR_LENGTH = 40;
+
+const formatAttrValue = (value) => {
+  const text = String(value);
+  return text.length > MAX_ATTR_LENGTH ? `${text.slice(0, MAX_ATTR_LENGTH)}…` : text;
+};
 
 /**
  * 单条日志组件
@@ -10,52 +20,23 @@ import { useTimezone } from '@contexts/TimezoneContext.jsx';
 function LogEntry({ log, searchQuery }) {
   const { formatTimeOnly } = useTimezone();
   const levelConfig = LOG_LEVELS[log.level] || LOG_LEVELS.INFO;
-  const Icon = levelConfig.icon;
-
-  // 高亮搜索关键词
-  const highlightText = (text) => {
-    if (!searchQuery) return text;
-    const parts = text.split(new RegExp(`(${searchQuery})`, 'gi'));
-    return parts.map((part, i) =>
-      part.toLowerCase() === searchQuery.toLowerCase() ? (
-        <mark key={i} className="bg-warn-solid/40 text-fg">{part}</mark>
-      ) : (
-        part
-      )
-    );
-  };
+  const attrs = log.attrs ? Object.entries(log.attrs) : [];
 
   return (
-    <div className="flex items-start gap-3 px-4 py-2 hover:bg-surface-sub border-b border-line-soft font-mono text-xs">
-      {/* 时间戳 */}
-      <div className="text-fg-subtle whitespace-nowrap w-32 flex-shrink-0">
-        {formatTimeOnly(log.timestamp)}
-      </div>
-
-      {/* 日志级别 */}
-      <div className={`flex items-center gap-1 ${levelConfig.color} whitespace-nowrap w-16 flex-shrink-0`}>
-        <Icon size={12} />
-        <span className="font-semibold">{log.level}</span>
-      </div>
-
-      {/* 日志消息 */}
-      <div className="flex-1 text-fg-body break-all">
-        {highlightText(log.message)}
-      </div>
-
-      {/* 附加属性 - 显示前3个，超长值截断 */}
-      {log.attrs && Object.keys(log.attrs).length > 0 && (
-        <div className="text-fg-subtle text-[10px] whitespace-nowrap flex-shrink-0 max-w-[400px] truncate">
-          {Object.entries(log.attrs).slice(0, 3).map(([key, value]) => (
-            <span key={key} className="mr-2">
-              {key}={String(value).length > 40 ? String(value).slice(0, 40) + '...' : value}
-            </span>
-          ))}
-          {Object.keys(log.attrs).length > 3 && (
-            <span className="text-fg-subtle">+{Object.keys(log.attrs).length - 3}</span>
-          )}
-        </div>
-      )}
+    <div className={`grid grid-cols-[104px_52px_minmax(0,1fr)_auto] gap-x-3 px-4 py-px font-mono text-xs leading-5 hover:bg-surface-mut ${log.level === 'ERROR' ? 'bg-danger-soft/60' : ''}`}>
+      <span className="text-fg-subtle">{formatTimeOnly(log.timestamp)}</span>
+      <span className={`font-semibold ${levelConfig.color}`}>{log.level}</span>
+      <span className="break-all text-fg-body">
+        {splitByKeyword(log.message, searchQuery).map((part, index) => (part.match
+          ? <mark key={index} className="rounded-sm bg-warn-solid/40 text-fg">{part.text}</mark>
+          : part.text))}
+      </span>
+      {attrs.length > 0 ? (
+        <span className="max-w-[360px] truncate text-[11px] text-fg-subtle" title={attrs.map(([key, value]) => `${key}=${value}`).join('  ')}>
+          {attrs.slice(0, MAX_ATTRS).map(([key, value]) => `${key}=${formatAttrValue(value)}`).join('  ')}
+          {attrs.length > MAX_ATTRS && `  +${attrs.length - MAX_ATTRS}`}
+        </span>
+      ) : <span />}
     </div>
   );
 }

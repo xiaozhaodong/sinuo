@@ -1,93 +1,51 @@
 // ============================================
 // 账号资产表格
 // 2026-03-22
+// 2026-10-07 桌面化：贴边 desk-table、32px 行；单击选中（详情在右侧检查器），
+//            右键或行尾「更多」弹出操作菜单；行内只保留勾选与启用开关
 // ============================================
 
-import { ArrowRight, Pencil, RefreshCw, TestTube2, Trash2 } from 'lucide-react';
-import Badge from './Badge.jsx';
-import {
-  AUTH_BADGE_CLASS,
-  GROUP_BADGE_CLASS,
-  PLAN_BADGE_CLASS,
-  normalizePlanLabel,
-  toBadgeToneClass
-} from './inventoryBadgeStyles.js';
+import Switch from '@components/desktop/Switch.jsx';
+import RowMoreButton from '@components/desktop/RowMoreButton.jsx';
+import { useTimezone } from '@contexts/TimezoneContext.jsx';
+import { GROUP_BADGE_CLASS, PLAN_BADGE_CLASS, normalizePlanLabel } from './inventoryBadgeStyles.js';
 
-const quotaColor = (text, percent) => {
-  if (!text || text === '-' || text === '无' || text === '未刷新') return 'text-fg-subtle';
-  if (text === '无限额') return 'text-fg-muted';
-  if (!Number.isFinite(percent)) return 'text-fg-muted';
-  if (percent > 50) return 'text-success';
-  if (percent > 20) return 'text-warn font-semibold';
-  return 'text-danger font-semibold';
+const STATE_DOT_CLASS = {
+  emerald: 'bg-success-solid',
+  amber: 'bg-warn-solid',
+  rose: 'bg-danger-solid',
+  slate: 'bg-fg-subtle'
 };
 
-const quotaStrokeColor = (text, percent) => {
-  if (!text || text === '-' || text === '无' || text === '未刷新') return '#cbd5e1';
-  if (text === '无限额') return '#94a3b8';
-  if (!Number.isFinite(percent)) return '#94a3b8';
-  if (percent > 50) return '#34d399';
-  if (percent > 20) return '#fbbf24';
-  return '#f87171';
+const STATE_TEXT_CLASS = {
+  emerald: 'text-fg-body',
+  amber: 'text-warn',
+  rose: 'text-danger',
+  slate: 'text-fg-subtle'
 };
 
-const RING_SIZE = 22;
-const RING_STROKE = 2.5;
-const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+const TAG = 'ml-1.5 inline-flex items-center rounded border px-1 text-[10.5px] font-medium leading-4';
 
-const QuotaRing = ({ label, text, percent }) => {
-  const hasRing = Number.isFinite(percent);
-  const fillPercent = hasRing ? Math.max(Math.min(percent, 100), 0) : 0;
-  const dashOffset = RING_CIRCUMFERENCE - (fillPercent / 100) * RING_CIRCUMFERENCE;
-  const stroke = quotaStrokeColor(text, percent);
-  const isInfinite = text === '无限额';
-  const isEmpty = !text || text === '-' || text === '无' || text === '未刷新';
-  const tooltip = `${label}: ${text || '-'}`;
+const quotaBarClass = (percent) => {
+  if (percent > 50) return 'bg-success-solid';
+  if (percent > 20) return 'bg-warn-solid';
+  return 'bg-danger-solid';
+};
 
+// 剩余额度：有百分比时画 40px 细条 + 数字；无限额 / 未刷新只给文字，free 账号没有 5h 窗口显示占位
+const QuotaMeter = ({ text, percent, title }) => {
+  if (!Number.isFinite(percent)) {
+    const label = !text || text === '-' || text === '无' ? '—' : text;
+    return <span className={`text-xs ${text === '无限额' ? 'text-fg-muted' : 'text-fg-subtle'}`} title={title}>{label}</span>;
+  }
+  const clamped = Math.max(Math.min(percent, 100), 0);
   return (
-    <div className="relative" style={{ width: RING_SIZE, height: RING_SIZE }} title={tooltip}>
-      <svg width={RING_SIZE} height={RING_SIZE} className="-rotate-90">
-        <circle
-          cx={RING_SIZE / 2}
-          cy={RING_SIZE / 2}
-          r={RING_RADIUS}
-          fill="none"
-          stroke="#f1f5f9"
-          strokeWidth={RING_STROKE}
-        />
-        {hasRing && (
-          <circle
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RING_RADIUS}
-            fill="none"
-            stroke={stroke}
-            strokeWidth={RING_STROKE}
-            strokeDasharray={RING_CIRCUMFERENCE}
-            strokeDashoffset={dashOffset}
-            strokeLinecap="round"
-          />
-        )}
-        {!hasRing && !isEmpty && (
-          <circle
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RING_RADIUS}
-            fill="none"
-            stroke={stroke}
-            strokeWidth={RING_STROKE}
-            strokeDasharray={RING_CIRCUMFERENCE}
-            strokeDashoffset={0}
-            strokeLinecap="round"
-            opacity={isInfinite ? 0.4 : 0.2}
-          />
-        )}
-      </svg>
-      <div className={`absolute inset-0 flex items-center justify-center text-[8px] font-bold leading-none ${quotaColor(text, percent)}`}>
-        {isEmpty ? '-' : (hasRing ? Math.round(percent) : (isInfinite ? '∞' : ''))}
-      </div>
-    </div>
+    <span className="inline-flex items-center gap-1.5 text-xs tabular-nums text-fg-body" title={title}>
+      <span className="h-1 w-10 overflow-hidden rounded-full bg-surface-emph">
+        <span className={`block h-full rounded-full ${quotaBarClass(clamped)}`} style={{ width: `${clamped}%` }} />
+      </span>
+      {Math.round(clamped)}%
+    </span>
   );
 };
 
@@ -95,178 +53,117 @@ const stopEvent = (event) => {
   event.stopPropagation();
 };
 
-const TH = 'border-b border-line px-4 py-3 whitespace-nowrap';
-const TD = 'border-b border-line-soft px-4 py-3 align-middle whitespace-nowrap';
+const isPinned = (row) => (row.raw?.is_active_selection ?? row.raw?.isActiveSelection) === true;
+const isGroupPreferred = (row) => (row.raw?.is_group_preferred ?? row.raw?.isGroupPreferred) === true;
 
 const AccountInventoryTable = ({
   rows = [],
   busyKey = '',
+  activeRowId = null,
   selectedRowIds = [],
   allVisibleSelected = false,
   onToggleAllRows,
   onToggleRow,
   onRowClick,
-  onToggleAccount,
-  onClearAccountCooldown,
-  onTestAccount,
-  onRefreshAccountProfile,
-  onEditAccount,
-  onDeleteAccount
+  onRowContextMenu,
+  onToggleAccount
 }) => {
   const selectedIdSet = new Set(selectedRowIds.map((item) => String(item)));
+  const actionBusy = Boolean(busyKey);
+  // 最近成功：当天只显示时分秒（完整时间在悬停提示与检查器里）
+  const { formatListTimestamp } = useTimezone();
 
   return (
-    <div className="relative">
-      <div className="overflow-x-auto">
-        <table className="min-w-[960px] w-full border-separate border-spacing-0">
-          <thead>
-            <tr className="bg-surface-sub text-left text-xs uppercase tracking-widest text-fg-subtle">
-              <th className={`w-10 ${TH}`}>
+    <table className="desk-table desk-dense">
+      <thead>
+        <tr>
+          <th className="w-[30px]">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              aria-label="选择全部账号"
+              onChange={() => onToggleAllRows?.()}
+              className="app-checkbox"
+            />
+          </th>
+          <th>账号</th>
+          <th>类型</th>
+          <th>组别</th>
+          <th>状态</th>
+          <th>5h 剩余</th>
+          <th>d7 剩余</th>
+          <th>最近成功</th>
+          <th className="text-center">启用</th>
+          <th className="w-[36px]" aria-label="操作" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const rowId = String(row.id);
+          const planText = normalizePlanLabel(row.planLabel);
+          const enabled = row.enabled !== false;
+          const quotaTitle = `最近刷新 ${row.refreshedAtText || '-'}`;
+          const lastSuccessAt = row.raw?.last_success_at ?? row.raw?.lastSuccessAt;
+
+          return (
+            <tr
+              key={rowId}
+              data-row-id={rowId}
+              aria-selected={activeRowId === rowId}
+              onClick={() => onRowClick?.(row)}
+              onContextMenu={(event) => onRowContextMenu?.(event, row)}
+              className={enabled ? '' : 'text-fg-subtle'}
+            >
+              <td onClick={stopEvent}>
                 <input
                   type="checkbox"
-                  checked={allVisibleSelected}
-                  aria-label="选择全部账号"
-                  onChange={() => onToggleAllRows?.()}
+                  checked={selectedIdSet.has(rowId)}
+                  aria-label={`选择账号 ${row.name || row.id}`}
+                  onChange={() => onToggleRow?.(row.id)}
                   className="app-checkbox"
                 />
-              </th>
-              <th className={TH}>账号名</th>
-              <th className={TH}>类型</th>
-              <th className={TH}>组别</th>
-              <th className={TH}>状态</th>
-              <th className={TH}>额度</th>
-              <th className={TH}>最近成功</th>
-              <th className={TH}>最近刷新</th>
-              <th className={`${TH} text-right`}>操作</th>
+              </td>
+              <td className={`font-medium ${enabled ? 'text-fg' : ''}`}>
+                <span className="inline-block max-w-[160px] truncate align-middle" title={row.name}>{row.name || '-'}</span>
+                {planText !== '-' && <span className={`${TAG} ${PLAN_BADGE_CLASS[planText] || 'tone-slate'}`}>{planText}</span>}
+                {isPinned(row) && <span className={`${TAG} border-danger-line text-danger`} title="全局固定使用此账号">固定</span>}
+                {isGroupPreferred(row) && <span className={`${TAG} border-accent-line text-accent`} title="组内首选">首选</span>}
+              </td>
+              <td className="text-xs text-fg-muted">{row.authLabel || '-'}</td>
+              <td>
+                <span className={`inline-flex items-center rounded border px-1.5 text-[11px] font-medium leading-4 ${GROUP_BADGE_CLASS[row.groupLabel] || 'tone-slate'}`}>
+                  {row.groupLabel || '-'}
+                </span>
+              </td>
+              <td>
+                <span className={`inline-flex items-center gap-1.5 text-xs ${STATE_TEXT_CLASS[row.stateTone] || STATE_TEXT_CLASS.slate}`}>
+                  <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${STATE_DOT_CLASS[row.stateTone] || STATE_DOT_CLASS.slate}`} />
+                  {row.stateLabel || '-'}
+                </span>
+              </td>
+              <td><QuotaMeter text={row.quota5hText} percent={row.quota5hPercent} title={quotaTitle} /></td>
+              <td><QuotaMeter text={row.quota7dText} percent={row.quota7dPercent} title={quotaTitle} /></td>
+              <td className="text-xs tabular-nums text-fg-muted" title={row.lastSuccessText}>
+                {lastSuccessAt ? formatListTimestamp(lastSuccessAt) : '-'}
+              </td>
+              <td className="text-center" onClick={stopEvent}>
+                <span className="inline-flex align-middle">
+                  <Switch
+                    checked={enabled}
+                    label={enabled ? '停用账号' : '启用账号'}
+                    disabled={actionBusy}
+                    onChange={() => onToggleAccount?.(row.raw || row.detail?.rawAccount || row)}
+                  />
+                </span>
+              </td>
+              <td onClick={stopEvent}>
+                <RowMoreButton label="更多操作" onOpenMenu={(event) => onRowContextMenu?.(event, row)} />
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const selected = selectedIdSet.has(String(row.id));
-              const planText = normalizePlanLabel(row.planLabel);
-              const actionBusy = Boolean(busyKey);
-
-              return (
-                <tr
-                  key={String(row.id)}
-                  onClick={() => onRowClick?.(row)}
-                  tabIndex={0}
-                  role="button"
-                  className={`cursor-pointer bg-surface transition-colors hover:bg-surface-sub ${selected ? 'ring-2 ring-inset ring-accent-soft' : ''}`}
-                >
-                  <td className={TD} onClick={stopEvent}>
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      aria-label={`选择账号 ${row.name || row.id}`}
-                      onChange={() => onToggleRow?.(row.id)}
-                      className="app-checkbox"
-                    />
-                  </td>
-                  <td className={TD}>
-                    <div className="text-sm font-semibold text-fg">{row.name || '-'}</div>
-                  </td>
-                  <td className={TD}>
-                    <div className="flex items-center gap-1.5">
-                      <Badge
-                        text={row.authLabel || '-'}
-                        className={AUTH_BADGE_CLASS[row.authLabel] || 'tone-slate'}
-                      />
-                      {planText !== '-' && (
-                        <Badge
-                          text={planText}
-                          className={PLAN_BADGE_CLASS[planText] || 'tone-slate'}
-                        />
-                      )}
-                    </div>
-                  </td>
-                  <td className={TD}>
-                    <Badge
-                      text={row.groupLabel || '-'}
-                      className={GROUP_BADGE_CLASS[row.groupLabel] || 'tone-slate'}
-                    />
-                  </td>
-                  <td className={TD}>
-                    <Badge
-                      text={row.stateLabel || '-'}
-                      className={toBadgeToneClass(row.stateTone)}
-                    />
-                  </td>
-                  <td className={TD}>
-                    <div className="flex items-center gap-2">
-                      <QuotaRing label="5h" text={row.quota5hText} percent={row.quota5hPercent} />
-                      <QuotaRing label="d7" text={row.quota7dText} percent={row.quota7dPercent} />
-                    </div>
-                  </td>
-                  <td className={`${TD} text-sm font-medium text-success`}>{row.lastSuccessText || '-'}</td>
-                  <td className={`${TD} text-sm font-medium text-success`}>{row.refreshedAtText || '-'}</td>
-                  <td className={`${TD} text-right`}>
-                    <div className="flex items-center justify-end gap-0.5" onClick={stopEvent}>
-                      {row.state === 'cooldown' && <button type="button" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(row.raw || row.detail?.rawAccount || row)} className="rounded-md px-1.5 py-1 text-[11px] text-warn hover:bg-warn-soft">解除冷却</button>}
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={row.enabled !== false}
-                        aria-label={row.enabled === false ? '启用账号' : '停用账号'}
-                        disabled={actionBusy}
-                        onClick={() => onToggleAccount?.(row.raw || row.detail?.rawAccount || row)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${row.enabled === false ? 'bg-line-strong' : 'bg-success-solid'}`}
-                      >
-                        <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-surface shadow-sm transition-transform ${row.enabled === false ? 'translate-x-0' : 'translate-x-4'}`} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onTestAccount?.(row.raw || row.detail?.rawAccount || row)}
-                        className="p-1.5 text-fg-subtle hover:bg-info-soft hover:text-info rounded-md transition-colors"
-                        title="测试连通性"
-                      >
-                        <TestTube2 size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onRefreshAccountProfile?.(row.raw || row.detail?.rawAccount || row)}
-                        className="p-1.5 text-fg-subtle hover:bg-success-soft hover:text-success rounded-md transition-colors"
-                        title="刷新画像"
-                      >
-                        <RefreshCw size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onEditAccount?.(row.raw || row.detail?.rawAccount || row)}
-                        className="p-1.5 text-fg-subtle hover:bg-surface-mut hover:text-accent rounded-md transition-colors"
-                        title="编辑"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onDeleteAccount?.(row.raw || row.detail?.rawAccount || row)}
-                        className="p-1.5 text-fg-subtle hover:bg-danger-soft hover:text-danger rounded-md transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onRowClick?.(row)}
-                        className="p-1.5 text-fg-subtle hover:bg-surface-mut hover:text-fg-body rounded-md transition-colors"
-                        title="查看详情"
-                      >
-                        <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          );
+        })}
+      </tbody>
+    </table>
   );
 };
 

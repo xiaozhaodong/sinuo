@@ -3,24 +3,32 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { suggestCachePrices, toPricingForm, toPricingPayload, validatePricingForm } from './utils/pricingForm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sourcePath = path.resolve(__dirname, './index.jsx');
+const inspectorPath = path.resolve(__dirname, './components/PricingInspector.jsx');
+const pagePath = path.resolve(__dirname, './index.jsx');
 
-test('PricingForm supports 0.001 price precision', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+test('定价支持 0.001 精度：文本输入不受原生 step 校验限制，3.125 原样保存', async () => {
+  const source = await readFile(inspectorPath, 'utf8');
+  assert.match(source, /inputMode="decimal"/);
+  assert.doesNotMatch(source, /type="number"/);
 
-  assert.match(
-    source,
-    /const PRICE_INPUT_STEP = '0\.001'/,
-    'expected pricing inputs to allow values like 3.125 without native step validation errors'
-  );
+  const form = { ...toPricingForm(null), modelName: 'x', inputPrice: '3.125' };
+  assert.deepEqual(validatePricingForm(form, { isNew: true }), {});
+  assert.equal(toPricingPayload(form).inputPrice, 3.125);
 });
 
-test('PricingForm keeps cache price suggestions at 3 decimal places', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+test('缓存价格建议保留 3 位小数', () => {
+  const next = suggestCachePrices({ ...toPricingForm(null), inputPrice: '2.4' });
+  assert.equal(next.cacheCreationPrice5m, '3');
+  assert.equal(next.cacheCreationPrice1h, '4.8');
+  assert.equal(next.cacheReadPrice, '0.24');
+  assert.equal(suggestCachePrices({ ...toPricingForm(null), inputPrice: '0.0123' }).cacheReadPrice, '0.001');
+});
 
-  assert.match(source, /const CACHE_PRICE_DECIMALS = 3/);
-  assert.match(source, /toFixed\(CACHE_PRICE_DECIMALS\)/);
-  assert.doesNotMatch(source, /input \* 1\.25\)\.toFixed\(2\)/);
+test('页面不再使用 window.alert（WKWebView 不弹窗），错误走页内提示', async () => {
+  const source = await readFile(pagePath, 'utf8');
+  assert.doesNotMatch(source, /\balert\(/);
+  assert.match(source, /setActionError\(resolveErrorMessage/);
 });

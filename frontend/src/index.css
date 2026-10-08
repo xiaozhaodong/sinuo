@@ -66,10 +66,19 @@
   --app-info-soft: #f0f9ff;
   --app-info-line: #bae6fd;
 
+  /* 侧边栏：比内容区略灰；选中态是半透明叠色，失焦时仍可读 */
+  --app-sidebar: #eef1f5;
+  --app-sidebar-sel: rgb(15 23 42 / 0.08);
+
+  /* 桌面化内容区：分组表单 / 仪表盘的浅灰底、检查器底色、表格斑马纹与选中行 */
+  --app-pane: #f4f5f7;
+  --app-inspector: #fbfcfd;
+  --app-zebra: #f8fafc;
+  --app-row-selected: color-mix(in srgb, var(--app-accent-ring) 13%, transparent);
+
   /* 不随主题反转：暗色需更深 / 换白色微透（方案 §4.3） */
   --app-overlay: rgb(15 23 42 / 0.4);
   --app-hairline: rgb(0 0 0 / 0.05);
-  --app-texture-dot: #cbd5e1;
   --app-scrollbar-track: #f1f5f9;
   --app-scrollbar-thumb: #cbd5e1;
   --app-scrollbar-thumb-hover: #94a3b8;
@@ -126,9 +135,16 @@
   --app-info-soft: #082f49;
   --app-info-line: #075985;
 
+  --app-sidebar: #151d2e;
+  --app-sidebar-sel: rgb(255 255 255 / 0.09);
+
+  --app-pane: #0b1120;
+  --app-inspector: #111a2c;
+  --app-zebra: rgb(255 255 255 / 0.022);
+  --app-row-selected: color-mix(in srgb, var(--app-accent-ring) 22%, transparent);
+
   --app-overlay: rgb(2 6 23 / 0.66);
   --app-hairline: rgb(255 255 255 / 0.08);
-  --app-texture-dot: #1e293b;
   --app-scrollbar-track: #172033;
   --app-scrollbar-thumb: #3f4d63;
   --app-scrollbar-thumb-hover: #55657f;
@@ -188,7 +204,10 @@
 
   --color-overlay: var(--app-overlay);
   --color-hairline: var(--app-hairline);
-  --color-texture-dot: var(--app-texture-dot);
+  --color-sidebar: var(--app-sidebar);
+  --color-sidebar-sel: var(--app-sidebar-sel);
+  --color-pane: var(--app-pane);
+  --color-inspector: var(--app-inspector);
 
   /* 覆写内置阴影阶梯：暗色下 rgb(0 0 0 / .1) 几乎不可见。
      参数化后全站现有 shadow-sm/md/lg 自动增强，无需逐处改 className。 */
@@ -470,6 +489,10 @@
   .app-checkbox:disabled {
     cursor: not-allowed;
     opacity: .5;
+  }
+
+  /* 只给未勾选的禁用态换灰底：勾选 + 禁用要保留勾选色，否则看起来像没勾 */
+  .app-checkbox:disabled:not(:checked) {
     background-color: var(--app-surface-mut);
   }
 }
@@ -518,6 +541,7 @@
 @keyframes motion-popover-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes motion-overlay-in { from { opacity: 0; } }
 @keyframes motion-dialog-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+@keyframes motion-drawer-in { from { opacity: 0; transform: translateX(16px); } }
 /* 页面根节点：只给一个「换页了」的信号，不拖慢内容出现 */
 @keyframes motion-page-in { from { opacity: 0; } }
 /* 启动就绪：页头、背景与内容区从启动画面的同色底上整体淡入一次 */
@@ -528,6 +552,7 @@
   .motion-popover { animation: motion-popover-in 150ms cubic-bezier(.22,1,.36,1); }
   .motion-overlay { animation: motion-overlay-in 180ms ease-out; }
   .motion-dialog { animation: motion-dialog-in 220ms cubic-bezier(.22,1,.36,1); }
+  .motion-drawer { animation: motion-drawer-in 200ms cubic-bezier(.22,1,.36,1); }
   .motion-page { animation: motion-page-in 150ms ease-out; }
   .motion-app { animation: motion-app-in 200ms ease-out; }
 }
@@ -904,6 +929,160 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   background: var(--app-canvas);
+}
+
+/* ============================================================
+ * 桌面化原生细节（2026-10-07）
+ * - 界面文字默认不可拖选、箭头光标；输入控件、代码与等宽文本
+ *   （请求 ID、URL、日志、数值）保留可选，便于复制。
+ *   放在 body 上而不是外壳容器上：弹窗 / 抽屉 portal 到 body，同样要生效。
+ * - .app-drag 是窗口拖拽区（Wails v3 认 --wails-draggable，自定义属性可继承），
+ *   区域内的可交互控件逐个排除，避免点按钮变成拖窗口。
+ * - 窗口失焦（.window-inactive）时侧边栏图标退成灰色，与 macOS 一致。
+ * ============================================================ */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+:is(input, textarea, [contenteditable="true"], pre, code, .font-mono, .selectable) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.app-drag {
+  --wails-draggable: drag;
+}
+
+.app-drag :is(button, input, select, textarea, a, label, [role="button"], [role="tab"], [role="menu"], [role="dialog"]) {
+  --wails-draggable: no-drag;
+}
+
+.sidebar-icon {
+  color: var(--app-accent);
+}
+
+.window-inactive .sidebar-icon {
+  color: var(--app-fg-muted);
+}
+
+.window-inactive .toolbar-title {
+  color: var(--app-fg-muted);
+}
+
+/* 失焦时选中行退成灰色叠色（macOS 列表惯例） */
+.window-inactive {
+  --app-row-selected: rgb(100 116 139 / 0.16);
+}
+
+/* 数字输入框去掉浏览器自带的上下微调箭头（样式不可控、挤占数字），
+   与 macOS 原生数字字段一致；直接输入、键盘 ↑↓ 增减与 min / max / step 校验不受影响 */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ============================================================
+ * 桌面化表格 / 输入框（2026-10-07）
+ * desk-table：贴边铺满、吸顶表头（列间短竖线）、斑马纹、32px 行高；
+ *   选中行用 aria-selected，分组标题行用 .desk-group（不参与斑马纹计数）。
+ * desk-field：24px 高的紧凑输入框，聚焦为 3px 半透明主色光环。
+ * ============================================================ */
+@layer components {
+  .desk-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+
+  .desk-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    height: 28px;
+    padding: 0 8px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--app-fg-muted);
+    white-space: nowrap;
+    background-color: var(--app-surface);
+    border-bottom: 1px solid var(--app-line);
+  }
+
+  .desk-table th + th {
+    background-image: linear-gradient(var(--app-line), var(--app-line));
+    background-size: 1px 14px;
+    background-position: 0 center;
+    background-repeat: no-repeat;
+  }
+
+  .desk-table td {
+    height: 32px;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+
+  .desk-table :is(th, td):first-child { padding-left: 16px; }
+  .desk-table :is(th, td):last-child { padding-right: 16px; }
+
+  /* 紧凑变体：列多的表（请求追踪）用，默认窗口宽度下少横向滚动 */
+  .desk-table.desk-dense :is(th, td) { padding: 0 6px; }
+  .desk-table.desk-dense :is(th, td):first-child { padding-left: 12px; }
+  .desk-table.desk-dense :is(th, td):last-child { padding-right: 12px; }
+
+  .desk-table tbody tr:nth-child(even of :not(.desk-group)) > td {
+    background-color: var(--app-zebra);
+  }
+
+  .desk-table tbody tr[aria-selected="true"] > td,
+  .desk-table tbody tr[aria-selected="true"]:nth-child(even of :not(.desk-group)) > td {
+    background-color: var(--app-row-selected);
+  }
+
+  .desk-table tr.desk-group > td {
+    height: 26px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--app-fg-muted);
+    background-color: var(--app-pane);
+    border-top: 1px solid var(--app-line-soft);
+    border-bottom: 1px solid var(--app-line-soft);
+  }
+
+  .desk-field {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 13px;
+    color: var(--app-fg);
+    background-color: var(--app-surface);
+    border: 1px solid var(--app-line);
+    border-radius: 6px;
+    outline: none;
+    box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.03);
+  }
+
+  .desk-field:focus {
+    border-color: var(--app-accent-ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent-ring) 28%, transparent);
+  }
+
+  .desk-field:disabled {
+    color: var(--app-fg-muted);
+    background-color: var(--app-surface-sub);
+  }
+
+  .desk-field[aria-invalid="true"] {
+    border-color: var(--app-danger-solid);
+  }
 }
 
 /* 确保 root 元素填满视口并禁止根层滚动回弹 */

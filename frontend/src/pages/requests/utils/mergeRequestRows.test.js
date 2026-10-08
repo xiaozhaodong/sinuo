@@ -71,7 +71,7 @@ test('每个比对字段单独变化都能被检出', () => {
 
 test('连续重试时详情字段推进必须换新引用', () => {
   // status / tokens / duration 全都没动，只有重试链路在推进 —— 表格看不出区别，
-  // 但详情弹窗的首帧读的就是这个对象。这是引用复用最容易吃掉数据的场景。
+  // 但详情面板的首帧读的就是这个对象。这是引用复用最容易吃掉数据的场景。
   const prev = row({ requestId: 'req-r', status: 'retry', retryCount: 1, httpStatusCode: 429 });
   const next = row({ requestId: 'req-r', status: 'retry', retryCount: 2, httpStatusCode: 500 });
 
@@ -102,12 +102,12 @@ test('COMPARED_FIELDS 覆盖所有可见列所依赖的字段', () => {
   assert.deepEqual(missing, [], `新增列后忘记同步 COMPARED_FIELDS：${missing.join(', ')}`);
 });
 
-test('COMPARED_FIELDS 覆盖详情弹窗与生命周期面板读到的字段', () => {
-  // 行对象不只喂给表格：双击后它是详情弹窗的先行渲染数据源。
+test('COMPARED_FIELDS 覆盖详情面板与生命周期面板读到的字段', () => {
+  // 行对象不只喂给表格：选中后它是详情面板的先行渲染数据源。
   // 静态扫描这两个消费方源码里的 request.xxx，任何一个漏进比对表，
   // 都会让该字段的变化被引用复用吃掉。
   const consumers = [
-    '../components/RequestDetailModal.jsx',
+    '../components/RequestDetailPane.jsx',
     '../components/LifecyclePanel.jsx'
   ];
 

@@ -1,10 +1,11 @@
 // ============================================
 // 账号资产筛选条
 // 2026-03-21
+// 2026-10-07 桌面化：工具栏下方的范围条（24px 控件、浅灰底），批量操作条同样压紧；
+//            筛选从「外置标签 + 下拉框」改为标签写在按钮里的弹出按钮，生效中的条件高亮
 // ============================================
 
-import { RotateCcw, Search, Sparkles, TestTube2, UserRoundCheck, Rows3 } from 'lucide-react';
-import { CustomSelect } from '@components/ui';
+import { ChevronDown, RotateCcw, Search, Sparkles, TestTube2, UserRoundCheck, Rows3 } from 'lucide-react';
 
 const BATCH_LABELS = {
   test: '批量测试',
@@ -28,35 +29,35 @@ const FILTER_SHORT_LABELS = {
   sort: '排序'
 };
 
-const FILTER_WIDTHS = {
-  auth: 'w-28',
-  plan: 'w-28',
-  group: 'w-24',
-  status: 'w-24',
-  risk: 'w-24',
-  sort: 'w-32'
-};
+// 默认值：排序取第一项，其余条件为「全部」
+const defaultValueOf = (config) => (config.key === 'sort' ? config.options?.[0]?.value : 'all');
 
-const FilterField = ({ config, value, onChange, wide = false, showLabel = true }) => {
-  const currentLabel = config.options?.find((option) => option.value === value)?.label;
-  const widthClass = wide ? FILTER_WIDTHS.sort : (FILTER_WIDTHS[config.key] || 'w-24');
+// 弹出按钮：默认值只显示标签「授权 ▾」，生效时显示取值并高亮「授权 OAuth ▾」，一眼看出哪些条件在生效；
+// 选项走锚定菜单。排序不显示标签，始终显示当前排序方式
+const FilterField = ({ config, value, onChange, onOpenMenu, showLabel = true }) => {
+  const options = config.options || [];
+  const current = options.find((option) => String(option.value) === String(value)) || options[0];
+  const active = String(current?.value ?? '') !== String(defaultValueOf(config));
+  const openMenu = (event) => onOpenMenu?.(event.currentTarget, options.map((option) => ({
+    label: option.label,
+    checked: String(option.value) === String(current?.value),
+    onSelect: () => onChange?.(option.value)
+  })));
 
   return (
-    <div
-      className="inline-flex shrink-0 items-center gap-1.5"
-      title={`${config.label}${currentLabel ? `：${currentLabel}` : ''}`}
+    <button
+      type="button"
+      aria-haspopup="menu"
+      onClick={openMenu}
+      title={`${config.label}：${current?.label || '-'}`}
+      className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-xs shadow-xs transition-colors ${
+        active ? 'border-accent-line bg-accent-soft text-accent-fg' : 'border-line bg-surface text-fg-body hover:bg-surface-sub'
+      }`}
     >
-      <span className={showLabel ? 'whitespace-nowrap text-[11px] font-medium text-fg-subtle' : 'sr-only'}>
-        {FILTER_SHORT_LABELS[config.key] || config.label}
-      </span>
-      <CustomSelect
-        size="xs"
-        options={config.options}
-        value={value}
-        onChange={onChange}
-        className={`${widthClass} [&>button]:h-8 [&>button]:min-w-0`}
-      />
-    </div>
+      {showLabel && <span className={active ? 'opacity-70' : ''}>{FILTER_SHORT_LABELS[config.key] || config.label}</span>}
+      {(active || !showLabel) && <span className="max-w-[96px] truncate">{current?.label || '-'}</span>}
+      <ChevronDown size={12} className="shrink-0 opacity-60" />
+    </button>
   );
 };
 
@@ -66,9 +67,9 @@ const BatchActionButton = ({ icon: Icon, label, onClick, disabled, title, classN
     onClick={onClick}
     disabled={disabled}
     title={title}
-    className={`inline-flex items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-fg-body transition-colors hover:border-line-strong hover:bg-surface-sub disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+    className={`inline-flex h-6 items-center rounded-md border border-line bg-surface px-2 text-xs text-fg-body shadow-xs transition-colors hover:bg-surface-sub disabled:opacity-40 ${className}`}
   >
-    {Icon && <Icon size={13} className="mr-1.5" />}
+    {Icon && <Icon size={12} className="mr-1" />}
     {label}
   </button>
 );
@@ -85,6 +86,7 @@ const AccountInventoryFilters = ({
   batchActions = [],
   batchFeedback,
   onBatchAction,
+  onOpenMenu,
   viewSwitcher = null
 }) => {
   const testAction = findAction(batchActions, 'batch-test', 'test');
@@ -99,16 +101,16 @@ const AccountInventoryFilters = ({
   const sortConfig = filterConfigs.find((config) => config.key === 'sort');
   const queryConfigs = filterConfigs.filter((config) => config.key !== 'sort');
   const hasActiveFilters = Boolean(String(searchTerm || '').trim()) || filterConfigs.some((config) => {
-    const defaultValue = config.key === 'sort' ? config.options?.[0]?.value : 'all';
+    const defaultValue = defaultValueOf(config);
     return String(filterValues[config.key] ?? defaultValue) !== String(defaultValue);
   });
 
   return (
-    <div className="border-b border-line-soft px-5 py-3">
+    <div className="shrink-0 border-b border-line bg-inspector px-3 py-1.5">
       {/* 单行工具栏：查询条件与结果工具共用一条基线；窄屏时按组换行 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="relative w-full shrink-0 sm:w-48">
-          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
+        <div className="relative w-40 shrink-0">
+          <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle" />
           <input
             id="account-inventory-search"
             type="search"
@@ -116,48 +118,49 @@ const AccountInventoryFilters = ({
             value={searchTerm}
             placeholder="搜索账号名 / 备注 / 标签"
             onChange={(event) => onSearchTermChange?.(event.target.value)}
-            className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-11 text-xs text-fg-body outline-none placeholder:text-fg-subtle focus:border-accent-line focus:ring-2 focus:ring-accent-soft"
+            className="desk-field w-full pl-7 pr-10 text-xs placeholder:text-fg-subtle"
           />
           <span
-            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-surface-mut px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-fg-muted"
+            className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-surface-mut px-1.5 text-[10px] font-medium leading-4 tabular-nums text-fg-muted"
             title={`当前筛选结果：${resultCount} 个账号`}
           >
             {resultCount}
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           {queryConfigs.map((config) => (
             <FilterField
               key={config.key}
               config={config}
               value={filterValues[config.key]}
               onChange={(value) => onFilterChange?.(config.key, value)}
+              onOpenMenu={onOpenMenu}
             />
           ))}
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-fg-subtle">
-          <span className="hidden h-5 w-px bg-surface-emph lg:block" />
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-fg-subtle">
+          <span className="hidden h-4 w-px bg-line lg:block" />
           {sortConfig ? (
             <FilterField
               config={sortConfig}
               value={filterValues[sortConfig.key]}
               onChange={(value) => onFilterChange?.(sortConfig.key, value)}
-              wide
+              onOpenMenu={onOpenMenu}
               showLabel={false}
             />
           ) : null}
-          <span className="hidden h-5 w-px bg-surface-emph sm:block" />
+          <span className="hidden h-4 w-px bg-line sm:block" />
           {viewSwitcher}
           <button
             type="button"
             onClick={onResetFilters}
             disabled={!hasActiveFilters}
-            className={`inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium transition-colors ${
+            className={`inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs transition-colors ${
               hasActiveFilters
                 ? 'text-fg-muted hover:bg-surface-mut hover:text-fg-body'
-                : 'cursor-default text-fg-subtle'
+                : 'text-fg-subtle'
             }`}
             title={hasActiveFilters ? '重置搜索、筛选与排序' : '当前没有需要重置的条件'}
             aria-label="重置搜索、筛选与排序"
@@ -169,7 +172,7 @@ const AccountInventoryFilters = ({
 
       {/* 批量操作 - 选中时显示 */}
       {selectedCount > 0 && (
-        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-accent-line bg-accent-soft/40 px-3 py-2">
+        <div className="mt-1.5 flex items-center gap-2 rounded-md border border-accent-line bg-accent-soft/40 px-2 py-1">
           <span className="shrink-0 text-xs font-medium text-accent">
             {selectedCount} 个已选
           </span>

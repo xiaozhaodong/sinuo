@@ -6,7 +6,8 @@ import {
   buildCodexModelRewriteRules,
   createDefaultModelRewriteRules,
   isValidAccountId,
-  parseCodexModelRewriteSettings
+  parseCodexModelRewriteSettings,
+  shouldAutoExtractCallback
 } from './accountPool.js';
 
 test('buildManualSwitchSuccessMessage avoids promising immediate effect', () => {
@@ -74,4 +75,30 @@ test('parseCodexModelRewriteSettings restores multiple editable rules', () => {
     { source: 'gpt-5.4', target: 'gpt-5.5' },
     { source: 'gpt-5.6', target: 'gpt-5.5' }
   ]);
+});
+
+test('shouldAutoExtractCallback accepts callback URLs with code', () => {
+  assert.equal(shouldAutoExtractCallback('http://localhost:1455/auth/callback?code=test-code&state=test-state'), true);
+});
+
+test('shouldAutoExtractCallback accepts callback URLs with rt', () => {
+  assert.equal(shouldAutoExtractCallback('http://localhost:1455/auth/callback?rt=test-rt'), true);
+  assert.equal(shouldAutoExtractCallback('http://localhost:1455/auth/callback?refresh_token=test-rt'), true);
+});
+
+test('shouldAutoExtractCallback accepts OAuth errors for immediate feedback', () => {
+  assert.equal(shouldAutoExtractCallback('http://localhost:1455/auth/callback?error=access_denied'), true);
+  assert.equal(shouldAutoExtractCallback('http://localhost:1455/auth/callback#error=access_denied'), true);
+});
+
+test('shouldAutoExtractCallback rejects ordinary URLs without callback parameters', () => {
+  assert.equal(shouldAutoExtractCallback('https://example.com/login?state=test-state'), false);
+});
+
+test('shouldAutoExtractCallback rejects empty input', () => {
+  assert.equal(shouldAutoExtractCallback(''), false);
+});
+
+test('shouldAutoExtractCallback rejects invalid text even with callback parameter fragments', () => {
+  assert.equal(shouldAutoExtractCallback('not-a-url?code=test-code&rt=test-rt&error=access_denied'), false);
 });

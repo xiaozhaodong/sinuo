@@ -1,13 +1,14 @@
 // ============================================
 // Account Pool 页面头部
 // 2026-03-22
+// 2026-10-07：嵌入 Codex 管理页时投送到统一工具栏，按钮改为工具栏按钮
 // ============================================
 
-import { Database, GitBranch, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { Button } from '@components/ui';
+import { GitBranch, Plus, RefreshCw, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ToolbarButton, ToolbarSeparator } from '@components/layout/ToolbarButton.jsx';
 
-const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModels, onOpenCodexModelRouting }) => (
-  <div className={`flex flex-col gap-4 md:flex-row md:items-end ${embedded ? 'md:justify-end' : 'justify-between'}`}>
+const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, onOpenScheduler, onOpenCodexModelRouting }) => (
+  <div className={`flex items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
     {!embedded && (
       <div className="flex items-center gap-3">
         <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
@@ -19,24 +20,12 @@ const PageHeader = ({ embedded = false, loading = false, onCreate, onRefresh, on
         </div>
       </div>
     )}
-    <div className="flex flex-wrap items-center gap-2">
-      <Button icon={Plus} onClick={onCreate}>
-        新增账号
-      </Button>
-      <Button icon={RefreshCw} variant="secondary" onClick={onRefresh} loading={loading}>
-        刷新数据
-      </Button>
-      <Button icon={Database} variant="secondary" onClick={onOpenCodexModels}>
-        Codex 模型
-      </Button>
-      <Button icon={GitBranch} variant="secondary" onClick={onOpenCodexModelRouting}>
-        模型路由
-      </Button>
-      <Button icon={GitBranch} variant="secondary" onClick={onOpenScheduler}
-        className="tone-indigo hover:bg-accent-soft hover:border-accent-line"
-      >
-        调度编排
-      </Button>
+    <div className="flex items-center gap-1">
+      <ToolbarButton variant="bordered" icon={SlidersHorizontal} label="调度编排" onClick={onOpenScheduler} />
+      <ToolbarButton variant="bordered" icon={GitBranch} label="模型路由" onClick={onOpenCodexModelRouting} />
+      <ToolbarSeparator />
+      <ToolbarButton icon={RefreshCw} title="刷新数据" onClick={onRefresh} loading={loading} />
+      <ToolbarButton icon={Plus} title="新增账号" onClick={onCreate} />
     </div>
   </div>
 );

@@ -96,6 +96,22 @@ export const formatTimeOnly = (value, timezone) => {
   }
 };
 
+// 列表时间列：当天显示时分秒，其它日期显示「月/日 时:分」，按配置时区判断「当天」。
+// 完整时间由详情处展示，列表列宽因此可以收窄。
+export const formatListTimestamp = (value, timezone, now = new Date()) => {
+  if (!value) return '-';
+  try {
+    const parts = partsMap(parseTimestamp(value), timezone);
+    const today = partsMap(now, timezone);
+    const sameDay = parts.year === today.year && parts.month === today.month && parts.day === today.day;
+    return sameDay
+      ? `${parts.hour}:${parts.minute}:${parts.second}`
+      : `${Number(parts.month)}/${Number(parts.day)} ${parts.hour}:${parts.minute}`;
+  } catch {
+    return '-';
+  }
+};
+
 export const formatMonthDayTime = (value, timezone) => {
   if (!value) return '-';
   try {

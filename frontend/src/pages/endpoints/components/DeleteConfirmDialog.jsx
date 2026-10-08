@@ -16,37 +16,32 @@ const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => {
     onClose: () => {
       if (!loading) onCancel();
     },
-    initialFocusRef: dialogRef
+    initialFocusRef: dialogRef,
+    focusTrapRef: dialogRef
   });
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[20vh] animate-fade-in">
-      <div className="absolute inset-0 bg-overlay" />
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[18vh]">
+      <div className="motion-overlay absolute inset-0 bg-overlay" />
       <div
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="确认删除端点"
-        className="relative bg-surface rounded-2xl border border-line shadow-2xl w-full max-w-md p-6 focus:outline-none"
+        className="motion-dialog relative w-full max-w-[340px] rounded-xl border border-line bg-surface p-5 shadow-2xl ring-1 ring-hairline focus:outline-none"
       >
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-3 bg-danger-soft rounded-full">
-            <AlertTriangle className="text-danger" size={24} />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-fg">确认删除</h3>
-            <p className="text-sm text-fg-muted">此操作不可撤销</p>
-          </div>
-        </div>
+        <AlertTriangle className="text-danger" size={28} strokeWidth={1.75} />
+        <h3 className="mt-3 text-[13px] font-semibold text-fg">确认删除</h3>
+        <p className="mt-1.5 text-xs text-fg-muted">此操作不可撤销</p>
 
-        <p className="text-fg-body mb-6">
+        <p className="selectable mt-3 text-xs leading-relaxed text-fg-body">
           确定要删除端点 <span className="font-semibold">&quot;{endpoint?.name}&quot;</span> 吗？
           删除后将无法恢复。
         </p>
 
-        <div className="flex justify-end gap-3">
-          <Button variant="ghost" onClick={onCancel} disabled={loading}>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>
             取消
           </Button>
           <Button

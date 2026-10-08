@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildColumnMenuItems } from './utils/columnMenu.js';
+import { TABLE_COLUMNS } from './utils/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './index.jsx');
 const autoRefreshPath = path.resolve(__dirname, './hooks/useAutoRefresh.js');
 const autoRefreshControlPath = path.resolve(__dirname, './components/AutoRefreshControl.jsx');
+const toolbarPath = path.resolve(__dirname, './components/Toolbar.jsx');
 
 test('requests page switches accounts by pinning the selected account instead of promoting its tier', async () => {
   const source = await readFile(sourcePath, 'utf8');
@@ -33,10 +36,11 @@ test('requests page surfaces upstream account load failures to users', async () 
 });
 
 test('requests page uses Wails request events instead of permanent polling', async () => {
-  const [source, hookSource, controlSource] = await Promise.all([
+  const [source, hookSource, controlSource, toolbarSource] = await Promise.all([
     readFile(sourcePath, 'utf8'),
     readFile(autoRefreshPath, 'utf8'),
-    readFile(autoRefreshControlPath, 'utf8')
+    readFile(autoRefreshControlPath, 'utf8'),
+    readFile(toolbarPath, 'utf8')
   ]);
 
   // 实时事件只刷新请求明细与统计。refreshLiveRequestData 是 refreshRequestData 的
@@ -55,7 +59,30 @@ test('requests page uses Wails request events instead of permanent polling', asy
   assert.match(hookSource, /mode !== REALTIME_REFRESH_MODE\.FALLBACK/);
   assert.match(hookSource, /FALLBACK_INTERVAL_SECONDS = 30/);
   assert.doesNotMatch(hookSource, /refreshInterval/);
-  assert.match(controlSource, /label: '实时'/);
-  assert.match(controlSource, /降级 \$\{fallbackInterval\}s/);
+  assert.match(controlSource, /已降级/);
+  assert.match(controlSource, /每 \{fallbackInterval\} 秒刷新/);
+  assert.doesNotMatch(toolbarSource, /AutoRefreshControl/);
   assert.match(controlSource, /连续刷新失败/);
+});
+
+test('显示列菜单保留固定列并复用原切换与恢复回调', () => {
+  const visibleColumns = Object.freeze(['requestId', 'timestamp', 'model']);
+  const toggledColumns = [];
+  let resetCount = 0;
+  const resetColumns = () => { resetCount += 1; };
+  const items = buildColumnMenuItems(TABLE_COLUMNS, visibleColumns, (id) => toggledColumns.push(id), resetColumns);
+
+  assert.deepEqual(items[0], { header: '显示列' });
+  assert.equal(items.some((item) => item.label === '请求ID' || item.label === '时间'), false);
+  assert.equal(items.find((item) => item.label === '模型').checked, true);
+  assert.equal(items.find((item) => item.label === '成本').checked, false);
+  items.find((item) => item.label === '模型').onSelect();
+  items.find((item) => item.label === '成本').onSelect();
+  assert.deepEqual(toggledColumns, ['model', 'cost']);
+  assert.equal(items.at(-2), '-');
+  assert.equal(items.at(-1).label, '恢复默认列');
+  assert.equal(items.at(-1).onSelect, resetColumns);
+  items.at(-1).onSelect();
+  assert.equal(resetCount, 1);
+  assert.deepEqual(visibleColumns, ['requestId', 'timestamp', 'model']);
 });

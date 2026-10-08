@@ -14,6 +14,7 @@ import {
   Globe
 } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
+import { FormBlock } from '@components/desktop/FormSection.jsx';
 import { fetchConfig } from '@utils/api.js';
 import {
   ConfigSection,
@@ -94,29 +95,18 @@ const ConfigPage = () => {
     : [];
 
   return (
-    <div className="space-y-8 motion-page">
-      {/* 页面标题 */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-fg flex items-center gap-3">
-            <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
-              <Settings size={20} />
-            </div>
-            <div>
-              <div>系统配置</div>
-              <p className="text-sm text-fg-muted font-normal mt-1">
-                查看当前系统配置参数（只读）
-              </p>
-            </div>
-          </h1>
+    <div className="motion-page min-h-0 flex-1 overflow-y-auto bg-pane px-7 pb-12">
+      <div className="mx-auto max-w-[640px]">
+        <div className="mx-1 mt-5 flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-[13px] font-semibold text-fg">系统配置</h1>
+            <p className="mt-1 text-xs text-fg-muted">查看当前系统配置参数（只读）</p>
+          </div>
+          <Button size="sm" variant="secondary" icon={RefreshCw} onClick={loadConfig}>刷新</Button>
         </div>
-        <Button icon={RefreshCw} onClick={loadConfig}>
-          刷新
-        </Button>
-      </div>
 
       {/* ========== 预设配置区块（两列布局）========== */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-0">
         {/* 服务配置 */}
         {config?.server && (
           <ConfigSection title="服务配置" icon={Server}>
@@ -213,7 +203,7 @@ const ConfigPage = () => {
 
       {/* ========== 动态配置区块（单列布局）========== */}
       {dynamicSections.length > 0 && (
-        <div className="space-y-6">
+        <div className="space-y-0">
           {dynamicSections.map(sectionName => (
             <DynamicConfigSection
               key={sectionName}
@@ -226,10 +216,13 @@ const ConfigPage = () => {
 
       {/* ========== 原始配置 JSON ========== */}
       <ConfigSection title="原始配置 (JSON)" icon={Settings}>
-        <pre className="bg-slate-900 dark:bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto text-xs font-mono max-h-96">
+        <FormBlock>
+        <pre className="selectable max-h-96 overflow-auto rounded-md border border-line-soft bg-pane px-3 py-2 font-mono text-xs text-fg-body">
           {JSON.stringify(config, null, 2)}
         </pre>
+        </FormBlock>
       </ConfigSection>
+      </div>
     </div>
   );
 };

@@ -83,7 +83,7 @@ const AccountRow = ({
           onClick={() => onToggle(account)}
           disabled={rowBusy}
           title={account.enabled ? '停用' : '启用'}
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring focus-visible:ring-offset-2 ${
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring focus-visible:ring-offset-2 ${
             account.enabled ? 'bg-indigo-500' : 'bg-line-strong'
           } ${rowBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
@@ -147,7 +147,7 @@ const AccountRow = ({
         <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
-            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors"
             onClick={() => onEdit(account)}
             disabled={rowBusy}
             title="编辑"
@@ -156,7 +156,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors"
             onClick={() => onRefreshProfile(account)}
             disabled={rowBusy}
             title="刷新账号信息"
@@ -165,7 +165,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent rounded-md transition-colors"
             onClick={() => onTest(account)}
             disabled={rowBusy}
             title="测试连通性"
@@ -174,7 +174,7 @@ const AccountRow = ({
           </button>
           <button
             type="button"
-            className="p-1.5 text-fg-subtle hover:bg-danger-soft hover:text-danger rounded-md transition-colors cursor-pointer"
+            className="p-1.5 text-fg-subtle hover:bg-danger-soft hover:text-danger rounded-md transition-colors"
             onClick={() => onDelete(account)}
             disabled={rowBusy}
             title="删除"

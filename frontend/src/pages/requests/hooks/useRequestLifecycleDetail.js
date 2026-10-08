@@ -2,7 +2,7 @@
 // useRequestLifecycleDetail - 详情权威数据源 Hook（方案 F3）
 // 2026-08-13
 // React 绑定层：核心逻辑在 lifecycleDetailController（纯函数可测）。
-// 弹窗打开即拉取；request:update 事件命中当前 requestId 时防抖重拉；
+// 详情面板选中请求即拉取；request:update 事件命中当前 requestId 时防抖重拉；
 // 关闭 / 切换请求时旧响应不回写。
 // loading 由「当前 key 是否已有数据」派生，避免在 effect 内同步 setState。
 // ============================================

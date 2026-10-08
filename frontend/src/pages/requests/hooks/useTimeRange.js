@@ -46,9 +46,13 @@ export const useTimeRange = (onRangeChange, initialRange = 'today') => {
     onRangeChange?.(timeRange);
   }, [getRecentDaysRange, getTodayTimeRange, onRangeChange]);
 
+  // 筛选条里应用了自定义区间：三个预设都不再高亮
+  const markCustomRange = useCallback(() => setActiveRange('custom'), []);
+
   return {
     activeRange,
-    selectRange
+    selectRange,
+    markCustomRange
   };
 };
 

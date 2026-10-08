@@ -3,6 +3,8 @@
 // 2025-12-01
 // ============================================
 
+import { FormRow } from '@components/desktop/FormSection.jsx';
+
 const ConfigItem = ({ label, value, type = 'text' }) => {
   // 格式化纳秒为可读时间格式
   const formatDuration = (ns) => {
@@ -20,8 +22,8 @@ const ConfigItem = ({ label, value, type = 'text' }) => {
 
     if (type === 'boolean') {
       return (
-        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-          value ? 'bg-success-soft text-success' : 'bg-surface-mut text-fg-body'
+        <span className={`rounded border px-1.5 text-[11px] font-medium leading-[18px] ${
+          value ? 'border-success-line bg-success-soft text-success' : 'border-line bg-surface-mut text-fg-body'
         }`}>
           {value ? '启用' : '禁用'}
         </span>
@@ -42,10 +44,9 @@ const ConfigItem = ({ label, value, type = 'text' }) => {
   };
 
   return (
-    <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
-      <span className="text-sm text-fg-body">{label}</span>
-      {renderValue()}
-    </div>
+    <FormRow label={label}>
+      <span className="selectable min-w-0 break-all text-right text-xs">{renderValue()}</span>
+    </FormRow>
   );
 };
 

@@ -44,7 +44,7 @@ const ToastHost = ({ toasts = [], pendingCount = 0, onDismiss }) => {
 
   return createPortal(
     <div
-      className="pointer-events-none fixed right-4 top-24 z-[120] flex w-[min(100vw-2rem,26rem)] flex-col gap-3"
+      className="pointer-events-none fixed right-4 top-16 z-[120] flex w-[min(100vw-2rem,26rem)] flex-col gap-3"
       aria-live="polite"
       aria-label="全局通知"
     >

@@ -5,7 +5,7 @@
 
 import { ArrowRight, GitBranch, ShieldAlert } from 'lucide-react';
 import { Button } from '@components/ui';
-import Badge from './Badge.jsx';
+import { FormBlock, FormRow, FormSection } from '@components/desktop/FormSection.jsx';
 import GroupBoardCard from './GroupBoardCard.jsx';
 
 const GROUP_ORDER = {
@@ -60,32 +60,18 @@ const AccountPoolSchedulerSection = ({
   const degraded = Boolean(summary?.degraded || latestSnapshot?.degraded);
 
   const summaryCards = (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
-        <div className="text-xs text-fg-subtle">当前运行组</div>
-        <div className="mt-1 text-sm font-semibold text-fg">{summary?.currentGroupLabel || '待确认'}</div>
-      </div>
-      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
-        <div className="text-xs text-fg-subtle">当前活跃账号</div>
-        <div className="mt-1 text-sm font-semibold text-fg">{summary?.activeAccountName || '暂无'}</div>
-      </div>
-      <div className="rounded-xl border border-line bg-surface-sub px-4 py-3">
-        <div className="text-xs text-fg-subtle">最新结论</div>
-        <div className="mt-1 flex items-center gap-2 text-sm font-semibold text-fg">
-          <span>{summary?.finalOutcomeLabel || '等待最近一次调度'}</span>
-          <Badge
-            text={degraded ? '已降级' : '未降级'}
-            className={degraded
-              ? 'tone-amber'
-              : 'tone-emerald'}
-          />
-        </div>
-      </div>
-    </div>
+    <FormSection title="运行态">
+      <FormRow label="当前运行组"><span className="text-xs font-medium text-fg-body">{summary?.currentGroupLabel || '待确认'}</span></FormRow>
+      <FormRow label="当前活跃账号"><span className="text-xs font-medium text-fg-body">{summary?.activeAccountName || '暂无'}</span></FormRow>
+      <FormRow label="最新结论">
+        <span className="text-xs font-medium text-fg-body">{summary?.finalOutcomeLabel || '等待最近一次调度'}</span>
+        <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (degraded ? 'tone-amber' : 'tone-emerald')}>{degraded ? '已降级' : '未降级'}</span>
+      </FormRow>
+    </FormSection>
   );
 
   const groupCards = (
-    <div className={`grid gap-4 ${embedded ? '' : 'xl:grid-cols-3'}`}>
+    <div className={`grid ${embedded ? '' : 'xl:grid-cols-3 xl:gap-4'}`}>
       {groups.map((group) => (
         <GroupBoardCard
           key={group.key}
@@ -102,7 +88,7 @@ const AccountPoolSchedulerSection = ({
 
   if (embedded) {
     return (
-      <div className="space-y-4">
+      <div>
         {summaryCards}
         {groupCards}
       </div>
@@ -110,65 +96,32 @@ const AccountPoolSchedulerSection = ({
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-surface shadow-sm overflow-hidden">
-      <div className="border-b border-line-soft px-5 py-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-fg">调度编排</h2>
-            <p className="mt-1 text-sm text-fg-muted">
-              查看主组 / 备组 / 冷备的运行态与编排动作。
-            </p>
+    <div>
+      <FormSection title="调度编排" description="查看主组 / 备组 / 冷备的运行态与编排动作。">
+        <FormBlock>{summaryCards}</FormBlock>
+      </FormSection>
+      {groupCards}
+      <FormSection title="最近一次调度" description="最新调度摘要">
+        <FormBlock>
+          <div className="flex items-start gap-2 text-xs text-fg-body">
+            {latestSnapshot?.finalError ? <ShieldAlert size={14} className="shrink-0 text-warn" /> : <GitBranch size={14} className="shrink-0 text-accent" />}
+            <p>{latestSnapshot?.summary || '把完整调度结果收敛在底部，保留可观测性同时减少主视图占位。'}</p>
           </div>
-          {summaryCards}
-        </div>
-      </div>
-
-      <div className="px-5 py-5">
-        {groupCards}
-      </div>
-
-      <div className="border-t border-line-soft bg-surface-sub px-5 py-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-surface p-2 text-accent shadow-sm ring-1 ring-line">
-              {latestSnapshot?.finalError ? <ShieldAlert size={18} /> : <GitBranch size={18} />}
-            </div>
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-widest text-fg-subtle">最新调度摘要</div>
-              <h3 className="mt-1 text-base font-semibold text-fg">最近一次调度</h3>
-              <p className="mt-1 text-sm text-fg-muted">
-                {latestSnapshot?.summary || '把完整调度结果收敛在底部，保留可观测性同时减少主视图占位。'}
-              </p>
-            </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] bg-surface text-fg-body border-line">{latestSnapshot?.requestPath || '/v1/responses'}</span>
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] tone-indigo">{latestSnapshot?.selectedAccountName || '待命中账号'}</span>
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] tone-slate">{Number.isFinite(latestSnapshot?.selectedPriority) ? `组内顺序 ${latestSnapshot.selectedPriority}` : '组内顺序待定'}</span>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge text={latestSnapshot?.requestPath || '/v1/responses'} className="bg-surface text-fg-body border-line" />
-            <Badge
-              text={latestSnapshot?.selectedAccountName || '待命中账号'}
-              className="tone-indigo"
-            />
-            <Badge
-              text={Number.isFinite(latestSnapshot?.selectedPriority) ? `组内顺序 ${latestSnapshot.selectedPriority}` : '组内顺序待定'}
-              className="tone-slate"
-            />
+          <div className="mt-3 flex justify-end">
+            <Button type="button" variant="secondary" size="sm" className="justify-between"
+              onClick={() => onOpenSnapshot?.(latestSnapshot)} disabled={!onOpenSnapshot}>
+              查看完整候选链路
+              <ArrowRight size={14} className="ml-2" />
+            </Button>
           </div>
-        </div>
-
-        <div className="mt-4 flex items-center justify-end">
-          <Button
-            type="button"
-            variant="secondary"
-            className="justify-between"
-            onClick={() => onOpenSnapshot?.(latestSnapshot)}
-            disabled={!onOpenSnapshot}
-          >
-            查看完整候选链路
-            <ArrowRight size={16} className="ml-2" />
-          </Button>
-        </div>
-      </div>
-    </section>
+        </FormBlock>
+      </FormSection>
+    </div>
   );
 };
 

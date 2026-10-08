@@ -6,6 +6,7 @@
 
 import { Settings } from 'lucide-react';
 import ConfigSection from './ConfigSection.jsx';
+import { FormRow } from '@components/desktop/FormSection.jsx';
 
 const DynamicConfigSection = ({ sectionName, sectionData }) => {
   // 格式化纳秒为可读时间格式
@@ -54,12 +55,11 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
     if (typeof value === 'object' && !Array.isArray(value)) {
       // 嵌套对象，递归显示
       return (
-        <div className="mt-2 space-y-2">
+        <div className="min-w-0 divide-y divide-line-soft">
           {Object.entries(value).map(([nestedKey, val]) => (
-            <div key={nestedKey} className="ml-4 flex justify-between items-start py-2 border-l-2 border-line pl-3">
-              <span className="text-xs text-fg-muted">{nestedKey}</span>
-              {renderValue(nestedKey, val)}
-            </div>
+            <FormRow key={nestedKey} label={nestedKey}>
+          <div className="selectable min-w-0 break-all text-right text-xs">{renderValue(nestedKey, val)}</div>
+            </FormRow>
           ))}
         </div>
       );
@@ -67,7 +67,7 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
 
     if (Array.isArray(value)) {
       return (
-        <span className="text-xs text-fg-body bg-surface-mut px-2 py-1 rounded">
+        <span className="rounded border border-line bg-surface-mut px-1.5 text-[11px] leading-[18px] text-fg-body">
           Array ({value.length} items)
         </span>
       );
@@ -76,8 +76,8 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
     const type = detectType(key, value);
     if (type === 'boolean') {
       return (
-        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-          value ? 'bg-success-soft text-success' : 'bg-surface-mut text-fg-body'
+        <span className={`rounded border px-1.5 text-[11px] font-medium leading-[18px] ${
+          value ? 'border-success-line bg-success-soft text-success' : 'border-line bg-surface-mut text-fg-body'
         }`}>
           {value ? '启用' : '禁用'}
         </span>
@@ -102,16 +102,11 @@ const DynamicConfigSection = ({ sectionName, sectionData }) => {
 
   return (
     <ConfigSection title={formatTitle(sectionName)} icon={Settings}>
-      <div className="space-y-1">
-        {Object.entries(sectionData).map(([key, value]) => (
-          <div key={key} className="py-2 border-b border-line-soft last:border-0">
-            <div className="flex justify-between items-start">
-              <span className="text-sm text-fg-body">{key}</span>
-              {renderValue(key, value)}
-            </div>
-          </div>
-        ))}
-      </div>
+      {Object.entries(sectionData).map(([key, value]) => (
+        <FormRow key={key} label={key}>
+        <div className="selectable min-w-0 break-all text-right text-xs">{renderValue(key, value)}</div>
+        </FormRow>
+      ))}
     </ConfigSection>
   );
 };

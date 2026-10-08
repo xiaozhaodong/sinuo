@@ -50,6 +50,6 @@ test('请求页按钮标签：入口未启用时显示端点策略，运行中�
   );
   assert.equal(resolveClaudeAccessLabel({ info: { enabled: true, error: '端口被占用' } }).label, '入口启动失败');
   assert.equal(resolveClaudeAccessLabel({ info: { enabled: true, running: false, error: '' } }).label, '入口未运行');
-  assert.equal(resolveClaudeAccessLabel({ info: { ...running, mode: 'subscription' } }).label, '订阅');
+  assert.equal(resolveClaudeAccessLabel({ info: { ...running, mode: 'subscription' } }).label, '订阅直通');
   assert.equal(resolveClaudeAccessLabel({ info: { ...running, mode: 'endpoint' }, routeLabel: 'Auto · vendor' }).label, '端点 · Auto · vendor');
 });

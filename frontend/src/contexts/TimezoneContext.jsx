@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { getConfig, subscribeToEvent } from '@utils/wailsApi.js';
 import StartupScreen from '@components/layout/StartupScreen.jsx';
 import {
+  formatListTimestamp,
   formatTimeOnly,
   formatMonthDayTime,
   formatTimestamp,
@@ -39,6 +40,7 @@ export const TimezoneProvider = ({ children }) => {
       timezone: state.timezone,
       formatTimestamp: (timestamp) => formatTimestamp(timestamp, state.timezone),
       formatTimeOnly: (timestamp) => formatTimeOnly(timestamp, state.timezone),
+      formatListTimestamp: (timestamp) => formatListTimestamp(timestamp, state.timezone),
       formatMonthDayTime: (timestamp) => formatMonthDayTime(timestamp, state.timezone),
       getTodayTimeRange: (now) => getTodayTimeRange(state.timezone, now),
       getRecentDaysRange: (days, now) => getRecentDaysRange(days, state.timezone, now),

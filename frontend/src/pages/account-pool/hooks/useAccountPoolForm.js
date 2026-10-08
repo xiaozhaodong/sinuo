@@ -63,33 +63,37 @@ const useAccountPoolForm = ({ loadData, showNotice }) => {
     setOauthCallbackURL('');
   }, []);
 
-  const handleGenerateOAuthLink = useCallback(async () => {
+  const handleGenerateOAuthLink = useCallback(async ({ notifySuccess = true } = {}) => {
     setOauthActionLoading(true);
     try {
       const result = await generateChatGPTOAuthLink();
       if (result?.unsupported) {
         showNotice('error', result.message || '当前后端版本暂不支持生成授权链接');
-        return;
+        return null;
       }
       if (!result?.auth_url || !result?.session_id) {
         showNotice('error', '生成授权链接失败：返回数据不完整');
-        return;
+        return null;
       }
       setOauthSession(result);
-      showNotice('success', '授权链接已生成，请登录后粘贴回调 URL');
+      if (notifySuccess) {
+        showNotice('success', '授权链接已生成，请登录后粘贴回调 URL');
+      }
+      return result;
     } catch (err) {
       showNotice('error', err.message || '生成授权链接失败');
+      return null;
     } finally {
       setOauthActionLoading(false);
     }
   }, [showNotice]);
 
-  const handleExtractRTFromCallback = useCallback(async () => {
+  const handleExtractRTFromCallback = useCallback(async (callbackURLOverride) => {
     if (!oauthSession?.session_id) {
       showNotice('error', '请先生成授权链接');
       return;
     }
-    const callbackURL = oauthCallbackURL.trim();
+    const callbackURL = (typeof callbackURLOverride === 'string' ? callbackURLOverride : oauthCallbackURL).trim();
     if (!callbackURL) {
       showNotice('error', '请粘贴回调 URL');
       return;

@@ -10,24 +10,24 @@ const cardSourcePath = resolve(here, '../../components/codex-access/CodexSubscri
 const accountPoolSourcePath = resolve(here, '../account-pool/index.jsx');
 const accountPoolHeaderSourcePath = resolve(here, '../account-pool/components/PageHeader.jsx');
 const appSourcePath = resolve(here, '../../App.jsx');
-const headerSourcePath = resolve(here, '../../components/layout/Header.jsx');
+const navigationSourcePath = resolve(here, '../../components/layout/navigation.js');
 
 test('Codex 管理页独立承载账号池与客户端接入', async () => {
   const source = await readFile(pageSourcePath, 'utf8');
 
   assert.match(source, /label: '账号池'/);
   assert.match(source, /label: '客户端接入'/);
-  assert.match(source, /<AccountPoolPage embedded active=\{activeTab === 'accounts'\} headerTarget=\{accountActionsTarget\} \/>/);
+  assert.match(source, /<AccountPoolPage embedded active=\{activeTab === 'accounts'\} headerTarget=\{accountActionsTarget\}[^>]*\/>/);
   assert.match(source, /<CodexSubscriptionProxyCard \/>/);
-  assert.match(source, /<PageTabs tabs=\{TABS\}/);
+  assert.match(source, /<PageToolbar>[\s\S]*<PageTabs tabs=\{TABS\}[\s\S]*<\/PageToolbar>/);
   assert.match(source, /role="tabpanel"/);
 });
 
 test('顶层导航保留原路由键，并支持设置页直达客户端接入', async () => {
   const appSource = await readFile(appSourcePath, 'utf8');
-  const headerSource = await readFile(headerSourcePath, 'utf8');
+  const navigationSource = await readFile(navigationSourcePath, 'utf8');
 
-  assert.match(headerSource, /\{ name: 'account-pool', label: 'Codex 管理' \}/);
+  assert.match(navigationSource, /\{ name: 'account-pool', label: 'Codex', shortcut: '5' \}/);
   assert.match(appSource, /const \[activeCodexTab, setActiveCodexTab\] = useState\('accounts'\)/);
   assert.match(appSource, /setActiveCodexTab\('client-access'\)/);
   assert.match(appSource, /setActiveTab\('account-pool'\)/);
@@ -47,18 +47,17 @@ test('页签隐藏已挂载面板，并将账号池 portal 可见性绑定到当
   assert.match(accountPoolSource, /notice=\{active \? notice : null\}/);
   assert.match(accountPoolSource, /open=\{active && Boolean\(sharedDrawerRow\)\}/);
   assert.match(accountPoolSource, /open=\{active && schedulerDrawerOpen\}/);
-  assert.match(accountPoolSource, /open=\{active && codexModelsOpen\}/);
   assert.match(accountPoolSource, /open=\{active && codexModelRoutingOpen\}/);
   assert.match(accountPoolSource, /open=\{active && accountModalOpen\}/);
   assert.match(accountPoolSource, /deleteTarget=\{active \? deleteTarget : null\}/);
 });
 
-test('嵌入账号池时只隐藏重复标题，账号操作栏仍保留', async () => {
+test('嵌入账号池时只隐藏重复标题，账号操作以工具栏按钮保留', async () => {
   const source = await readFile(accountPoolHeaderSourcePath, 'utf8');
 
   assert.match(source, /!embedded &&/);
-  assert.match(source, /<Button icon=\{Plus\}/);
-  assert.match(source, /<Button icon=\{RefreshCw\}/);
+  assert.match(source, /<ToolbarButton icon=\{Plus\} title="新增账号"/);
+  assert.match(source, /<ToolbarButton icon=\{RefreshCw\} title="刷新数据"/);
   assert.match(source, /onOpenScheduler/);
 });
 
@@ -76,4 +75,21 @@ test('隐私读取失败只降级隐私区块，不阻断代理控制', async ()
   assert.doesNotMatch(source, /Promise\.all\(\[\s*getCodexSubscriptionProxyConfig\(\)[\s\S]{0,200}getPrivacySettings\(\)/);
   assert.match(source, /const loadPrivacy = useCallback/);
   assert.match(source, /setPrivacyError/);
+});
+
+test('模型目录首次访问挂载并保留页签状态，工具栏按当前页签投送', async () => {
+  const [source, modelsSource, accountPoolSource, headerSource] = await Promise.all([
+    readFile(pageSourcePath, 'utf8'),
+    readFile(join(here, 'models/CodexModelsPage.jsx'), 'utf8'),
+    readFile(accountPoolSourcePath, 'utf8'),
+    readFile(accountPoolHeaderSourcePath, 'utf8')
+  ]);
+  assert.match(source, /label: '模型目录'/);
+  assert.match(source, /hidden=\{activeTab !== 'models'\}/);
+  assert.match(source, /useState\(activeTab === 'models'\)/);
+  assert.match(source, /setModelsVisited\(true\)/);
+  assert.match(source, /modelsVisited && <CodexModelsPage active=\{activeTab === 'models'\} headerTarget=\{modelsActionsTarget\} \/>/);
+  assert.match(modelsSource, /headerTarget && active && createPortal\(/);
+  assert.doesNotMatch(accountPoolSource, /CodexModelsPanel|codexModelsOpen|onOpenCodexModels/);
+  assert.doesNotMatch(headerSource, /title="Codex 模型"|onOpenCodexModels/);
 });

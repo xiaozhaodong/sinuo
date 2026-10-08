@@ -6,30 +6,23 @@
 import { useState } from 'react';
 import { ArrowUpCircle, ChevronDown, ChevronRight, ExternalLink, Pin, RotateCcw, Target } from 'lucide-react';
 import { Button } from '@components/ui';
-import Badge from './Badge.jsx';
+import { FormSection } from '@components/desktop/FormSection.jsx';
 
 const DEFAULT_VISIBLE = 10;
 
-// 三组的环与头部底纹用同色相透明度色，而非固定浅色阶：
-// 透明色让页面底透上来，深浅两主题都成立，无需成对维护 dark:。
+// 三组状态沿用现有 tone 配色，分组外壳由 FormSection 统一提供。
 const GROUP_STYLE = {
   primary: {
     label: '主组',
-    badgeClassName: 'tone-indigo',
-    ringClassName: 'border-indigo-400/40',
-    headerBg: 'bg-indigo-400/[0.07]'
+    badgeClassName: 'tone-indigo'
   },
   backup: {
     label: '备组',
-    badgeClassName: 'tone-cyan',
-    ringClassName: 'border-cyan-400/40',
-    headerBg: 'bg-cyan-400/[0.07]'
+    badgeClassName: 'tone-cyan'
   },
   cold: {
     label: '冷备',
-    badgeClassName: 'tone-violet',
-    ringClassName: 'border-violet-400/40',
-    headerBg: 'bg-violet-400/[0.07]'
+    badgeClassName: 'tone-violet'
   }
 };
 
@@ -64,16 +57,16 @@ const ACTION_VARIANT_BY_TONE = {
 };
 
 const quotaStrokeColor = (text, percent) => {
-  if (!text || text === '-' || text === '无' || text === '未刷新') return '#cbd5e1';
-  if (text === '无限额') return '#94a3b8';
-  if (!Number.isFinite(percent)) return '#94a3b8';
-  if (percent > 50) return '#34d399';
-  if (percent > 20) return '#fbbf24';
-  return '#f87171';
+  if (!text || text === '-' || text === '无' || text === '未刷新') return 'var(--color-line-strong)';
+  if (text === '无限额') return 'var(--color-fg-muted)';
+  if (!Number.isFinite(percent)) return 'var(--color-fg-muted)';
+  if (percent > 50) return 'var(--color-success-solid)';
+  if (percent > 20) return 'var(--color-warn-solid)';
+  return 'var(--color-danger-solid)';
 };
 
 const quotaTextColor = (text, percent) => {
-  if (!text || text === '-' || text === '无' || text === '未刷新') return 'text-fg-subtle';
+  if (!text || text === '-' || text === '无' || text === '未刷新') return 'text-fg-muted';
   if (text === '无限额') return 'text-fg-muted';
   if (!Number.isFinite(percent)) return 'text-fg-muted';
   if (percent > 50) return 'text-success';
@@ -98,7 +91,7 @@ const MiniQuotaRing = ({ label, text, percent }) => {
   return (
     <div className="relative shrink-0" style={{ width: RING_SIZE, height: RING_SIZE }} title={tooltip}>
       <svg width={RING_SIZE} height={RING_SIZE} className="-rotate-90">
-        <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={RING_RADIUS} fill="none" stroke="#f1f5f9" strokeWidth={RING_STROKE} />
+        <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={RING_RADIUS} fill="none" stroke="var(--color-line-soft)" strokeWidth={RING_STROKE} />
         {hasRing && (
           <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={RING_RADIUS} fill="none" stroke={stroke} strokeWidth={RING_STROKE}
             strokeDasharray={RING_CIRCUMFERENCE} strokeDashoffset={dashOffset} strokeLinecap="round" />
@@ -150,37 +143,37 @@ const GroupBoardCard = ({
   };
 
   return (
-    <article className={`rounded-xl border ${style.ringClassName} bg-surface shadow-sm overflow-hidden`}>
+    <FormSection
+      title={group?.label || style.label}
+      actions={<span className={`${style.badgeClassName} rounded border px-1.5 text-[11px] leading-[18px]`}>{availableCount}/{accounts.length} 可用</span>}
+    >
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-sub ${style.headerBg}`}
+        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-xs transition-colors hover:bg-surface-sub"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          {expanded ? <ChevronDown size={14} className="text-fg-subtle shrink-0" /> : <ChevronRight size={14} className="text-fg-subtle shrink-0" />}
-          <Badge text={group?.label || style.label} className={style.badgeClassName} />
-          <span className="text-xs text-fg-muted">{availableCount}/{accounts.length} 可用</span>
-          <span className="text-fg-subtle">·</span>
+          {expanded ? <ChevronDown size={14} className="text-fg-muted shrink-0" /> : <ChevronRight size={14} className="text-fg-muted shrink-0" />}
           <span className="text-xs text-fg-body font-medium truncate">
             {hasManualPinnedAccount ? '全局手动' : hasGroupPreferredAccount ? '本组首选' : '顺序首位'}: {activeAccountName}
           </span>
         </div>
-        <span className="text-xs text-fg-subtle shrink-0">{group?.healthSummary || ''}</span>
+        <span className="text-xs text-fg-muted shrink-0">{group?.healthSummary || ''}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-line-soft">
+        <div className="divide-y divide-line-soft">
           {accounts.length === 0 ? (
-            <div className="px-4 py-4 text-sm text-fg-muted">该组暂无账号。</div>
+            <div className="px-3.5 py-3 text-xs text-fg-muted">该组暂无账号。</div>
           ) : (
             <>
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-surface-sub text-left text-[11px] uppercase tracking-wider text-fg-subtle">
-                    <th className="px-4 py-2 font-medium">名称</th>
-                    <th className="px-3 py-2 font-medium">状态</th>
-                    <th className="px-3 py-2 font-medium">额度</th>
-                    <th className="px-3 py-2 font-medium text-right">操作</th>
+                  <tr className="h-7 border-b border-line-soft text-left text-[11.5px] text-fg-muted">
+                    <th className="px-3.5 py-1.5 font-medium">名称</th>
+                    <th className="px-2 py-1.5 font-medium">状态</th>
+                    <th className="px-2 py-1.5 font-medium">额度</th>
+                    <th className="px-2 py-1.5 font-medium text-right">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -191,23 +184,23 @@ const GroupBoardCard = ({
 
                     return (
                       <tr key={String(accountId ?? `${groupKey}-${index}`)} className="border-t border-line-soft hover:bg-surface-sub">
-                        <td className="px-4 py-2 whitespace-nowrap">
+                        <td className="px-3.5 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <span className="font-medium text-fg">{account.name || `候选 ${index + 1}`}</span>
-                            {isActive && <Badge text="全局手动" className="tone-indigo" />}
-                            {!isActive && account?.isGroupPreferred && <Badge text="本组首选" className="tone-emerald" />}
+                            {isActive && <span className="rounded border px-1.5 text-[11px] leading-[18px] tone-indigo">{"全局手动"}</span>}
+                            {!isActive && account?.isGroupPreferred && <span className="rounded border px-1.5 text-[11px] leading-[18px] tone-emerald">{"本组首选"}</span>}
                           </div>
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <Badge text={account.stateLabel || '-'} className={toneCls} />
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (toneCls)}>{account.stateLabel || '-'}</span>
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
+                        <td className="px-2 py-1.5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <MiniQuotaRing label="5h" text={account.quota5hText} percent={account.quota5hPercent} />
                             <MiniQuotaRing label="d7" text={account.quota7dText} percent={account.quota7dPercent} />
                           </div>
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right">
+                        <td className="px-2 py-1.5 whitespace-nowrap text-right">
                           <div className="flex items-center justify-end gap-1">
                             {!isActive && !account?.isGroupPreferred && typeof onSetActiveAccount === 'function' && (
                               <button
@@ -215,9 +208,9 @@ const GroupBoardCard = ({
                                 title="设为本组首选"
                                 disabled={busyKey === `group-active-${groupKey}-${accountId}` || groupActionBusy}
                                 onClick={() => onSetActiveAccount?.(toActionAccount(account), group)}
-                                className="p-1 text-fg-subtle hover:text-success hover:bg-success-soft rounded transition-colors disabled:opacity-40"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg disabled:opacity-40"
                               >
-                                <Target size={13} />
+                                <Target size={14} />
                               </button>
                             )}
                             {!isActive && typeof onPinAccountSelection === 'function' && (
@@ -226,7 +219,7 @@ const GroupBoardCard = ({
                                 title="设为全局手动"
                                 disabled={Boolean(busyKey)}
                                 onClick={() => onPinAccountSelection?.(toActionAccount(account))}
-                                className="p-1 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded transition-colors disabled:opacity-40"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg disabled:opacity-40"
                               >
                                 <Pin size={13} />
                               </button>
@@ -240,7 +233,7 @@ const GroupBoardCard = ({
               </table>
 
               {hiddenCount > 0 && (
-                <div className="border-t border-line-soft px-4 py-2 text-center">
+                <div className="border-t border-line-soft px-3.5 py-1.5 text-center">
                   <button
                     type="button"
                     onClick={() => setShowAll(true)}
@@ -252,7 +245,7 @@ const GroupBoardCard = ({
               )}
 
               {showAll && accounts.length > DEFAULT_VISIBLE && (
-                <div className="border-t border-line-soft px-4 py-2 text-center">
+                <div className="border-t border-line-soft px-3.5 py-1.5 text-center">
                   <button
                     type="button"
                     onClick={() => setShowAll(false)}
@@ -266,11 +259,11 @@ const GroupBoardCard = ({
           )}
 
           {actions.length > 0 && activeAccount ? (
-            <div className="border-t border-line-soft px-4 py-3">
+            <div className="border-t border-line-soft px-3.5 py-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-xs font-medium text-fg-body">当前组动作</div>
-                  <div className="mt-0.5 text-[11px] text-fg-subtle">与相邻组整组交换，不是单账号加入</div>
+                  <div className="mt-0.5 text-[11px] text-fg-muted">与相邻组整组交换，不是单账号加入</div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -301,7 +294,7 @@ const GroupBoardCard = ({
           ) : null}
 
           {onViewInInventory && accounts.length > 0 && (
-            <div className="border-t border-line-soft px-4 py-2">
+            <div className="border-t border-line-soft px-3.5 py-1.5">
               <button
                 type="button"
                 onClick={() => onViewInInventory?.(groupKey)}
@@ -314,7 +307,7 @@ const GroupBoardCard = ({
           )}
         </div>
       )}
-    </article>
+    </FormSection>
   );
 };
 

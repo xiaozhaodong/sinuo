@@ -3,19 +3,17 @@
 // 2026-07-24
 // ============================================
 
-import { useRef } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Activity,
   AlertTriangle,
   CheckCircle2,
   Clock3,
-  Route,
-  SkipForward,
-  X
+  SkipForward
 } from 'lucide-react';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import { FormBlock, FormSection } from '@components/desktop/FormSection.jsx';
+import ListEmpty from '@components/desktop/ListEmpty.jsx';
+import SidePanel from '@components/desktop/SidePanel.jsx';
 
 // 快照结果解析与抽屉组件同文件（被测试与页面共用）；仅影响 HMR 精度，不影响构建。
 // eslint-disable-next-line react-refresh/only-export-components
@@ -110,14 +108,7 @@ const routeModeLabels = {
 const EndpointScheduleDrawer = ({ open = false, onClose, snapshot = {}, unsupported = false }) => {
   const { formatTimestamp } = useTimezone();
   const formatTime = (value) => (value ? formatTimestamp(value) : '-');
-  const closeButtonRef = useRef(null);
-
-  useModalLifecycle({ open, onClose, initialFocusRef: closeButtonRef });
-
   if (!open) return null;
-
-  const nav = document.querySelector('nav.sticky');
-  const topOffset = nav ? nav.getBoundingClientRect().bottom : 0;
 
   const { label: outcomeLabel, className: outcomeClass, isAbnormal } = resolveSnapshotOutcome(snapshot);
   const decisions = Array.isArray(snapshot.decisions) ? snapshot.decisions : [];
@@ -131,144 +122,111 @@ const EndpointScheduleDrawer = ({ open = false, onClose, snapshot = {}, unsuppor
     return result;
   }, { candidates: 0, skipped: 0 });
 
-  return createPortal(
-    <div className="fixed inset-0 z-[45] flex justify-end" style={{ top: topOffset }}>
-      <button
-        type="button"
-        aria-label="关闭调度快照"
-        className="absolute inset-0 bg-overlay backdrop-blur-[2px]"
-        onClick={onClose}
-      />
-
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="最近一次端点调度"
-        className="relative z-10 flex h-full w-full max-w-[680px] flex-col border-l border-line bg-surface shadow-2xl animate-in slide-in-from-right duration-300"
-      >
-        <div className="border-b border-line-soft bg-gradient-to-r from-accent-soft/60 via-surface to-surface px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-sm ${isAbnormal ? 'tone-amber' : 'tone-indigo'}`}>
-                {isAbnormal ? <AlertTriangle size={20} /> : <Route size={20} />}
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-fg">最近一次端点调度</h2>
-                <p className="mt-0.5 text-sm text-fg-muted">展示真实请求的候选筛选、跳过原因、实际命中端点与最终结果。</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              ref={closeButtonRef}
-              aria-label="关闭抽屉"
-              onClick={onClose}
-              className="rounded-lg border border-line bg-surface p-2 text-fg-subtle transition-colors hover:text-fg-body hover:border-line-strong"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {!unsupported && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-              <span className="rounded-full border border-line bg-surface-sub px-2 py-0.5 text-[10px] font-medium text-fg-muted">5s 自动刷新</span>
-              {(snapshot.updatedAt || snapshot.capturedAt) && (
-                <span>更新于 {formatTime(snapshot.updatedAt || snapshot.capturedAt)}</span>
-              )}
-            </div>
+  return (
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      label="最近一次端点调度"
+      title="最近一次端点调度"
+      subtitle="展示真实请求的候选筛选、跳过原因、实际命中端点与最终结果。"
+      width={680}
+      layer={45}
+      closeOnOverlay={true}
+      overlayLabel="关闭调度快照"
+    >
+      <FormSection title="调度快照" actions={!unsupported && (
+        <>
+          <span className="rounded border border-line px-1.5 text-[11px] leading-[18px] text-fg-muted">5s 自动刷新</span>
+          {(snapshot.updatedAt || snapshot.capturedAt) && (
+            <span className="text-[11.5px] text-fg-muted">更新于 {formatTime(snapshot.updatedAt || snapshot.capturedAt)}</span>
           )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {unsupported ? (
-            <div className="rounded-xl border border-line bg-surface-sub px-4 py-3 text-sm text-fg-body">
-              {snapshot.message || '当前运行版本暂不支持端点调度快照。'}
-            </div>
-          ) : !snapshot.hasSnapshot ? (
-            <div className="rounded-xl border border-dashed border-line bg-surface-sub px-4 py-4">
-              <div className="text-sm font-medium text-fg">暂无端点调度记录</div>
-              <div className="mt-1 text-xs leading-5 text-fg-muted">发起一次 Claude `/v1/messages` 请求后，这里会立即显示本次请求为何选择或跳过每个端点。</div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className={`rounded-xl border px-4 py-3 ${isAbnormal ? 'border-warn-line bg-warn-soft/40' : 'border-line bg-surface-sub'}`}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${outcomeClass}`}>{outcomeLabel}</span>
-                  <span className="min-w-0 truncate text-sm font-medium text-fg">{snapshot.summary || '端点调度已完成'}</span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
-                  <span>请求：<span className="font-mono text-fg-body">{snapshot.requestPath || '-'}</span></span>
-                  {snapshot.requestModel && <span>模型：<span className="font-mono text-fg-body">{snapshot.requestModel}</span></span>}
-                  {/* 组名是后端自动维护的实现细节，同行左侧已有「模型」，这里只标明路由方式。 */}
-                  <span>{snapshot.routeScopeKind === 'upstream_group' ? '模型路由：已分配' : snapshot.routeScopeKind === 'unassigned' ? '模型路由：未分配' : '全局路由'}</span>
-                  <span>候选 {counts.candidates} · 跳过 {counts.skipped}</span>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-line pt-3 text-xs">
-                  <div><div className="text-fg-subtle">实际命中</div><div className="mt-0.5 truncate font-semibold text-fg" title={snapshot.selectedEndpoint}>{snapshot.selectedEndpoint || '-'}</div></div>
-                  <div><div className="text-fg-subtle">路由模式</div><div className="mt-0.5 font-medium text-fg-body">{routeModeLabels[snapshot.routeMode] || snapshot.routeMode || '自动调度'}</div></div>
-                  <div><div className="text-fg-subtle">请求内故障转移</div><div className={`mt-0.5 font-medium ${effectiveFailoverEnabled ? 'text-success' : 'text-fg-muted'}`}>{effectiveFailoverEnabled ? '已启用' : snapshot.routeMode === 'manual_fixed' ? '固定模式关闭' : '已关闭'}</div></div>
-                </div>
+        </>
+      )}>
+        {unsupported ? (
+          <FormBlock><p className="text-xs text-fg-body">{snapshot.message || '当前运行版本暂不支持端点调度快照。'}</p></FormBlock>
+        ) : !snapshot.hasSnapshot ? (
+          <ListEmpty icon={Activity} title="暂无端点调度记录"
+            description="发起一次 Claude `/v1/messages` 请求后，这里会立即显示本次请求为何选择或跳过每个端点。" />
+        ) : (
+          <>
+            <FormBlock>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`${outcomeClass} rounded border px-1.5 text-[11px] leading-[18px]`}>{outcomeLabel}</span>
+                <span className={`min-w-0 truncate text-[13px] font-medium ${isAbnormal ? 'text-warn' : 'text-fg'}`}>
+                  {snapshot.summary || '端点调度已完成'}
+                </span>
               </div>
-
-              <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
-                <div className="rounded-lg border border-line-soft bg-surface-sub px-3 py-2"><span className="text-fg-subtle">请求 ID</span><div className="mt-1 truncate font-mono text-fg-body" title={snapshot.requestId}>{snapshot.requestId || '-'}</div></div>
-                <div className="rounded-lg border border-line-soft bg-surface-sub px-3 py-2"><span className="text-fg-subtle">路由目标</span><div className="mt-1 truncate font-medium text-fg-body">{snapshot.routeEndpointName || '按自动策略选择'}</div></div>
-                <div className="rounded-lg border border-line-soft bg-surface-sub px-3 py-2"><span className="text-fg-subtle">捕获时间</span><div className="mt-1 font-medium text-fg-body">{formatTime(snapshot.capturedAt)}</div></div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
+                <span>请求：<span className="font-mono text-fg-body">{snapshot.requestPath || '-'}</span></span>
+                {snapshot.requestModel && <span>模型：<span className="font-mono text-fg-body">{snapshot.requestModel}</span></span>}
+                {/* 同行左侧已有模型，这里只标明路由方式。 */}
+                <span>{snapshot.routeScopeKind === 'upstream_group' ? '模型路由：已分配' : snapshot.routeScopeKind === 'unassigned' ? '模型路由：未分配' : '全局路由'}</span>
+                <span>候选 {counts.candidates} · 跳过 {counts.skipped}</span>
               </div>
-
+            </FormBlock>
+            <FormBlock>
+              <dl className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-2 text-xs">
+                <dt className="text-right text-fg-muted">实际命中</dt>
+                <dd className="truncate font-medium text-fg" title={snapshot.selectedEndpoint}>{snapshot.selectedEndpoint || '-'}</dd>
+                <dt className="text-right text-fg-muted">路由模式</dt>
+                <dd className="text-fg-body">{routeModeLabels[snapshot.routeMode] || snapshot.routeMode || '自动调度'}</dd>
+                <dt className="text-right text-fg-muted">请求内故障转移</dt>
+                <dd className={effectiveFailoverEnabled ? 'text-success' : 'text-fg-muted'}>{effectiveFailoverEnabled ? '已启用' : snapshot.routeMode === 'manual_fixed' ? '固定模式关闭' : '已关闭'}</dd>
+                <dt className="text-right text-fg-muted">请求 ID</dt>
+                <dd className="truncate font-mono text-fg-body" title={snapshot.requestId}>{snapshot.requestId || '-'}</dd>
+                <dt className="text-right text-fg-muted">路由目标</dt>
+                <dd className="text-fg-body">{snapshot.routeEndpointName || '按自动策略选择'}</dd>
+                <dt className="text-right text-fg-muted">捕获时间</dt>
+                <dd className="text-fg-body">{formatTime(snapshot.capturedAt)}</dd>
+              </dl>
               {snapshot.finalError && (
-                <div className="tone-amber rounded-lg border px-3 py-2 text-xs leading-5">最终信息：{snapshot.finalError}</div>
-              )}
-
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-fg">候选与跳过决策</div>
-                  <div className="text-xs text-fg-subtle">按调度解释顺序展示</div>
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs text-warn">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <span>最终信息：{snapshot.finalError}</span>
                 </div>
-                {decisions.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-line px-4 py-4 text-xs text-fg-muted">本次请求未生成端点候选。</div>
-                ) : (
-                  <div className="space-y-2">
-                    {decisions.map((decision, index) => {
-                      const candidate = decision.decision === 'candidate';
-                      return (
-                        <div key={`${decision.name}-${index}`} className="rounded-xl border border-line bg-surface px-3 py-3">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <div className={`rounded-lg p-1.5 ${candidate ? 'tone-indigo' : 'tone-slate'}`}>
-                                {candidate ? <Activity size={14} /> : <SkipForward size={14} />}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="truncate text-sm font-semibold text-fg">{decision.name}</span>
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${candidate ? 'tone-indigo' : 'tone-slate'}`}>{candidate ? '候选' : '跳过'}</span>
-                                  {decision.runtimeOutcome && (
-                                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${decision.runtimeOutcome === 'success' ? 'tone-emerald' : decision.runtimeOutcome === 'attempting' ? 'tone-blue' : 'tone-amber'}`}>
-                                      {decision.runtimeOutcome === 'success' ? <CheckCircle2 size={10} /> : <Clock3 size={10} />}
-                                      {runtimeLabels[decision.runtimeOutcome] || decision.runtimeOutcome}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="mt-1 text-xs text-fg-muted">{resolveReasonLabel(decision.reason)}</div>
-                              </div>
-                            </div>
-                            {decision.availableAt && (
-                              <div className="shrink-0 text-xs text-warn">预计恢复：{formatTime(decision.availableAt)}</div>
-                            )}
-                          </div>
-                          {decision.runtimeError && <div className="mt-2 rounded-lg bg-danger-soft px-2.5 py-1.5 text-xs leading-5 text-danger">{decision.runtimeError}</div>}
-                        </div>
-                      );
-                    })}
+              )}
+            </FormBlock>
+          </>
+        )}
+      </FormSection>
+
+      {!unsupported && snapshot.hasSnapshot && (
+        <FormSection title="候选与跳过决策" description="按调度解释顺序展示">
+          {decisions.length === 0 ? (
+            <FormBlock><p className="text-xs text-fg-muted">本次请求未生成端点候选。</p></FormBlock>
+          ) : decisions.map((decision, index) => {
+            const candidate = decision.decision === 'candidate';
+            return (
+              <div key={`${decision.name}-${index}`} className="px-3.5 py-2">
+                <div className="flex items-start gap-2">
+                  {candidate ? <Activity size={14} className="mt-0.5 shrink-0 text-accent" /> : <SkipForward size={14} className="mt-0.5 shrink-0 text-fg-muted" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-[13px] font-medium text-fg">{decision.name}</span>
+                      <span className={`${candidate ? 'tone-indigo' : 'tone-slate'} rounded border px-1.5 text-[11px] leading-[18px]`}>{candidate ? '候选' : '跳过'}</span>
+                      {decision.runtimeOutcome && (
+                        <span className={`inline-flex items-center gap-1 rounded border px-1.5 text-[11px] leading-[18px] ${decision.runtimeOutcome === 'success' ? 'tone-emerald' : decision.runtimeOutcome === 'attempting' ? 'tone-blue' : 'tone-amber'}`}>
+                          {decision.runtimeOutcome === 'success' ? <CheckCircle2 size={10} /> : <Clock3 size={10} />}
+                          {runtimeLabels[decision.runtimeOutcome] || decision.runtimeOutcome}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-xs text-fg-muted">{resolveReasonLabel(decision.reason)}</div>
+                  </div>
+                  {decision.availableAt && <span className="shrink-0 text-xs text-warn">预计恢复：{formatTime(decision.availableAt)}</span>}
+                </div>
+                {decision.runtimeError && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <span>{decision.runtimeError}</span>
                   </div>
                 )}
               </div>
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>,
-    document.body
+            );
+          })}
+        </FormSection>
+      )}
+    </SidePanel>
   );
 };
 

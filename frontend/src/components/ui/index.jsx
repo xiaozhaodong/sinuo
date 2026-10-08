@@ -5,6 +5,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
+  Check,
   CheckCircle2,
   Key,
   ChevronDown,
@@ -19,7 +20,7 @@ import {
 // KPI 卡片组件
 // ============================================
 export const KPICard = ({ title, value, tooltip, subText, icon: Icon, statusColor = 'bg-surface-mut text-fg-body' }) => (
-  <div className="bg-surface p-5 rounded-2xl border border-line/60 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+  <div className="bg-surface p-5 rounded-2xl border border-line/60 shadow-sm flex flex-col justify-between">
     <div className="flex justify-between items-start mb-2">
       <div className={`p-2 rounded-lg ${statusColor}`}>
         <Icon size={20} />
@@ -42,8 +43,8 @@ export const KPICard = ({ title, value, tooltip, subText, icon: Icon, statusColo
 // 统计详情项
 // ============================================
 export const StatDetailItem = ({ label, value, unit, valueColor }) => (
-  <div className="bg-surface-sub rounded-xl p-4 flex flex-col items-center justify-center border border-line-soft hover:border-line transition-colors group">
-    <div className={`text-2xl font-bold mb-1 ${valueColor || 'text-fg'} group-hover:scale-105 transition-transform`}>
+  <div className="bg-surface-sub rounded-xl p-4 flex flex-col items-center justify-center border border-line-soft">
+    <div className={`text-2xl font-bold mb-1 ${valueColor || 'text-fg'}`}>
       {value}<span className="text-sm font-medium text-fg-muted ml-0.5">{unit}</span>
     </div>
     <div className="text-xs text-fg-subtle font-medium">{label}</div>
@@ -206,7 +207,7 @@ export const TokenSelector = ({ tokens = [], currentTokenId, onSelect, disabled 
                     onSelect?.(token.id);
                     setIsOpen(false);
                   }}
-                  className={`group relative flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${
+                  className={`group relative flex items-center justify-between px-4 py-3 transition-colors ${
                     isActive ? 'bg-accent-soft/60' : 'hover:bg-surface-sub'
                   }`}
                 >
@@ -307,34 +308,36 @@ export const Button = ({
   // 但 hover 必须分主题：浅色下变深（向按下的方向），暗色下变亮 ——
   // 深底上继续变深等于往页面里沉，会读成「按钮变灰」而不是被激活。
   const variants = {
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 shadow-md hover:shadow-lg',
-    secondary: 'bg-surface-mut text-fg-body hover:bg-surface-emph',
+    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 shadow-xs',
+    // 2026-10-07 桌面化：次要按钮改为带边框的白底按钮（macOS push button），不再是灰色色块
+    secondary: 'border border-line bg-surface text-fg-body shadow-xs hover:bg-surface-sub',
     success: 'bg-emerald-600 text-white hover:bg-emerald-700 dark:hover:bg-emerald-500',
     danger: 'bg-rose-600 text-white hover:bg-rose-700 dark:hover:bg-rose-500',
     ghost: 'bg-transparent text-fg-body hover:bg-surface-mut'
   };
 
+  // 桌面化尺寸：24 / 28 / 32px 高
   const sizes = {
-    sm: 'px-3 py-1.5 text-xs',
-    md: 'px-4 py-2 text-sm',
-    lg: 'px-6 py-3 text-base'
+    sm: 'h-6 px-2.5 text-xs',
+    md: 'h-7 px-3 text-[13px]',
+    lg: 'h-8 px-4 text-sm'
   };
 
   return (
     <button
       disabled={disabled || loading}
       className={`
-        inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200
+        inline-flex shrink-0 items-center justify-center whitespace-nowrap font-medium rounded-md transition-colors
         ${variants[variant]} ${sizes[size]}
-        ${disabled || loading ? 'opacity-50 cursor-not-allowed' : 'hover:-translate-y-0.5'}
+        ${disabled || loading ? 'opacity-50 cursor-not-allowed' : ''}
         ${className}
       `}
       {...props}
     >
       {loading ? (
-        <Loader2 size={16} className="animate-spin mr-2" />
+        <Loader2 size={14} className="animate-spin mr-1.5" />
       ) : Icon && (
-        <Icon size={16} className="mr-2" />
+        <Icon size={14} className="mr-1.5" />
       )}
       {children}
     </button>
@@ -352,12 +355,12 @@ export const Input = ({
 }) => (
   <div className="flex flex-col">
     {label && (
-      <label className="text-sm font-medium text-fg-body mb-1.5">{label}</label>
+      <label className="text-xs font-medium text-fg-body mb-1">{label}</label>
     )}
     <input
       className={`
-        w-full px-3 py-2 border rounded-lg text-sm bg-surface text-fg
-        focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent-ring
+        w-full h-7 px-2.5 border rounded-md text-[13px] bg-surface text-fg
+        focus:outline-none focus:ring-3 focus:ring-accent-ring/30 focus:border-accent-ring
         ${error ? 'border-danger-line focus:ring-danger-solid focus:border-danger-solid' : 'border-line'}
         ${className}
       `}
@@ -380,12 +383,12 @@ export const Select = ({
 }) => (
   <div className="flex flex-col">
     {label && (
-      <label className="text-sm font-medium text-fg-body mb-1.5">{label}</label>
+      <label className="text-xs font-medium text-fg-body mb-1">{label}</label>
     )}
     <select
       className={`
-        px-3 py-2 bg-surface-sub border border-line rounded-lg text-sm text-fg-body
-        focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent-ring
+        h-7 px-2 bg-surface border border-line rounded-md text-[13px] text-fg-body
+        focus:outline-none focus:ring-3 focus:ring-accent-ring/30 focus:border-accent-ring
         ${className}
       `}
       {...props}
@@ -474,10 +477,11 @@ export const CustomSelect = ({
     setIsOpen(false);
   };
 
+  // 桌面化：弹出按钮式触发器（24 / 28px 高）
   const sizeClasses = {
-    xs: 'px-2 py-1 text-xs min-w-[80px]',
-    sm: 'px-2.5 py-1.5 text-xs min-w-[100px]',
-    md: 'px-3 py-2 text-sm min-w-[120px]'
+    xs: 'h-6 px-2 text-xs min-w-[80px]',
+    sm: 'h-7 px-2.5 text-xs min-w-[100px]',
+    md: 'h-7 px-2.5 text-[13px] min-w-[120px]'
   };
 
   const dropdownSizeClasses = {
@@ -494,13 +498,13 @@ export const CustomSelect = ({
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className={`
-          group inline-flex w-full items-center justify-between bg-surface border rounded-lg
-          transition-all duration-200 font-medium
+          group inline-flex w-full items-center justify-between bg-surface border rounded-md shadow-xs
+          transition-colors font-medium
           ${sizeClasses[size]}
           ${disabled
             ? 'opacity-50 cursor-not-allowed border-line text-fg-subtle'
             : isOpen
-              ? 'border-accent-ring ring-2 ring-accent-soft text-accent'
+              ? 'border-accent-ring ring-3 ring-accent-ring/25 text-fg'
               : 'border-line text-fg-body hover:border-line-strong hover:text-fg'
           }
         `}
@@ -521,7 +525,7 @@ export const CustomSelect = ({
           ref={dropdownRef}
           className={`
             fixed z-[9999] bg-surface border border-line
-            rounded-lg shadow-lg overflow-hidden animate-fade-in
+            rounded-lg shadow-xl ring-1 ring-hairline overflow-hidden motion-popover
             ${dropdownSizeClasses[size]}
           `}
           style={{
@@ -532,7 +536,7 @@ export const CustomSelect = ({
             transformOrigin: dropdownPosition.isUpward ? 'bottom' : 'top'
           }}
         >
-          <div className="py-1 max-h-[240px] overflow-y-auto">
+          <div className="p-1 max-h-[240px] overflow-y-auto">
             {options.map((option) => {
               const isSelected = option.value === value;
               return (
@@ -540,16 +544,14 @@ export const CustomSelect = ({
                   key={option.value}
                   onClick={() => handleSelect(option.value)}
                   className={`
-                    px-3 py-2 cursor-pointer transition-colors flex items-center justify-between whitespace-nowrap
-                    ${isSelected
-                      ? 'bg-accent-soft text-accent font-medium'
-                      : 'text-fg-body hover:bg-surface-sub'
-                    }
+                    group flex h-6 items-center justify-between rounded px-2 whitespace-nowrap
+                    hover:bg-indigo-600 hover:text-white
+                    ${isSelected ? 'font-medium text-fg' : 'text-fg-body'}
                   `}
                 >
                   <span>{option.label}</span>
                   {isSelected && (
-                    <CheckCircle2 size={14} className="text-accent-ring ml-2 flex-shrink-0" />
+                    <Check size={13} className="ml-3 flex-shrink-0 text-accent group-hover:text-white" />
                   )}
                 </div>
               );

@@ -4,7 +4,7 @@
 // ============================================
 
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import Badge from './Badge.jsx';
+import { AlertCircle } from 'lucide-react';
 import {
   MANUAL_FAILOVER_TIER_PRESETS,
   QUOTA_STATUS_STYLE,
@@ -39,28 +39,22 @@ const ScheduleCandidateCard = ({ candidate, index }) => {
   return (
     <div
       key={String(candidateId)}
-      className={`rounded-xl border px-4 py-4 shadow-sm ${decision === 'selected' ? 'border-accent-line bg-accent-soft/40' : 'border-line bg-surface'}`}
+      className={`px-3.5 py-2 ${decision === 'selected' ? 'bg-accent-soft/40' : ''}`}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-fg-subtle">#{index + 1}</span>
-            <span className="text-sm font-semibold text-fg">{candidate.account_name || candidate.accountName || '-'}</span>
-            <Badge
-              text={toAccountAuthLabel(candidate.provider_type || candidate.providerType || '')}
-              className="bg-accent-soft text-accent border-accent-line"
-            />
-            <Badge
-              text={`${candidate.tier_label || candidate.tierLabel || '未分组'}${Number.isFinite(candidatePriority) ? ` · 组内顺序 ${candidatePriority}` : ''}`}
-              className={candidateTierClass}
-            />
-            <Badge text={toScheduleDecisionLabel(decision)} className={decisionClass} />
+            <span className="text-xs font-medium text-fg-muted">#{index + 1}</span>
+            <span className="text-[13px] font-semibold text-fg">{candidate.account_name || candidate.accountName || '-'}</span>
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] bg-accent-soft text-accent border-accent-line">{toAccountAuthLabel(candidate.provider_type || candidate.providerType || '')}</span>
+            <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (candidateTierClass)}>{`${candidate.tier_label || candidate.tierLabel || '未分组'}${Number.isFinite(candidatePriority) ? ` · 组内顺序 ${candidatePriority}` : ''}`}</span>
+            <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (decisionClass)}>{toScheduleDecisionLabel(decision)}</span>
             {runtimeOutcome && (
-              <Badge text={toScheduleOutcomeLabel(runtimeOutcome)} className={runtimeOutcomeClass} />
+              <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (runtimeOutcomeClass)}>{toScheduleOutcomeLabel(runtimeOutcome)}</span>
             )}
           </div>
 
-          <div className="mt-2 text-sm font-medium text-fg">
+          <div className="mt-1.5 text-xs font-medium text-fg">
             {toScheduleReasonLabel(candidate.reason || '')}
           </div>
           <div className="mt-1 text-xs leading-5 text-fg-muted">
@@ -68,27 +62,22 @@ const ScheduleCandidateCard = ({ candidate, index }) => {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 lg:max-w-[320px] lg:justify-end">
-          <Badge text={toQuotaStatusLabel(quotaStatus)} className={quotaClass} />
+        <div className="flex flex-wrap gap-1.5">
+          <span className={"rounded border px-1.5 text-[11px] leading-[18px] " + (quotaClass)}>{toQuotaStatusLabel(quotaStatus)}</span>
           {Number.isFinite(effectiveQuotaRemaining) && (
-            <Badge
-              text={`剩余额度 ${effectiveQuotaRemaining.toFixed(0)}%`}
-              className="bg-surface text-fg-body border-line"
-            />
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] bg-surface text-fg-body border-line">{`剩余额度 ${effectiveQuotaRemaining.toFixed(0)}%`}</span>
           )}
-          <Badge text={`失败 ${failCount}`} className="bg-surface text-fg-body border-line" />
+          <span className="rounded border px-1.5 text-[11px] leading-[18px] bg-surface text-fg-body border-line">{`失败 ${failCount}`}</span>
           {lastSuccessAt && (
-            <Badge
-              text={`最近成功 ${formatTimestamp(lastSuccessAt)}`}
-              className="bg-surface text-success border-success-line"
-            />
+            <span className="rounded border px-1.5 text-[11px] leading-[18px] bg-surface text-success border-success-line">{`最近成功 ${formatTimestamp(lastSuccessAt)}`}</span>
           )}
         </div>
       </div>
 
       {runtimeError && (
-        <div className="mt-3 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
-          运行时错误：{runtimeError}
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs text-warn">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <span>运行时错误：{runtimeError}</span>
         </div>
       )}
     </div>

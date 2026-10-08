@@ -17,7 +17,7 @@ const SectionError = ({ error, onRetry, compact = false }) => {
         <button
           type="button"
           onClick={onRetry}
-          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg-body hover:bg-surface-sub"
+          className="mt-2.5 inline-flex h-6 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-fg-body shadow-xs hover:bg-surface-sub"
         >
           <RefreshCw size={12} />
           重试

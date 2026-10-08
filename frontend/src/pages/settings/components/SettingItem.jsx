@@ -1,11 +1,12 @@
 // ============================================
 // SettingItem - 可编辑的设置项组件
 // v5.1.0 (2025-12-08)
+// 2026-10-07：桌面化——系统设置式单行（左侧名称与说明、右侧控件），开关 / 输入框改为桌面尺寸
 // ============================================
 
-import { useState, useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
 import { CustomSelect } from '../../../components/ui';
+import Switch from '@components/desktop/Switch.jsx';
+import { FormBlock, FormRow } from '@components/desktop/FormSection.jsx';
 
 // 值类型到输入类型的映射
 const VALUE_TYPE_CONFIG = {
@@ -56,19 +57,31 @@ const CODEX_IDENTITY_MODE_HELP = {
   enabled: '已覆盖自动判断：官方 OAuth 映射身份，API Key / 第三方也执行身份清理（含 client_metadata）。排障结束后可恢复自动。'
 };
 
+// 输入框宽度按设置项内容长度给
+const INPUT_WIDTHS = {
+  endpoint_url: 'w-72',
+  api_key: 'w-56',
+  model: 'w-56',
+  token: 'w-48'
+};
+
+const RestartBadge = () => (
+  <span className="rounded border border-warn-line px-1 text-[10.5px] leading-[15px] text-warn">需重启</span>
+);
+
 const CodexIdentityModeSetting = ({ value, onChange, disabled }) => (
-  <div className="py-3 border-b border-line-soft last:border-0">
+  <FormBlock>
     <div className="flex items-center justify-between gap-4">
-      <span className="text-sm font-medium text-fg-body">身份处理</span>
-      <span className="text-xs text-fg-subtle">
+      <span className="text-[13px] text-fg">身份处理</span>
+      <span className="text-xs text-fg-muted">
         {CODEX_IDENTITY_MODE_OPTIONS.find((option) => option.value === value)?.label || value}
       </span>
     </div>
-    <p className="text-xs text-fg-subtle mt-1">{CODEX_IDENTITY_MODE_HELP[value]}</p>
-    <p className="text-xs text-fg-subtle mt-1">使用客户端订阅凭据直通时，始终保留客户端身份，不受此设置影响。</p>
-    <details className="mt-3">
-      <summary className="text-xs text-fg-subtle cursor-pointer">高级排障</summary>
-      <div className="flex justify-end mt-2">
+    <p className="mt-1 text-[11.5px] leading-snug text-fg-muted">{CODEX_IDENTITY_MODE_HELP[value]}</p>
+    <p className="mt-1 text-[11.5px] leading-snug text-fg-muted">使用客户端订阅凭据直通时，始终保留客户端身份，不受此设置影响。</p>
+    <details className="mt-2">
+      <summary className="text-xs text-fg-subtle">高级排障</summary>
+      <div className="mt-2 flex justify-end">
         <CustomSelect
           options={CODEX_IDENTITY_MODE_OPTIONS}
           value={value}
@@ -78,7 +91,7 @@ const CodexIdentityModeSetting = ({ value, onChange, disabled }) => (
         />
       </div>
     </details>
-  </div>
+  </FormBlock>
 );
 
 const SettingItem = ({
@@ -87,13 +100,6 @@ const SettingItem = ({
   onChange,
   disabled = false
 }) => {
-  const [localValue, setLocalValue] = useState(value);
-
-  // 同步外部 value 变化
-  useEffect(() => {
-    setLocalValue(value);
-  }, [value]);
-
   // 检测值类型（优先使用 setting.value_type，然后尝试自动检测）
   const valueType = setting.value_type || (
     (value === 'true' || value === 'false' || value === true || value === false) ? 'bool' : 'string'
@@ -106,151 +112,57 @@ const SettingItem = ({
 
   // 显示标签（优先使用 label，没有则使用 key）
   const displayLabel = setting.label || setting.key;
-
-  // 处理值变更
-  const handleChange = (e) => {
-    let newValue;
-    if (valueType === 'bool') {
-      newValue = e.target.checked ? 'true' : 'false';
-    } else {
-      newValue = e.target.value;
-    }
-    setLocalValue(newValue);
-    onChange(setting.category, setting.key, newValue);
+  const emit = (nextValue) => onChange(setting.category, setting.key, nextValue);
+  const rowProps = {
+    label: displayLabel,
+    description: setting.description,
+    badge: setting.requires_restart ? <RestartBadge /> : null
   };
 
   if (setting.category === 'codex_identity' && setting.key === 'mode') {
-    return (
-      <CodexIdentityModeSetting
-        value={localValue}
-        onChange={(newValue) => {
-          setLocalValue(newValue);
-          onChange(setting.category, setting.key, newValue);
-        }}
-        disabled={disabled}
-      />
-    );
+    return <CodexIdentityModeSetting value={value} onChange={emit} disabled={disabled} />;
   }
 
-  // 布尔类型使用 Toggle 开关
+  // 布尔类型使用开关
   if (valueType === 'bool') {
-    const isChecked = localValue === 'true' || localValue === true;
     return (
-      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
-        <div className="flex-1 min-w-0 pr-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
-            {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
-                <AlertTriangle size={10} className="mr-0.5" />
-                重启生效
-              </span>
-            )}
-          </div>
-          {setting.description && (
-            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
-          )}
-        </div>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isChecked}
-            onChange={handleChange}
-            disabled={disabled}
-            className="sr-only peer"
-          />
-          <div className={`
-            w-11 h-6 bg-surface-emph rounded-full peer
-            peer-checked:bg-indigo-600
-            peer-focus:ring-2 peer-focus:ring-accent-soft
-            after:content-[''] after:absolute after:top-0.5 after:left-[2px]
-            after:bg-surface after:rounded-full after:h-5 after:w-5
-            after:transition-all after:shadow-sm
-            peer-checked:after:translate-x-full
-            ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-          `}></div>
-        </label>
-      </div>
+      <FormRow {...rowProps}>
+        <Switch checked={value === 'true' || value === true} onChange={(checked) => emit(checked ? 'true' : 'false')} disabled={disabled} label={displayLabel} />
+      </FormRow>
     );
   }
 
   // 策略类型、失败处理动作、菜单栏文字使用下拉选择
   const selectOptions = SELECT_SETTING_OPTIONS[`${setting.category}.${setting.key}`];
   if (selectOptions) {
-    const handleSelectChange = (newValue) => {
-      setLocalValue(newValue);
-      onChange(setting.category, setting.key, newValue);
-    };
-
     return (
-      <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
-        <div className="flex-1 min-w-0 pr-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
-            {setting.requires_restart && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
-                <AlertTriangle size={10} className="mr-0.5" />
-                重启生效
-              </span>
-            )}
-          </div>
-          {setting.description && (
-            <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
-          )}
-        </div>
-        <CustomSelect
-          options={selectOptions}
-          value={localValue}
-          onChange={handleSelectChange}
-          disabled={disabled}
-          size="md"
-        />
-      </div>
+      <FormRow {...rowProps}>
+        <CustomSelect options={selectOptions} value={value} onChange={emit} disabled={disabled} size="md" />
+      </FormRow>
     );
   }
 
   // 其他类型使用文本/数字输入框
   const input = (
-    <div className="flex justify-between items-center py-3 border-b border-line-soft last:border-0">
-      <div className="flex-1 min-w-0 pr-4">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-fg-body">{displayLabel}</span>
-          {setting.requires_restart && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warn-soft text-warn">
-              <AlertTriangle size={10} className="mr-0.5" />
-              重启生效
-            </span>
-          )}
-        </div>
-        {setting.description && (
-          <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
-        )}
-      </div>
+    <FormRow {...rowProps}>
       <input
         type={config.type}
         autoComplete={valueType === 'password' ? 'new-password' : undefined}
-        value={localValue}
-        onChange={handleChange}
+        value={value}
+        onChange={(event) => emit(event.target.value)}
         disabled={disabled}
         step={setting.key === 'fixed_price_usd' ? 0.001 : config.step}
         placeholder={inputPlaceholder}
-        className={`
-          w-32 px-3 py-1.5 bg-surface-sub border border-line rounded-lg text-sm text-fg-body
-          font-mono text-right
-          focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent-line
-          ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-          ${setting.key === 'token' ? 'w-48' : ''}
-          ${setting.key === 'endpoint_url' ? 'w-72 max-w-[58%]' : ''}
-          ${setting.key === 'api_key' || setting.key === 'model' ? 'w-56 max-w-[50%]' : ''}
-        `}
+        aria-label={displayLabel}
+        className={`desk-field text-right font-mono ${INPUT_WIDTHS[setting.key] || 'w-28'}`}
       />
-    </div>
+    </FormRow>
   );
   if (setting.category === 'codex_identity' && setting.key === 'compat_version') {
     return (
-      <details className="py-3">
-        <summary className="text-xs text-fg-subtle cursor-pointer">高级兼容设置</summary>
-        {input}
+      <details className="px-3.5 py-2">
+        <summary className="text-xs text-fg-subtle">高级兼容设置</summary>
+        <div className="-mx-3.5">{input}</div>
       </details>
     );
   }

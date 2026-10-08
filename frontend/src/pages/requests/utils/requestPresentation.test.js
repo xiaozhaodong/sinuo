@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getRequestPresentation } from './requestPresentation.js';
+import { formatRouteMode, getRequestPresentation } from './requestPresentation.js';
 import { normalizeRequest } from './normalizeRequest.js';
 import { buildLifecycleSegments } from './lifecycle.js';
 import { STATUS_SELECT_OPTIONS } from './constants.js';
@@ -80,4 +80,11 @@ test('详情优先使用规范化字段，空值不被旧别名覆盖', () => {
     failureReason: 'subscription_client_disconnected'
   }).isInterrupted, true);
   assert.equal(getRequestPresentation().isInterrupted, false);
+});
+
+test('formatRouteMode 只认两种手动模式，其余按自动', () => {
+  assert.equal(formatRouteMode('manual_fixed'), '严格固定');
+  assert.equal(formatRouteMode('manual_preferred'), '手动优选');
+  assert.equal(formatRouteMode('auto'), '自动');
+  assert.equal(formatRouteMode(undefined), '自动');
 });

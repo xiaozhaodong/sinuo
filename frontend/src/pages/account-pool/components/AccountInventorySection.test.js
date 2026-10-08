@@ -34,8 +34,12 @@ test('inventory workspace exposes saved views, batch actions, and drawer section
   assert.match(tableSource, /checkbox|aria-label="选择账号"/, 'expected rows to support explicit selection affordance');
   assert.match(tableSource, /启用账号|停用账号/, 'expected row-level quick toggle affordance to remain visible');
   assert.match(tableSource, /更多|查看详情/, 'expected row-level secondary action affordance to remain visible');
-  assert.match(sectionSource, /上一页|下一页/, 'expected the inventory workspace to expose pagination actions');
-  assert.match(sectionSource, /每页/, 'expected the inventory workspace to expose page-size controls');
+  // 2026-10-07 桌面化：分页收进状态栏，控件由共享的 StatusPager 提供
+  const pagerSource = await loadSource('../../../components/desktop/StatusPager.jsx');
+  assert.match(sectionSource, /<StatusPager[\s\S]*onPageChange=\{state\.pagination\.goToPage\}[\s\S]*onPageSizeChange=\{state\.pagination\.setPageSize\}/, 'expected the inventory workspace to wire pagination into the status bar pager');
+  assert.match(pagerSource, /上一页/, 'expected the pager to expose 上一页');
+  assert.match(pagerSource, /下一页/, 'expected the pager to expose 下一页');
+  assert.match(pagerSource, /每页/, 'expected the pager to expose page-size controls');
   assert.match(drawerSource, /编辑账号/, 'expected the drawer action area to expose 编辑账号');
 
   assert.match(drawerSource, /账号详情/, 'expected the drawer to expose account detail heading');
@@ -128,13 +132,13 @@ test('inventory grid cards keep quick actions visible when account timestamps ar
 
   assert.match(
     cardSource,
-    /className="flex min-w-0 flex-1 items-center gap-2\.5"/,
-    'expected the card status area to shrink before pushing quick actions outside the card'
+    /<QuotaBar label="d7"[\s\S]*?\{statusText\}[\s\S]*?className="mt-auto flex items-center justify-between/,
+    'expected the card status text below quota and before the quick-action footer'
   );
   assert.match(
     cardSource,
-    /className="min-w-0 truncate whitespace-nowrap text-\[11px\] text-fg-subtle"/,
-    'expected long connectivity and refresh timestamps to truncate inside the available width'
+    /className="mt-2 min-w-0 truncate whitespace-nowrap text-\[11px\] text-fg-muted"/,
+    'expected long connectivity and refresh timestamps to use a full-width muted row with truncation'
   );
   assert.match(
     cardSource,

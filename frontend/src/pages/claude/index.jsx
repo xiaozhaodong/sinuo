@@ -1,57 +1,59 @@
 // ============================================
 // Claude 管理页面：第三方端点 + Claude Code 客户端接入
 // 2026-09-24
+// 2026-10-07：页签与端点操作放进统一工具栏
 // ============================================
 
 import { useState } from 'react';
-import { KeyRound, Server } from 'lucide-react';
 import ClaudeCodeEntryCard from '@components/claude-code-entry/ClaudeCodeEntryCard.jsx';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
 import EndpointsPage from '@pages/endpoints/index.jsx';
+import ClaudeModelsPage from './models/ClaudeModelsPage.jsx';
 
 const TABS = [
-  {
-    id: 'endpoints',
-    label: '端点',
-    icon: Server
-  },
-  {
-    id: 'client-access',
-    label: '客户端接入',
-    icon: KeyRound
-  }
+  { id: 'endpoints', label: '端点' },
+  { id: 'models', label: '模型目录' },
+  { id: 'client-access', label: '客户端接入' }
 ];
 
 const ClaudePage = ({ activeTab = 'endpoints', onTabChange, modelRoutingOpenRequest = null, onModelRoutingOpenRequestHandled }) => {
   const [endpointActionsTarget, setEndpointActionsTarget] = useState(null);
+  const [modelsActionsTarget, setModelsActionsTarget] = useState(null);
+  const [modelsVisited, setModelsVisited] = useState(activeTab === 'models');
+
+  const handleTabChange = (nextTab) => {
+    if (nextTab === 'models') setModelsVisited(true);
+    onTabChange?.(nextTab);
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
-          <Server size={20} />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-fg">Claude 管理</h1>
-          <p className="mt-1 text-sm text-fg-muted">
-            管理第三方端点与模型路由，并配置 Claude Code 的订阅直通接入入口
-          </p>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <PageTabs tabs={TABS} activeTab={activeTab} onChange={onTabChange} idPrefix="claude" ariaLabel="Claude 管理" />
-        {/* 端点操作仍由端点页管理，在同一工具栏展示，避免多占一行。 */}
-        <div ref={setEndpointActionsTarget} hidden={activeTab !== 'endpoints'} />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageToolbar>
+        <PageTabs tabs={TABS} activeTab={activeTab} onChange={handleTabChange} idPrefix="claude" ariaLabel="Claude 管理" />
+        {/* 端点操作仍由端点页管理，投送到工具栏右侧。 */}
+        <div ref={setEndpointActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'endpoints'} />
+        <div ref={setModelsActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'models'} />
+      </PageToolbar>
 
       <section
         id="claude-panel-endpoints"
         role="tabpanel"
         aria-labelledby="claude-tab-endpoints"
         hidden={activeTab !== 'endpoints'}
+        className="flex min-h-0 flex-1"
       >
         <EndpointsPage embedded active={activeTab === 'endpoints'} headerTarget={endpointActionsTarget} modelRoutingOpenRequest={modelRoutingOpenRequest} onModelRoutingOpenRequestHandled={onModelRoutingOpenRequestHandled} />
+      </section>
+
+      <section
+        id="claude-panel-models"
+        role="tabpanel"
+        aria-labelledby="claude-tab-models"
+        hidden={activeTab !== 'models'}
+        className="flex min-h-0 flex-1"
+      >
+        {modelsVisited && <ClaudeModelsPage active={activeTab === 'models'} headerTarget={modelsActionsTarget} />}
       </section>
 
       <section
@@ -59,8 +61,11 @@ const ClaudePage = ({ activeTab = 'endpoints', onTabChange, modelRoutingOpenRequ
         role="tabpanel"
         aria-labelledby="claude-tab-client-access"
         hidden={activeTab !== 'client-access'}
+        className="min-h-0 flex-1 overflow-y-auto bg-pane px-7 pb-12"
       >
-        <ClaudeCodeEntryCard />
+        <div className="mx-auto max-w-[640px]">
+          <ClaudeCodeEntryCard />
+        </div>
       </section>
     </div>
   );

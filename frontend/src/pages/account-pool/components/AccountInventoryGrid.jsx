@@ -25,8 +25,8 @@ const AccountInventoryGrid = ({
   const selectedIdSet = new Set(selectedRowIds.map((item) => String(item)));
 
   return (
-    <div>
-      <div className="flex items-center gap-2 border-b border-line-soft px-5 py-2.5">
+    <div className="min-h-full bg-pane">
+      <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
         <input
           type="checkbox"
           checked={allVisibleSelected}
@@ -38,7 +38,7 @@ const AccountInventoryGrid = ({
           选择本页全部 {rows.length} 个账号{selectedCount > 0 ? `(已选 ${selectedCount} 个)` : ''}
         </span>
       </div>
-      <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => (
           <AccountInventoryCard
             key={String(row.id)}

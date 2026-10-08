@@ -1,6 +1,7 @@
 // ============================================
-// 布局组件 - 页头主题菜单
+// 布局组件 - 主题菜单
 // 2026-09-30：跟随系统 / 浅色 / 深色 三选一，替代原浅深两态快捷开关
+// 2026-10-07：移到侧边栏底部，菜单向上展开
 // ============================================
 
 import { useId, useRef, useState } from 'react';
@@ -19,13 +20,13 @@ const THEME_OPTIONS = [
 
 const THEME_LABELS = { light: '浅色', dark: '深色' };
 
-const ThemeMenu = () => {
+const ThemeMenu = ({ placement = 'bottom' }) => {
   const { preference, system, setPreference } = useTheme();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   const menuId = useId();
-  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: MENU_WIDTH });
+  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: MENU_WIDTH, placement });
 
   const current = THEME_OPTIONS.find((option) => option.value === preference) || THEME_OPTIONS[0];
   const CurrentIcon = current.icon;
@@ -47,9 +48,9 @@ const ThemeMenu = () => {
         aria-label={`主题：${summary}`}
         title={`主题：${summary}`}
         onClick={() => setOpen((value) => !value)}
-        className={`p-2 rounded-lg transition-colors hover:text-fg hover:bg-surface-mut ${open ? 'text-fg bg-surface-mut' : 'text-fg-muted'}`}
+        className={`grid h-7 w-7 shrink-0 place-items-center rounded-md transition-colors hover:text-fg hover:bg-sidebar-sel ${open ? 'text-fg bg-sidebar-sel' : 'text-fg-muted'}`}
       >
-        <CurrentIcon size={16} />
+        <CurrentIcon size={15} strokeWidth={1.75} />
       </button>
 
       {open && position && createPortal(
@@ -59,7 +60,7 @@ const ThemeMenu = () => {
           role="menu"
           aria-label="主题"
           style={position}
-          className="fixed z-50 rounded-xl border border-line bg-surface p-1 shadow-xl ring-1 ring-hairline motion-popover origin-top-right"
+          className={`fixed z-50 rounded-xl border border-line bg-surface p-1 shadow-xl ring-1 ring-hairline motion-popover ${placement === 'top' ? 'origin-bottom-left' : 'origin-top-right'}`}
         >
           {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
             const checked = value === preference;

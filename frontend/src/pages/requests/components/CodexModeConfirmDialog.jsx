@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, ArrowRight, Loader2, X } from 'lucide-react';
+import { Button } from '@components/ui';
 import useModalLifecycle from '@hooks/useModalLifecycle.js';
 import {
   MODE_EFFECT_NOTICE,
@@ -54,19 +55,21 @@ const CodexModeConfirmDialog = ({ pending, status, busy, stale, result, notice, 
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby={titleId} aria-describedby={descriptionId} onKeyDown={trapFocus} className="max-h-[calc(100dvh-32px)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface shadow-2xl outline-none">
-        <div className="flex items-center justify-between gap-3 border-b border-line-soft px-5 py-4">
-          <h2 id={titleId} className="text-base font-semibold text-fg">确认切换 Codex 接入模式</h2>
-          <button type="button" onClick={close} disabled={busy} aria-label="关闭确认弹窗" className="rounded-lg p-1.5 text-fg-subtle hover:bg-surface-sub disabled:opacity-50"><X size={17} /></button>
+    <div className="fixed inset-0 z-[100] flex items-start justify-center px-4 pt-[18vh]">
+      <div aria-hidden="true" className="motion-overlay absolute inset-0 bg-overlay" onMouseDown={close} />
+      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby={titleId} aria-describedby={descriptionId} onKeyDown={trapFocus} className="motion-dialog relative max-h-[76vh] w-full max-w-[400px] overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-2xl ring-1 ring-hairline outline-none">
+        <div className="flex items-start justify-between gap-3">
+          <AlertCircle size={28} strokeWidth={1.75} className="text-warn" />
+          <button type="button" onClick={close} disabled={busy} aria-label="关闭确认弹窗" className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut disabled:opacity-50"><X size={14} /></button>
         </div>
-        <div className="space-y-4 px-5 py-4">
-          <div className="flex items-center justify-center gap-4 rounded-xl border border-line bg-surface-sub px-4 py-3 text-sm">
+        <h2 id={titleId} className="mt-3 text-[13px] font-semibold text-fg">确认切换 Codex 接入模式</h2>
+        <div className="mt-3 space-y-3">
+          <div className="flex items-center gap-3 text-xs">
             <span className="text-fg-muted">{modeLabel(pending.config.mode)}</span>
             <ArrowRight size={16} className="text-fg-subtle" />
             <span className="font-semibold text-accent-fg">{modeLabel(pending.mode)}</span>
           </div>
-          <p id={descriptionId} className="text-sm leading-relaxed text-fg-body">全局生效于所有使用此独立入口的 Codex 客户端，仅切换精确匹配的 Responses 请求；原有入口的账号池路由不受影响。</p>
+          <p id={descriptionId} className="selectable text-xs leading-relaxed text-fg-body">全局生效于所有使用此独立入口的 Codex 客户端，仅切换精确匹配的 Responses 请求；原有入口的账号池路由不受影响。</p>
           <div className="space-y-2 text-xs leading-relaxed text-fg-muted">
             <p>{MODE_EFFECT_NOTICE}在途请求保持原行为。</p>
             <p>{pending.mode === 'pool'
@@ -75,14 +78,14 @@ const CodexModeConfirmDialog = ({ pending, status, busy, stale, result, notice, 
             <p>当前入口：{subscriptionProxyStateMeta(status?.state).label}；底层 WS 连接数：{status?.activeWebSockets ?? '未知'}（含上下游两侧）。已有 WS 重连后才读取新模式。</p>
           </div>
           {stale && !busy && !result?.saved && <p role="alert" className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs text-warn">配置或运行态已变化，请刷新后重新选择模式并确认。</p>}
-          {notice && <div role="alert" className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${notice.type === 'error' ? 'border-danger-line bg-danger-soft text-danger' : 'border-warn-line bg-warn-soft text-warn'}`}><AlertCircle size={15} className="mt-0.5 shrink-0" /><span>{notice.text}</span></div>}
+          {notice && <div role="alert" className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${notice.type === 'error' ? 'border-danger-line bg-danger-soft text-danger' : 'border-warn-line bg-warn-soft text-warn'}`}><AlertCircle size={14} className="mt-0.5 shrink-0" /><span>{notice.text}</span></div>}
         </div>
-        <div className="flex justify-end gap-2 border-t border-line-soft px-5 py-4">
-          <button ref={cancelRef} type="button" disabled={busy} onClick={close} className="rounded-lg border border-line px-4 py-2 text-sm text-fg-body hover:bg-surface-sub disabled:opacity-50">{result?.saved ? '关闭' : '取消'}</button>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button ref={cancelRef} type="button" disabled={busy} onClick={close} variant="secondary">{result?.saved ? '关闭' : '取消'}</Button>
           {needsRefresh ? (
-            <button type="button" disabled={busy} onClick={onRefresh} className="rounded-lg bg-accent px-4 py-2 text-sm text-white disabled:opacity-50">刷新状态</button>
+            <Button type="button" disabled={busy} onClick={onRefresh}>刷新状态</Button>
           ) : (
-            <button type="button" disabled={busy} onClick={onConfirm} className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-white disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}{busy ? '保存并确认状态…' : `确认切换到${modeLabel(pending.mode)}`}</button>
+            <Button type="button" disabled={busy} onClick={onConfirm}>{busy && <Loader2 size={14} className="animate-spin" />}{busy ? '保存并确认状态…' : `确认切换到${modeLabel(pending.mode)}`}</Button>
           )}
         </div>
       </section>

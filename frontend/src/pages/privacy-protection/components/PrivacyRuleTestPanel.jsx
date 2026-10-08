@@ -5,8 +5,9 @@
 // ============================================
 
 import { useState } from 'react';
-import { FlaskConical } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
+import { FormBlock, FormFieldRow, FormSection } from '@components/desktop/FormSection.jsx';
 import PrivacyHitList from './PrivacyHitList.jsx';
 import {
   PRIVACY_PATH_OPTIONS,
@@ -36,73 +37,64 @@ const PrivacyRuleTestPanel = ({ onTest, variant = 'card', showHeader = true }) =
   };
 
   return (
-    <div className={isDrawer ? 'space-y-4' : 'border border-line rounded-xl bg-surface p-4 space-y-3'}>
+    <div>
       {showHeader && (
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-fg-body flex items-center gap-1.5">
-            <FlaskConical size={15} className="text-accent" />
-            规则测试
-          </h3>
-          <span className="text-xs text-fg-subtle">测试文本不会被记录</span>
+        <div className="mx-1 mt-5 flex items-baseline justify-between gap-2">
+          <h3 className="text-[13px] font-semibold text-fg-body">规则测试</h3>
+          <span className="text-xs text-fg-muted">测试文本不会被记录</span>
         </div>
       )}
-
-      <div className={isDrawer ? 'grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px]' : 'flex gap-2'}>
-        <CustomSelect
-          options={PRIVACY_PATH_OPTIONS.map((p) => ({ value: p, label: p }))}
-          value={path}
-          onChange={setPath}
-          className={isDrawer ? 'w-full [&>button]:h-11' : 'flex-1'}
-        />
-        <CustomSelect
-          options={PRIVACY_UPSTREAM_TYPE_OPTIONS}
-          value={upstreamType}
-          onChange={setUpstreamType}
-          className={isDrawer ? 'w-full [&>button]:h-11' : 'w-32'}
-        />
-      </div>
-
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={isDrawer ? 9 : 6}
-        spellCheck={false}
-        placeholder="粘贴一段测试文本，例如包含 API Key 或手机号的内容"
-        className="w-full px-3 py-2 border border-line rounded-lg text-sm font-mono break-all focus:outline-none focus:ring-2 focus:ring-accent-ring"
-      />
-
-      <Button
-        onClick={handleTest}
-        loading={testing}
-        disabled={!text}
-        className={isDrawer ? 'h-10 w-full' : 'w-full'}
-        size={isDrawer ? 'md' : 'sm'}
-      >
-        测试
-      </Button>
-
-      {error && <p className="text-xs text-danger break-all">{error}</p>}
-
-      {result && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3 text-xs text-fg-muted">
-            <span>原文 {result.original_length} 字符</span>
-            <span>命中 {result.hit_count} 处</span>
-            <span>耗时 {result.scan_duration_ms.toFixed(2)} ms</span>
+      <FormSection title="测试输入">
+        <FormFieldRow label="请求路径">
+          <CustomSelect
+            options={PRIVACY_PATH_OPTIONS.map((p) => ({ value: p, label: p }))}
+            value={path}
+            onChange={setPath}
+            size="sm"
+            className="w-full"
+          />
+        </FormFieldRow>
+        <FormFieldRow label="上游类型">
+          <CustomSelect options={PRIVACY_UPSTREAM_TYPE_OPTIONS} value={upstreamType} onChange={setUpstreamType} size="sm" className="w-full" />
+        </FormFieldRow>
+        <FormBlock>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={isDrawer ? 9 : 6}
+            spellCheck={false}
+            placeholder="粘贴一段测试文本，例如包含 API Key 或手机号的内容"
+            className="desk-field h-auto w-full break-all py-1.5 font-mono leading-relaxed"
+          />
+          <div className="mt-3 flex justify-end">
+            <Button onClick={handleTest} loading={testing} disabled={!text} size="sm">测试</Button>
           </div>
-
-          <div>
-            <div className="text-xs font-medium text-fg-muted mb-1">替换后文本</div>
-            <pre className={`text-xs bg-surface-sub border border-line-soft rounded-lg p-3 whitespace-pre-wrap break-all overflow-y-auto ${isDrawer ? 'max-h-72' : 'max-h-48'}`}>
+          {error && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" /><span className="break-all">{error}</span>
+            </div>
+          )}
+        </FormBlock>
+      </FormSection>
+      {result && (
+        <FormSection title="测试结果" actions={(
+          <>
+            <span className="tone-slate rounded border px-1.5 text-[11px] leading-[18px]">原文 {result.original_length} 字符</span>
+            <span className="tone-indigo rounded border px-1.5 text-[11px] leading-[18px]">命中 {result.hit_count} 处</span>
+            <span className="rounded border border-line px-1.5 text-[11px] leading-[18px] text-fg-muted">耗时 {result.scan_duration_ms.toFixed(2)} ms</span>
+          </>
+        )}>
+          <FormBlock>
+            <div className="mb-1 text-xs font-medium text-fg-muted">替换后文本</div>
+            <pre className={`whitespace-pre-wrap break-all overflow-y-auto rounded-md border border-line-soft bg-pane px-3 py-2 font-mono text-xs ${isDrawer ? 'max-h-72' : 'max-h-48'}`}>
               {result.replaced_text || '（空）'}
             </pre>
-          </div>
-
-          <div>
-            <div className="text-xs font-medium text-fg-muted mb-1">命中规则</div>
+          </FormBlock>
+          <FormBlock>
+            <div className="mb-1 text-xs font-medium text-fg-muted">命中规则</div>
             <PrivacyHitList hits={result.rule_hits} />
-          </div>
-        </div>
+          </FormBlock>
+        </FormSection>
       )}
     </div>
   );

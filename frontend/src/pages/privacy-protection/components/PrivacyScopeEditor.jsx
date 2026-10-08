@@ -24,7 +24,7 @@ const CheckboxGroup = ({ label, hint, options, values, onChange }) => {
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-1.5">
-        <span className="text-sm font-medium text-fg-body">{label}</span>
+        <span className="text-[13px] font-medium text-fg-body">{label}</span>
         {hint && <span className="text-xs text-fg-subtle">{hint}</span>}
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -34,8 +34,9 @@ const CheckboxGroup = ({ label, hint, options, values, onChange }) => {
             <button
               key={String(opt.value)}
               type="button"
+              aria-pressed={checked}
               onClick={() => toggle(opt.value)}
-              className={`px-2.5 py-1 rounded-lg text-xs border transition-colors break-all ${
+              className={`px-2 py-1 rounded text-xs border transition-colors break-all ${
                 checked
                   ? 'bg-accent-soft border-accent-line text-accent-fg'
                   : 'bg-surface border-line text-fg-muted hover:border-line-strong'
@@ -57,7 +58,7 @@ const PrivacyScopeEditor = ({ scope, onChange, endpointOptions = [], accountOpti
   const update = (key, values) => onChange({ ...scope, [key]: values });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <p className="text-xs text-fg-subtle">
         空选项表示不限。多个维度之间是 AND，同一维度内是 OR；路径为精确匹配。
       </p>

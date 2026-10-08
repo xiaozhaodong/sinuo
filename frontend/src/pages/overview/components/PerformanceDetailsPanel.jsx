@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState } from 'react';
-import { ChevronDown, Gauge } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import ResponseTimeChart from './ResponseTimeChart.jsx';
 import ConnectionActivityChart from './ConnectionActivityChart.jsx';
 
@@ -15,28 +15,21 @@ const PerformanceDetailsPanel = ({ refreshKey = 0 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <section className="bg-surface rounded-2xl border border-line/60 shadow-sm overflow-hidden">
+    <section className="overflow-hidden rounded-lg border border-line bg-surface">
+      {/* 披露三角（macOS 折叠行惯例）：▸ 收起 / ▾ 展开 */}
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
         aria-expanded={isOpen}
-        className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-surface-sub"
+        className="flex h-[34px] w-full items-center gap-1.5 px-3 text-left hover:bg-surface-sub"
       >
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="flex items-center gap-2 text-sm font-semibold text-fg">
-            <Gauge size={16} className="text-fg-muted" />
-            详细性能监控
-          </span>
-          <span className="text-xs text-fg-muted">响应时间 · 连接活动 · 按需展开</span>
-        </span>
-        <ChevronDown
-          size={18}
-          className={`shrink-0 text-fg-muted transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-        />
+        <ChevronRight size={14} className={`shrink-0 text-fg-muted transition-transform duration-150 ${isOpen ? 'rotate-90' : ''}`} />
+        <span className="text-[13px] font-semibold text-fg">响应时间与连接活动</span>
+        <span className="text-xs text-fg-muted">按需加载</span>
       </button>
 
       {/* 保持挂载：折叠时 active=false 不发起请求，展开后数据不因再次折叠而丢失 */}
-      <div className={`grid grid-cols-1 gap-4 px-4 pb-4 lg:grid-cols-2 ${isOpen ? '' : 'hidden'}`}>
+      <div className={`grid grid-cols-2 gap-3 border-t border-line-soft p-3 ${isOpen ? '' : 'hidden'}`}>
         <ResponseTimeChart active={isOpen} refreshKey={refreshKey} />
         <ConnectionActivityChart active={isOpen} refreshKey={refreshKey} />
       </div>

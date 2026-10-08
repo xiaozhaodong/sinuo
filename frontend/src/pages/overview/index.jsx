@@ -9,6 +9,9 @@
 import { useCallback, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
+import { ToolbarButton, ToolbarSeparator, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
+import SegmentedControl from '@components/desktop/SegmentedControl.jsx';
 import useOverviewData from '@hooks/useOverviewData.js';
 import { resolveErrorMessage } from '@utils/errors.js';
 import { setPendingRequestsFilters } from '@utils/overviewHandoff.js';
@@ -20,7 +23,7 @@ import ModelUsageTable from './components/ModelUsageTable.jsx';
 import UpstreamCostRanking from './components/UpstreamCostRanking.jsx';
 import TokenDistributionChart from './components/TokenDistributionChart.jsx';
 import PerformanceDetailsPanel from './components/PerformanceDetailsPanel.jsx';
-import { DEFAULT_OVERVIEW_PERIOD, buildRequestsRangeFromSnapshot, periodCaption } from './utils/overviewViewModel.js';
+import { DEFAULT_OVERVIEW_PERIOD, OVERVIEW_PERIODS, buildRequestsRangeFromSnapshot, periodCaption } from './utils/overviewViewModel.js';
 
 // ============================================
 // Overview 主页面
@@ -62,34 +65,18 @@ const OverviewPage = ({ onNavigate }) => {
   const caption = periodCaption(period);
 
   return (
-    <div className="motion-page space-y-6">
-      {/* 页头 */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-fg">概览</h1>
-          <p className="text-fg-muted text-sm mt-1">系统健康状态与请求流量，先看异常，再看趋势。</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-mono text-xs text-fg-subtle">
-            最后更新 {lastUpdate || '—'}
-          </span>
-
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-inverted px-3.5 py-1.5 text-xs font-semibold text-fg-inverted shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            {refreshing ? '刷新中' : '刷新数据'}
-          </button>
-        </div>
-      </div>
+    <div className="motion-page flex-1 space-y-3 bg-pane p-4">
+      <PageToolbar subtitle={`快照 · ${lastUpdate || '—'} 更新`}>
+        <ToolbarSpacer />
+        {/* 时间范围由页面统一持有：趋势图、模型表与 Token 分布共用 */}
+        <SegmentedControl options={OVERVIEW_PERIODS} value={period} onChange={setPeriod} ariaLabel="时间范围" />
+        <ToolbarSeparator />
+        <ToolbarButton icon={RefreshCw} title="刷新数据" onClick={refresh} loading={refreshing} />
+      </PageToolbar>
 
       {/* 今日统计局部失败：只降级提示，不把整页变成错误页 */}
       {errors.today && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-xs text-danger">
+        <div role="alert" className="selectable flex flex-wrap items-center gap-3 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
           <AlertCircle size={14} />
           <span>今日统计加载失败：{resolveErrorMessage(errors.today, '未知错误')}</span>
           <button
@@ -114,11 +101,10 @@ const OverviewPage = ({ onNavigate }) => {
       />
 
       {/* 二级信息：请求趋势 + 模型调用情况 */}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(420px,1fr)]">
+      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
         <RequestTrendChart
           data={snapshot.trend}
           period={period}
-          onPeriodChange={setPeriod}
           loading={sectionLoading}
           error={errors.trend}
           onRetry={refresh}
@@ -134,7 +120,7 @@ const OverviewPage = ({ onNavigate }) => {
       </div>
 
       {/* 三级信息：上游成本排行 + Token 使用分布 */}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(420px,1fr)]">
+      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
         <UpstreamCostRanking
           data={snapshot.endpointCosts}
           loading={false}

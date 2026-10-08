@@ -92,7 +92,7 @@ const ConnectionActivityChart = ({ active = false, refreshKey = 0 }) => {
     : 0;
 
   return (
-    <div className="bg-surface-sub p-5 rounded-xl border border-line-soft flex flex-col h-full">
+    <div className="flex h-full flex-col rounded-md border border-line-soft bg-surface-sub p-3">
       <div className="flex justify-between items-start mb-1">
         <div className="flex items-center space-x-2">
           {/* tone-violet 给底色，inline color 覆到 series 色（tone 在 components 层，inline 优先） */}

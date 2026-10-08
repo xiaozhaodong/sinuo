@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildQueryParamsFromFilters, formatFilterDateTimeInput } from './filterTime.js';
+import { buildCustomRangePatch, buildQueryParamsFromFilters, formatFilterDateTimeInput } from './filterTime.js';
 
 test('buildQueryParamsFromFilters normalizes supported date-time precisions without producing malformed values', () => {
   assert.deepEqual(buildQueryParamsFromFilters({
@@ -46,4 +46,31 @@ test('概览交接保留绝对边界和来源，日期输入转换不修改查�
   assert.deepEqual(buildQueryParamsFromFilters(filters), expected);
   assert.equal(buildQueryParamsFromFilters({ ...filters, sourceView: 'all' }).source_view, undefined);
   assert.equal(formatFilterDateTimeInput('2026-09-09T10:00', 'Asia/Shanghai'), '2026-09-09T10:00');
+});
+
+test('应用未编辑的自定义区间保留 DST 重复小时及微秒边界', () => {
+  const original = { startDate: '2026-11-01T01:30:00.123456-04:00', endDate: '2026-11-01T01:30:00.654321-05:00' };
+  const timezone = 'America/New_York';
+  const draft = {
+    start: formatFilterDateTimeInput(original.startDate, timezone),
+    end: formatFilterDateTimeInput(original.endDate, timezone)
+  };
+  const patch = buildCustomRangePatch(original, draft, timezone);
+  assert.deepEqual(patch, original);
+  assert.deepEqual(buildQueryParamsFromFilters(patch), { start_date: original.startDate, end_date: original.endDate });
+});
+
+test('只编辑或清除一个时间边界时保留另一端的原始时刻', () => {
+  const original = { startDate: '2026-10-01T00:00:00.123456Z', endDate: '2026-10-02T00:00:00.654321Z' };
+  const timezone = 'Asia/Shanghai';
+  const draft = {
+    start: formatFilterDateTimeInput(original.startDate, timezone),
+    end: formatFilterDateTimeInput(original.endDate, timezone)
+  };
+  assert.deepEqual(buildCustomRangePatch(original, { ...draft, start: '2026-10-01T09:00' }, timezone), {
+    startDate: '2026-10-01T09:00', endDate: original.endDate
+  });
+  assert.deepEqual(buildCustomRangePatch(original, { ...draft, end: '' }, timezone), {
+    startDate: original.startDate, endDate: ''
+  });
 });

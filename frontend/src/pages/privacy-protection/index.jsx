@@ -1,6 +1,8 @@
 // ============================================
 // 隐私保护页面 - 出站请求隐私规则工作台
 // 2026-06-11 (v6.1 新增)
+// 2026-10-07 桌面化：子页签与扫描参数并入工具栏下方的范围条，规则表格贴边铺满，
+//            运行状态收进底部状态栏；部分规则未激活时在范围条下方给一条警示
 // ============================================
 
 import { useEffect, useMemo, useState } from 'react';
@@ -10,10 +12,13 @@ import {
   FlaskConical,
   PackagePlus,
   Plus,
-  Save,
-  Shield
+  Save
 } from 'lucide-react';
-import { Button, CustomSelect, ErrorMessage, Input, LoadingSpinner } from '@components/ui';
+import { Button, CustomSelect, ErrorMessage, LoadingSpinner } from '@components/ui';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
+import PageTabs from '@components/layout/PageTabs.jsx';
+import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
+import { StatusBar, StatusItem, StatusSpacer } from '@components/desktop/StatusBar.jsx';
 import { fetchEndpoints, fetchUpstreamAccounts, exportPrivacyRules } from '@utils/api.js';
 import usePrivacyProtection from './hooks/usePrivacyProtection.js';
 import useConfirm from '@hooks/useConfirm.js';
@@ -40,14 +45,14 @@ import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 // 模式分段控件（修改后立即保存热生效）
 const ModeSegmentedControl = ({ mode, busy, onChange }) => (
-  <div className="inline-flex rounded-lg border border-line p-0.5 bg-surface shadow-sm">
+  <div className="inline-flex shrink-0 rounded-[7px] bg-surface-mut p-0.5">
     {PRIVACY_MODE_OPTIONS.map((opt) => (
       <button
         key={opt.value}
         type="button"
         disabled={busy}
         onClick={() => onChange(opt.value)}
-        className={`px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
+        className={`h-[22px] whitespace-nowrap rounded-[5px] px-2.5 text-xs font-medium transition-colors ${
           mode === opt.value
             ? opt.value === 'disabled'
               ? 'bg-inverted text-fg-inverted shadow-sm'
@@ -63,15 +68,8 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
   </div>
 );
 
-// 扫描参数（点击保存生效，避免误触）
+// 扫描参数（点击保存生效，避免误触）：范围条右侧一组 24px 控件
 // 注意：调用方通过 key 在 settings 变化时重挂载本组件，初始 state 直接取自 settings
-const ScanSettingField = ({ label, className = '', children }) => (
-  <div className={`space-y-1.5 ${className}`}>
-    <label className="block h-5 text-sm font-semibold leading-5 text-fg-body">{label}</label>
-    <div className="h-10">{children}</div>
-  </div>
-);
-
 const ScanSettingsBar = ({ settings, busy, onSave }) => {
   const [scanMaxBytes, setScanMaxBytes] = useState(settings.scan_max_bytes);
   const [overLimitAction, setOverLimitAction] = useState(settings.over_limit_action);
@@ -82,101 +80,59 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
     || onError !== settings.on_error;
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-[260px_180px_164px_112px] md:items-end">
-      <ScanSettingField label="扫描上限（字节）">
-        <Input
+    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-fg-muted">
+      <label className="flex items-center gap-1.5">
+        扫描上限
+        <input
           type="number"
           min="1024"
           value={scanMaxBytes}
           onChange={(e) => setScanMaxBytes(e.target.value)}
-          className="h-10 font-semibold tabular-nums text-fg"
+          className="desk-field w-24 text-xs tabular-nums"
         />
-      </ScanSettingField>
-      <ScanSettingField label="超限策略">
-        <CustomSelect
-          size="md"
-          options={PRIVACY_OVER_LIMIT_OPTIONS}
-          value={overLimitAction}
-          onChange={setOverLimitAction}
-          className="w-full [&>button]:h-10 [&>button]:w-full"
-        />
-      </ScanSettingField>
-      <ScanSettingField label="出错策略">
-        <CustomSelect
-          size="md"
-          options={PRIVACY_ON_ERROR_OPTIONS}
-          value={onError}
-          onChange={setOnError}
-          className="w-full [&>button]:h-10 [&>button]:w-full"
-        />
-      </ScanSettingField>
-      <div className="space-y-1.5">
-        <div className="h-5" aria-hidden="true" />
-        <div className="h-10">
-          <Button
-            size="md"
-            variant="secondary"
-            icon={Save}
-            disabled={!dirty || busy}
-            className="h-10 w-full"
-            onClick={() => onSave({
-              scan_max_bytes: Number(scanMaxBytes),
-              over_limit_action: overLimitAction,
-              on_error: onError
-            })}
-          >
-            保存
-          </Button>
-        </div>
-      </div>
+        字节
+      </label>
+      <span className="flex items-center gap-1.5">
+        超限
+        <CustomSelect size="xs" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-32" />
+      </span>
+      <span className="flex items-center gap-1.5">
+        出错
+        <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-24" />
+      </span>
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={Save}
+        disabled={!dirty || busy}
+        onClick={() => onSave({
+          scan_max_bytes: Number(scanMaxBytes),
+          over_limit_action: overLimitAction,
+          on_error: onError
+        })}
+      >
+        保存
+      </Button>
     </div>
   );
 };
 
-const StatusBand = ({ settings, stats }) => {
+const PrivacyStatusBar = ({ settings, stats }) => {
   const { formatTimestamp } = useTimezone();
   const modeLabel = PRIVACY_MODE_OPTIONS.find((opt) => opt.value === settings.mode)?.label || settings.mode;
-  const items = [
-    { label: '当前模式', value: modeLabel },
-    { label: '已启用规则', value: settings.enabled_rules },
-    { label: '快照版本', value: `v${settings.version}` },
-    { label: '扫描上限', value: formatScanBytes(settings.scan_max_bytes) },
-    { label: '最近更新', value: settings.updated_at ? formatTimestamp(settings.updated_at) : '-' }
-  ];
-  if (stats && stats.scan_count > 0) {
-    items.push({ label: '累计扫描/命中', value: `${stats.scan_count} / ${stats.hit_count}` });
-  }
-  if (stats && stats.truncated_count > 0) {
-    items.push({ label: '扫描截断', value: stats.truncated_count, tone: 'warning' });
-  }
-  if (stats && stats.blocked_count > 0) {
-    items.push({ label: '已阻断', value: stats.blocked_count, tone: 'danger' });
-  }
-
-  const valueClassName = (tone) => {
-    if (tone === 'warning') return 'text-warn bg-warn-soft px-1.5 py-0.5 rounded-md';
-    if (tone === 'danger') return 'text-danger bg-danger-soft px-1.5 py-0.5 rounded-md';
-    return 'text-fg-body';
-  };
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 bg-surface border border-line rounded-xl">
-      {items.map((item) => (
-        <div key={item.label} className="flex items-baseline gap-1.5">
-          <span className="text-xs text-fg-subtle">{item.label}</span>
-          <span className={`text-sm font-medium tabular-nums ${valueClassName(item.tone)}`}>{item.value}</span>
-        </div>
-      ))}
-      {settings.status === 'degraded' && (
-        <span
-          className="flex items-center gap-1 text-xs text-warn bg-warn-soft px-2 py-1 rounded-lg"
-          title={settings.compile_error}
-        >
-          <AlertTriangle size={13} />
-          部分规则未激活
-        </span>
-      )}
-    </div>
+    <StatusBar>
+      <StatusItem label="模式" value={modeLabel} />
+      <StatusItem label="已启用规则" value={settings.enabled_rules} />
+      <StatusItem label="快照" value={`v${settings.version}`} />
+      <StatusItem label="扫描上限" value={formatScanBytes(settings.scan_max_bytes)} />
+      {stats?.scan_count > 0 && <StatusItem label="累计扫描 / 命中" value={`${stats.scan_count} / ${stats.hit_count}`} />}
+      {stats?.truncated_count > 0 && <StatusItem label="扫描截断" value={stats.truncated_count} valueClassName="text-warn" />}
+      {stats?.blocked_count > 0 && <StatusItem label="已阻断" value={stats.blocked_count} valueClassName="text-danger" />}
+      <StatusSpacer />
+      <StatusItem label="最近更新" value={settings.updated_at ? formatTimestamp(settings.updated_at) : '-'} />
+    </StatusBar>
   );
 };
 
@@ -185,25 +141,6 @@ const PRIVACY_TABS = [
   { id: 'builtin', label: '内置规则' },
   { id: 'advanced', label: '高级预设' }
 ];
-
-const PrivacyTabs = ({ activeTab, onChange }) => (
-  <div className="inline-flex rounded-lg border border-line bg-surface p-0.5 shadow-sm">
-    {PRIVACY_TABS.map((tab) => (
-      <button
-        key={tab.id}
-        type="button"
-        onClick={() => onChange(tab.id)}
-        className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-          activeTab === tab.id
-            ? 'bg-inverted text-fg-inverted shadow-sm'
-            : 'text-fg-muted hover:text-fg'
-        }`}
-      >
-        {tab.label}
-      </button>
-    ))}
-  </div>
-);
 
 const PrivacyProtectionPage = () => {
   const {
@@ -314,44 +251,28 @@ const PrivacyProtectionPage = () => {
     return <LoadingSpinner text="加载隐私保护配置..." />;
   }
   if (error || !settings) {
-    return <ErrorMessage title="隐私保护加载失败" message={error || '服务未启用'} onRetry={reloadAll} />;
+    return <div className="p-5"><ErrorMessage title="隐私保护加载失败" message={error || '服务未启用'} onRetry={reloadAll} /></div>;
   }
 
   return (
-    <div className="space-y-4 motion-page">
-      {/* 顶部工具条 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-xl font-bold text-fg flex items-center gap-2">
-          <Shield size={20} className="text-accent" />
-          隐私保护
-        </h2>
-        <span className="text-xs text-fg-subtle">出站请求保护：转发前按规则检测/脱敏请求内容</span>
-        <div className="ml-auto flex items-center gap-2">
-          <ModeSegmentedControl mode={settings.mode} busy={busy} onChange={handleModeChange} />
-          <Button size="sm" variant="secondary" icon={FlaskConical} onClick={() => setTestDrawerOpen(true)}>
-            规则测试
-          </Button>
-          <Button size="sm" variant="secondary" icon={Download} onClick={handleExport} disabled={busy}>
-            导出
-          </Button>
-          {activeTab === 'advanced' && (
-            <>
-              <Button size="sm" variant="secondary" icon={PackagePlus} onClick={() => setPresetOpen(true)} disabled={busy}>
-                导入预设
-              </Button>
-              <Button size="sm" icon={Plus} onClick={() => openDrawer(createEmptyPrivacyRuleForm())} disabled={busy}>
-                新增规则
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+    <div className="motion-page flex min-h-0 flex-1 flex-col bg-surface">
+      <PageToolbar subtitle="出站请求保护：转发前按规则检测 / 脱敏请求内容">
+        <ModeSegmentedControl mode={settings.mode} busy={busy} onChange={handleModeChange} />
+        <ToolbarSpacer />
+        <ToolbarButton variant="bordered" icon={FlaskConical} label="规则测试" onClick={() => setTestDrawerOpen(true)} />
+        <ToolbarButton icon={Download} title="导出规则" onClick={handleExport} disabled={busy} />
+        {activeTab === 'advanced' && (
+          <>
+            <ToolbarButton icon={PackagePlus} title="导入预设" onClick={() => setPresetOpen(true)} disabled={busy} />
+            <ToolbarButton icon={Plus} title="新增规则" onClick={() => openDrawer(createEmptyPrivacyRuleForm())} disabled={busy} />
+          </>
+        )}
+      </PageToolbar>
 
-      {/* 状态带 */}
-      <StatusBand settings={settings} stats={stats} />
-
-      {/* 扫描参数 */}
-      <div className="px-4 py-3 bg-surface border border-line rounded-xl">
+      {/* 范围条：规则分类页签 + 扫描参数 */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line bg-inspector px-3 py-1.5">
+        <PageTabs tabs={PRIVACY_TABS} activeTab={activeTab} onChange={setActiveTab} idPrefix="privacy" ariaLabel="隐私规则分类" />
+        <span className="flex-1" aria-hidden="true" />
         <ScanSettingsBar
           key={`${settings.scan_max_bytes}|${settings.over_limit_action}|${settings.on_error}|${settings.version}`}
           settings={settings}
@@ -360,13 +281,23 @@ const PrivacyProtectionPage = () => {
         />
       </div>
 
+      {settings.status === 'degraded' && (
+        <div role="alert" className="selectable flex shrink-0 items-start gap-2 border-b border-warn-line bg-warn-soft px-4 py-1.5 text-xs text-warn">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span className="break-all">部分规则未激活{settings.compile_error ? `：${settings.compile_error}` : ''}</span>
+        </div>
+      )}
       {actionError && (
-        <p className="text-sm text-danger break-all">{actionError}</p>
+        <div role="alert" className="selectable shrink-0 break-all border-b border-danger-line bg-danger-soft px-4 py-1.5 text-xs text-danger">{actionError}</div>
       )}
 
-      {/* 主体：规则配置与管理 */}
-      <div className="space-y-3">
-        <PrivacyTabs activeTab={activeTab} onChange={setActiveTab} />
+      {/* 主体：当前分类的规则 */}
+      <div
+        id={`privacy-panel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`privacy-tab-${activeTab}`}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         {activeTab === 'exact' && (
           <PrivacyExactSecretsPanel
             secrets={exactSecrets}
@@ -390,16 +321,18 @@ const PrivacyProtectionPage = () => {
           />
         )}
         {activeTab === 'builtin' && (
-          <PrivacyBuiltinRulesPanel
-            rules={builtinRules}
-            busy={busy}
-            onToggle={handleToggle}
-            onEdit={(rule) => openDrawer(ruleToForm(rule))}
-          />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <PrivacyBuiltinRulesPanel
+              rules={builtinRules}
+              busy={busy}
+              onToggle={handleToggle}
+              onEdit={(rule) => openDrawer(ruleToForm(rule))}
+            />
+          </div>
         )}
         {activeTab === 'advanced' && (
           <>
-            <div className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+            <div className="shrink-0 border-b border-warn-line bg-warn-soft px-4 py-1.5 text-xs leading-5 text-warn">
               这些规则可能误伤代码、日志、测试数据和工具输出。建议先使用“仅检测”，确认命中质量后再开启“脱敏转发”。
             </div>
             <PrivacyRulesToolbar
@@ -408,19 +341,23 @@ const PrivacyProtectionPage = () => {
               total={advancedRules.length}
               filtered={filteredRules.length}
             />
-            <PrivacyRulesTable
-              rules={filteredRules}
-              busy={busy}
-              reorderEnabled={reorderEnabled}
-              onToggle={handleToggle}
-              onEdit={(rule) => openDrawer(ruleToForm(rule))}
-              onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
-              onDelete={handleDelete}
-              onMove={handleMove}
-            />
+            <div className="min-h-0 flex-1 overflow-auto">
+              <PrivacyRulesTable
+                rules={filteredRules}
+                busy={busy}
+                reorderEnabled={reorderEnabled}
+                onToggle={handleToggle}
+                onEdit={(rule) => openDrawer(ruleToForm(rule))}
+                onDuplicate={(rule) => openDrawer(duplicateRuleForm(rule))}
+                onDelete={handleDelete}
+                onMove={handleMove}
+              />
+            </div>
           </>
         )}
       </div>
+
+      <PrivacyStatusBar settings={settings} stats={stats} />
 
       <PrivacyRuleDrawer
         key={drawerSession}

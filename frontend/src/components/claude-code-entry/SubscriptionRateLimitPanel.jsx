@@ -1,8 +1,10 @@
 // 订阅额度：请求页 Claude 浮层「接入模式」里的额度区，状态由 useClaudeSubscriptionRateLimit 提供。
 // 5h / d7 取响应头与主动查询中较新的一份；按模型周额度与额外用量只有主动查询才有。与账号池一样展示剩余。
+// 2026-10-07 桌面化：去掉外框，改为浮层的一组（小标题 + 「刷新」文字按钮 + 细条行 + 灰字说明）
 
 import { Fragment } from 'react';
-import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { PopoverAlert, PopoverNote, PopoverSection } from '@components/desktop/PopoverParts.jsx';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import {
   describeSubscriptionExtraUsage,
@@ -14,11 +16,6 @@ import {
   resolveSubscriptionWindows,
   SUBSCRIPTION_QUOTA_WINDOWS
 } from './subscriptionRateLimit.js';
-
-const ALERT_TONE_CLASS = {
-  danger: 'border-danger-line bg-danger-soft text-danger',
-  warn: 'border-warn-line bg-warn-soft text-warn'
-};
 
 const describeWindowText = (view, formatMonthDayTime) => {
   if (view.state === 'reset') return '已重置，等待新数据';
@@ -34,9 +31,9 @@ const describeRefreshTitle = (refreshState, formatTimeOnly) => {
   return '查询官方最新额度（含 claude.ai 网页等其他客户端的用量）';
 };
 
-// 三列网格让各行标签等宽对齐，模型名比 5h / d7 长
+// 三列网格让各行标签等宽对齐，模型名比 5h / d7 长；左缩进与浮层行文字对齐
 const QuotaRows = ({ rows, nowMs, formatMonthDayTime }) => (
-  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5 py-1 pl-[26px] pr-2">
     {rows.map(({ key, label, window }) => {
       const view = describeSubscriptionQuotaWindow(window, nowMs);
       return (
@@ -55,10 +52,9 @@ const QuotaRows = ({ rows, nowMs, formatMonthDayTime }) => (
 const RateLimitAlert = ({ alert, formatMonthDayTime }) => {
   const details = [alert.claimLabel, alert.resetAt && `${formatMonthDayTime(alert.resetAt)} 重置`].filter(Boolean);
   return (
-    <div className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${ALERT_TONE_CLASS[alert.tone]}`}>
-      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-      <span>{alert.title}{details.length > 0 && `（${details.join('，')}）`}</span>
-    </div>
+    <PopoverAlert tone={alert.tone === 'danger' ? 'danger' : 'warn'}>
+      {alert.title}{details.length > 0 && `（${details.join('，')}）`}
+    </PopoverAlert>
   );
 };
 
@@ -74,33 +70,34 @@ const SubscriptionRateLimitPanel = ({ quota, error, refreshing, nowMs, onRefresh
   ];
   const errorText = error || quota?.lastError;
 
+  const refreshButton = (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshState.disabled}
+      title={describeRefreshTitle(refreshState, formatTimeOnly)}
+      className="flex items-center gap-1 text-[11.5px] text-accent hover:text-accent-fg disabled:text-fg-subtle"
+    >
+      {refreshing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}刷新
+    </button>
+  );
+
   return (
-    <div className="space-y-2.5 rounded-xl border border-line-soft p-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold text-fg">订阅额度</span>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshState.disabled}
-          title={describeRefreshTitle(refreshState, formatTimeOnly)}
-          className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] text-fg-muted hover:bg-surface-sub disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}刷新
-        </button>
-      </div>
+    <div>
+      <PopoverSection title="订阅额度" aside={refreshButton} />
       {hasSubscriptionQuotaData(quota) ? (
         <>
           {alert && <RateLimitAlert alert={alert} formatMonthDayTime={formatMonthDayTime} />}
           <QuotaRows rows={rows} nowMs={nowMs} formatMonthDayTime={formatMonthDayTime} />
-          {extraUsageText && <p className="text-[11px] text-fg-muted">额外用量：{extraUsageText}</p>}
-          <p className="text-[11px] leading-relaxed text-fg-subtle">
+          {extraUsageText && <PopoverNote tone="muted">额外用量：{extraUsageText}</PopoverNote>}
+          <PopoverNote>
             显示剩余比例，更新于 {formatMonthDayTime(windows.updatedAt)}（{describeSubscriptionSource(windows.source)}）。订阅请求结束约 3 分钟后自动同步一次官方额度，网页等其他客户端的用量届时补上。
-          </p>
+          </PopoverNote>
         </>
       ) : (
-        <p className="text-xs text-fg-subtle">发起一次订阅直通请求后显示。额度只保存在内存里，重启应用后需要重新请求。</p>
+        <PopoverNote>发起一次订阅直通请求后显示。额度只保存在内存里，重启应用后需要重新请求。</PopoverNote>
       )}
-      {errorText && <p role="alert" className="text-[11px] text-danger">{errorText}</p>}
+      {errorText && <PopoverNote tone="danger"><span role="alert">{errorText}</span></PopoverNote>}
     </div>
   );
 };

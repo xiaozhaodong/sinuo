@@ -18,3 +18,11 @@ export const getRequestPresentation = (request = {}) => {
       : ''
   };
 };
+
+// 路由模式展示名：详情面板「概要」与生命周期「调度」共用；未知值与缺省都按自动
+const ROUTE_MODE_LABELS = {
+  manual_fixed: '严格固定',
+  manual_preferred: '手动优选'
+};
+
+export const formatRouteMode = (mode) => ROUTE_MODE_LABELS[mode] || '自动';

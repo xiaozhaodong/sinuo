@@ -28,9 +28,10 @@ const ConfirmDialog = ({
   // 焦点只由生命周期管理：先记住触发控件，再聚焦对话框，避免 autoFocus 抢先覆盖恢复目标。
   useModalLifecycle({ open: true, onClose: onCancel, initialFocusRef: dialogRef, focusTrapRef: dialogRef });
 
+  // 2026-10-07 桌面化：紧凑的系统提示框样式（340px 宽、图标在上、按钮右对齐）
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-[20vh] animate-fade-in">
-      <button type="button" tabIndex={-1} aria-label="取消" className="absolute inset-0 bg-overlay" onClick={onCancel} />
+    <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-[18vh]">
+      <button type="button" tabIndex={-1} aria-label="取消" className="motion-overlay absolute inset-0 bg-overlay" onClick={onCancel} />
       <div
         ref={dialogRef}
         tabIndex={-1}
@@ -38,19 +39,14 @@ const ConfirmDialog = ({
         aria-modal="true"
         aria-label={title}
         aria-describedby={messageId}
-        className="relative bg-surface rounded-2xl border border-line shadow-2xl w-full max-w-md p-6 focus:outline-none"
+        className="motion-dialog relative w-full max-w-[340px] rounded-xl border border-line bg-surface p-5 shadow-2xl ring-1 ring-hairline focus:outline-none"
       >
-        <div className="flex items-center gap-3 mb-4">
-          <div className={`p-3 rounded-full ${danger ? 'bg-danger-soft' : 'bg-warn-soft'}`}>
-            <AlertTriangle className={danger ? 'text-danger' : 'text-warn'} size={24} />
-          </div>
-          <h3 className="text-lg font-semibold text-fg">{title}</h3>
-        </div>
+        <AlertTriangle className={danger ? 'text-danger' : 'text-warn'} size={28} strokeWidth={1.75} />
+        <h3 className="mt-3 text-[13px] font-semibold text-fg">{title}</h3>
+        <p id={messageId} className="selectable mt-1.5 whitespace-pre-line text-xs leading-relaxed text-fg-body">{message}</p>
 
-        <p id={messageId} className="text-fg-body mb-6 whitespace-pre-line">{message}</p>
-
-        <div className="flex justify-end gap-3">
-          <Button type="button" variant="ghost" onClick={onCancel}>{cancelText}</Button>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel}>{cancelText}</Button>
           <Button type="button" variant={danger ? 'danger' : 'primary'} onClick={onConfirm}>{confirmText}</Button>
         </div>
       </div>

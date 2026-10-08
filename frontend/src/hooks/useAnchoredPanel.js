@@ -10,7 +10,8 @@ const MIN_PANEL_HEIGHT = 120;
 // 触发按钮贴近视口底部时，浮层至少留出这么高再往上收
 const MIN_VISIBLE_HEIGHT = 180;
 
-const useAnchoredPanel = ({ open, setOpen, triggerRef, panelRef, maxWidth, dismissible = true }) => {
+// placement='top' 时向上展开（侧边栏底部的主题菜单），用 bottom 定位，不必预先知道浮层高度
+const useAnchoredPanel = ({ open, setOpen, triggerRef, panelRef, maxWidth, dismissible = true, placement = 'bottom' }) => {
   const [position, setPosition] = useState(null);
 
   useEffect(() => {
@@ -19,11 +20,21 @@ const useAnchoredPanel = ({ open, setOpen, triggerRef, panelRef, maxWidth, dismi
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(maxWidth, window.innerWidth - VIEWPORT_MARGIN * 2);
+      const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN));
+      if (placement === 'top') {
+        setPosition({
+          width,
+          left,
+          bottom: window.innerHeight - rect.top + TRIGGER_GAP,
+          maxHeight: Math.max(MIN_PANEL_HEIGHT, rect.top - TRIGGER_GAP - VIEWPORT_MARGIN)
+        });
+        return;
+      }
       const top = Math.min(rect.bottom + TRIGGER_GAP, Math.max(VIEWPORT_MARGIN, window.innerHeight - MIN_VISIBLE_HEIGHT));
       setPosition({
         width,
         top,
-        left: Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN)),
+        left,
         maxHeight: Math.max(MIN_PANEL_HEIGHT, window.innerHeight - top - VIEWPORT_MARGIN)
       });
     };
@@ -34,7 +45,7 @@ const useAnchoredPanel = ({ open, setOpen, triggerRef, panelRef, maxWidth, dismi
       window.removeEventListener('resize', positionPanel);
       window.removeEventListener('scroll', positionPanel, true);
     };
-  }, [open, triggerRef, maxWidth]);
+  }, [open, triggerRef, maxWidth, placement]);
 
   useEffect(() => {
     if (!open || !dismissible) return undefined;

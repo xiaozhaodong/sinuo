@@ -28,11 +28,11 @@ const EndpointPicker = ({ endpoints = [], selected = [], disabled = false, onTog
   const clearVisible = () => onReplace?.(selected.filter((name) => !visibleNames.includes(name)));
 
   return (
-    <div className="rounded-xl border border-line bg-surface-sub/40">
+    <div className="rounded-[10px] border border-line bg-surface">
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
         <Search size={14} className="shrink-0 text-fg-subtle" />
         <input
-          className="min-w-0 flex-1 bg-transparent text-xs text-fg-body outline-none placeholder:text-fg-subtle"
+          className="desk-field min-w-0 flex-1"
           value={keyword}
           disabled={disabled}
           onChange={(event) => setKeyword(event.target.value)}
@@ -48,7 +48,7 @@ const EndpointPicker = ({ endpoints = [], selected = [], disabled = false, onTog
         </button>
       </div>
 
-      <div className="max-h-[240px] overflow-y-auto p-1.5">
+      <div className="max-h-[240px] divide-y divide-line-soft overflow-y-auto">
         {visible.length === 0 ? (
           <div className="px-3 py-8 text-center text-xs text-fg-subtle">
             {endpoints.length === 0 ? '还没有可用端点，请先在端点页创建' : '没有匹配的端点'}
@@ -62,8 +62,9 @@ const EndpointPicker = ({ endpoints = [], selected = [], disabled = false, onTog
                 type="button"
                 key={endpoint.name}
                 disabled={disabled}
+                aria-pressed={checked}
                 onClick={() => onToggle?.(endpoint.name)}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors disabled:opacity-50 ${
+                className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors disabled:opacity-50 ${
                   checked ? 'bg-accent-soft/60' : 'hover:bg-surface-mut/60'
                 }`}
               >
@@ -79,10 +80,10 @@ const EndpointPicker = ({ endpoints = [], selected = [], disabled = false, onTog
                   <span className="block truncate text-xs font-medium text-fg-body">{endpoint.name}</span>
                   <span className="block truncate font-mono text-[10px] text-fg-subtle">{endpoint.url}</span>
                 </span>
-                <span className="shrink-0 rounded-full bg-surface-mut px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
+                <span className="shrink-0 rounded border border-line px-1.5 font-mono text-[11px] leading-[18px] text-fg-muted">
                   P{endpoint.priority ?? 1}
                 </span>
-                <span className={`${hint.tone} shrink-0 rounded-md border px-1.5 py-0.5 text-[10px]`}>{hint.label}</span>
+                <span className={`${hint.tone} shrink-0 rounded border px-1.5 text-[11px] leading-[18px]`}>{hint.label}</span>
               </button>
             );
           })

@@ -7,7 +7,7 @@ import { AlertTriangle, Globe, Pencil, Trash2 } from 'lucide-react';
 import { CustomSelect } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { ENDPOINT_STATUS_LABELS, ROUTE_MODES, endpointStatusTone, isWebToolsBinding } from '../../utils/modelRouting.js';
-import ToggleSwitch from '../ToggleSwitch.jsx';
+import Switch from '@components/desktop/Switch.jsx';
 
 const outcomeLabels = {
   success: '成功',
@@ -27,25 +27,25 @@ const ModelBindingRow = ({ binding, busy, onEdit, onDelete, onPatch }) => {
   const webTools = isWebToolsBinding(binding);
 
   return (
-    <div className={`px-4 py-3 transition-colors ${binding.enabled ? '' : 'bg-surface-sub/50'}`}>
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+    <div className="px-3.5 py-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-[180px] flex-1">
           {webTools ? (
             <div
-              className={`flex items-center gap-1.5 text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`}
+              className={`flex items-center gap-1.5 text-[13px] ${binding.enabled ? 'text-fg-body' : 'text-fg-muted line-through'}`}
               title="请求 tools 里带 web_search / web_fetch 时优先命中，不看模型名"
             >
               <Globe size={13} className="shrink-0 text-accent" />
               <span className="truncate">联网工具</span>
-              <span className="shrink-0 rounded-md border border-line px-1 py-px font-mono text-[10px] text-fg-subtle">web_search / web_fetch</span>
+              <span className="shrink-0 rounded border border-line px-1.5 font-mono text-[11px] leading-[18px] text-fg-muted">web_search / web_fetch</span>
             </div>
           ) : (
-            <div className={`truncate font-mono text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`} title={binding.model}>
+            <div className={`truncate font-mono text-[13px] ${binding.enabled ? 'text-fg-body' : 'text-fg-muted line-through'}`} title={binding.model}>
               {binding.model}
             </div>
           )}
           {binding.note && (
-            <div className="mt-0.5 truncate text-[11px] text-fg-subtle" title={binding.note}>{binding.note}</div>
+            <div className="mt-0.5 truncate text-[11px] text-fg-muted" title={binding.note}>{binding.note}</div>
           )}
         </div>
 
@@ -54,7 +54,7 @@ const ModelBindingRow = ({ binding, busy, onEdit, onDelete, onPatch }) => {
           value={binding.route_mode}
           disabled={busy}
           size="sm"
-          className="w-[104px] shrink-0"
+          className="w-[100px] shrink-0"
           onChange={(routeMode) => {
             // 切到优选/固定时后端要求目标必须是成员，只有一个端点就直接替用户定下来。
             const routeTarget =
@@ -69,47 +69,47 @@ const ModelBindingRow = ({ binding, busy, onEdit, onDelete, onPatch }) => {
           disabled={busy || binding.route_mode === 'auto'}
           size="sm"
           placeholder={binding.route_mode === 'auto' ? '自动挑选' : '选择目标端点'}
-          className="w-[150px] shrink-0"
+          className="w-[170px] shrink-0"
           onChange={(routeTarget) => onPatch({ route_target: routeTarget })}
         />
 
         <div className="flex shrink-0 items-center gap-1">
-          <ToggleSwitch
-            enabled={binding.enabled}
+          <Switch
+            checked={binding.enabled}
             disabled={busy}
             title={binding.enabled ? '停用该映射' : '启用该映射'}
-            onChange={() => onPatch({ enabled: !binding.enabled })}
+            onChange={(enabled) => onPatch({ enabled })}
           />
           <button
             type="button"
             title="编辑模型与端点"
             disabled={busy}
             onClick={onEdit}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted hover:border-accent-line hover:text-accent disabled:opacity-50"
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg disabled:opacity-50"
           >
-            <Pencil size={13} />
+            <Pencil size={14} />
           </button>
           <button
             type="button"
             title="删除该模型映射"
             disabled={busy}
             onClick={onDelete}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted hover:border-danger hover:text-danger disabled:opacity-50"
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-danger disabled:opacity-50"
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} />
           </button>
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1">
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
         {binding.endpoints.length === 0 ? (
-          <span className="tone-rose rounded-md border px-1.5 py-0.5 text-[11px]">未选择任何端点</span>
+          <span className="tone-rose rounded border px-1.5 text-[11px] leading-[18px]">未选择任何端点</span>
         ) : (
           binding.endpoints.map((endpoint) => (
             <span
               key={endpoint.name}
               title={endpoint.detail || ENDPOINT_STATUS_LABELS[endpoint.status] || endpoint.status}
-              className={`${endpointStatusTone(endpoint.status)} max-w-full truncate rounded-md border px-1.5 py-0.5 text-[11px] ${
+              className={`${endpointStatusTone(endpoint.status)} max-w-full truncate rounded border px-1.5 text-[11px] leading-[18px] ${
                 endpoint.name === binding.route_target ? 'font-semibold' : ''
               }`}
             >
@@ -121,7 +121,7 @@ const ModelBindingRow = ({ binding, busy, onEdit, onDelete, onPatch }) => {
       </div>
 
       {(binding.last_effective_endpoint || blocked.length > 0 || binding.shared_models.length > 0) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-subtle">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-muted">
           {binding.last_effective_endpoint && (
             <span>
               最近命中 {binding.last_effective_endpoint}

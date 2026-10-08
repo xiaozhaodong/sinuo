@@ -167,9 +167,10 @@ const normalizeOptions = (options = [], { includeAll = false } = {}) => {
     return unique;
   }
 
+  // 视图模型自带的「全部计划」等同值项去掉：否则菜单里两项「全部」同时被勾上
   return [
     { value: ALL_FILTER_VALUE, label: '全部' },
-    ...unique
+    ...unique.filter((option) => option.value !== ALL_FILTER_VALUE)
   ];
 };
 

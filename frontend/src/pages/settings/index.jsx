@@ -3,7 +3,7 @@
 // v5.1.0 (2025-12-08)
 // ============================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Settings,
   RefreshCw,
@@ -20,9 +20,12 @@ import {
   Archive,
   ImageIcon,
   TerminalSquare,
-  Monitor
+  Monitor,
+  KeyRound
 } from 'lucide-react';
-import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
+import { LoadingSpinner, ErrorMessage } from '@components/ui';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
+import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
 import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
 import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
@@ -43,6 +46,18 @@ import {
   resetSettings as apiResetSettings,
   fetchPortInfo
 } from '@utils/api.js';
+
+// 左侧目录：分组锚点 id 与滚动联动参数
+const ACCESS_SECTION_ID = 'settings-access';
+const sectionIdOf = (categoryName) => `settings-${categoryName}`;
+const SECTION_ACTIVATE_OFFSET = 32;
+const SECTION_SCROLL_MARGIN = 8;
+
+const MESSAGE_TONES = {
+  success: 'border-success-line bg-success-soft text-success',
+  error: 'border-danger-line bg-danger-soft text-danger',
+  info: 'border-line bg-surface text-fg-body'
+};
 
 // 分类名称到 Lucide 图标的映射
 const CATEGORY_ICONS = {
@@ -75,6 +90,27 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
   const [saveMessage, setSaveMessage] = useState(null);
 
   const isWails = isWailsEnvironment();
+  const scrollRef = useRef(null);
+  const [activeSection, setActiveSection] = useState(ACCESS_SECTION_ID);
+
+  // 滚动联动：顶部已越过的最后一个分组即当前分组
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    let current = ACCESS_SECTION_ID;
+    for (const section of container.querySelectorAll('section[id]')) {
+      if (section.offsetTop - container.scrollTop <= SECTION_ACTIVATE_OFFSET) current = section.id;
+    }
+    setActiveSection(current);
+  }, []);
+
+  const scrollToSection = useCallback((id) => {
+    const container = scrollRef.current;
+    const section = container?.querySelector(`#${CSS.escape(id)}`);
+    if (!section) return;
+    setActiveSection(id);
+    container.scrollTo({ top: section.offsetTop - SECTION_SCROLL_MARGIN, behavior: 'smooth' });
+  }, []);
 
   // 加载设置数据
   const loadSettings = useCallback(async () => {
@@ -106,7 +142,7 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
       setPortInfo(portData);
       setChanges({});
     } catch (err) {
-      setError(err.message || '加载设置失败');
+      setError(resolveErrorMessage(err, '加载设置失败'));
     } finally {
       setLoading(false);
     }
@@ -194,25 +230,24 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
         return setting?.requires_restart;
       });
 
+      // 先重新加载再写提示：loadSettings 开头会清空提示，顺序反过来提示永远显示不出来
+      await loadSettings();
       setSaveMessage({
         type: 'success',
         text: requiresRestart
           ? '设置已保存。部分设置需要重启应用后生效。'
           : '设置已保存并生效'
       });
-
-      // 重新加载设置
-      await loadSettings();
     } catch (err) {
-      setSaveMessage({ type: 'error', text: err.message || '保存失败' });
+      setSaveMessage({ type: 'error', text: resolveErrorMessage(err, '保存失败') });
     } finally {
       setSaving(false);
     }
   }, [changes, isWails, settings, loadSettings]);
 
   // 重置分类设置
-  const handleResetCategory = useCallback(async (category) => {
-    if (!(await confirm({ title: '重置分类设置', message: `确定要将「${category}」分类的设置重置为默认值吗？`, confirmText: '确认重置', danger: true }))) {
+  const handleResetCategory = useCallback(async (category, label = category) => {
+    if (!(await confirm({ title: '恢复默认设置', message: `确定要将「${label}」分组的设置恢复为默认值吗？`, confirmText: '恢复默认', danger: true }))) {
       return;
     }
 
@@ -226,10 +261,10 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
         await apiResetSettings(category);
       }
 
-      setSaveMessage({ type: 'success', text: `${category} 设置已重置为默认值` });
       await loadSettings();
+      setSaveMessage({ type: 'success', text: `「${label}」已恢复默认值` });
     } catch (err) {
-      setSaveMessage({ type: 'error', text: err.message || '重置失败' });
+      setSaveMessage({ type: 'error', text: resolveErrorMessage(err, '重置失败') });
     } finally {
       setSaving(false);
     }
@@ -237,142 +272,126 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
 
   // 判断是否有未保存的变更
   const hasChanges = Object.keys(changes).length > 0;
+  const changeCount = Object.keys(changes).length;
+
+  // 左侧目录与右侧分组同序：客户端接入 → 服务端口 → 其余分类
+  const serverCategory = categories.find((category) => category.name === 'server');
+  const otherCategories = categories.filter((category) => category.name !== 'server');
+  const sections = [
+    { id: ACCESS_SECTION_ID, label: '客户端接入', icon: KeyRound },
+    ...(serverCategory ? [serverCategory] : []).concat(otherCategories).map((category) => ({
+      id: sectionIdOf(category.name),
+      label: category.label,
+      icon: CATEGORY_ICONS[category.name] || Settings
+    }))
+  ];
+
+  const renderItems = (categoryName) => settingsByCategory[categoryName]?.map((setting) => (
+    <SettingItem
+      key={`${setting.category}.${setting.key}`}
+      setting={setting}
+      value={getCurrentValue(setting)}
+      onChange={handleSettingChange}
+      disabled={saving}
+    />
+  ));
 
   return (
-    <div className="space-y-8 motion-page">
-      {/* 页面标题 */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-fg flex items-center gap-3">
-            <div className="p-2 bg-inverted rounded-lg text-fg-inverted shadow-lg">
-              <Settings size={20} />
-            </div>
-            <div>
-              <div>系统设置</div>
-              <p className="text-sm text-fg-muted font-normal mt-1">
-                配置系统运行参数，大部分设置即时生效
-              </p>
-            </div>
-          </h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            icon={RefreshCw}
-            variant="secondary"
-            onClick={loadSettings}
-            disabled={saving || loading}
-          >
-            刷新
-          </Button>
-          <Button
-            icon={Save}
-            variant="primary"
-            onClick={handleSave}
-            disabled={saving || loading || !hasChanges}
-            loading={saving}
-          >
-            {hasChanges ? `保存 (${Object.keys(changes).length})` : '保存'}
-          </Button>
-        </div>
-      </div>
-
-      {/* 保存消息提示 */}
-      {saveMessage && (
-        <div className={`
-          flex items-center gap-2 px-4 py-3 rounded-lg text-sm
-          ${saveMessage.type === 'success' ? 'bg-success-soft text-success border border-success-line' : ''}
-          ${saveMessage.type === 'error' ? 'bg-danger-soft text-danger border border-danger-line' : ''}
-          ${saveMessage.type === 'info' ? 'bg-surface-sub text-fg-body border border-line' : ''}
-        `}>
-          {saveMessage.type === 'success' && <CheckCircle2 size={16} />}
-          {saveMessage.type === 'error' && <AlertCircle size={16} />}
-          {saveMessage.text}
-        </div>
-      )}
-
-      {/* 未保存变更提示 */}
-      {hasChanges && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg text-sm bg-warn-soft text-warn border border-warn-line">
-          <AlertCircle size={16} />
-          您有 {Object.keys(changes).length} 项未保存的变更
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <AccessShortcutCard
-          title="Codex 客户端接入"
-          description="订阅代理的启停、模式、监听地址与一次性接入密钥已移至 Codex 管理。"
-          onNavigate={onNavigateToCodexAccess}
+    <div className="motion-page flex min-h-0 flex-1 bg-pane">
+      <PageToolbar subtitle={hasChanges ? `${changeCount} 项更改未保存` : '大部分设置保存后即时生效'}>
+        <ToolbarSpacer />
+        <ToolbarButton icon={RefreshCw} title="重新载入" onClick={loadSettings} disabled={saving || loading} />
+        <ToolbarButton
+          variant="primary"
+          icon={Save}
+          label={hasChanges ? `保存 (${changeCount})` : '保存'}
+          onClick={handleSave}
+          disabled={saving || loading || !hasChanges}
+          loading={saving}
         />
-        <AccessShortcutCard
-          title="Claude Code 客户端接入"
-          description="入口的启停、端口与接入模式（订阅直通 / 端点）已移至 Claude 管理。"
-          onNavigate={onNavigateToClaudeAccess}
-        />
-      </div>
+      </PageToolbar>
 
-      {error
-        ? <ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} />
-        : loading
-          ? <LoadingSpinner text="加载设置..." />
-          : (
-            <>
-              {/* 端口信息 (服务端口分类的特殊处理) */}
-              {categories.find(c => c.name === 'server') && (
-                <SettingsSection
-                  title="服务端口"
-                  icon={Server}
-                  description="API 服务端口配置"
-                  onReset={() => handleResetCategory('server')}
-                  resetDisabled={saving}
-                >
-                  <PortInfo portInfo={portInfo} loading={loading} />
-                  <div className="mt-4 pt-4 border-t border-line-soft">
-                    {settingsByCategory['server']?.map(setting => (
-                      <SettingItem
-                        key={`${setting.category}.${setting.key}`}
-                        setting={setting}
-                        value={getCurrentValue(setting)}
-                        onChange={handleSettingChange}
-                        disabled={saving}
-                      />
-                    ))}
-                  </div>
-                </SettingsSection>
-              )}
+      {/* 分组目录：点击滚到对应分组，滚动时高亮当前分组 */}
+      <nav aria-label="设置分组" className="w-[172px] shrink-0 overflow-y-auto border-r border-line px-2 py-3">
+        {sections.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => scrollToSection(id)}
+            aria-current={activeSection === id ? 'true' : undefined}
+            className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px] ${
+              activeSection === id ? 'bg-sidebar-sel font-medium text-fg' : 'text-fg-body'
+            }`}
+          >
+            <Icon size={14} strokeWidth={1.75} className="sidebar-icon shrink-0" />
+            <span className="truncate">{label}</span>
+          </button>
+        ))}
+      </nav>
 
-              {/* 其他设置分类 (两列布局) */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {categories
-                  .filter(c => c.name !== 'server')
-                  .map(category => (
+      <div ref={scrollRef} onScroll={handleScroll} className="relative min-w-0 flex-1 overflow-y-auto px-7 pb-12">
+        <div className="mx-auto max-w-[640px]">
+          {saveMessage && (
+            <div
+              role={saveMessage.type === 'error' ? 'alert' : 'status'}
+              className={`selectable mt-4 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${MESSAGE_TONES[saveMessage.type]}`}
+            >
+              {saveMessage.type === 'success' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+              {saveMessage.text}
+            </div>
+          )}
+
+          <SettingsSection id={ACCESS_SECTION_ID} title="客户端接入" description="入口的启停、端口与接入模式在各自的管理页">
+            <AccessShortcutCard
+              title="Codex 客户端接入"
+              description="订阅代理的启停、模式、监听地址与一次性接入密钥"
+              onNavigate={onNavigateToCodexAccess}
+            />
+            <AccessShortcutCard
+              title="Claude Code 客户端接入"
+              description="入口的启停、端口与接入模式（订阅直通 / 端点）"
+              onNavigate={onNavigateToClaudeAccess}
+            />
+          </SettingsSection>
+
+          {error
+            ? <div className="mt-5"><ErrorMessage title="设置加载失败" message={error} onRetry={loadSettings} /></div>
+            : loading
+              ? <LoadingSpinner text="加载设置..." />
+              : (
+                <>
+                  {serverCategory && (
                     <SettingsSection
-                      key={category.name}
-                      title={category.label}
-                      icon={CATEGORY_ICONS[category.name] || Settings}
-                      description={category.description}
-                      onReset={() => handleResetCategory(category.name)}
+                      id={sectionIdOf('server')}
+                      title={serverCategory.label}
+                      description={serverCategory.description}
+                      onReset={() => handleResetCategory('server', serverCategory.label)}
                       resetDisabled={saving}
                     >
-                      {settingsByCategory[category.name]?.map(setting => (
-                        <SettingItem
-                          key={`${setting.category}.${setting.key}`}
-                          setting={setting}
-                          value={getCurrentValue(setting)}
-                          onChange={handleSettingChange}
-                          disabled={saving}
-                        />
-                      ))}
+                      <PortInfo portInfo={portInfo} loading={loading} />
+                      {renderItems('server')}
+                    </SettingsSection>
+                  )}
+
+                  {otherCategories.map((category) => (
+                    <SettingsSection
+                      key={category.name}
+                      id={sectionIdOf(category.name)}
+                      title={category.label}
+                      description={category.description}
+                      onReset={() => handleResetCategory(category.name, category.label)}
+                      resetDisabled={saving}
+                    >
+                      {renderItems(category.name)}
                       {(!settingsByCategory[category.name] || settingsByCategory[category.name].length === 0) && (
-                        <div className="text-sm text-fg-subtle text-center py-4">
-                          暂无设置项
-                        </div>
+                        <div className="px-3.5 py-3 text-center text-xs text-fg-subtle">暂无设置项</div>
                       )}
                     </SettingsSection>
                   ))}
-              </div>
-            </>
-          )}
+                </>
+              )}
+        </div>
+      </div>
       {confirmDialog}
     </div>
   );

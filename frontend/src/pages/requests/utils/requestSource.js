@@ -60,29 +60,31 @@ export const normalizeRequestSource = (request = {}) => ({
   upstreamName: resolveRequestUpstream(request)
 });
 
-// 上游筛选候选：返回 { value, label }，订阅直通的 value 仍是真实存储的
-// upstream_name（筛选按精确值查库），只有展示名固定为「订阅直通」。
+// 单条请求的上游筛选候选：返回 { value, label }，不可筛选（合成标签）时返回 null。
+// 订阅直通的 value 仍是真实存储的 upstream_name（筛选按精确值查库），只有展示名固定为「订阅直通」；
+// withFamily：不限请求族时两家订阅直通同时出现，标签带上请求族区分。
+export const resolveUpstreamFilterOption = (request = {}, { withFamily = true } = {}) => {
+  const normalized = normalizeRequestSource(request);
+  if (isSubscriptionRequest(request)) {
+    const value = SUBSCRIPTION_UPSTREAM_NAMES[normalized.requestFamily];
+    if (!value) return null;
+    const label = withFamily
+      ? `${SUBSCRIPTION_UPSTREAM_LABEL} · ${getRequestFamilyMeta(normalized.requestFamily).label}`
+      : SUBSCRIPTION_UPSTREAM_LABEL;
+    return { value, label };
+  }
+  const name = normalized.upstreamName;
+  return name && !SYNTHETIC_UPSTREAM_LABELS.has(name) ? { value: name, label: name } : null;
+};
+
+// 上游筛选候选列表（按请求族过滤、去重、排序）
 export const filterUpstreamOptionsByFamily = (requests = [], family = 'all') => {
   const selectedFamily = family === 'all' ? '' : normalizeRequestFamily(family);
   const options = new Map();
   for (const request of requests) {
-    const normalized = normalizeRequestSource(request);
-    if (selectedFamily && normalized.requestFamily !== selectedFamily) continue;
-    if (isSubscriptionRequest(request)) {
-      const value = SUBSCRIPTION_UPSTREAM_NAMES[normalized.requestFamily];
-      if (value) {
-        // 不限请求族时两家订阅直通同时出现，标签带上请求族区分
-        const label = selectedFamily
-          ? SUBSCRIPTION_UPSTREAM_LABEL
-          : `${SUBSCRIPTION_UPSTREAM_LABEL} · ${getRequestFamilyMeta(normalized.requestFamily).label}`;
-        options.set(value, { value, label });
-      }
-      continue;
-    }
-    const name = normalized.upstreamName;
-    if (name && !SYNTHETIC_UPSTREAM_LABELS.has(name)) {
-      options.set(name, { value: name, label: name });
-    }
+    if (selectedFamily && normalizeRequestFamily(request.requestFamily || request.request_family) !== selectedFamily) continue;
+    const option = resolveUpstreamFilterOption(request, { withFamily: !selectedFamily });
+    if (option) options.set(option.value, option);
   }
   return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
 };

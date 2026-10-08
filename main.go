@@ -132,12 +132,8 @@ func main() {
 		BackgroundColour: application.NewRGBA(11, 17, 32, 255),
 		Mac: application.MacWindow{
 			Backdrop: application.MacBackdropNormal,
-			TitleBar: application.MacTitleBar{
-				AppearsTransparent: true,
-				HideTitle:          true,
-				FullSizeContent:    true,
-				UseToolbar:         false,
-			},
+			// 统一工具栏：红绿灯下移到 52pt 工具栏的竖直中线，前端侧边栏顶部与内容区工具栏同高。
+			TitleBar: application.MacTitleBarHiddenInsetUnified,
 		},
 		Windows: application.WindowsWindow{
 			DisableIcon:  false,

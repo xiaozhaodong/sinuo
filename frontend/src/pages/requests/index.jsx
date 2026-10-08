@@ -1,11 +1,21 @@
 // ============================================
 // Requests 页面 - 请求追踪（重构版）
 // 2025-12-06 10:40:38 v4.0: 简化端点切换（移除 Token 级联）
+// 2026-10-07 桌面化：贴边表格 + 底部可拖动详情面板（替代双击弹窗）+ 状态栏（统计与分页）；
+//            单击选中、↑↓ 切换、⌘C 复制请求 ID、右键菜单
 // ============================================
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { BarChart3 } from 'lucide-react';
 import { ErrorMessage } from '@components/ui';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
+import { StatusBar, StatusSpacer } from '@components/desktop/StatusBar.jsx';
+import PaneSplitter from '@components/desktop/PaneSplitter.jsx';
+import StatusPager from '@components/desktop/StatusPager.jsx';
+import { readStorage, writeStorage } from '@components/desktop/storage.js';
+import useResizablePane from '@components/desktop/useResizablePane.js';
+import useContextMenu from '@components/desktop/useContextMenu.jsx';
+import useListKeyboard from '@components/desktop/useListKeyboard.js';
+import { formatShortcut, isMacPlatform } from '@utils/platform.js';
 import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
@@ -37,16 +47,34 @@ import { buildQueryParamsFromFilters, useFilters } from './hooks/useFilters.js';
 import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
-import { FiltersPanel, StatsOverview, RequestsTable, Toolbar, RequestDetailModal } from './components';
+import { StatsOverview, RequestsTable, Toolbar, RequestDetailPane } from './components';
+import FilterBar from './components/FilterBar.jsx';
+import RequestRefreshStatus from './components/AutoRefreshControl.jsx';
+import { copyTextToClipboard } from './components/clipboard.js';
 import { PAGINATION_CONFIG } from './utils/constants.js';
+import { buildColumnMenuItems } from './utils/columnMenu.js';
 import { isRuntimeActiveSelection, isSamePinnedAccount } from './utils/accountSwitcherState.js';
 import { bindingDisplayName, isWebToolsBinding, patchBindingPayload } from '../endpoints/utils/modelRouting.js';
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
+import { buildChipPatch, buildClearChipsPatch, countActiveChips, resolveStoredPageSize } from './utils/filterBar.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
-import { filterUpstreamOptionsByFamily } from './utils/requestSource.js';
+import { filterUpstreamOptionsByFamily, resolveUpstreamFilterOption } from './utils/requestSource.js';
 import { prefersReducedMotion } from '@utils/motion.js';
 import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
+
+// 每页条数与筛选条显隐记在本机
+const PAGE_SIZE_STORAGE_KEY = 'requests.pageSize';
+const FILTER_BAR_STORAGE_KEY = 'requests.filterBar.visible';
+
+// 详情面板：默认 280px；拖动时面板至少 160px、上方列表至少留 120px
+const DETAIL_PANE = { storageKey: 'requests.detailPane', defaultHeight: 280, minHeight: 160, minRemaining: 120 };
+
+// ⌘C（Windows / Linux 为 Ctrl+C）
+const isCopyShortcut = (event) => {
+  const primary = isMacPlatform() ? event.metaKey : event.ctrlKey;
+  return primary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c';
+};
 
 // ============================================
 // Requests 页面
@@ -87,13 +115,14 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   // 只在 refreshRequestData 这个 callback 里读写，不碰 render 期。
   const prevRequestIdsRef = useRef(null);
 
-  // 面板状态
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [isViewConfigOpen, setIsViewConfigOpen] = useState(false);
+  // 面板状态：筛选条默认显示
+  const [filterBarVisible, setFilterBarVisibleState] = useState(() => readStorage(FILTER_BAR_STORAGE_KEY) !== 'false');
 
-  // 详情模态框状态
-  const [selectedRequest, setSelectedRequest] = useState(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  // 选中行与底部详情面板。selection 存行对象：行被实时刷新挤出当前页后，面板仍按它显示（详情接口按 ID 拉权威数据）
+  const [selection, setSelection] = useState(null);
+  const listRef = useRef(null);
+  const detailPane = useResizablePane(DETAIL_PANE);
+  const { contextMenu, openContextMenu, openMenuAt } = useContextMenu();
 
   // 筛选器 Hook
   // 概览页模型表跳转过来时会带一次性筛选条件（模型 / 请求族 / 滚动时间区间），
@@ -109,9 +138,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   }
   const {
     filters,
-    updateFilter,
     updateFilters,
-    resetFilters,
     buildQueryParams
   } = useFilters(handoffRef.current.filters);
   const [appliedQueryParams, setAppliedQueryParams] = useState(() => buildQueryParams());
@@ -123,19 +150,21 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     resetColumns,
     allColumns: columnConfigs
   } = useColumnConfig();
+  const columnMenuItems = buildColumnMenuItems(columnConfigs, visibleColumns, toggleColumn, resetColumns);
 
   // 时间范围 Hook
-  const { activeRange, selectRange } = useTimeRange((timeRange) => {
+  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange) => {
     const nextState = buildTimeRangeSelectionState(filters, timeRange);
     updateFilters(nextState.filters);
     setAppliedQueryParams(nextState.appliedQueryParams);
     setPagination(prev => ({ ...prev, page: 1 }));
+    setSelection(null);
   }, handoffRef.current.timeRangeKey);
 
   // 分页状态
   const [pagination, setPagination] = useState({
     page: 1,
-    pageSize: PAGINATION_CONFIG.DEFAULT_PAGE_SIZE,
+    pageSize: resolveStoredPageSize(readStorage(PAGE_SIZE_STORAGE_KEY)),
     total: 0,
     totalPages: 1
   });
@@ -316,58 +345,75 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // ==================== 事件处理 ====================
 
-  // 筛选面板切换
-  const handleFilterToggle = () => {
-    setIsFilterOpen(!isFilterOpen);
-    setIsViewConfigOpen(false); // 关闭列配置
-  };
+  const setFilterBarVisible = useCallback((visible) => {
+    setFilterBarVisibleState(visible);
+    writeStorage(FILTER_BAR_STORAGE_KEY, visible);
+  }, []);
 
-  // 列配置面板切换
-  const handleViewConfigToggle = () => {
-    setIsViewConfigOpen(!isViewConfigOpen);
-    setIsFilterOpen(false); // 关闭筛选面板
-  };
+  // 换筛选、翻页都是换一批数据，选中项随之清掉（与切换文件夹时清空选择同理）
 
-  // 应用筛选
-  const handleApplyFilters = () => {
-    setAppliedQueryParams(buildQueryParams());
+  // 筛选条与右键「只看此模型 / 上游」共用：在当前筛选上叠加并立即生效
+  const applyQuickFilter = useCallback((patch) => {
+    updateFilters(patch);
+    setAppliedQueryParams(buildQueryParamsFromFilters({ ...filters, ...patch }));
     setPagination(prev => ({ ...prev, page: 1 }));
+    setSelection(null);
+  }, [filters, updateFilters]);
+
+  const handleChipChange = (key, value) => applyQuickFilter(buildChipPatch(key, value));
+  const handleClearChips = () => applyQuickFilter(buildClearChipsPatch());
+
+  // 自定义时间段：工具栏三个预设随之都不高亮
+  const handleCustomRange = ({ startDate, endDate }) => {
+    applyQuickFilter({ startDate, endDate });
+    markCustomRange();
   };
 
-  // 重置筛选
-  const handleResetFilters = () => {
-    const nextFilters = resetFilters();
-    setAppliedQueryParams(buildQueryParamsFromFilters(nextFilters));
-    setPagination(prev => ({ ...prev, page: 1 }));
-  };
+  // 右键「只看此…」后把筛选条亮出来，生效的条件看得见
+  const applyContextFilter = useCallback((patch) => {
+    applyQuickFilter(patch);
+    setFilterBarVisible(true);
+  }, [applyQuickFilter, setFilterBarVisible]);
 
   // 页码变更
   const handlePageChange = (newPage) => {
     setPagination(prev => ({ ...prev, page: newPage }));
+    setSelection(null);
   };
 
   // 每页条数变更
   const handlePageSizeChange = (newPageSize) => {
+    writeStorage(PAGE_SIZE_STORAGE_KEY, newPageSize);
     setPagination(prev => ({
       ...prev,
       pageSize: newPageSize,
       page: 1 // 重置到第一页
     }));
+    setSelection(null);
   };
 
-  // 双击行打开详情
-  // 必须 useCallback：作为 prop 传给 memo 化的 RequestRow，
+  // 行回调必须 useCallback：作为 prop 传给 memo 化的 RequestRow，
   // 每次渲染换新引用会让整页行的 memo 全部失效。
-  const handleRowDoubleClick = useCallback((request) => {
-    setSelectedRequest(request);
-    setIsDetailModalOpen(true);
-  }, []);
+  const handleRowSelect = useCallback((request) => setSelection(request), []);
+  const { show: showDetailPane, toggle: toggleDetailPane } = detailPane;
+  const handleRowOpen = useCallback(() => showDetailPane(), [showDetailPane]);
 
-  // 关闭详情模态框
-  const handleCloseDetailModal = () => {
-    setIsDetailModalOpen(false);
-    setSelectedRequest(null);
-  };
+  const handleRowContextMenu = useCallback((event, request) => {
+    setSelection(request);
+    const model = request.model || '';
+    const upstream = resolveUpstreamFilterOption(request);
+    const filterItems = [
+      model && { label: `只看模型「${model}」`, onSelect: () => applyContextFilter({ model }) },
+      upstream && { label: `只看上游「${upstream.label}」`, onSelect: () => applyContextFilter({ upstreamName: upstream.value }) }
+    ].filter(Boolean);
+    openContextMenu(event, [
+      { label: '复制请求 ID', shortcut: formatShortcut('C'), onSelect: () => copyTextToClipboard(request.requestId, '请求 ID') },
+      model && { label: '复制模型名', onSelect: () => copyTextToClipboard(model, '模型名') },
+      ...(filterItems.length > 0 ? ['-', ...filterItems] : []),
+      '-',
+      { label: detailPane.visible ? '隐藏详情面板' : '显示详情面板', onSelect: toggleDetailPane }
+    ]);
+  }, [applyContextFilter, detailPane.visible, openContextMenu, toggleDetailPane]);
 
   // Claude 端点路由切换回调
   const handleClaudeEndpointSwitch = async (endpointName, mode = 'manual_preferred') => {
@@ -579,48 +625,62 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     };
   }, []);
 
+  // ==================== 选中与键盘 ====================
+
+  // 选中行优先取当前列表里的同 ID 行（随实时刷新更新），不在当前页时退回选中那一刻的快照
+  const selectedRequest = useMemo(() => {
+    if (!selection) return null;
+    return requests.find((request) => request.requestId === selection.requestId) || selection;
+  }, [requests, selection]);
+  const requestIds = useMemo(() => requests.map((request) => request.requestId), [requests]);
+  const selectById = useCallback((requestId) => {
+    const row = requests.find((request) => request.requestId === requestId);
+    if (row) setSelection(row);
+  }, [requests]);
+  const handleListNavigation = useListKeyboard({ ids: requestIds, selectedId: selectedRequest?.requestId ?? null, onSelect: selectById, containerRef: listRef });
+
+  // ⌘C：列表里有选中文字时按系统默认复制文字，否则复制选中行的请求 ID
+  const handleListKeyDown = (event) => {
+    if (isCopyShortcut(event)) {
+      if (selectedRequest && !window.getSelection()?.toString()) {
+        event.preventDefault();
+        copyTextToClipboard(selectedRequest.requestId, '请求 ID');
+      }
+      return;
+    }
+    handleListNavigation(event);
+  };
+
   // ==================== 渲染 ====================
 
   if (error) {
     return (
-      <ErrorMessage
-        title="请求数据加载失败"
-        message={error}
-        onRetry={handleManualRefresh}
-      />
+      <div className="p-5">
+        <ErrorMessage
+          title="请求数据加载失败"
+          message={error}
+          onRetry={handleManualRefresh}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6 motion-page relative">
+    <div className="motion-page relative flex min-h-0 flex-1 flex-col bg-surface">
       <NoticeToast notice={notice} onClose={closeNotice} />
 
-      {/* 页面标题 & 工具栏（单行） */}
-      <div className="flex items-center gap-2 xl:gap-3 relative z-30">
-        {/* 页面标题 */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="p-1.5 bg-indigo-600 rounded-lg text-white shadow-lg">
-            <BarChart3 className="w-5 h-5" />
-          </div>
-          <h1 className="text-lg xl:text-xl font-bold text-fg tracking-tight whitespace-nowrap">请求追踪</h1>
-        </div>
-
-        {/* 工具栏 */}
-        <div className="flex-1 min-w-0 flex justify-end">
+      {/* 工具栏：投送到窗口统一工具栏 */}
+      <PageToolbar subtitle={`共 ${Number(pagination.total || 0).toLocaleString()} 条`}>
+        <div className="flex min-w-0 flex-1 justify-end">
           <Toolbar
             activeTimeRange={activeRange}
             onTimeRangeChange={selectRange}
-            isFilterOpen={isFilterOpen}
-            onFilterToggle={handleFilterToggle}
-            isViewConfigOpen={isViewConfigOpen}
-            onViewConfigToggle={handleViewConfigToggle}
+            filterBarVisible={filterBarVisible}
+            onFilterBarToggle={() => setFilterBarVisible(!filterBarVisible)}
+            activeFilterCount={countActiveChips(filters)}
+            onOpenColumnsMenu={(event) => openMenuAt(event.currentTarget, columnMenuItems)}
             onRefresh={handleManualRefresh}
             refreshing={refreshing}
-            columns={columnConfigs}
-            visibleColumns={visibleColumns}
-            onToggleColumn={toggleColumn}
-            onResetColumns={resetColumns}
-            autoRefresh={autoRefresh}
             endpoints={endpoints}
             claudeRoutingState={claudeRoutingState}
             modelRoutingEnabled={modelRoutingSettings?.claude_enabled === true}
@@ -644,53 +704,90 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
             onAccountSwitch={handleAccountSwitch}
             onEnableAutoSelection={handleEnableAutoSelection}
             accountSwitching={accountSwitching}
+            detailPaneVisible={detailPane.visible}
+            onDetailPaneToggle={toggleDetailPane}
           />
+        </div>
+      </PageToolbar>
+
+      {/* 筛选条：工具栏下方，选了立即生效 */}
+      {filterBarVisible && (
+        <FilterBar
+          filters={filters}
+          activeRange={activeRange}
+          models={models}
+          upstreams={upstreamOptions}
+          onChange={handleChipChange}
+          onClear={handleClearChips}
+          onApplyCustomRange={handleCustomRange}
+        />
+      )}
+
+      {/* 列表 + 详情面板 */}
+      <div
+        ref={detailPane.containerRef}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="relative min-h-0 flex-1">
+          {/* 刷新进度条：盖在表头上沿，不占布局高度 */}
+          {refreshing && (
+            <div className="absolute inset-x-0 top-0 z-[4] h-0.5 overflow-hidden">
+              <div className="indeterminate-bar h-full w-1/3 bg-accent-ring/70" />
+            </div>
+          )}
+          <div
+            ref={listRef}
+            tabIndex={0}
+            onKeyDown={handleListKeyDown}
+            aria-label="请求列表"
+            className="absolute inset-0 overflow-auto focus:outline-none"
+          >
+            <RequestsTable
+              requests={requests}
+              loading={loading}
+              enterAnimations={rowEnterAnimations}
+              visibleColumns={visibleColumns}
+              columnConfigs={columnConfigs}
+              selectedId={selectedRequest?.requestId ?? null}
+              onSelect={handleRowSelect}
+              onOpen={handleRowOpen}
+              onRowContextMenu={handleRowContextMenu}
+              onHeaderContextMenu={(event) => openContextMenu(event, columnMenuItems)}
+            />
+          </div>
         </div>
 
-        {/* 筛选面板（弹出式） */}
-        <div className="absolute top-full left-0 right-0 z-10">
-          <FiltersPanel
-            isOpen={isFilterOpen}
-            onClose={() => setIsFilterOpen(false)}
-            filters={filters}
-            updateFilter={updateFilter}
-            onApply={handleApplyFilters}
-            onReset={handleResetFilters}
-            models={models}
-            upstreams={upstreamOptions}
-          />
-        </div>
+        {detailPane.visible && (
+          <>
+            <PaneSplitter label="调整详情面板高度" {...detailPane.splitterProps} />
+            {/* max-h 兜住窗口变矮：按视口算（52 工具栏 + 26 状态栏 + 列表至少 120），
+                主内容区只有 min-height，百分比在这里解析不出来 */}
+            <div
+              className="flex max-h-[calc(100vh-198px)] shrink-0 flex-col bg-inspector"
+              style={{ height: detailPane.height }}
+            >
+              <RequestDetailPane request={selectedRequest} onClose={detailPane.hide} />
+            </div>
+          </>
+        )}
       </div>
 
-      {/* 统计概览 - 面板打开时blur */}
-      <StatsOverview
-        stats={stats}
-        total={pagination.total}
-        isBlurred={isFilterOpen || isViewConfigOpen}
-      />
-
-      {/* 请求列表表格 - 面板打开时blur */}
-      <div className={`transition-all duration-300 ${isFilterOpen || isViewConfigOpen ? 'opacity-40 pointer-events-none blur-[1px]' : ''}`}>
-        <RequestsTable
-          requests={requests}
-          loading={loading}
-          refreshing={refreshing}
-          enterAnimations={rowEnterAnimations}
-          pagination={pagination}
+      <StatusBar>
+        <StatsOverview stats={stats} />
+        <StatusSpacer />
+        <RequestRefreshStatus mode={autoRefresh.mode} fallbackInterval={autoRefresh.fallbackInterval} />
+        <StatusPager
+          currentPage={pagination.page}
+          pageSize={pagination.pageSize}
+          pageSizeOptions={PAGINATION_CONFIG.PAGE_SIZE_OPTIONS}
+          total={pagination.total}
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}
-          visibleColumns={visibleColumns}
-          columnConfigs={columnConfigs}
-          onRowDoubleClick={handleRowDoubleClick}
+          onOpenMenu={openMenuAt}
         />
-      </div>
+      </StatusBar>
 
-      {/* 请求详情模态框 */}
-      <RequestDetailModal
-        isOpen={isDetailModalOpen}
-        onClose={handleCloseDetailModal}
-        request={selectedRequest}
-      />
+      {contextMenu}
     </div>
   );
 };

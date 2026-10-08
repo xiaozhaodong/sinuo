@@ -1,12 +1,14 @@
 // ============================================
 // Toolbar - 页面工具栏
 // 2025-12-06 10:40:38 v4.0: 简化端点切换（移除 Token 级联）
+// 2026-10-07 桌面化：时间范围改分段控件；漏斗按钮只负责显示 / 隐藏筛选条（隐藏时有生效条件就带数字）；
+//            「显示」改为列图标按钮
 // ============================================
 
-import { Filter, Settings2, ChevronDown } from 'lucide-react';
+import { Columns3, Funnel, PanelBottom, RefreshCw } from 'lucide-react';
+import { ToolbarButton, ToolbarSeparator } from '@components/layout/ToolbarButton.jsx';
+import SegmentedControl from '@components/desktop/SegmentedControl.jsx';
 import { TIME_RANGE_OPTIONS } from '../utils/constants.js';
-import ViewConfigPanel from './ViewConfigPanel.jsx';
-import AutoRefreshControl from './AutoRefreshControl.jsx';
 import ClaudeAccessSwitcher from './ClaudeAccessSwitcher.jsx';
 import CodexAccessSwitcher from './CodexAccessSwitcher.jsx';
 
@@ -15,17 +17,12 @@ import CodexAccessSwitcher from './CodexAccessSwitcher.jsx';
  * @param {Object} props
  * @param {string} props.activeTimeRange - 当前激活的时间范围
  * @param {Function} props.onTimeRangeChange - 时间范围变更回调
- * @param {boolean} props.isFilterOpen - 筛选面板是否打开
- * @param {Function} props.onFilterToggle - 筛选面板切换回调
- * @param {boolean} props.isViewConfigOpen - 列配置面板是否打开
- * @param {Function} props.onViewConfigToggle - 列配置面板切换回调
+ * @param {boolean} props.filterBarVisible - 筛选条是否显示
+ * @param {Function} props.onFilterBarToggle - 显示 / 隐藏筛选条
+ * @param {number} props.activeFilterCount - 生效中的筛选条件数（筛选条隐藏时显示在漏斗上）
+ * @param {Function} props.onOpenColumnsMenu - 打开显示列菜单 (event) => void
  * @param {Function} props.onRefresh - 刷新回调
  * @param {boolean} props.refreshing - 是否正在刷新（手动刷新期间按钮转圈）
- * @param {Array} props.columns - 所有列配置
- * @param {Array} props.visibleColumns - 当前可见的列ID数组
- * @param {Function} props.onToggleColumn - 切换列显示回调
- * @param {Function} props.onResetColumns - 重置列配置回调
- * @param {Object} props.autoRefresh - 实时刷新状态
  * @param {Array} props.endpoints - Claude 端点列表
  * @param {Function} props.onClaudeEndpointSwitch - Claude 端点路由切换回调
  * @param {Array} props.accounts - 账号池账号列表
@@ -34,21 +31,18 @@ import CodexAccessSwitcher from './CodexAccessSwitcher.jsx';
  * @param {Function} props.onAccountSwitch - 账号池切换回调 (account) => void
  * @param {Function} props.onEnableAutoSelection - 切回按编排自动调度
  * @param {boolean} props.accountSwitching - 是否正在切换账号
+ * @param {boolean} props.detailPaneVisible - 底部详情面板是否显示
+ * @param {Function} props.onDetailPaneToggle - 显示 / 隐藏详情面板
  */
 const Toolbar = ({
   activeTimeRange = 'today',
   onTimeRangeChange,
-  isFilterOpen = false,
-  onFilterToggle,
-  isViewConfigOpen = false,
-  onViewConfigToggle,
+  filterBarVisible = true,
+  onFilterBarToggle,
+  activeFilterCount = 0,
+  onOpenColumnsMenu,
   onRefresh,
   refreshing = false,
-  columns = [],
-  visibleColumns = [],
-  onToggleColumn,
-  onResetColumns,
-  autoRefresh = null,
   endpoints = [],
   claudeRoutingState = null,
   modelRoutingEnabled = false,
@@ -71,10 +65,12 @@ const Toolbar = ({
   recentSelectedAccountId = null,
   onAccountSwitch,
   onEnableAutoSelection,
-  accountSwitching = false
+  accountSwitching = false,
+  detailPaneVisible = true,
+  onDetailPaneToggle
 }) => {
   return (
-    <div className="flex flex-nowrap items-center justify-end gap-2 xl:gap-3 min-w-0">
+    <div className="flex flex-nowrap items-center justify-end gap-1.5 min-w-0">
       {/* Claude 接入与端点策略快捷切换（入口未启用时即端点切换器） */}
       <ClaudeAccessSwitcher
         endpoints={endpoints}
@@ -105,78 +101,39 @@ const Toolbar = ({
         onNavigateToCodexAccess={onNavigateToCodexAccess}
       />
 
-      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
+      <ToolbarSeparator />
 
-      {/* 快捷时间范围选择 */}
-      <div className="hidden sm:flex h-9 shrink-0 items-center bg-surface border border-line rounded-lg p-1 shadow-sm">
-        {TIME_RANGE_OPTIONS.map((range) => (
-          <button
-            key={range.value}
-            onClick={() => onTimeRangeChange?.(range.value)}
-            className={`h-full px-2 xl:px-3 text-xs font-medium rounded-md transition-all ${
-              activeTimeRange === range.value
-                ? 'bg-accent-soft text-accent-fg shadow-sm'
-                : 'text-fg-muted hover:text-fg hover:bg-surface-sub'
-            }`}
-          >
-            {range.label}
-          </button>
-        ))}
-      </div>
+      {/* 快捷时间范围：自定义区间（筛选条的「时间」）时三个都不高亮 */}
+      <SegmentedControl
+        ariaLabel="时间范围"
+        options={TIME_RANGE_OPTIONS}
+        value={activeTimeRange}
+        onChange={(value) => onTimeRangeChange?.(value)}
+      />
 
-      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
+      <ToolbarSeparator />
 
-      {/* 筛选按钮 */}
-      <button
-        onClick={onFilterToggle}
-        className={`flex h-9 items-center gap-2 px-3 rounded-lg text-sm font-medium transition-all shadow-sm border ${
-          isFilterOpen
-            ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
-            : 'bg-surface text-fg-body border-line hover:border-accent-line hover:text-accent'
-        }`}
-      >
-        <Filter className="w-4 h-4" /> <span className="hidden xl:inline">筛选</span><span className="xl:hidden">筛</span>
-        <ChevronDown
-          className={`w-3.5 h-3.5 transition-transform ${isFilterOpen ? 'rotate-180' : ''}`}
+      <span className="relative inline-flex shrink-0">
+        <ToolbarButton
+          icon={Funnel}
+          title={activeFilterCount > 0 && !filterBarVisible ? `显示筛选条（${activeFilterCount} 个条件生效中）` : '显示 / 隐藏筛选条'}
+          pressed={filterBarVisible}
+          onClick={onFilterBarToggle}
         />
-      </button>
+        {activeFilterCount > 0 && !filterBarVisible && (
+          <span className="pointer-events-none absolute -right-0.5 -top-0.5 grid h-[14px] min-w-[14px] place-items-center rounded-full bg-accent-ring px-0.5 text-[9.5px] font-semibold text-white">
+            {activeFilterCount}
+          </span>
+        )}
+      </span>
 
-      <div className="h-6 w-px bg-line-strong mx-1 hidden xl:block"></div>
+      {/* 列配置 */}
+      <ToolbarButton icon={Columns3} title="显示列" onClick={onOpenColumnsMenu} />
 
-      {/* 列配置按钮 */}
-      <div className="relative">
-        <button
-          onClick={onViewConfigToggle}
-          className={`flex h-9 items-center gap-2 px-3 rounded-lg text-sm transition-all shadow-sm border ${
-            isViewConfigOpen
-              ? 'bg-accent-soft text-accent-fg border-accent-line ring-2 ring-accent-soft'
-              : 'bg-surface text-fg-body border-line hover:bg-surface-sub hover:text-accent hover:border-accent-line'
-          }`}
-          title="自定义显示列"
-        >
-          <Settings2 className="w-4 h-4" />
-          <span className="hidden xl:inline font-medium">显示</span><span className="xl:hidden font-medium">列</span>
-        </button>
+      <ToolbarButton icon={RefreshCw} title="立即刷新" loading={refreshing} onClick={onRefresh} />
 
-        {/* 列配置面板 */}
-        <ViewConfigPanel
-          isOpen={isViewConfigOpen}
-          onClose={() => onViewConfigToggle?.(false)}
-          columns={columns}
-          visibleColumns={visibleColumns}
-          onToggleColumn={onToggleColumn}
-          onReset={onResetColumns}
-        />
-      </div>
-
-      {/* 实时刷新状态（包含手动刷新） */}
-      {autoRefresh && (
-        <AutoRefreshControl
-          mode={autoRefresh.mode}
-          fallbackInterval={autoRefresh.fallbackInterval}
-          onManualRefresh={onRefresh}
-          refreshing={refreshing}
-        />
+      {onDetailPaneToggle && (
+        <ToolbarButton icon={PanelBottom} title="显示 / 隐藏详情面板" pressed={detailPaneVisible} onClick={onDetailPaneToggle} />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 // ============================================
 // Account Pool 页面 - 账号管理
 // 2026-03-22
+// 2026-10-07 桌面化：左侧账号列表（范围条 + 表格 + 状态栏）、右侧常驻检查器（原详情抽屉）
 // ============================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -26,7 +27,6 @@ import {
   PageHeader,
   SchedulerDrawer
 } from './components';
-import CodexModelsPanel from './components/CodexModelsPanel.jsx';
 import CodexModelRoutingDrawer from './components/CodexModelRoutingDrawer.jsx';
 import {
   buildAccountPoolDashboardModel,
@@ -134,7 +134,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
 
   const [sharedDrawerRowId, setSharedDrawerRowId] = useState(null);
   const [schedulerDrawerOpen, setSchedulerDrawerOpen] = useState(false);
-  const [codexModelsOpen, setCodexModelsOpen] = useState(false);
   const [codexModelRoutingOpen, setCodexModelRoutingOpen] = useState(false);
   const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
   const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
@@ -414,11 +413,13 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
 
   if (error && !loading) {
     return (
-      <ErrorMessage
-        title="账号数据加载失败"
-        message={error}
-        onRetry={() => loadData()}
-      />
+      <div className="p-5">
+        <ErrorMessage
+          title="账号数据加载失败"
+          message={error}
+          onRetry={() => loadData()}
+        />
+      </div>
     );
   }
 
@@ -433,45 +434,49 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
       onCreate={openCreateAccount}
       onRefresh={handleRefreshAll}
       onOpenScheduler={() => setSchedulerDrawerOpen(true)}
-      onOpenCodexModels={() => setCodexModelsOpen(true)}
       onOpenCodexModelRouting={() => setCodexModelRoutingOpen(true)}
     />
   );
 
   return (
-    <div className="space-y-6 motion-page">
-      {headerTarget ? (active && createPortal(header, headerTarget)) : (!embedded && header)}
+    <div className="motion-page flex min-h-0 min-w-0 flex-1 flex-col bg-surface">
+      {headerTarget
+        ? (active && createPortal(header, headerTarget))
+        : (!embedded && <div className="shrink-0 border-b border-line px-4 py-2">{header}</div>)}
 
       <NoticeToast notice={active ? notice : null} onClose={closeNotice} />
 
-      <AccountInventorySection
-        inventory={dashboardModel.inventory}
-        busyKey={busyKey}
-        externalViewRequest={inventoryViewRequest}
-        onBatchAction={executeBatchAction}
-        onOpenDetails={openSharedDrawer}
-        onToggleAccount={handleToggleAccount}
-        onClearAccountCooldown={handleClearAccountCooldown}
-        onTestAccount={handleTestAccount}
-        onRefreshAccountProfile={handleRefreshAccountProfile}
-        onMoveAccountToTier={handleMoveAccountToTier}
-        onDeleteAccount={handleDeleteAccount}
-        onEditAccount={openEditAccount}
-      />
+      <div className="flex min-h-0 flex-1">
+        <AccountInventorySection
+          inventory={dashboardModel.inventory}
+          busyKey={busyKey}
+          externalViewRequest={inventoryViewRequest}
+          onBatchAction={executeBatchAction}
+          onOpenDetails={openSharedDrawer}
+          onToggleAccount={handleToggleAccount}
+          onClearAccountCooldown={handleClearAccountCooldown}
+          onTestAccount={handleTestAccount}
+          onRefreshAccountProfile={handleRefreshAccountProfile}
+          onMoveAccountToTier={handleMoveAccountToTier}
+          onDeleteAccount={handleDeleteAccount}
+          onEditAccount={openEditAccount}
+          activeRowId={sharedDrawerRow ? String(sharedDrawerRow.id) : null}
+        />
 
-      <AccountDetailsDrawer
-        open={active && Boolean(sharedDrawerRow)}
-        row={sharedDrawerRow}
-        busyKey={busyKey}
-        onClose={closeSharedDrawer}
-        onToggleAccount={handleToggleAccount}
-        onClearAccountCooldown={handleClearAccountCooldown}
-        onTestAccount={handleTestAccount}
-        onRefreshAccountProfile={handleRefreshAccountProfile}
-        onMoveAccountToTier={handleMoveAccountToTier}
-        onDeleteAccount={handleDeleteAccount}
-        onEditAccount={openEditAccount}
-      />
+        <AccountDetailsDrawer
+          open={active && Boolean(sharedDrawerRow)}
+          row={sharedDrawerRow}
+          busyKey={busyKey}
+          onClose={closeSharedDrawer}
+          onToggleAccount={handleToggleAccount}
+          onClearAccountCooldown={handleClearAccountCooldown}
+          onTestAccount={handleTestAccount}
+          onRefreshAccountProfile={handleRefreshAccountProfile}
+          onMoveAccountToTier={handleMoveAccountToTier}
+          onDeleteAccount={handleDeleteAccount}
+          onEditAccount={openEditAccount}
+        />
+      </div>
 
       <SchedulerDrawer
         open={active && schedulerDrawerOpen}
@@ -485,12 +490,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null,
         onEnableAutoSelection={handleSchedulerEnableAutoSelection}
         onViewInInventory={handleViewGroupInInventory}
         busyKey={schedulerBusyKey}
-      />
-
-      <CodexModelsPanel
-        open={active && codexModelsOpen}
-        onClose={() => setCodexModelsOpen(false)}
-        showNotice={showNotice}
       />
 
       <CodexModelRoutingDrawer

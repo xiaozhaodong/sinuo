@@ -1,15 +1,20 @@
 // ============================================
 // 主 App 组件 - Dashboard 入口
 // 2025-11-28 (Updated 2025-12-12)
+// 2026-10-07：桌面化外壳——左侧边栏 + 统一工具栏，内容区铺满窗口
 // ============================================
 
 import { useState, Suspense, lazy, useCallback, useEffect, startTransition } from 'react';
-import Header from '@components/layout/Header.jsx';
+import Sidebar from '@components/layout/Sidebar.jsx';
+import { AppToolbar, ToolbarProvider } from '@components/layout/AppToolbar.jsx';
+import { pageTitleOf } from '@components/layout/navigation.js';
 import StartupScreen from '@components/layout/StartupScreen.jsx';
 import ToastHost from '@components/notifications/ToastHost.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
+import useNavigationShortcuts from '@hooks/useNavigationShortcuts.js';
+import useWindowFocus from '@hooks/useWindowFocus.js';
 import { getMigrationStatus, getSystemStatus, isWailsEnvironment } from '@utils/wailsApi.js';
 import { connectTrayNavigation } from '@utils/trayNavigation.js';
 import { setPendingRequestsFilters } from '@utils/overviewHandoff.js';
@@ -128,6 +133,9 @@ const AppRoutes = () => {
   const switchTab = useCallback((tab) => {
     startTransition(() => setActiveTab(tab));
   }, []);
+
+  useNavigationShortcuts(switchTab);
+  const windowFocused = useWindowFocus();
 
   const navigateToCodexAccess = useCallback(() => {
     startTransition(() => {
@@ -260,36 +268,35 @@ const AppRoutes = () => {
 
   return (
     <TimezoneProvider>
-      <div className="motion-app h-screen overflow-hidden bg-canvas font-sans text-fg flex flex-col">
-      {/* 背景纹理 */}
-      <div
-        className="fixed inset-0 pointer-events-none opacity-[0.4]"
-        style={{
-          backgroundImage: 'radial-gradient(var(--app-texture-dot) 1px, transparent 1px)',
-          backgroundSize: '24px 24px'
-        }}
-      />
+      <ToolbarProvider>
+        <div className={`motion-app flex h-screen overflow-hidden bg-canvas font-sans text-fg ${windowFocused ? '' : 'window-inactive'}`}>
+          <Sidebar
+            activeTab={activeTab}
+            onTabChange={switchTab}
+            connectionStatus={connectionStatus}
+            proxyStatus={proxyStatus}
+          />
 
-      {/* 顶部导航 */}
-      <Header
-        activeTab={activeTab}
-        onTabChange={switchTab}
-        connectionStatus={connectionStatus}
-        proxyStatus={proxyStatus}
-      />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <AppToolbar title={pageTitleOf(activeTab)} />
 
-      {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
-      <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
+            {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
+            <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
 
-      {/* 主内容区 */}
-      <main id="app-scroll-container" className="flex-1 min-h-0 overflow-y-auto overscroll-none relative z-10">
-        <div className="max-w-7xl mx-auto px-6 pt-8 pb-8">
-          <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
-            {renderPage()}
-          </Suspense>
+            {/* 主内容区：铺满窗口，不加统一内边距——列表页贴边（表格 + 检查器），
+                滚动型页面自己加 p-5。内层固定为窗口剩余高度（h-full 而不是 min-h-full）：
+                列表页（flex-1 + min-h-0）恰好占满、在内部滚动，内容再高也不会把整页撑长、把状态栏挤出窗口；
+                滚动型页面的内容超出时照常由 main 滚动 */}
+            <main id="app-scroll-container" className="relative min-h-0 flex-1 overflow-y-auto overscroll-none">
+              <div className="flex h-full flex-col">
+                <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
+                  {renderPage()}
+                </Suspense>
+              </div>
+            </main>
+          </div>
         </div>
-      </main>
-      </div>
+      </ToolbarProvider>
     </TimezoneProvider>
   );
 };

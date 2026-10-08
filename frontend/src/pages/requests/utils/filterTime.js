@@ -33,6 +33,12 @@ export const formatFilterDateTimeInput = (value, timezone) => {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}${fraction ? `.${fraction}` : ''}`;
 };
 
+// 应用自定义区间时，未编辑的边界继续使用原始时刻，避免显示值丢失 offset 或微秒。
+export const buildCustomRangePatch = (original, draft, timezone) => ({
+  startDate: draft.start === formatFilterDateTimeInput(original.startDate, timezone) ? original.startDate : draft.start,
+  endDate: draft.end === formatFilterDateTimeInput(original.endDate, timezone) ? original.endDate : draft.end
+});
+
 export const buildQueryParamsFromFilters = (filters = {}) => {
   const queryParams = {};
 

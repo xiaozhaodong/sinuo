@@ -1,42 +1,26 @@
 // ============================================
 // 隐私规则表格
 // 2026-06-11 (v6.1 新增)
+// 2026-10-07 桌面化：贴边 desk-table；双击编辑，右键 / 行尾「更多」弹出编辑、复制、调序、删除
 // ============================================
 
-import { ArrowDown, ArrowUp, Copy, Pencil, Trash2 } from 'lucide-react';
-import { EmptyState } from '@components/ui';
-import { ShieldOff } from 'lucide-react';
+import { ArrowDown, ArrowUp, ShieldOff } from 'lucide-react';
+import Switch from '@components/desktop/Switch.jsx';
+import ListEmpty from '@components/desktop/ListEmpty.jsx';
+import RowMoreButton from '@components/desktop/RowMoreButton.jsx';
+import useContextMenu from '@components/desktop/useContextMenu.jsx';
 import { summarizeScope } from '../utils/privacyRules.js';
 
 const matchTypeLabel = (matchType) => (matchType === 'literal' ? '字面' : '正则');
 const actionLabel = (action) => (action === 'detect' ? '仅检测' : '脱敏');
 
-const Toggle = ({ checked, onChange, disabled }) => (
-  <button
-    type="button"
-    disabled={disabled}
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-      checked ? 'bg-indigo-600' : 'bg-line-strong'
-    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-  >
-    <span
-      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow transition-transform ${
-        checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
-      }`}
-    />
-  </button>
-);
-
 const CompileStatusDot = ({ compileError }) => (
   <span className="inline-flex items-center" title={compileError || '编译正常'}>
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${
-        compileError ? 'bg-danger-solid' : 'bg-success-solid'
-      }`}
-    />
+    <span className={`inline-block h-[7px] w-[7px] rounded-full ${compileError ? 'bg-danger-solid' : 'bg-success-solid'}`} />
   </span>
 );
+
+const MOVE_BUTTON = 'text-fg-subtle hover:text-fg-body disabled:opacity-30';
 
 const PrivacyRulesTable = ({
   rules,
@@ -48,128 +32,86 @@ const PrivacyRulesTable = ({
   onMove,
   reorderEnabled
 }) => {
+  const { contextMenu, openContextMenu } = useContextMenu();
+
   if (!rules.length) {
-    return (
-      <EmptyState
-        icon={ShieldOff}
-        title="暂无规则"
-        description="点击右上角“新增规则”或“导入预设”开始配置出站隐私保护"
-      />
-    );
+    return <ListEmpty icon={ShieldOff} title="暂无规则" description="点击工具栏的「导入预设」或 + 开始配置出站隐私保护" />;
   }
 
+  const openRowMenu = (event, rule, index) => openContextMenu(event, [
+    { label: '编辑…', disabled: busy, onSelect: () => onEdit(rule) },
+    { label: '复制为新规则…', disabled: busy, onSelect: () => onDuplicate(rule) },
+    reorderEnabled && '-',
+    reorderEnabled && { label: '上移', disabled: busy || index === 0, onSelect: () => onMove(rule, -1) },
+    reorderEnabled && { label: '下移', disabled: busy || index === rules.length - 1, onSelect: () => onMove(rule, 1) },
+    '-',
+    { label: '删除…', danger: true, disabled: busy, onSelect: () => onDelete(rule) }
+  ]);
+
   return (
-    <div className="overflow-x-auto border border-line rounded-xl bg-surface">
-      <table className="w-full text-sm">
+    <>
+      <table className="desk-table">
         <thead>
-          <tr className="bg-surface-sub text-left text-xs text-fg-muted">
-            <th className="px-3 py-2 font-medium w-12">启用</th>
-            <th className="px-3 py-2 font-medium w-20">优先级</th>
-            <th className="px-3 py-2 font-medium">规则名</th>
-            <th className="px-3 py-2 font-medium w-14">类型</th>
-            <th className="px-3 py-2 font-medium w-16">动作</th>
-            <th className="px-3 py-2 font-medium w-28">占位符</th>
-            <th className="px-3 py-2 font-medium">作用域</th>
-            <th className="px-3 py-2 font-medium w-12">状态</th>
-            <th className="px-3 py-2 font-medium w-28 text-right">操作</th>
+          <tr>
+            <th className="w-[52px] text-center">启用</th>
+            <th className="w-[72px]">优先级</th>
+            <th>规则名</th>
+            <th>类型</th>
+            <th>动作</th>
+            <th>占位符</th>
+            <th>作用域</th>
+            <th className="text-center">状态</th>
+            <th className="w-[36px]" aria-label="操作" />
           </tr>
         </thead>
         <tbody>
           {rules.map((rule, index) => (
-            <tr key={rule.id} className="border-t border-line-soft hover:bg-surface-sub">
-              <td className="px-3 py-2">
-                <Toggle
-                  checked={rule.enabled}
-                  disabled={busy}
-                  onChange={(enabled) => onToggle(rule, enabled)}
-                />
+            <tr
+              key={rule.id}
+              onDoubleClick={() => !busy && onEdit(rule)}
+              onContextMenu={(event) => openRowMenu(event, rule, index)}
+              className={rule.enabled ? '' : 'text-fg-subtle'}
+            >
+              <td className="text-center">
+                <span className="inline-flex align-middle">
+                  <Switch checked={rule.enabled} disabled={busy} label={`${rule.name} 启用`} onChange={(enabled) => onToggle(rule, enabled)} />
+                </span>
               </td>
-              <td className="px-3 py-2">
-                <div className="flex items-center gap-1">
+              <td>
+                <span className="inline-flex items-center gap-1.5">
                   <span className="tabular-nums text-fg-body">{rule.priority}</span>
                   {reorderEnabled && (
                     <span className="flex flex-col">
-                      <button
-                        type="button"
-                        disabled={busy || index === 0}
-                        onClick={() => onMove(rule, -1)}
-                        className="text-fg-subtle hover:text-fg-body disabled:opacity-30"
-                        title="上移"
-                      >
-                        <ArrowUp size={12} />
+                      <button type="button" disabled={busy || index === 0} onClick={() => onMove(rule, -1)} className={MOVE_BUTTON} title="上移" aria-label="上移">
+                        <ArrowUp size={11} />
                       </button>
-                      <button
-                        type="button"
-                        disabled={busy || index === rules.length - 1}
-                        onClick={() => onMove(rule, 1)}
-                        className="text-fg-subtle hover:text-fg-body disabled:opacity-30"
-                        title="下移"
-                      >
-                        <ArrowDown size={12} />
+                      <button type="button" disabled={busy || index === rules.length - 1} onClick={() => onMove(rule, 1)} className={MOVE_BUTTON} title="下移" aria-label="下移">
+                        <ArrowDown size={11} />
                       </button>
                     </span>
                   )}
-                </div>
+                </span>
               </td>
-              <td className="px-3 py-2">
-                <div className="font-medium text-fg break-all">{rule.name}</div>
-                {rule.description && (
-                  <div className="text-xs text-fg-subtle break-all line-clamp-1">{rule.description}</div>
-                )}
+              <td className="max-w-[260px] py-1.5">
+                <div className={`truncate font-medium ${rule.enabled ? 'text-fg' : ''}`} title={rule.name}>{rule.name}</div>
+                {rule.description && <div className="truncate text-xs text-fg-subtle" title={rule.description}>{rule.description}</div>}
               </td>
-              <td className="px-3 py-2 text-fg-body">{matchTypeLabel(rule.match_type)}</td>
-              <td className="px-3 py-2">
-                <span
-                  className={`px-1.5 py-0.5 rounded text-xs ${
-                    rule.action === 'detect'
-                      ? 'bg-warn-soft text-warn'
-                      : 'bg-accent-soft text-accent'
-                  }`}
-                >
+              <td className="text-xs text-fg-body">{matchTypeLabel(rule.match_type)}</td>
+              <td>
+                <span className={`rounded px-1.5 py-0.5 text-[11px] ${rule.action === 'detect' ? 'bg-warn-soft text-warn' : 'bg-accent-soft text-accent'}`}>
                   {actionLabel(rule.action)}
                 </span>
               </td>
-              <td className="px-3 py-2 text-fg-body break-all">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
-              <td className="px-3 py-2 text-xs text-fg-muted">{summarizeScope(rule.scope)}</td>
-              <td className="px-3 py-2">
-                <CompileStatusDot compileError={rule.compile_error} />
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onEdit(rule)}
-                    className="p-1.5 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded-lg"
-                    title="编辑"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onDuplicate(rule)}
-                    className="p-1.5 text-fg-subtle hover:text-accent hover:bg-accent-soft rounded-lg"
-                    title="复制"
-                  >
-                    <Copy size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onDelete(rule)}
-                    className="p-1.5 text-fg-subtle hover:text-danger hover:bg-danger-soft rounded-lg"
-                    title="删除"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </td>
+              <td className="font-mono text-xs text-fg-body">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
+              <td className="text-xs text-fg-muted">{summarizeScope(rule.scope)}</td>
+              <td className="text-center"><CompileStatusDot compileError={rule.compile_error} /></td>
+              <td><RowMoreButton onOpenMenu={(event) => openRowMenu(event, rule, index)} /></td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+      {contextMenu}
+    </>
   );
 };
 

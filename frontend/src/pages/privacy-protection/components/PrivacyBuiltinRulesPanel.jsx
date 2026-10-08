@@ -1,81 +1,65 @@
-import { Pencil, ShieldCheck } from 'lucide-react';
-import { EmptyState } from '@components/ui';
-import { summarizeScope } from '../utils/privacyRules.js';
+// ============================================
+// 内置规则表格（手机号 / 身份证 / 银行卡）
+// 2026-10-07 桌面化：贴边 desk-table；双击或行尾按钮编辑
+// ============================================
 
-const Toggle = ({ checked, onChange, disabled }) => (
-  <button
-    type="button"
-    disabled={disabled}
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-      checked ? 'bg-indigo-600' : 'bg-line-strong'
-    } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-  >
-    <span
-      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow transition-transform ${
-        checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
-      }`}
-    />
-  </button>
-);
+import { Pencil, ShieldCheck } from 'lucide-react';
+import Switch from '@components/desktop/Switch.jsx';
+import ListEmpty from '@components/desktop/ListEmpty.jsx';
+import { summarizeScope } from '../utils/privacyRules.js';
 
 const actionLabel = (action) => (action === 'detect' ? '仅检测' : '脱敏');
 
 const PrivacyBuiltinRulesPanel = ({ rules = [], busy, onToggle, onEdit }) => {
   if (!rules.length) {
-    return (
-      <EmptyState
-        icon={ShieldCheck}
-        title="暂无内置规则"
-        description="启动后会自动补齐手机号、身份证和银行卡内置规则"
-      />
-    );
+    return <ListEmpty icon={ShieldCheck} title="暂无内置规则" description="启动后会自动补齐手机号、身份证和银行卡内置规则" />;
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-surface-sub text-left text-xs text-fg-muted">
-            <th className="w-12 px-3 py-2 font-medium">启用</th>
-            <th className="px-3 py-2 font-medium">内置规则</th>
-            <th className="w-20 px-3 py-2 font-medium">动作</th>
-            <th className="w-28 px-3 py-2 font-medium">占位符</th>
-            <th className="px-3 py-2 font-medium">作用域</th>
-            <th className="w-16 px-3 py-2 text-right font-medium">操作</th>
+    <table className="desk-table">
+      <thead>
+        <tr>
+          <th className="w-[52px] text-center">启用</th>
+          <th>内置规则</th>
+          <th>动作</th>
+          <th>占位符</th>
+          <th>作用域</th>
+          <th className="w-[36px]" aria-label="操作" />
+        </tr>
+      </thead>
+      <tbody>
+        {rules.map((rule) => (
+          <tr key={rule.id} onDoubleClick={() => !busy && onEdit(rule)} className={rule.enabled ? '' : 'text-fg-subtle'}>
+            <td className="text-center">
+              <span className="inline-flex align-middle">
+                <Switch checked={rule.enabled} disabled={busy} label={`${rule.name} 启用`} onChange={(enabled) => onToggle(rule, enabled)} />
+              </span>
+            </td>
+            <td className="py-1.5">
+              <div className={`font-medium ${rule.enabled ? 'text-fg' : ''}`}>{rule.name}</div>
+              <div className="font-mono text-xs text-fg-subtle">{rule.pattern}</div>
+              {rule.description && <div className="text-xs text-fg-subtle">{rule.description}</div>}
+              {rule.compile_error && <div className="break-all text-xs text-danger">{rule.compile_error}</div>}
+            </td>
+            <td className="text-xs text-fg-body">{actionLabel(rule.action)}</td>
+            <td className="font-mono text-xs text-fg-body">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
+            <td className="text-xs text-fg-muted">{summarizeScope(rule.scope)}</td>
+            <td>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onEdit(rule)}
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg disabled:opacity-40"
+                title="编辑"
+                aria-label={`编辑 ${rule.name}`}
+              >
+                <Pencil size={13} />
+              </button>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {rules.map((rule) => (
-            <tr key={rule.id} className="border-t border-line-soft hover:bg-surface-sub">
-              <td className="px-3 py-2">
-                <Toggle checked={rule.enabled} disabled={busy} onChange={(enabled) => onToggle(rule, enabled)} />
-              </td>
-              <td className="px-3 py-2">
-                <div className="font-medium text-fg">{rule.name}</div>
-                <div className="mt-0.5 font-mono text-xs text-fg-subtle">{rule.pattern}</div>
-                {rule.description && <div className="mt-0.5 text-xs text-fg-subtle">{rule.description}</div>}
-                {rule.compile_error && <div className="mt-1 break-all text-xs text-danger">{rule.compile_error}</div>}
-              </td>
-              <td className="px-3 py-2 text-fg-body">{actionLabel(rule.action)}</td>
-              <td className="break-all px-3 py-2 text-fg-body">{rule.action === 'redact' ? rule.placeholder : '-'}</td>
-              <td className="px-3 py-2 text-xs text-fg-muted">{summarizeScope(rule.scope)}</td>
-              <td className="px-3 py-2 text-right">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onEdit(rule)}
-                  className="rounded-lg p-1.5 text-fg-subtle hover:bg-accent-soft hover:text-accent"
-                  title="编辑"
-                >
-                  <Pencil size={14} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   );
 };
 

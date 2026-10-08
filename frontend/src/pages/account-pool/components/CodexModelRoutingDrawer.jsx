@@ -1,72 +1,221 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Pencil, Plus, RefreshCw, Route, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, Pencil, Plus, RefreshCw, Route, Trash2 } from 'lucide-react';
 import { Button, CustomSelect, LoadingSpinner } from '@components/ui';
-import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import { FormBlock, FormRow, FormSection } from '@components/desktop/FormSection.jsx';
+import ListEmpty from '@components/desktop/ListEmpty.jsx';
+import SidePanel from '@components/desktop/SidePanel.jsx';
+import Switch from '@components/desktop/Switch.jsx';
 import useConfirm from '@hooks/useConfirm.js';
 import { subscribeToEvent } from '@utils/wailsApi.js';
 import { createCodexModelRouteBinding, deleteCodexModelRouteBinding, fetchCodexModelRouteBindings, fetchModelRoutingSettings, testCodexModelRouting, updateCodexModelRouteBinding, updateModelRoutingSettings } from '@utils/api.js';
 import CodexRouteTestBox from './CodexRouteTestBox.jsx';
+import CodexBindingEditor, { MODES, accountId, accountName } from './CodexBindingEditor.jsx';
 
-const MODES = [
-  { value: 'auto', label: '自动', hint: '按账号顺序尝试所有可用账号' },
-  { value: 'manual_preferred', label: '优选', hint: '优先使用目标账号，失败后继续尝试其他成员' },
-  { value: 'manual_fixed', label: '固定', hint: '只使用目标账号，失败后直接结束，不切换账号' }
-];
-const inputClass = 'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg-body outline-none focus:border-accent-line';
-const labelClass = 'block text-xs font-medium text-fg-muted';
-const accountId = (account) => Number(account?.id ?? account?.ID ?? account?.account_id ?? account?.accountId);
-const accountName = (account) => account?.account_name || account?.accountName || account?.name || `账号 ${accountId(account)}`;
-const accountProvider = (account) => String(account?.provider_type || account?.providerType || 'unknown').replaceAll('_', ' ');
-const accountState = (account) => {
-  if (!account) return { label: '账号不存在', tone: 'tone-rose' };
-  if (account.enabled === false || account.state === 'disabled_auth') return { label: '已停用', tone: 'tone-rose' };
-  if (!account.has_credential && !account.credential_raw && !account.credentialRaw) return { label: '无凭据', tone: 'tone-amber' };
-  const until = account.cooldown_until || account.cooldownUntil;
-  if (until && new Date(until).getTime() > Date.now()) return { label: '冷却中', tone: 'tone-amber' };
-  return { label: '可参与', tone: 'tone-emerald' };
-};
-
-const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose }) => {
-  const inputRef = useRef(null);
-  const [draft, setDraft] = useState(() => ({ assignmentId: binding?.assignment_id || null, model: binding?.model || '', accountIds: (binding?.account_ids || []).map(Number), memberEnabled: Object.fromEntries((binding?.account_ids || []).map((id) => [Number(id), binding?.member_enabled?.[id] !== false])), routeMode: binding?.route_mode || 'auto', targetId: Number(binding?.route_target_account_id || 0), enabled: binding?.enabled !== false, note: binding?.note || '' }));
-  const [query, setQuery] = useState('');
-  const [error, setError] = useState('');
-  useModalLifecycle({ open: true, onClose, initialFocusRef: inputRef });
-  const byId = useMemo(() => new Map(accounts.map((account) => [accountId(account), account])), [accounts]);
-  const visible = useMemo(() => { const needle = query.trim().toLowerCase(); return accounts.filter((account) => !needle || `${accountName(account)} ${accountProvider(account)} ${accountId(account)}`.toLowerCase().includes(needle)); }, [accounts, query]);
-  const targetOptions = draft.accountIds.map((id) => ({ value: id, label: `${accountName(byId.get(id))} (#${id})` }));
-  const patch = (next) => { setDraft(next); setError(''); };
-  const toggleAccount = (id) => { const selected = draft.accountIds.includes(id); const next = selected ? draft.accountIds.filter((item) => item !== id) : [...draft.accountIds, id]; const memberEnabled = { ...draft.memberEnabled }; if (selected) delete memberEnabled[id]; else memberEnabled[id] = true; const targetId = next.includes(draft.targetId) ? draft.targetId : (next.length === 1 ? next[0] : 0); patch({ ...draft, accountIds: next, memberEnabled, targetId, routeMode: next.length === 0 ? 'auto' : draft.routeMode }); };
-  const toggleMember = (id) => patch({ ...draft, memberEnabled: { ...draft.memberEnabled, [id]: draft.memberEnabled[id] === false } });
-  const move = (id, delta) => { const index = draft.accountIds.indexOf(id); const nextIndex = index + delta; if (index < 0 || nextIndex < 0 || nextIndex >= draft.accountIds.length) return; const next = [...draft.accountIds]; [next[index], next[nextIndex]] = [next[nextIndex], next[index]]; patch({ ...draft, accountIds: next }); };
-  const submit = async () => { const model = draft.model.trim(); if (!model) return setError('请输入模型名'); if (!draft.accountIds.length) return setError('至少选择一个账号'); if (draft.routeMode !== 'auto' && !draft.targetId) return setError('优选 / 固定模式需要选择目标账号'); if (draft.routeMode !== 'auto' && !draft.accountIds.includes(draft.targetId)) return setError('目标账号必须在成员列表中'); if (bindings.some((item) => item.assignment_id !== draft.assignmentId && item.model.trim().toLowerCase() === model.toLowerCase())) return setError(`模型「${model}」已经配置过路由`); await onSave(draft.assignmentId, { model, account_ids: draft.accountIds, member_enabled: draft.memberEnabled, route_mode: draft.routeMode, route_target_account_id: draft.routeMode === 'auto' ? 0 : draft.targetId, enabled: draft.enabled, note: draft.note.trim() }); };
-  return createPortal(<div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[11vh]"><button type="button" aria-label="关闭 Codex 绑定编辑" className="absolute inset-0 bg-overlay backdrop-blur-[2px]" onClick={onClose} /><div role="dialog" aria-modal="true" aria-label={draft.assignmentId ? '编辑 Codex 模型路由' : '新建 Codex 模型路由'} className="relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl"><div className="flex items-center justify-between border-b border-line-soft px-5 py-4"><div><h3 className="font-semibold text-fg">{draft.assignmentId ? '编辑 Codex 模型路由' : '新建 Codex 模型路由'}</h3><p className="mt-0.5 text-xs text-fg-muted">模型只会在这里选中的账号之间调度。</p></div><button type="button" onClick={onClose} className="rounded-lg border border-line p-1.5 text-fg-subtle hover:text-fg-body"><X size={15} /></button></div><div className="flex-1 space-y-4 overflow-y-auto px-5 py-4"><div className="grid gap-3 sm:grid-cols-[1fr_190px]"><div><label className={labelClass} htmlFor="codex-model-name">模型名（精确匹配，大小写不敏感）</label><input id="codex-model-name" ref={inputRef} className={`${inputClass} mt-1 font-mono`} value={draft.model} disabled={busy} onChange={(event) => patch({ ...draft, model: event.target.value })} placeholder="gpt-5.5" /></div><div><span className={labelClass}>调度策略</span><CustomSelect options={MODES} value={draft.routeMode} disabled={busy} size="md" className="mt-1 w-full" onChange={(routeMode) => patch({ ...draft, routeMode, targetId: routeMode === 'auto' ? 0 : (draft.targetId || (draft.accountIds.length === 1 ? draft.accountIds[0] : 0)) })} /></div></div><p className="text-[11px] text-fg-subtle">{MODES.find((mode) => mode.value === draft.routeMode)?.hint}</p><div><div className="mb-1 flex items-center justify-between"><span className={labelClass}>账号成员与顺序</span><span className="text-[11px] text-fg-subtle">成员顺序就是自动模式的尝试顺序</span></div><div className="rounded-xl border border-line bg-surface-sub/40"><div className="flex items-center gap-2 border-b border-line-soft px-3 py-2"><input className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-fg-subtle" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} placeholder="搜索账号名称、类型或 ID" /><span className="text-[11px] text-fg-subtle">已选 {draft.accountIds.length}</span></div><div className="max-h-[250px] overflow-y-auto p-1.5">{visible.map((account) => { const id = accountId(account); const selected = draft.accountIds.includes(id); const state = accountState(account); return <button key={id} type="button" disabled={busy} onClick={() => toggleAccount(id)} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left ${selected ? 'bg-accent-soft/60' : 'hover:bg-surface-mut/60'}`}><span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border ${selected ? 'border-accent-ring bg-accent-ring text-white' : 'border-line-strong'}`}>{selected && <Check size={11} />}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-fg-body">{accountName(account)} <span className="font-mono text-[10px] text-fg-subtle">#{id}</span></span><span className="block truncate text-[10px] text-fg-subtle">{accountProvider(account)}</span></span><span className={`${state.tone} rounded-md border px-1.5 py-0.5 text-[10px]`}>{state.label}</span></button>; })}</div></div></div>{draft.accountIds.length > 0 && <div className="space-y-1.5 rounded-xl border border-line bg-surface-sub/30 p-3"><div className={labelClass}>当前顺序</div>{draft.accountIds.map((id, index) => <div key={id} className="flex items-center gap-2 rounded-lg border border-line-soft bg-surface px-2.5 py-1.5"><span className="w-5 text-center font-mono text-[11px] text-fg-subtle">{index + 1}</span><span className="min-w-0 flex-1 truncate text-xs text-fg-body">{accountName(byId.get(id))}</span>{draft.routeMode !== 'auto' && id === draft.targetId && <span className="text-[10px] text-accent">目标</span>}<button type="button" disabled={busy || index === 0} onClick={() => move(id, -1)} className="rounded p-1 text-fg-subtle hover:text-fg-body disabled:opacity-30"><ChevronUp size={14} /></button><button type="button" disabled={busy || index === draft.accountIds.length - 1} onClick={() => move(id, 1)} className="rounded p-1 text-fg-subtle hover:text-fg-body disabled:opacity-30"><ChevronDown size={14} /></button></div>)}</div>}<div className="rounded-xl border border-line bg-surface-sub/30 p-3"><div className={labelClass}>参与本模型组调度</div><div className="mt-2 flex flex-wrap gap-2">{draft.accountIds.map((id) => <label key={id} className="flex items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1 text-xs"><input type="checkbox" checked={draft.memberEnabled[id] !== false} onChange={() => toggleMember(id)} />{accountName(byId.get(id))}</label>)}</div></div><div><span className={labelClass}>目标账号（优选 / 固定）</span><CustomSelect options={targetOptions} value={draft.targetId || ''} disabled={busy || draft.routeMode === 'auto'} size="md" className="mt-1 w-full" placeholder={draft.routeMode === 'auto' ? '自动模式无需目标' : '选择目标账号'} onChange={(value) => patch({ ...draft, targetId: Number(value) })} /></div><div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div><label className={labelClass} htmlFor="codex-route-note">备注（可选）</label><input id="codex-route-note" className={`${inputClass} mt-1`} value={draft.note} disabled={busy} onChange={(event) => patch({ ...draft, note: event.target.value })} placeholder="例如：高性能账号" /></div><label className="flex items-center gap-2 pb-2.5 text-xs text-fg-body"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={(event) => patch({ ...draft, enabled: event.target.checked })} />启用该路由</label></div>{error && <div className="tone-rose flex items-start gap-1.5 rounded-lg border px-3 py-2 text-xs"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{error}</div>}</div><div className="flex justify-end gap-2 border-t border-line-soft px-5 py-3"><Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>取消</Button><Button size="sm" onClick={submit} loading={busy}>保存</Button></div></div></div>, document.body);
-};
-
-const CodexModelRoutingDrawer = ({ open, onClose, accounts = [] }) => {
-  const [settings, setSettings] = useState({ codex_enabled: false });
+const CodexModelRoutingDrawer = ({
+  open,
+  onClose,
+  accounts = []
+}) => {
+  const [settings, setSettings] = useState({
+    codex_enabled: false
+  });
   const [bindings, setBindings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { confirm, confirmDialog } = useConfirm();
+  const {
+    confirm,
+    confirmDialog
+  } = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [editor, setEditor] = useState(null);
-  const closeRef = useRef(null);
-  useModalLifecycle({ open, onClose, initialFocusRef: closeRef });
-  const load = useCallback(async () => { setError(''); try { const [nextSettings, nextBindings] = await Promise.all([fetchModelRoutingSettings(), fetchCodexModelRouteBindings()]); setSettings(nextSettings || {}); setBindings(nextBindings || []); } catch (err) { setError(err.message || '加载 Codex 模型路由失败'); } finally { setLoading(false); } }, []);
-  useEffect(() => { if (open) { setLoading(true); load(); } }, [open, load]);
-  useEffect(() => { if (!open) return undefined; return subscribeToEvent('model-routing:update', () => load().catch(() => {})); }, [open, load]);
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const [nextSettings, nextBindings] = await Promise.all([fetchModelRoutingSettings(), fetchCodexModelRouteBindings()]);
+      setSettings(nextSettings || {});
+      setBindings(nextBindings || []);
+    } catch (err) {
+      setError(err.message || '加载 Codex 模型路由失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (open) {
+      setLoading(true);
+      load();
+    }
+  }, [open, load]);
+  useEffect(() => {
+    if (!open) return undefined;
+    return subscribeToEvent('model-routing:update', () => load().catch(() => {}));
+  }, [open, load]);
   if (!open) return null;
-  const run = async (operation) => { setBusy(true); setError(''); try { await operation(); await load(); return true; } catch (err) { setError(err.message || '操作失败'); return false; } finally { setBusy(false); } };
-  const toggle = async () => { if (!settings.codex_enabled && bindings.filter((binding) => binding.enabled).length === 0 && !(await confirm({ title: '开启 Codex 模型路由', message: '当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？', confirmText: '仍要开启' }))) return; return run(() => updateModelRoutingSettings({ codex_enabled: !settings.codex_enabled })); };
-  const save = async (assignmentId, payload) => { const ok = await run(() => assignmentId ? updateCodexModelRouteBinding(assignmentId, payload) : createCodexModelRouteBinding(payload)); if (ok) setEditor(null); };
-  const patchBinding = (binding, patch) => { const next = { ...binding, ...patch }; const targetId = next.route_mode === 'auto' ? 0 : (Number(next.route_target_account_id) || Number(next.account_ids?.[0]) || 0); return run(() => updateCodexModelRouteBinding(binding.assignment_id, { model: next.model, account_ids: next.account_ids, member_enabled: next.member_enabled, route_mode: next.route_mode, route_target_account_id: targetId, enabled: next.enabled, note: next.note })); };
-  const remove = async (binding) => { if (!(await confirm({ title: '删除模型路由', message: `确定删除模型「${binding.model}」的路由吗？`, confirmText: '确认删除', danger: true }))) return; run(() => deleteCodexModelRouteBinding(binding.assignment_id)); };
-  const accountById = new Map(accounts.map((account) => [accountId(account), account]));
-  const nav = typeof document === 'undefined' ? null : document.querySelector('nav.sticky');
-  const topOffset = nav ? nav.getBoundingClientRect().bottom : 0;
-  return createPortal(<div className="fixed inset-0 z-[46] flex justify-end" style={{ top: topOffset }}><button type="button" aria-label="关闭 Codex 模型路由" className="absolute inset-0 bg-overlay backdrop-blur-[2px]" onClick={onClose} /><aside role="dialog" aria-modal="true" aria-label="Codex 模型路由" className="relative z-10 flex h-full w-full max-w-[880px] flex-col border-l border-line bg-surface shadow-2xl"><div className="border-b border-line-soft bg-gradient-to-r from-accent-soft/60 via-surface to-surface px-6 py-5"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="tone-indigo flex h-10 w-10 items-center justify-center rounded-xl shadow-sm"><Route size={20} /></div><div><h2 className="text-lg font-semibold text-fg">Codex 模型路由</h2><p className="mt-0.5 text-sm text-fg-muted">为每个模型指定账号集合、顺序和固定策略。</p></div></div><button type="button" ref={closeRef} onClick={onClose} className="rounded-lg border border-line bg-surface p-2 text-fg-subtle hover:text-fg-body"><X size={16} /></button></div><div className="mt-4 flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3"><div><div className="text-sm font-medium text-fg">启用 Codex 模型路由</div><div className="mt-0.5 text-xs text-fg-muted">{settings.codex_enabled ? '已生效：Codex 请求按模型绑定选择账号。' : '关闭中：Codex 请求继续使用全局账号池调度。'}</div></div><button type="button" role="switch" aria-checked={settings.codex_enabled === true} disabled={busy || loading} onClick={toggle} className={`relative h-6 w-11 rounded-full ${settings.codex_enabled ? 'bg-success-solid' : 'bg-surface-emph'} transition-colors`}><span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${settings.codex_enabled ? 'translate-x-5' : 'translate-x-0'}`} /></button></div></div><div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">{error && <div className="tone-rose flex items-start gap-2 rounded-xl border px-3 py-2 text-xs"><AlertTriangle size={14} className="mt-0.5 shrink-0" /><span className="flex-1">{error}</span><button type="button" onClick={load} className="underline">重试</button></div>}{settings.codex_enabled && bindings.filter((binding) => binding.enabled).length === 0 && <div className="tone-amber flex items-start gap-2 rounded-xl border px-3 py-2 text-xs"><AlertTriangle size={14} className="mt-0.5 shrink-0" />开启后未绑定模型不会回落到全局账号池。</div>}<div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-fg">模型绑定</h3><p className="mt-0.5 text-xs text-fg-subtle">{loading ? '加载中...' : `${bindings.length} 个模型 · ${bindings.filter((binding) => binding.enabled).length} 个已启用`}</p></div><div className="flex items-center gap-2"><Button variant="ghost" size="sm" icon={RefreshCw} onClick={load} loading={loading}>刷新</Button><Button size="sm" icon={Plus} disabled={busy} onClick={() => setEditor({})}>添加模型</Button></div></div>{loading && bindings.length === 0 ? <div className="rounded-xl border border-line py-10"><LoadingSpinner text="加载模型绑定..." /></div> : bindings.length === 0 ? <button type="button" onClick={() => setEditor({})} className="w-full rounded-xl border border-dashed border-line bg-surface-sub px-4 py-10 text-center hover:border-accent-line"><Route size={28} className="mx-auto text-fg-subtle/60" /><div className="mt-2 text-sm font-medium text-fg-body">还没有模型绑定</div><div className="mt-1 text-xs text-fg-subtle">添加模型并选择账号后，可在行内切换自动、优选或固定。</div></button> : <div className="divide-y divide-line-soft overflow-hidden rounded-xl border border-line bg-surface shadow-sm">{bindings.map((binding) => <div key={binding.assignment_id} className={`px-4 py-3 ${binding.enabled ? '' : 'bg-surface-sub/50'}`}><div className="flex flex-wrap items-center gap-2"><div className="min-w-[180px] flex-1"><div className={`truncate font-mono text-sm ${binding.enabled ? 'text-fg-body' : 'text-fg-subtle line-through'}`}>{binding.model}</div>{binding.note && <div className="mt-0.5 truncate text-[11px] text-fg-subtle">{binding.note}</div>}</div><CustomSelect options={MODES} value={binding.route_mode} disabled={busy} size="sm" className="w-[104px]" onChange={(route_mode) => patchBinding(binding, { route_mode })} /><CustomSelect options={(binding.account_ids || []).map((id) => ({ value: id, label: `${accountName(accountById.get(id))} (#${id})` }))} value={binding.route_target_account_id || ''} disabled={busy || binding.route_mode === 'auto'} size="sm" className="w-[180px]" placeholder={binding.route_mode === 'auto' ? '自动挑选' : '选择目标账号'} onChange={(value) => patchBinding(binding, { route_target_account_id: Number(value) })} /><button type="button" title="编辑模型与账号" disabled={busy} onClick={() => setEditor(binding)} className="rounded-lg border border-line p-1.5 text-fg-muted hover:border-accent-line hover:text-accent"><Pencil size={14} /></button><button type="button" title="删除模型绑定" disabled={busy} onClick={() => remove(binding)} className="rounded-lg border border-line p-1.5 text-fg-muted hover:border-danger hover:text-danger"><Trash2 size={14} /></button></div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(binding.account_ids || []).map((id, index) => <span key={id} className={`rounded-md border px-1.5 py-0.5 text-[11px] ${id === binding.route_target_account_id ? 'border-accent-line bg-accent-soft text-accent-fg' : 'border-line bg-surface-sub text-fg-muted'}`}>{index + 1}. {accountName(accountById.get(id))}{id === binding.route_target_account_id && binding.route_mode !== 'auto' ? ' · 目标' : ''}</span>)}{binding.last_account_id ? <span className="ml-1 text-[11px] text-fg-subtle">最近命中：{accountName(accountById.get(binding.last_account_id))} · {binding.last_outcome || '已完成'}</span> : null}</div></div>)}</div>}<CodexRouteTestBox onTest={testCodexModelRouting} /></div></aside>{editor && <CodexBindingEditor binding={editor.assignment_id ? editor : null} accounts={accounts} bindings={bindings} busy={busy} onSave={save} onClose={() => setEditor(null)} />}{confirmDialog}</div>, document.body);
+  const run = async operation => {
+    setBusy(true);
+    setError('');
+    try {
+      await operation();
+      await load();
+      return true;
+    } catch (err) {
+      setError(err.message || '操作失败');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggle = async () => {
+    if (!settings.codex_enabled && bindings.filter(binding => binding.enabled).length === 0 && !(await confirm({
+      title: '开启 Codex 模型路由',
+      message: '当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？',
+      confirmText: '仍要开启'
+    }))) return;
+    return run(() => updateModelRoutingSettings({
+      codex_enabled: !settings.codex_enabled
+    }));
+  };
+  const save = async (assignmentId, payload) => {
+    const ok = await run(() => assignmentId ? updateCodexModelRouteBinding(assignmentId, payload) : createCodexModelRouteBinding(payload));
+    if (ok) setEditor(null);
+  };
+  const patchBinding = (binding, patch) => {
+    const next = {
+      ...binding,
+      ...patch
+    };
+    const targetId = next.route_mode === 'auto' ? 0 : Number(next.route_target_account_id) || Number(next.account_ids?.[0]) || 0;
+    return run(() => updateCodexModelRouteBinding(binding.assignment_id, {
+      model: next.model,
+      account_ids: next.account_ids,
+      member_enabled: next.member_enabled,
+      route_mode: next.route_mode,
+      route_target_account_id: targetId,
+      enabled: next.enabled,
+      note: next.note
+    }));
+  };
+  const remove = async binding => {
+    if (!(await confirm({
+      title: '删除模型路由',
+      message: `确定删除模型「${binding.model}」的路由吗？`,
+      confirmText: '确认删除',
+      danger: true
+    }))) return;
+    run(() => deleteCodexModelRouteBinding(binding.assignment_id));
+  };
+  const accountById = new Map(accounts.map(account => [accountId(account), account]));
+  return (
+    <>
+      <SidePanel
+        open={open}
+        onClose={onClose}
+        label="Codex 模型路由"
+        title="Codex 模型路由"
+        subtitle="为每个模型指定账号集合、顺序和固定策略。"
+        width={880}
+        layer={46}
+        closeOnOverlay={true}
+        overlayLabel="关闭 Codex 模型路由"
+      >
+        <FormSection title="路由开关">
+          <FormRow
+            label="启用 Codex 模型路由"
+            description={settings.codex_enabled
+              ? '已生效：Codex 请求按模型绑定选择账号。'
+              : '关闭中：Codex 请求继续使用全局账号池调度。'}
+          >
+            <Switch checked={settings.codex_enabled === true} disabled={busy || loading} label="启用 Codex 模型路由" onChange={toggle} />
+          </FormRow>
+        </FormSection>
+
+        {error && (
+          <div className="mt-5 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span className="flex-1">{error}</span>
+            <button type="button" onClick={load} className="underline">重试</button>
+          </div>
+        )}
+        {settings.codex_enabled && bindings.filter((binding) => binding.enabled).length === 0 && (
+          <div className="mt-5 flex items-start gap-2 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs text-warn">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            开启后未绑定模型不会回落到全局账号池。
+          </div>
+        )}
+
+        <FormSection
+          title="模型绑定"
+          description={loading ? '加载中...' : `${bindings.length} 个模型 · ${bindings.filter((binding) => binding.enabled).length} 个已启用`}
+          actions={(
+            <>
+              <Button variant="ghost" size="sm" icon={RefreshCw} onClick={load} loading={loading}>刷新</Button>
+              <Button size="sm" icon={Plus} disabled={busy} onClick={() => setEditor({})}>添加模型</Button>
+            </>
+          )}
+        >
+          {loading && bindings.length === 0 ? (
+            <FormBlock><LoadingSpinner text="加载模型绑定..." /></FormBlock>
+          ) : bindings.length === 0 ? (
+            <button type="button" onClick={() => setEditor({})} className="block w-full rounded-[10px] hover:bg-surface-sub">
+              <ListEmpty icon={Route} title="还没有模型绑定" description="添加模型并选择账号后，可在行内切换自动、优选或固定。" />
+            </button>
+          ) : bindings.map((binding) => (
+            <div key={binding.assignment_id} className="px-3.5 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-[180px] flex-1">
+                  <div className={`truncate font-mono text-[13px] ${binding.enabled ? 'text-fg-body' : 'text-fg-muted line-through'}`}>
+                    {binding.model}
+                  </div>
+                  {binding.note && <div className="mt-0.5 truncate text-[11.5px] text-fg-muted">{binding.note}</div>}
+                </div>
+                <CustomSelect
+                  options={MODES}
+                  value={binding.route_mode}
+                  disabled={busy}
+                  size="sm"
+                  className="w-[100px] shrink-0"
+                  onChange={(route_mode) => patchBinding(binding, { route_mode })}
+                />
+                <CustomSelect
+                  options={(binding.account_ids || []).map((id) => ({ value: id, label: `${accountName(accountById.get(id))} (#${id})` }))}
+                  value={binding.route_target_account_id || ''}
+                  disabled={busy || binding.route_mode === 'auto'}
+                  size="sm"
+                  className="w-[170px] shrink-0"
+                  placeholder={binding.route_mode === 'auto' ? '自动挑选' : '选择目标账号'}
+                  onChange={(value) => patchBinding(binding, { route_target_account_id: Number(value) })}
+                />
+                <button type="button" title="编辑模型与账号" disabled={busy} onClick={() => setEditor(binding)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg disabled:opacity-50">
+                  <Pencil size={14} />
+                </button>
+                <button type="button" title="删除模型绑定" disabled={busy} onClick={() => remove(binding)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-danger disabled:opacity-50">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {(binding.account_ids || []).map((id, index) => (
+                  <span key={id} className={`rounded border px-1.5 text-[11px] leading-[18px] ${id === binding.route_target_account_id ? 'border-accent-line bg-accent-soft text-accent-fg' : 'border-line bg-pane text-fg-muted'}`}>
+                    {index + 1}. {accountName(accountById.get(id))}
+                    {id === binding.route_target_account_id && binding.route_mode !== 'auto' ? ' · 目标' : ''}
+                  </span>
+                ))}
+                {binding.last_account_id ? (
+                  <span className="ml-1 text-[11px] text-fg-muted">
+                    最近命中：{accountName(accountById.get(binding.last_account_id))} · {binding.last_outcome || '已完成'}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </FormSection>
+        <CodexRouteTestBox onTest={testCodexModelRouting} />
+      </SidePanel>
+      {editor && <CodexBindingEditor binding={editor.assignment_id ? editor : null} accounts={accounts} bindings={bindings} busy={busy} onSave={save} onClose={() => setEditor(null)} />}
+      {confirmDialog}
+    </>
+  );
 };
 
 export default CodexModelRoutingDrawer;

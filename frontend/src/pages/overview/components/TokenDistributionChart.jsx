@@ -3,9 +3,10 @@
 // 2025-11-28
 // 2026-09-09 概览改版：改为受控组件，数据取模型聚合接口的四类 Token 汇总
 // （与模型表同一时间范围），不再使用进程内累计值，也没有定时器与 chartUpdate 监听
+// 2026-10-07 桌面化：面板样式
 // ============================================
 
-import { PieChart as PieChartIcon } from 'lucide-react';
+import Panel from '@components/desktop/Panel.jsx';
 import {
   PieChart,
   Pie,
@@ -44,18 +45,7 @@ const TokenDistributionChart = ({ modelUsage, periodCaption = '', loading, error
     .filter((item) => item.value > 0);
 
   return (
-    <div className="bg-surface p-6 rounded-2xl border border-line/60 shadow-sm flex flex-col h-full">
-      <div className="flex justify-between items-start mb-1">
-        <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-accent-soft text-accent-ring rounded-md">
-            <PieChartIcon size={16} />
-          </div>
-          <h3 className="font-semibold text-fg">Token 使用分布</h3>
-        </div>
-        {periodCaption && <span className="text-[11px] text-fg-subtle">{periodCaption}</span>}
-      </div>
-      <p className="text-xs text-fg-muted mb-4">各类 Token 消耗占比</p>
-
+    <Panel title="Token 分布" subtitle={periodCaption || undefined} className="h-full" bodyClassName="flex flex-col px-3 py-3">
       <div className="flex-1 min-h-[180px] flex items-center justify-center relative overflow-visible">
         {loading ? (
           <div className="h-32 w-32 animate-pulse rounded-full bg-surface-mut" />
@@ -92,7 +82,7 @@ const TokenDistributionChart = ({ modelUsage, periodCaption = '', loading, error
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-fg-body">{breakdown.totalText}</span>
+              <span className="text-lg font-semibold tabular-nums text-fg">{breakdown.totalText}</span>
               <span className="text-xs text-fg-subtle">总计</span>
             </div>
           </>
@@ -101,7 +91,7 @@ const TokenDistributionChart = ({ modelUsage, periodCaption = '', loading, error
 
       {/* 图例 */}
       {!loading && !error && breakdown.hasData && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 pt-3 border-t border-line-soft">
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-line-soft pt-2.5">
           {breakdown.items.map((item) => (
             <div key={item.key} className="flex items-center justify-between text-xs">
               <div className="flex items-center text-fg-body">
@@ -116,7 +106,7 @@ const TokenDistributionChart = ({ modelUsage, periodCaption = '', loading, error
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 };
 

@@ -1,6 +1,7 @@
 // ============================================
 // 隐私规则筛选工具条
 // 2026-06-11 (v6.1 新增)
+// 2026-10-07 桌面化：表格上方的范围条，24px 控件
 // ============================================
 
 import { Search } from 'lucide-react';
@@ -26,41 +27,46 @@ const PrivacyRulesToolbar = ({ filters, onChange, total, filtered }) => {
   const update = (patch) => onChange({ ...filters, ...patch });
 
   return (
-    <div className="flex flex-wrap items-center gap-2 mb-3">
-      <div className="relative flex-1 min-w-[180px]">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line bg-inspector px-3 py-1.5">
+      <div className="relative w-56">
+        <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle" />
         <input
+          aria-label="搜索规则"
           value={filters.keyword || ''}
           onChange={(e) => update({ keyword: e.target.value })}
           placeholder="搜索规则名 / 描述 / pattern"
-          className="w-full pl-8 pr-3 py-1.5 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent-ring"
+          className="desk-field w-full pl-7 text-xs placeholder:text-fg-subtle"
         />
       </div>
       <CustomSelect
+        size="xs"
         options={ENABLED_OPTIONS}
         value={filters.enabled || ''}
         onChange={(value) => update({ enabled: value })}
-        className="w-28"
+        className="w-24"
       />
       <CustomSelect
+        size="xs"
         options={[{ value: '', label: '全部类型' }, ...PRIVACY_MATCH_TYPE_OPTIONS]}
         value={filters.matchType || ''}
         onChange={(value) => update({ matchType: value })}
-        className="w-28"
+        className="w-24"
       />
       <CustomSelect
+        size="xs"
         options={[{ value: '', label: '全部动作' }, ...PRIVACY_ACTION_OPTIONS]}
         value={filters.action || ''}
         onChange={(value) => update({ action: value })}
-        className="w-28"
+        className="w-24"
       />
       <CustomSelect
+        size="xs"
         options={SOURCE_OPTIONS}
         value={filters.source || ''}
         onChange={(value) => update({ source: value })}
-        className="w-28"
+        className="w-24"
       />
-      <span className="text-xs text-fg-subtle ml-auto">
+      <span className="ml-auto text-xs tabular-nums text-fg-subtle">
         {filtered} / {total} 条
       </span>
     </div>

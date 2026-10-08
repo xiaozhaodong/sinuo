@@ -5,7 +5,8 @@ import {
   filterUpstreamOptionsByFamily,
   getRequestFamilyMeta,
   normalizeRequestSource,
-  resolveRequestUpstream
+  resolveRequestUpstream,
+  resolveUpstreamFilterOption
 } from './requestSource.js';
 
 test('request source uses request_family and upstream_name as primary fields', () => {
@@ -103,4 +104,13 @@ test('合成上游标签不进筛选选项', () => {
   ];
   assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'claude').map((option) => option.value), ['xuanwulei']);
   assert.deepEqual(filterUpstreamOptionsByFamily(rows, 'all').map((option) => option.value), ['xuanwulei']);
+});
+
+test('单条请求的上游筛选候选与列表候选同口径（右键「只看此上游」用）', () => {
+  assert.deepEqual(resolveUpstreamFilterOption({ request_family: 'claude', upstream_name: 'xuanwulei' }), { value: 'xuanwulei', label: 'xuanwulei' });
+  assert.deepEqual(
+    resolveUpstreamFilterOption({ request_family: 'codex', upstream_type: 'subscription', upstream_name: 'chatgpt-subscription' }),
+    { value: 'chatgpt-subscription', label: '订阅直通 · Codex' }
+  );
+  assert.equal(resolveUpstreamFilterOption({ request_family: 'claude', upstream_name: '' }), null, '合成标签不可筛选');
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  formatListTimestamp,
   formatTimestamp,
   getRecentDaysRange,
   getTodayTimeRange,
@@ -40,4 +41,15 @@ test('parseTimestamp accepts absolute instants and rejects ambiguous strings', (
   assert.throws(() => parseTimestamp('2026-08-13 00:00:01'), /缺少时区/);
   assert.throws(() => parseTimestamp('not-a-date'), /缺少时区/);
   assert.throws(() => parseTimestamp('2026-99-99T00:00:00Z'), /无效时间/);
+});
+
+test('formatListTimestamp 当天显示时分秒，其它日期显示月/日 时:分，按配置时区判断当天', () => {
+  const now = new Date('2026-08-04T10:00:00.000Z'); // 上海 18:00，纽约 06:00，同为 8/4
+  assert.equal(formatListTimestamp('2026-08-04T06:50:10.000000Z', 'Asia/Shanghai', now), '14:50:10');
+  assert.equal(formatListTimestamp('2026-08-03T06:50:10.000000Z', 'Asia/Shanghai', now), '8/3 14:50');
+  // 上海已是 8/5 00:30，但纽约仍是 8/4 —— 「当天」跟随配置时区，而不是宿主时区
+  const lateNow = new Date('2026-08-04T16:30:00.000Z');
+  assert.equal(formatListTimestamp('2026-08-04T06:50:10.000000Z', 'Asia/Shanghai', lateNow), '8/4 14:50');
+  assert.equal(formatListTimestamp('2026-08-04T06:50:10.000000Z', 'America/New_York', lateNow), '02:50:10');
+  assert.equal(formatListTimestamp('', 'Asia/Shanghai', now), '-');
 });

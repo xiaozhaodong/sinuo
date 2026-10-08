@@ -30,13 +30,13 @@ const TABLE_FIELDS = [
   'costKnown'
 ];
 
-// 表格不渲染、但详情弹窗会读的字段。
-// 行对象是「弹窗打开瞬间的先行渲染」数据源（RequestDetailModal.jsx:129），
+// 表格不渲染、但详情面板会读的字段。
+// 行对象是「选中瞬间的先行渲染」数据源（RequestDetailPane.jsx 的 initialRequest），
 // 详情接口返回后会被权威数据覆盖 —— 但若这里不比对，行引用会一直停在旧快照，
-// 弹窗首帧就会闪一个过期值（连续重试时 retryCount 尤其明显），
+// 面板首帧就会闪一个过期值（连续重试时 retryCount 尤其明显），
 // 且详情接口失败降级时（lifecycleDetailController 的 found:false 分支）
 // 会持久显示错误数据。
-// 后端同时下发 camelCase 与 snake_case 两套命名，弹窗也两套都读，故都要比。
+// 后端同时下发 camelCase 与 snake_case 两套命名，面板也两套都读，故都要比。
 const DETAIL_ONLY_FIELDS = [
   'cacheCreation5mTokens',
   'cacheCreation1hTokens',

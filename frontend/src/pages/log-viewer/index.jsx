@@ -1,8 +1,13 @@
 // LogsPage - 系统日志查看页面（主组件）
+// 2026-10-07：控制台式全宽列表；级别、搜索、跟随与流控制都在工具栏，计数在状态栏
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useWailsLogs } from '@/hooks/useWailsLogs';
-import { FileText, RefreshCw, AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowDownToLine, FileText, RefreshCw } from 'lucide-react';
 import { LogEntry, LogControls, LogFilters } from './components';
+import { PageToolbar } from '@components/layout/AppToolbar.jsx';
+import { ToolbarButton, ToolbarSeparator, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
+import ToolbarSearch from '@components/layout/ToolbarSearch.jsx';
+import { StatusBar, StatusItem, StatusSpacer } from '@components/desktop/StatusBar.jsx';
 
 // 主页面组件
 function LogsPage() {
@@ -107,69 +112,57 @@ function LogsPage() {
     prevLogsLengthRef.current = 0;
   };
 
+  const errorCount = stats.ERROR;
+  const warnCount = stats.WARN;
+
   return (
-    <div
-      className="flex flex-col bg-surface rounded-lg overflow-hidden border border-line shadow-sm"
-      style={{ height: 'calc(100vh - 150px)' }}
-    >
-      {/* 页面头部 - 固定 */}
-      <div className="flex-shrink-0 border-b border-line px-6 py-4">
-        {/* 标题栏 */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-fg flex items-center gap-2">
-              <FileText size={28} className="text-accent" />
-              系统日志
-            </h1>
-            <p className="text-fg-muted text-sm mt-1">
-              实时查看系统运行日志 · 共 {logs.length} 条
-              {filteredLogs.length !== logs.length && ` · 筛选后 ${filteredLogs.length} 条`}
-            </p>
-          </div>
-
-          <LogControls
-            isStreaming={isStreaming}
-            loading={loading}
-            logsCount={filteredLogs.length}
-            onToggleStream={isStreaming ? stop : start}
-            onRefresh={refresh}
-            onClear={handleClear}
-            onExport={handleExport}
-          />
-        </div>
-
-        {/* 过滤器栏 */}
+    <div className="motion-page flex min-h-0 flex-1 flex-col bg-surface">
+      <PageToolbar subtitle={`共 ${logs.length} 条${filteredLogs.length !== logs.length ? ` · 筛选后 ${filteredLogs.length} 条` : ''}`}>
         <LogFilters
           stats={stats}
           levelFilter={levelFilter}
           onLevelFilterChange={setLevelFilter}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          autoScroll={autoScroll}
-          onAutoScrollChange={setAutoScroll}
           totalLogs={logs.length}
         />
-      </div>
+        <ToolbarSpacer />
+        <ToolbarSearch value={searchQuery} onChange={setSearchQuery} placeholder="过滤日志" width={180} />
+        <ToolbarButton icon={ArrowDownToLine} title={autoScroll ? '跟随最新：开' : '跟随最新：关'} pressed={autoScroll} onClick={() => setAutoScroll((value) => !value)} />
+        <ToolbarSeparator />
+        <LogControls
+          isStreaming={isStreaming}
+          loading={loading}
+          logsCount={filteredLogs.length}
+          onToggleStream={isStreaming ? stop : start}
+          onRefresh={refresh}
+          onClear={handleClear}
+          onExport={handleExport}
+        />
+      </PageToolbar>
 
-      {/* 日志内容区域 - 可滚动 */}
-      <div className="flex-1 overflow-y-auto bg-surface">
+      {/* 已有日志时出错只给一条提示，不把已加载的日志整屏换成错误页 */}
+      {error && logs.length > 0 && (
+        <div role="alert" className="selectable flex shrink-0 items-center gap-2 border-b border-danger-line bg-danger-soft px-4 py-1.5 text-xs text-danger">
+          <AlertCircle size={13} className="shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* 日志内容区域 - 可滚动；等宽文本可直接拖选复制 */}
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {loading && logs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-fg-subtle">
-            <RefreshCw size={24} className="animate-spin mr-2" />
-            加载中...
+          <div className="flex h-full items-center justify-center gap-2 text-[13px] text-fg-subtle">
+            <RefreshCw size={16} className="animate-spin" />
+            加载中…
           </div>
-        ) : error ? (
-          <div className="flex items-center justify-center h-full text-danger">
-            <AlertCircle size={24} className="mr-2" />
+        ) : error && logs.length === 0 ? (
+          <div role="alert" className="selectable flex h-full items-center justify-center gap-2 text-[13px] text-danger">
+            <AlertCircle size={16} />
             {error}
           </div>
         ) : filteredLogs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-fg-subtle">
-            <FileText size={48} className="mb-2 opacity-50" />
-            <p className="text-lg">暂无日志</p>
-            {searchQuery || levelFilter !== 'ALL' ? (
-              <p className="text-sm mt-1">尝试调整搜索条件或过滤器</p>
-            ) : null}
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-[13px] text-fg-subtle">
+            <FileText size={32} strokeWidth={1.25} />
+            {searchQuery || levelFilter !== 'ALL' ? '没有符合条件的日志，试试调整级别或关键词' : '暂无日志'}
           </div>
         ) : (
           <>
@@ -180,10 +173,19 @@ function LogsPage() {
                 searchQuery={searchQuery}
               />
             ))}
-            <div ref={logsEndRef} className="h-4" />
+            <div ref={logsEndRef} className="h-2" />
           </>
         )}
       </div>
+
+      <StatusBar>
+        <StatusItem label="显示" value={`${filteredLogs.length} / ${logs.length}`} />
+        <StatusItem label="错误" value={errorCount} valueClassName={errorCount > 0 ? 'text-danger' : 'text-fg-body'} />
+        <StatusItem label="警告" value={warnCount} valueClassName={warnCount > 0 ? 'text-warn' : 'text-fg-body'} />
+        <StatusSpacer />
+        <StatusItem label={isStreaming ? '实时接收中' : '已暂停接收'} />
+        <StatusItem label={autoScroll ? '跟随最新' : '已停止跟随'} />
+      </StatusBar>
     </div>
   );
 }

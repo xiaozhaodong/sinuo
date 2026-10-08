@@ -340,6 +340,16 @@ const summarizeCallbackURL = (raw = '') => {
   }
 };
 
+const shouldAutoExtractCallback = (text) => {
+  try {
+    const callbackURL = new URL(text);
+    const { hasCode, hasRefreshToken, oauthError } = summarizeCallbackURL(callbackURL.href);
+    return Boolean(hasCode || hasRefreshToken || oauthError);
+  } catch {
+    return false;
+  }
+};
+
 const toDateOrNull = (value) => {
   if (!value) {
     return null;
@@ -423,6 +433,7 @@ export {
   parseCodexModelRewriteSettings,
   providerTypeToAuthMethod,
   resolveAccountId,
+  shouldAutoExtractCallback,
   summarizeCallbackURL,
   toAccountAuthLabel,
   toAccountStateLabel,

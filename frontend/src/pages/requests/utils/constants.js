@@ -34,10 +34,10 @@ export const STATUS_SELECT_OPTIONS = Object.entries(STATUS_OPTIONS).map(([value,
   label
 }));
 
-// 分页配置
+// 分页配置：默认 30 条，列表区基本铺满；后端单页上限 100（超过会被改回 20），选项不要超过 100
 export const PAGINATION_CONFIG = {
-  DEFAULT_PAGE_SIZE: 10,
-  PAGE_SIZE_OPTIONS: [10, 20, 50, 100]
+  DEFAULT_PAGE_SIZE: 30,
+  PAGE_SIZE_OPTIONS: [20, 30, 50, 100]
 };
 
 // 来源视图选项：value 与服务端 source_view 取值一一对应，

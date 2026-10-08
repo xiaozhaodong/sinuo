@@ -59,7 +59,7 @@ test('概览页不再渲染端点健康环形图与底部连接统计大卡', as
   assert.doesNotMatch(pageSource, /ConnectionStats/);
 });
 
-test('概览页首屏按 4 个今日 KPI + 趋势 + 模型表组织，并显示最后更新时间', async () => {
+test('概览页首屏按 4 个今日 KPI + 趋势 + 模型表组织，工具栏显示快照时间与刷新', async () => {
   const pageSource = await readSource(overviewPagePath);
 
   assert.match(pageSource, /KPICardsGrid/);
@@ -68,8 +68,8 @@ test('概览页首屏按 4 个今日 KPI + 趋势 + 模型表组织，并显示�
   assert.match(pageSource, /UpstreamCostRanking/);
   assert.match(pageSource, /TokenDistributionChart/);
   assert.match(pageSource, /PerformanceDetailsPanel/);
-  assert.match(pageSource, /最后更新/);
-  assert.match(pageSource, /刷新数据/);
+  assert.match(pageSource, /<PageToolbar subtitle=\{`快照 · \$\{lastUpdate \|\| '—'\} 更新`\}>/);
+  assert.match(pageSource, /title="刷新数据"/);
 });
 
 test('全局 status/notification SSE 与请求页实时流保持不变', async () => {

@@ -74,5 +74,6 @@ export const resolveClaudeAccessLabel = ({ info = null, loading = false, error =
   if (info.error) return { label: '入口启动失败', detail: info.error };
   if (!info.running) return { label: '入口未运行', detail: '' };
   if (info.mode === 'endpoint') return { label: `端点 · ${routeLabel}`, detail: '' };
-  return { label: '订阅', detail: '' };
+  // 按钮宽度随内容（最多 236px），不再为定宽缩写成「订阅」
+  return { label: '订阅直通', detail: '' };
 };
