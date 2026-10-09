@@ -11,6 +11,7 @@
 // 点外部、按 Esc、外部滚动、窗口失焦都会关闭；↑↓ / Home / End 导航，Enter 选择。
 // 位置贴着光标，越界时向左 / 向上收。
 // 弹出按钮（筛选、每页条数）用 openMenuAt(按钮元素, items)：菜单对齐按钮左下，下方放不下时翻到按钮上方。
+// 锚定菜单开着时再点同一个触发按钮即关闭：该按钮上的 mousedown 不算「点外部」，交给按钮 click 切换。
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
@@ -22,7 +23,7 @@ const ANCHOR_GAP = 4;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
 
-const ContextMenu = ({ x, y, anchorRect = null, items, onClose }) => {
+const ContextMenu = ({ x, y, anchorRect = null, anchorElement = null, items, onClose }) => {
   const menuRef = useRef(null);
   const hasCheckColumn = items.some((item) => item !== '-' && item.checked !== undefined);
 
@@ -56,7 +57,8 @@ const ContextMenu = ({ x, y, anchorRect = null, items, onClose }) => {
 
   useEffect(() => {
     const handlePointer = (event) => {
-      if (!menuRef.current?.contains(event.target)) onClose();
+      if (menuRef.current?.contains(event.target) || anchorElement?.contains(event.target)) return;
+      onClose();
     };
     const handleKey = (event) => {
       if (event.key === 'Escape') onClose();
@@ -76,7 +78,7 @@ const ContextMenu = ({ x, y, anchorRect = null, items, onClose }) => {
       window.removeEventListener('scroll', handleScroll, true);
       window.removeEventListener('resize', onClose);
     };
-  }, [onClose]);
+  }, [anchorElement, onClose]);
 
   const handleNavigation = (event) => {
     if (event.key === 'Tab') {
