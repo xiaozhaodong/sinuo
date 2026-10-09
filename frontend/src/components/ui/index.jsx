@@ -477,11 +477,11 @@ export const CustomSelect = ({
     setIsOpen(false);
   };
 
-  // 桌面化：弹出按钮式触发器（24 / 28px 高）
+  // 桌面化：弹出按钮式触发器统一 24px 高，与 desk-field 一致；size 只控制字号与最小宽度
   const sizeClasses = {
     xs: 'h-6 px-2 text-xs min-w-[80px]',
-    sm: 'h-7 px-2.5 text-xs min-w-[100px]',
-    md: 'h-7 px-2.5 text-[13px] min-w-[120px]'
+    sm: 'h-6 px-2.5 text-xs min-w-[100px]',
+    md: 'h-6 px-2.5 text-[13px] min-w-[120px]'
   };
 
   const dropdownSizeClasses = {
