@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterRoutingBindings, routingCounts, routingOutcomeLabel } from './routingView.js';
+import {
+  filterRoutingBindings,
+  routingCounts,
+  routingOutcomeLabel,
+  routingOutcomeTone,
+  splitRoutingMembers
+} from './routingView.js';
 
 const bindings = [
   { assignment_id: 1, model: 'Claude-Opus', note: '主力', enabled: true },
@@ -25,4 +31,36 @@ test('最近命中保留所有旧结果文案，未知结果不被掩盖', () =>
   assert.equal(routingOutcomeLabel('manual_fixed_blocked'), '固定目标不可用');
   assert.equal(routingOutcomeLabel('future_outcome'), 'future_outcome');
   assert.equal(routingOutcomeLabel(''), '—');
+});
+
+test('路由成员按上限拆分，溢出色调按 rose、amber、slate 降级', () => {
+  const members = [
+    { key: 'a', tone: 'tone-emerald' },
+    { key: 'b', tone: 'tone-amber' },
+    { key: 'c', tone: 'tone-rose' },
+    { key: 'd', tone: 'tone-emerald' }
+  ];
+  assert.deepEqual(splitRoutingMembers(members, 2), { visible: members.slice(0, 2), hidden: members.slice(2), overflowTone: 'tone-rose' });
+  assert.deepEqual(splitRoutingMembers(members.slice(0, 2), 2), { visible: members.slice(0, 2), hidden: [], overflowTone: '' });
+  assert.deepEqual(splitRoutingMembers(members.slice(0, 1), 2), { visible: members.slice(0, 1), hidden: [], overflowTone: '' });
+  assert.equal(splitRoutingMembers([
+    { key: 'a', tone: 'tone-emerald' },
+    { key: 'b', tone: 'tone-amber' },
+    { key: 'c', tone: 'tone-emerald' }
+  ], 1).overflowTone, 'tone-amber');
+  assert.equal(splitRoutingMembers([
+    { key: 'a', tone: 'tone-emerald' },
+    { key: 'b', tone: 'tone-emerald' },
+    { key: 'c', tone: 'tone-slate' }
+  ], 1).overflowTone, 'tone-slate');
+});
+
+test('路由结果色调覆盖成功、进行中、取消、失败和空值', () => {
+  assert.equal(routingOutcomeTone('success'), 'success');
+  assert.equal(routingOutcomeTone('pending'), 'neutral');
+  assert.equal(routingOutcomeTone('cancelled'), 'neutral');
+  assert.equal(routingOutcomeTone('quality_incomplete'), 'danger');
+  assert.equal(routingOutcomeTone('future_outcome'), 'danger');
+  assert.equal(routingOutcomeTone(''), '');
+  assert.equal(routingOutcomeTone(null), '');
 });

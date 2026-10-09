@@ -58,7 +58,7 @@ const RoutingList = ({ data, rows, selectedId, memberProps, onSelect, onPatch, o
   const handleListKeyDown = useListKeyboard({ ids, selectedId, onSelect, containerRef: listRef });
   const Table = config.Table;
   return (
-    <div ref={listRef} tabIndex={0} onKeyDown={handleListKeyDown} aria-label={config.listLabel} className="min-h-0 flex-1 overflow-auto focus:outline-none">
+    <div ref={listRef} tabIndex={0} onKeyDown={handleListKeyDown} aria-label={config.listLabel} className="@container min-h-0 flex-1 overflow-auto focus:outline-none">
       {!data.ready ? <ListEmpty title="桌面环境中可编辑模型路由" />
         : data.loading && !data.settings ? <LoadingSpinner text="加载模型路由..." />
           : rows.length > 0 ? <Table {...memberProps} bindings={rows} selectedId={selectedId} busy={disabled} onSelect={onSelect} onPatch={onPatch} onRowContextMenu={onRowContextMenu} />

@@ -18,6 +18,27 @@ const OUTCOME_LABELS = {
 
 export const routingOutcomeLabel = (outcome) => OUTCOME_LABELS[outcome] || outcome || '—';
 
+export const splitRoutingMembers = (members, limit = 2) => {
+  const items = Array.isArray(members) ? members : [];
+  const visible = items.slice(0, limit);
+  const hidden = items.slice(limit);
+  const overflowTone = hidden.length === 0
+    ? ''
+    : hidden.some((member) => member.tone === 'tone-rose')
+      ? 'tone-rose'
+      : hidden.some((member) => member.tone === 'tone-amber')
+        ? 'tone-amber'
+        : 'tone-slate';
+  return { visible, hidden, overflowTone };
+};
+
+export const routingOutcomeTone = (outcome) => {
+  if (!outcome) return '';
+  if (outcome === 'success') return 'success';
+  if (outcome === 'pending' || outcome === 'cancelled') return 'neutral';
+  return 'danger';
+};
+
 const modelDisplayName = (binding) => binding.model || '';
 
 export const filterRoutingBindings = (bindings, { query = '', filter = 'all', displayName = modelDisplayName } = {}) => {
