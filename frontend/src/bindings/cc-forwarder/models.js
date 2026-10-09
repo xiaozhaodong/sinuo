@@ -921,6 +921,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * RequestQueryParams 请求查询参数
  * @typedef {Object} RequestQueryParams
+ * @property {string} session_id
  * @property {number} page
  * @property {number} page_size
  * @property {string} start_date - 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
@@ -936,6 +937,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * RequestRecord 请求记录
  * @typedef {Object} RequestRecord
+ * @property {string} [session_id]
  * @property {string} id
  * @property {string} request_id
  * @property {string} timestamp
@@ -1193,6 +1195,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * UsageStatsQueryParams 使用统计查询参数
  * @typedef {Object} UsageStatsQueryParams
+ * @property {string} session_id
  * @property {string} period - 时间周期: "1h", "1d", "7d", "30d", "90d"
  * @property {string} start_date - 开始时间（优先于 period）
  * @property {string} end_date - 结束时间（优先于 period）

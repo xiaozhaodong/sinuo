@@ -51,6 +51,7 @@ export const SOURCE_VIEW_OPTIONS = [
 
 // 默认筛选器状态（v4.0: 移除group筛选）
 export const DEFAULT_FILTERS = {
+  sessionId: '',
   status: 'all',
   model: '',
   requestFamily: 'all',
@@ -70,6 +71,7 @@ export const TABLE_COLUMNS = [
   // 表格读起来像历史日志而不是监控列表。
   { id: 'status', label: '状态', alwaysVisible: false, width: 'auto' },
   { id: 'requestId', label: '请求ID', alwaysVisible: true, width: 'auto' },
+  { id: 'sessionId', label: '会话', alwaysVisible: false, defaultHidden: true, width: 'auto' },
   { id: 'timestamp', label: '时间', alwaysVisible: true, width: 'auto' },
   { id: 'model', label: '模型', alwaysVisible: false, width: 'auto' },
   { id: 'requestFamily', label: '类型', alwaysVisible: false, width: 'auto' },
@@ -82,9 +84,9 @@ export const TABLE_COLUMNS = [
   { id: 'cost', label: '成本', alwaysVisible: false, width: 'auto', align: 'right' }
 ];
 
-// 默认全部可见。必须从 TABLE_COLUMNS 派生而不是手抄一份 id 列表 ——
+// 默认显示未标记 defaultHidden 的列。必须从 TABLE_COLUMNS 派生而不是手抄一份 id 列表 ——
 // 手抄的版本会漏列、会写错 id，也会在 TABLE_COLUMNS 调整顺序时悄悄失配。
-export const DEFAULT_VISIBLE_COLUMNS = TABLE_COLUMNS.map(col => col.id);
+export const DEFAULT_VISIBLE_COLUMNS = TABLE_COLUMNS.filter(col => !col.defaultHidden).map(col => col.id);
 
 // 时间范围快捷选项
 export const TIME_RANGE_OPTIONS = [

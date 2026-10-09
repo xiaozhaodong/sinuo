@@ -27,6 +27,7 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   upstreamSourceName: pick(request, ['upstream_source_name', 'upstreamSourceName'], ''),
   upstreamId: pick(request, ['upstream_id', 'upstreamId'], null),
   requestId: pick(request, ['request_id', 'requestId', 'id'], ''),
+  sessionId: pick(request, ['session_id', 'sessionId'], ''),
   id: pick(request, ['request_id', 'requestId', 'id'], ''),
   timestamp: pick(request, ['start_time', 'timestamp'], ''),
   model: pick(request, ['model_name', 'model'], 'unknown'),

@@ -11,7 +11,7 @@ import { TABLE_COLUMNS, DEFAULT_VISIBLE_COLUMNS } from '../utils/constants.js';
  * @returns {Object}
  */
 export const useColumnConfig = () => {
-  // 可见列状态（默认全部可见）
+  // 可见列状态（默认隐藏会话列）
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_VISIBLE_COLUMNS);
 
   // 切换单个列的显示/隐藏
@@ -37,7 +37,7 @@ export const useColumnConfig = () => {
     });
   }, []);
 
-  // 重置为默认配置（全部可见）
+  // 重置为默认配置（会话列隐藏）
   const resetColumns = useCallback(() => {
     setVisibleColumns(DEFAULT_VISIBLE_COLUMNS);
   }, []);

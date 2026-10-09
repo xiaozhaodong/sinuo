@@ -11,6 +11,7 @@
 // ⚠️ 新增可见列时必须同步这里，否则该列的数据变化不会触发行重渲染。
 const TABLE_FIELDS = [
   'requestId',
+  'sessionId',
   'timestamp',
   'status',
   'model',

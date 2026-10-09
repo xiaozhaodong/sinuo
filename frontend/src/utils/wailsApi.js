@@ -1135,6 +1135,7 @@ export const getUsageStats = async (params = {}) => {
     start_date: params.start_date || '',
     end_date: params.end_date || '',
     status: params.status || '',
+    session_id: params.session_id || params.sessionId || '',
     model: params.model || '',
     request_family: params.request_family || params.requestFamily || '',
     upstream_name: params.upstream_name || params.upstreamName || '',
@@ -1274,6 +1275,7 @@ export const getRequests = async (params = {}) => {
     page_size: parseInt(params.limit || params.pageSize || 50),
     ...buildRequestScopeParams(params),
     status: params.status || '',
+    session_id: params.session_id || params.sessionId || '',
     model: params.model || '',
     upstream_name: params.upstream_name || params.upstreamName || ''
   };
@@ -1285,6 +1287,7 @@ export const getRequests = async (params = {}) => {
   // 转换请求记录格式
   const requests = (result.requests || []).map(r => ({
     request_id: r.request_id,
+    session_id: r.session_id || '',
     id: r.request_id,
     timestamp: r.timestamp,
     start_time: r.timestamp,

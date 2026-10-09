@@ -6,8 +6,42 @@ import {
   formatReasoning,
   assessModel,
   assessReasoning,
+  formatSpeed,
   buildModelAlert
 } from './modelConsistency.js';
+
+test('formatSpeed 只展示请求档位与上游回报值，不做一致性判定', () => {
+  const cases = [
+    [{}, '标准'],
+    [{ requestReasoning: 'speed:default', responseReasoning: 'speed:default' }, '标准'],
+    [{ responseReasoning: 'speed:auto' }, '标准'],
+    [{ responseReasoning: 'speed:priority' }, '请求 标准 · 上游回报 Fast'],
+    [{ requestReasoning: 'speed:priority' }, '请求 Fast · 上游未回报'],
+    [{ requestReasoning: 'speed:priority', responseReasoning: 'speed:default' }, '请求 Fast · 上游回报 标准'],
+    [{ requestReasoning: 'speed:fast', responseReasoning: 'speed:fast' }, '请求 Fast · 上游回报 Fast'],
+    [{ requestReasoning: 'speed:ultrafast', responseReasoning: 'speed:flex' }, '请求 Ultrafast · 上游回报 Flex'],
+    [{ requestReasoning: 'speed:__proto__', responseReasoning: 'speed:future-tier' }, '请求 __proto__ · 上游回报 future-tier']
+  ];
+  for (const [request, text] of cases) {
+    assert.equal(formatSpeed(request), text, JSON.stringify(request));
+  }
+});
+
+test('速度档位不进列表告警', () => {
+  assert.equal(buildModelAlert({ requestReasoning: 'speed:priority', responseReasoning: 'speed:default' }), null);
+  const combined = buildModelAlert({ requestFamily: 'codex', requestModel: 'gpt-a', responseModel: 'gpt-b', requestReasoning: 'effort:high speed:ultrafast', responseReasoning: 'effort:low speed:default' });
+  assert.ok(combined.lines.includes('思考  high → low'));
+  assert.ok(combined.lines.every(line => !line.startsWith('速度')));
+});
+
+test('速度字段独立于思考显示，旧数据的判定保持不变', () => {
+  const legacy = { requestFamily: 'codex', requestReasoning: 'effort:high', responseReasoning: 'effort:low' };
+  assert.equal(formatSpeed(legacy), '标准');
+  assert.deepEqual(assessReasoning({ ...legacy, requestReasoning: 'effort:high speed:priority', responseReasoning: 'effort:low speed:default' }), assessReasoning(legacy));
+  assert.equal(formatReasoning('effort:high speed:priority'), 'high');
+  assert.equal(formatReasoning('speed:priority'), '未指定');
+  assert.equal(buildModelAlert({}), null);
+});
 
 test('parseReasoning / formatReasoning 文法往返', () => {
   assert.deepEqual(parseReasoning('thinking:adaptive effort:xhigh'), { thinking: 'adaptive', effort: 'xhigh' });

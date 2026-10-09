@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 
 import { buildCustomRangePatch, buildQueryParamsFromFilters, formatFilterDateTimeInput } from './filterTime.js';
 
+test('会话条件下传完整 ID，空会话不收窄查询', () => {
+  assert.deepEqual(buildQueryParamsFromFilters({ sessionId: 'session-12345678', model: 'gpt-test' }), {
+    session_id: 'session-12345678', model: 'gpt-test'
+  });
+  assert.deepEqual(buildQueryParamsFromFilters({ sessionId: '' }), {});
+});
+
 test('buildQueryParamsFromFilters normalizes supported date-time precisions without producing malformed values', () => {
   assert.deepEqual(buildQueryParamsFromFilters({
     startDate: '2026-08-04',

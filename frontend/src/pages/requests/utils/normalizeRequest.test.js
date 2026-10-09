@@ -3,6 +3,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeRequest } from './normalizeRequest.js';
 
+test('会话字段兼容两种命名，旧数据保持空值', () => {
+  assert.equal(normalizeRequest({ session_id: 'session-snake' }).sessionId, 'session-snake');
+  assert.equal(normalizeRequest({ sessionId: 'session-camel' }).sessionId, 'session-camel');
+  assert.equal(normalizeRequest({ session_id: 'original', sessionId: 'other' }).sessionId, 'original');
+  assert.equal(normalizeRequest({}).sessionId, '');
+  assert.equal(normalizeRequest({ session_id: null }).sessionId, '');
+});
+
 test('Wails 列表形状：duration_ms / status_code', () => {
   const result = normalizeRequest({
     request_id: 'req-1',

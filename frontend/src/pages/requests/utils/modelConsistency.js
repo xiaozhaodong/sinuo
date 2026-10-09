@@ -171,6 +171,33 @@ export const assessReasoning = ({ requestFamily, requestReasoning, responseReaso
 };
 
 /**
+ * 速度档位只展示、不判定：有中转按 Fast 计费却回报 default，回报值不能当作实际处理档位。
+ */
+const normalizeSpeed = (value) => {
+  const speed = String(value ?? '').trim().toLowerCase();
+  if (speed === 'priority' || speed === 'fast') return 'fast';
+  if (!speed || ['default', 'standard', 'auto'].includes(speed)) return 'standard';
+  return speed;
+};
+
+const SPEED_LABELS = { fast: 'Fast', ultrafast: 'Ultrafast', flex: 'Flex', standard: '标准' };
+const speedLabel = (speed) => Object.hasOwn(SPEED_LABELS, speed) ? SPEED_LABELS[speed] : speed;
+
+/**
+ * 详情「速度档位」文案：请求档位与上游回报档位；未请求且上游没回报非标准档位时只显示「标准」。
+ */
+export const formatSpeed = ({ requestReasoning, responseReasoning } = {}) => {
+  const request = normalizeSpeed(parseReasoning(requestReasoning).speed);
+  const rawResponse = parseReasoning(responseReasoning).speed;
+  const response = rawResponse ? normalizeSpeed(rawResponse) : '';
+  if (request === 'standard' && (!response || response === 'standard')) {
+    return speedLabel('standard');
+  }
+  const responseText = response ? `上游回报 ${speedLabel(response)}` : '上游未回报';
+  return `请求 ${speedLabel(request)} · ${responseText}`;
+};
+
+/**
  * 列表 ModelTag 的告警：仅 mismatch（模型或思考任一）触发，否则 null。
  * @returns {{ level: 'mismatch', lines: string[] } | null}
  */

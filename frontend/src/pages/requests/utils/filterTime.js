@@ -51,6 +51,7 @@ export const buildQueryParamsFromFilters = (filters = {}) => {
 
   if (filters.status && filters.status !== 'all') queryParams.status = filters.status;
   if (filters.model) queryParams.model = filters.model;
+  if (filters.sessionId) queryParams.session_id = filters.sessionId;
   if (filters.requestFamily && filters.requestFamily !== 'all') queryParams.request_family = filters.requestFamily;
   if (filters.sourceView === 'endpoint' || filters.sourceView === 'account' || filters.sourceView === 'subscription') queryParams.source_view = filters.sourceView;
   if (filters.upstreamName && filters.upstreamName !== 'all') queryParams.upstream_name = filters.upstreamName;

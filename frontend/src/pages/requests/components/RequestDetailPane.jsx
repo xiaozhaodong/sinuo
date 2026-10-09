@@ -17,7 +17,7 @@ import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { formatRouteMode, getRequestPresentation } from '../utils/requestPresentation.js';
-import { assessModel, assessReasoning, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
+import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 
 // 请求种类展示：legacy 是历史与旧入口记录，不额外占一行
@@ -105,6 +105,7 @@ const ModelConsistencySection = ({ request }) => {
         <Property label="响应模型" truncate={false}><ModelValue value={responseModel || '—'} pill={responsePill} /></Property>
         <Property label="请求思考" truncate={false}><ModelValue value={reasoning.requestLabel} /></Property>
         <Property label="响应思考" truncate={false}><ModelValue value={reasoning.responseLabel} pill={reasoningPill} /></Property>
+        <Property label="速度档位" truncate={false}><ModelValue value={formatSpeed(request)} /></Property>
       </PropertyList>
       {reasoning.level === REASONING_LEVELS.CONSISTENT && reasoning.note && (
         <div className="mt-2 text-xs text-fg-subtle">{reasoning.note}：Claude 响应不回显 effort，只能校验是否出现思考块。</div>
@@ -226,7 +227,20 @@ const OutcomeNote = ({ request, presentation }) => {
   );
 };
 
-const SummarySection = ({ request, presentation }) => {
+const SessionValue = ({ sessionId, onFilter }) => {
+  if (!sessionId) return <span>—</span>;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="font-mono text-xs" title={sessionId}>{sessionId.slice(0, 8)}</span>
+      <button type="button" title="复制会话 ID" aria-label="复制会话 ID" onClick={() => copyTextToClipboard(sessionId, '会话 ID')} className={ICON_BUTTON}>
+        <Copy size={13} />
+      </button>
+      {onFilter && <button type="button" onClick={() => onFilter(sessionId)} className="shrink-0 text-xs text-accent hover:text-accent-fg">只看此会话</button>}
+    </span>
+  );
+};
+
+const SummarySection = ({ request, presentation, onFilterSession }) => {
   const family = getRequestFamilyMeta(request.requestFamily);
   const kindLabel = REQUEST_KIND_LABELS[request.requestKind];
   const httpStatus = request.http_status_code || request.httpStatusCode;
@@ -243,6 +257,7 @@ const SummarySection = ({ request, presentation }) => {
           </span>
         </Property>
         <Property label="上游" title={request.upstreamName}>{request.upstreamName || '未知上游'}</Property>
+        <Property label="会话" truncate={false}><SessionValue sessionId={request.sessionId} onFilter={onFilterSession} /></Property>
         <Property label="路由">{formatRouteMode(request.routeMode)}</Property>
         {request.requestedEndpoint && (
           <Property label="手动目标" title={request.requestedEndpoint}>{request.requestedEndpoint}</Property>
@@ -290,7 +305,7 @@ const PaneSection = ({ title, className = '', children }) => (
   </section>
 );
 
-const RequestDetailPane = ({ request: initialRequest, onClose }) => {
+const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }) => {
   const { formatTimestamp } = useTimezone();
   const { lifecycle, lifecycleLoading } = useRequestLifecycleDetail(initialRequest?.requestId, Boolean(initialRequest));
 
@@ -316,7 +331,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose }) => {
             <LifecyclePanel key={request.requestId} request={request} lifecycle={lifecycle} lifecycleLoading={lifecycleLoading} />
           </PaneSection>
           <PaneSection title="概要" className="bg-inspector">
-            <SummarySection request={request} presentation={presentation} />
+            <SummarySection request={request} presentation={presentation} onFilterSession={onFilterSession} />
           </PaneSection>
           <div className="min-w-0 bg-inspector @xl:col-span-2 @4xl:col-span-1">
             <PaneSection title="模型与思考">

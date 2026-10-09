@@ -31,8 +31,8 @@ const chipTone = (active) => (active
   ? 'border-accent-line bg-accent-soft text-accent-fg'
   : 'border-line bg-surface text-fg-body hover:bg-surface-sub');
 
-const FilterChip = ({ label, valueLabel, active, onOpen, onClear }) => (
-  <span className={`${CHIP} ${chipTone(active)}`}>
+const FilterChip = ({ label, valueLabel, title, active, onOpen, onClear }) => (
+  <span className={`${CHIP} ${chipTone(active)}`} title={title}>
     <button
       type="button"
       aria-haspopup={onOpen ? 'menu' : undefined}
@@ -162,6 +162,9 @@ const FilterBar = ({ filters, activeRange, models = [], upstreams = [], onChange
       })}
       {isChipActive(filters, 'includeCompaction') && (
         <FilterChip label="种类" valueLabel="仅生成" active onClear={() => onChange?.('includeCompaction', true)} />
+      )}
+      {isChipActive(filters, 'sessionId') && (
+        <FilterChip label="会话" valueLabel={filters.sessionId.slice(0, 8)} title={filters.sessionId} active onClear={() => onChange?.('sessionId', '')} />
       )}
       <TimeRangeChip
         label={describeTimeChip(activeRange, formatFilterDateTimeInput(filters.startDate, timezone), formatFilterDateTimeInput(filters.endDate, timezone))}

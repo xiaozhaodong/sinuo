@@ -24,6 +24,13 @@ const row = (overrides = {}) => ({
   ...overrides
 });
 
+test('会话字段变化更新行，未变化保持引用', () => {
+  const previous = row({ sessionId: 'session-a' });
+  const next = row({ sessionId: 'session-b' });
+  assert.equal(mergeRequestRows([previous], [next])[0], next);
+  assert.equal(mergeRequestRows([previous], [row({ sessionId: 'session-a' })])[0], previous);
+});
+
 test('未变化的行复用旧引用，变化的行使用新对象', () => {
   const prevA = row({ requestId: 'req-a' });
   const prevB = row({ requestId: 'req-b', outputTokens: 10 });

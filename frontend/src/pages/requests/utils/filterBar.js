@@ -2,12 +2,12 @@
 // 请求页筛选条的纯逻辑
 // 2026-10-07 桌面化：筛选从「弹出面板 + 应用」改为工具栏下方的筛选条，选了立即生效
 // ============================================
-// 条件按钮只管类型 / 来源 / 状态 / 模型 / 上游，外加概览跳转带来的「仅生成」；
+// 条件按钮只管类型 / 来源 / 状态 / 模型 / 上游 / 会话，外加概览跳转带来的「仅生成」；
 // 时间由工具栏的今天 / 7 天 / 30 天和筛选条上的自定义区间按钮负责，不计入生效条件数。
 
 import { DEFAULT_FILTERS, PAGINATION_CONFIG } from './constants.js';
 
-export const FILTER_CHIP_KEYS = ['requestFamily', 'sourceView', 'status', 'model', 'upstreamName', 'includeCompaction'];
+export const FILTER_CHIP_KEYS = ['requestFamily', 'sourceView', 'status', 'model', 'upstreamName', 'sessionId', 'includeCompaction'];
 
 export const isChipActive = (filters = {}, key) => {
   const value = filters[key];

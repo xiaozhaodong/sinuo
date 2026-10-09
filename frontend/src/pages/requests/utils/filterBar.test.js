@@ -11,6 +11,17 @@ import {
 } from './filterBar.js';
 import { DEFAULT_FILTERS, PAGINATION_CONFIG } from './constants.js';
 
+test('会话标签参与计数、单项清除和清除全部条件', () => {
+  const filters = { ...DEFAULT_FILTERS, sessionId: 'session-12345678', model: 'gpt-test' };
+  assert.equal(isChipActive(filters, 'sessionId'), true);
+  assert.equal(countActiveChips(filters), 2);
+  assert.deepEqual(buildChipPatch('sessionId', ''), { sessionId: '' });
+  assert.equal(countActiveChips({ ...filters, ...buildChipPatch('sessionId', '') }), 1);
+  const cleared = { ...filters, ...buildClearChipsPatch() };
+  assert.equal(cleared.sessionId, '');
+  assert.equal(countActiveChips(cleared), 0);
+});
+
 test('默认筛选没有生效条件', () => {
   assert.equal(countActiveChips(DEFAULT_FILTERS), 0);
   assert.equal(countActiveChips({ ...DEFAULT_FILTERS, startDate: '2026-10-01T00:00' }), 0, '时间不计入');

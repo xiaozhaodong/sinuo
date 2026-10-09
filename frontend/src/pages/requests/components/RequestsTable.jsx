@@ -186,6 +186,8 @@ const renderCell = (columnId, request, formatTime) => {
       );
     case 'timestamp':
       return <span className="inline-block text-xs tabular-nums text-fg-subtle">{formatTime(request.timestamp)}</span>;
+    case 'sessionId':
+      return <span className="inline-block font-mono text-xs text-fg-muted" title={request.sessionId}>{request.sessionId?.slice(0, 8) || '—'}</span>;
     case 'status':
       return <RequestTraceCell request={request} />;
     case 'model':

@@ -156,8 +156,8 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   const columnMenuItems = buildColumnMenuItems(columnConfigs, visibleColumns, toggleColumn, resetColumns);
 
   // 时间范围 Hook
-  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange) => {
-    const nextState = buildTimeRangeSelectionState(filters, timeRange);
+  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange, filterPatch) => {
+    const nextState = buildTimeRangeSelectionState(filters, timeRange, filterPatch);
     updateFilters(nextState.filters);
     setAppliedQueryParams(nextState.appliedQueryParams);
     setPagination(prev => ({ ...prev, page: 1 }));
@@ -384,9 +384,16 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // 右键「只看此…」后把筛选条亮出来，生效的条件看得见
   const applyContextFilter = useCallback((patch) => {
-    applyQuickFilter(patch);
+    if (patch.sessionId) {
+      // 会话与近 30 天一次性生效，避免先筛选再切时间触发两次查询。
+      selectRange('30days', patch);
+    } else {
+      applyQuickFilter(patch);
+    }
     setFilterBarVisible(true);
-  }, [applyQuickFilter, setFilterBarVisible]);
+  }, [applyQuickFilter, selectRange, setFilterBarVisible]);
+
+  const handleSessionFilter = useCallback((sessionId) => applyContextFilter({ sessionId }), [applyContextFilter]);
 
   // 页码变更
   const handlePageChange = (newPage) => {
@@ -416,17 +423,19 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     const model = request.model || '';
     const upstream = resolveUpstreamFilterOption(request);
     const filterItems = [
+      request.sessionId && { label: '只看此会话', onSelect: () => handleSessionFilter(request.sessionId) },
       model && { label: `只看模型「${model}」`, onSelect: () => applyContextFilter({ model }) },
       upstream && { label: `只看上游「${upstream.label}」`, onSelect: () => applyContextFilter({ upstreamName: upstream.value }) }
     ].filter(Boolean);
     openContextMenu(event, [
       { label: '复制请求 ID', shortcut: formatShortcut('C'), onSelect: () => copyTextToClipboard(request.requestId, '请求 ID') },
+      request.sessionId && { label: '复制会话 ID', onSelect: () => copyTextToClipboard(request.sessionId, '会话 ID') },
       model && { label: '复制模型名', onSelect: () => copyTextToClipboard(model, '模型名') },
       ...(filterItems.length > 0 ? ['-', ...filterItems] : []),
       '-',
       { label: detailPane.visible ? '隐藏详情面板' : '显示详情面板', onSelect: toggleDetailPane }
     ]);
-  }, [applyContextFilter, detailPane.visible, openContextMenu, toggleDetailPane]);
+  }, [applyContextFilter, handleSessionFilter, detailPane.visible, openContextMenu, toggleDetailPane]);
 
   // Claude 端点路由切换回调
   const handleClaudeEndpointSwitch = async (endpointName, mode = 'manual_preferred') => {
@@ -779,7 +788,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
               className="flex max-h-[calc(100vh-198px)] shrink-0 flex-col bg-inspector"
               style={{ height: detailPane.height }}
             >
-              <RequestDetailPane request={selectedRequest} onClose={detailPane.hide} />
+              <RequestDetailPane request={selectedRequest} onClose={detailPane.hide} onFilterSession={handleSessionFilter} />
             </div>
           </>
         )}

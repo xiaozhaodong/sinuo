@@ -56,10 +56,12 @@
   - 前端支持多条精确匹配规则，默认关闭，不按渠道自动生成规则
   - 固定作用于 `/v1/messages` 与 `/v1/messages/count_tokens`；故障转移时每个候选端点都从原始请求体重新应用自己的规则
 - Responses 计费口径修正：`/v1/responses` 的 `input_tokens` 已含缓存读，实际输入计费需按 `input_tokens - cache_read_tokens`
-- 请求追踪记录请求 / 上游 / 响应模型与思考等级，一致性由前端派生（v6.3）：
+- 请求追踪记录请求 / 上游 / 响应模型、思考等级与速度档位，一致性由前端派生（v6.3）：
   - `request_logs` 新增 5 列 `request_model / upstream_model / response_model / request_reasoning / response_reasoning`（TEXT DEFAULT ''），`model_name` 仍是计费模型、所有计费口径不变
   - 请求两项在 `handler.go` 入口同步解析（`reasoning.ParseRequest`）并随 start 事件原子写入；上游模型每 attempt 覆盖（改写目标或空串 = 与请求相同）；响应两项与终态事件（`ResponseDiagnostics`）同一事件落库
-  - 思考串文法：空格分隔 `key:value`，key ∈ `thinking / budget / effort / reasoning_tokens`；Claude 响应只能观测有无思考块，不做默认值推断；Codex 响应按字段合并 `created` 的 effort 与 `completed` 的 reasoning_tokens
+  - 思考串文法：空格分隔 `key:value`，key ∈ `thinking / budget / effort / reasoning_tokens / speed`；Claude 响应只能观测有无思考块，不做默认值推断；Codex 响应按字段合并 `created` 的 effort 与 `completed` 的 reasoning_tokens
+  - `speed` 记录请求与实际速度档位：Codex 请求读 `service_tier`，响应只采用终态 `service_tier`（忽略 `auto`，不采用开场回显）；Claude 请求读 `speed`，响应读 `usage.speed`，不把 Anthropic 的 `usage.service_tier` 当作 Fast。档位只在请求详情中展示「请求 / 上游回报」，不做一致性判定、不进列表告警与悬停提示（有中转按 Fast 计费却回报 `default`，回报值不代表实际处理档位）；只记录、不改变任何计费
+  - `request_logs.session_id` 在开始记录时写入客户端原始会话：订阅代理优先读 context association 的 session / thread，其他入口依次读 `X-Claude-Code-Session-Id`、`session-id`、`session_id`、`thread-id`；池模式头被剥离后仍从 association 取值。会话筛选只在请求页生效，「只看此会话」一次性切到近 30 天并同步列表与顶部统计；会话列默认隐藏，历史不回填，会话 ID 不写入 Go 后端日志
   - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
 - Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：
