@@ -416,7 +416,7 @@ const PrivacyExactSecretsPanel = ({
                   className={secret.enabled ? '' : 'text-fg-subtle'}
                 >
                   <td className="text-center">
-                    <span className="inline-flex align-middle">
+                    <span className="flex justify-center">
                       <Switch checked={secret.enabled} disabled={actionBusy} label={`${secret.name} 启用`} onChange={(enabled) => handleToggle(secret, enabled)} />
                     </span>
                   </td>

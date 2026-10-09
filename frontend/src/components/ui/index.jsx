@@ -345,64 +345,6 @@ export const Button = ({
 };
 
 // ============================================
-// 输入框
-// ============================================
-export const Input = ({
-  label,
-  error,
-  className = '',
-  ...props
-}) => (
-  <div className="flex flex-col">
-    {label && (
-      <label className="text-xs font-medium text-fg-body mb-1">{label}</label>
-    )}
-    <input
-      className={`
-        w-full h-7 px-2.5 border rounded-md text-[13px] bg-surface text-fg
-        focus:outline-none focus:ring-3 focus:ring-accent-ring/30 focus:border-accent-ring
-        ${error ? 'border-danger-line focus:ring-danger-solid focus:border-danger-solid' : 'border-line'}
-        ${className}
-      `}
-      {...props}
-    />
-    {error && (
-      <span className="text-xs text-danger mt-1">{error}</span>
-    )}
-  </div>
-);
-
-// ============================================
-// 选择框（原生）
-// ============================================
-export const Select = ({
-  label,
-  options = [],
-  className = '',
-  ...props
-}) => (
-  <div className="flex flex-col">
-    {label && (
-      <label className="text-xs font-medium text-fg-body mb-1">{label}</label>
-    )}
-    <select
-      className={`
-        h-7 px-2 bg-surface border border-line rounded-md text-[13px] text-fg-body
-        focus:outline-none focus:ring-3 focus:ring-accent-ring/30 focus:border-accent-ring
-        ${className}
-      `}
-      {...props}
-    >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
-    </select>
-  </div>
-);
-
-// ============================================
 // 自定义下拉选择器（统一样式）
 // ============================================
 export const CustomSelect = ({

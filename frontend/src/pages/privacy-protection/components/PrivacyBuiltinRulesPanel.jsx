@@ -31,7 +31,7 @@ const PrivacyBuiltinRulesPanel = ({ rules = [], busy, onToggle, onEdit }) => {
         {rules.map((rule) => (
           <tr key={rule.id} onDoubleClick={() => !busy && onEdit(rule)} className={rule.enabled ? '' : 'text-fg-subtle'}>
             <td className="text-center">
-              <span className="inline-flex align-middle">
+              <span className="flex justify-center">
                 <Switch checked={rule.enabled} disabled={busy} label={`${rule.name} 启用`} onChange={(enabled) => onToggle(rule, enabled)} />
               </span>
             </td>

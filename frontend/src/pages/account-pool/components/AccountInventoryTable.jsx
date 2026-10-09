@@ -147,7 +147,7 @@ const AccountInventoryTable = ({
                 {lastSuccessAt ? formatListTimestamp(lastSuccessAt) : '-'}
               </td>
               <td className="text-center" onClick={stopEvent}>
-                <span className="inline-flex align-middle">
+                <span className="flex justify-center">
                   <Switch
                     checked={enabled}
                     label={enabled ? '停用账号' : '启用账号'}
