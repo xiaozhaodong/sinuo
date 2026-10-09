@@ -277,14 +277,15 @@ export const buildModelRows = (modelUsage) => {
 
 /** Token 分布视图模型：范围与页面时间范围一致。 */
 export const buildTokenBreakdown = (modelUsage) => {
-  const input = Number(modelUsage?.input_tokens) || 0;
+  const total = Number(modelUsage?.total_tokens) || 0;
   const output = Number(modelUsage?.output_tokens) || 0;
   const cacheCreation = Number(modelUsage?.cache_creation_tokens) || 0;
   const cacheRead = Number(modelUsage?.cache_read_tokens) || 0;
-  const total = input + output + cacheCreation + cacheRead;
+  // 后端总量已按协议去重；混合统计中的原始 input_tokens 不能直接作为独立扇区。
+  const input = Math.max(total - output - cacheCreation - cacheRead, 0);
 
   const items = [
-    { key: 'input', name: '输入 Token', value: input },
+    { key: 'input', name: '非缓存输入', value: input },
     { key: 'output', name: '输出 Token', value: output },
     { key: 'cacheCreation', name: '缓存创建', value: cacheCreation },
     { key: 'cacheRead', name: '缓存读取', value: cacheRead }

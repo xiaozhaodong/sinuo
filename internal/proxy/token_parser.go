@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	responsesUsageInputTokensRe  = regexp.MustCompile(`"input_tokens"\s*:\s*(\d+)`)
-	responsesUsageOutputTokensRe = regexp.MustCompile(`"output_tokens"\s*:\s*(\d+)`)
-	responsesUsageCachedTokensRe = regexp.MustCompile(`"cached_tokens"\s*:\s*(\d+)`)
-	responsesModelRe             = regexp.MustCompile(`"model"\s*:\s*"([^\"]+)"`)
-	ssePayloadTypeRe             = regexp.MustCompile(`"type"\s*:\s*"([^"]+)"`)
+	responsesUsageInputTokensRe      = regexp.MustCompile(`"input_tokens"\s*:\s*(\d+)`)
+	responsesUsageOutputTokensRe     = regexp.MustCompile(`"output_tokens"\s*:\s*(\d+)`)
+	responsesUsageCachedTokensRe     = regexp.MustCompile(`"cached_tokens"\s*:\s*(\d+)`)
+	responsesUsageCacheWriteTokensRe = regexp.MustCompile(`"cache_write_tokens"\s*:\s*(\d+)`)
+	responsesModelRe                 = regexp.MustCompile(`"model"\s*:\s*"([^\"]+)"`)
+	ssePayloadTypeRe                 = regexp.MustCompile(`"type"\s*:\s*"([^"]+)"`)
 )
 
 // ParseResult 解析结果结构体
@@ -673,11 +674,14 @@ func responsesUsageReported(usage map[string]interface{}) bool {
 
 func tokenUsageFromResponsesUsageMap(usageMap map[string]interface{}) *tracking.TokenUsage {
 	usage := &tracking.TokenUsage{
-		InputTokens:  parseInt64Field(usageMap["input_tokens"]),
-		OutputTokens: parseInt64Field(usageMap["output_tokens"]),
+		InputTokens:        parseInt64Field(usageMap["input_tokens"]),
+		OutputTokens:       parseInt64Field(usageMap["output_tokens"]),
+		InputIncludesCache: true,
 	}
 	if inputDetails, ok := usageMap["input_tokens_details"].(map[string]interface{}); ok {
 		usage.CacheReadTokens = parseInt64Field(inputDetails["cached_tokens"])
+		// Responses 只报告写入总量；不虚构 Claude 的 5m / 1h 分项。
+		usage.CacheCreationTokens = parseInt64Field(inputDetails["cache_write_tokens"])
 	}
 	return usage
 }
@@ -725,12 +729,14 @@ func (tp *TokenParser) parseResponsesEvent(eventType string) *monitor.TokenUsage
 	if result == nil || result.Status != "completed" || !result.HasTokenUsage || result.TokenUsage == nil {
 		return nil
 	}
-	return &monitor.TokenUsage{
+	usage := &monitor.TokenUsage{
 		InputTokens:         result.TokenUsage.InputTokens,
 		OutputTokens:        result.TokenUsage.OutputTokens,
 		CacheCreationTokens: result.TokenUsage.CacheCreationTokens,
 		CacheReadTokens:     result.TokenUsage.CacheReadTokens,
 	}
+	usage.SetProtocol(tracking.RequestFamilyCodex, "")
+	return usage
 }
 
 func (tp *TokenParser) applyResponsesParseResult(eventType string, result *ParseResult) {
@@ -977,6 +983,7 @@ func extractResponsesUsageFromRawJSON(raw string) (*tracking.TokenUsage, bool) {
 	inputTokens, okInput := extractLastInt64ByRegexp(raw, responsesUsageInputTokensRe)
 	outputTokens, okOutput := extractLastInt64ByRegexp(raw, responsesUsageOutputTokensRe)
 	cachedTokens, okCached := extractLastInt64ByRegexp(raw, responsesUsageCachedTokensRe)
+	cacheWriteTokens, _ := extractLastInt64ByRegexp(raw, responsesUsageCacheWriteTokensRe)
 
 	if !okInput && !okOutput && !okCached {
 		return nil, false
@@ -985,8 +992,9 @@ func extractResponsesUsageFromRawJSON(raw string) (*tracking.TokenUsage, bool) {
 	return &tracking.TokenUsage{
 		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
-		CacheCreationTokens: 0,
+		CacheCreationTokens: cacheWriteTokens,
 		CacheReadTokens:     cachedTokens,
+		InputIncludesCache:  true,
 	}, true
 }
 

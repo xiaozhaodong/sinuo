@@ -2,12 +2,49 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
+
+func TestCacheWriteEndpointCosts_UsesDeduplicatedTotalsAndStoredCosts(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	now := timezonepolicy.FormatStorage(time.Now())
+	for _, row := range []struct {
+		id, family, path                   string
+		input, output, creation, cacheRead int64
+		cost                               float64
+	}{
+		{"history", "codex", "/v1/responses", 272077, 1671, 0, 265159, 0.123456},
+		{"current", "codex", "/backend-api/codex/responses/compact", 272077, 1671, 2000, 265159, 0.417889},
+		{"claude", "claude", "/v1/messages", 100, 50, 10, 20, 0.5},
+	} {
+		_, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, path, upstream_type, upstream_name,
+			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_cost_usd
+		) VALUES (?, ?, 'completed', ?, ?, 'endpoint', ?, ?, ?, ?, ?, ?)`,
+			row.id, now, row.family, row.path, row.family, row.input, row.output, row.creation, row.cacheRead, row.cost)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := app.GetEndpointCosts()
+	if len(got) != 2 {
+		t.Fatalf("上游成本分组不正确：%+v", got)
+	}
+	want := []EndpointCostItem{
+		{Name: "codex", RequestFamily: "codex", Tokens: 273748 * 2, Cost: 0.123456 + 0.417889},
+		{Name: "claude", RequestFamily: "claude", Tokens: 180, Cost: 0.5},
+	}
+	for i, row := range got {
+		if row.Name != want[i].Name || row.RequestFamily != want[i].RequestFamily || row.Tokens != want[i].Tokens || math.Abs(row.Cost-want[i].Cost) > 1e-12 {
+			t.Fatalf("上游排行重复累计缓存或改变了已存费用：got=%+v want=%+v", got, want)
+		}
+	}
+}
 
 func TestGetRequestTrendData_BucketsComeFromRequestLogs(t *testing.T) {
 	app := newUsageStatsTestApp(t)

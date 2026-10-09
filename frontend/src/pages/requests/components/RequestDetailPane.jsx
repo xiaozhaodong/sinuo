@@ -133,7 +133,7 @@ const TokenFigure = ({ label, value, title, tone }) => (
 /**
  * 「Token 与成本」。未知用量与成本显示占位符（与列表同口径）：在途时后端还没写这几个字段，
  * 终态但没收到 usage 时同理 —— 0 是「还不知道」而不是「用了 0 个」。
- * 计费输入：账号池 / Codex 按 input − cache_read（/v1/responses 的 input_tokens 已含缓存读），其余按 input。
+ * Codex 缓存写入只细分统计，仍包含在 input − cache_read 的计费输入中。
  */
 const TokenSection = ({ request }) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
@@ -145,15 +145,19 @@ const TokenSection = ({ request }) => {
   const inputTokens = request.inputTokens || 0;
   const outputTokens = request.outputTokens || 0;
   const cacheReadTokens = request.cacheReadTokens || 0;
-  const totalTokens = inputTokens + outputTokens;
-  const isAccountRequest = request.upstreamType === 'account' || request.requestFamily === 'codex';
-  const billableInput = isAccountRequest ? Math.max(inputTokens - cacheReadTokens, 0) : inputTokens;
-  const billableHint = isAccountRequest
-    ? 'input − cache_read'
-    : (cacheReadTokens ? `含缓存读 ${cacheReadTokens.toLocaleString()}` : '无缓存读');
-  const totalHint = usageKnown && totalTokens > 0
-    ? `输入 ${Math.round((inputTokens / totalTokens) * 100)}% · 输出 ${Math.round((outputTokens / totalTokens) * 100)}%`
-    : '输入 + 输出';
+  const cacheCreationTokens = request.cacheCreationTokens || 0;
+  const family = String(request.requestFamily || '').trim().toLowerCase();
+  const path = String(request.path || '').trim().toLowerCase();
+  const inputIncludesCache = family === 'codex'
+    || (family !== 'claude' && /\/responses(?:\/compact)?$/.test(path));
+  const totalTokens = inputTokens + outputTokens + (inputIncludesCache ? 0 : cacheReadTokens + cacheCreationTokens);
+  const billableInput = inputIncludesCache ? Math.max(inputTokens - cacheReadTokens, 0) : inputTokens;
+  const billableHint = inputIncludesCache
+    ? '输入 − 缓存读取；缓存写入已包含在内，继续按输入单价计算'
+    : '普通输入；缓存读写单独计费';
+  const totalHint = inputIncludesCache
+    ? '输入 + 输出；缓存读写已包含在输入中'
+    : '输入 + 输出 + 缓存创建 + 缓存读取';
   // Codex 响应回显的推理 token（来自 response_reasoning 串，非 usage）
   const reasoningTokens = request.requestFamily === 'codex'
     ? parseReasoning(request.responseReasoning).reasoning_tokens
@@ -164,9 +168,13 @@ const TokenSection = ({ request }) => {
       <TokenFigure label="输入" value={formatUsage(request.inputTokens)} tone={usageTone} />
       <TokenFigure label="输出" value={formatUsage(request.outputTokens)} tone={usageTone} />
       <TokenFigure label="缓存读取" value={formatUsage(request.cacheReadTokens)} tone={usageTone} />
-      <TokenFigure label="缓存创建" value={formatUsage(request.cacheCreationTokens)} title="5 分钟与 1 小时缓存创建合计" tone={usageTone} />
-      <TokenFigure label="创建 5m" value={formatUsage(request.cacheCreation5mTokens)} tone={usageTone} />
-      <TokenFigure label="创建 1h" value={formatUsage(request.cacheCreation1hTokens)} tone={usageTone} />
+      <TokenFigure label="缓存创建" value={formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已计入输入总量和输入费用' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
+      {!inputIncludesCache && (
+        <>
+          <TokenFigure label="创建 5m" value={formatUsage(request.cacheCreation5mTokens)} tone={usageTone} />
+          <TokenFigure label="创建 1h" value={formatUsage(request.cacheCreation1hTokens)} tone={usageTone} />
+        </>
+      )}
       {reasoningTokens !== undefined && (
         <TokenFigure label="推理" value={(Number(reasoningTokens) || 0).toLocaleString()} title="推理 Token，含在输出 Token 内" tone="text-fg" />
       )}

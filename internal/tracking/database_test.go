@@ -295,6 +295,7 @@ func waitTrackingDetail(t *testing.T, tracker *UsageTracker, requestID, status s
 }
 
 func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
+	// 独立 5m / 1h 缓存收费属于 Claude 协议；Responses 写入只作为输入明细。
 	config := &Config{
 		Enabled:         true,
 		DatabasePath:    ":memory:",
@@ -305,7 +306,7 @@ func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
 		CleanupInterval: 24 * time.Hour,
 		RetentionDays:   30,
 		ModelPricing: map[string]ModelPricing{
-			"gpt-5.4": {
+			"claude-test": {
 				Input:           1.0,
 				Output:          5.0,
 				CacheCreation:   1.25,
@@ -338,7 +339,7 @@ func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
 				ClientIP:    "127.0.0.1",
 				UserAgent:   "test-agent",
 				Method:      "POST",
-				Path:        "/v1/responses",
+				Path:        "/v1/messages",
 				IsStreaming: true,
 			},
 		},
@@ -353,8 +354,8 @@ func TestSuccessEventPreservesSplitCacheCreationPricing(t *testing.T) {
 			RequestID: "req-success-split-cache",
 			Timestamp: time.Now(),
 			Data: RequestCompleteData{
-				ModelName:             "gpt-5.4",
-				Path:                  "/v1/responses",
+				ModelName:             "claude-test",
+				Path:                  "/v1/messages",
 				InputTokens:           0,
 				OutputTokens:          0,
 				CacheCreationTokens:   1000,

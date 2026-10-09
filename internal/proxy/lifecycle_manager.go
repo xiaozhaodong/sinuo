@@ -412,6 +412,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 				CacheCreationTokens: tokens.CacheCreationTokens,
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
+			monitorTokens.SetProtocol(state.requestFamily, "")
 			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, state.endpointName, monitorTokens)
 		}
 
@@ -485,6 +486,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 				CacheCreationTokens: tokens.CacheCreationTokens,
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
+			monitorTokens.SetProtocol(state.requestFamily, "")
 			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, state.endpointName, monitorTokens)
 		}
 
@@ -1173,6 +1175,7 @@ func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *trackin
 				CacheCreationTokens: tokens.CacheCreationTokens,
 				CacheReadTokens:     tokens.CacheReadTokens,
 			}
+			monitorTokens.SetProtocol(state.requestFamily, "")
 			// 新增失败请求Token记录方法
 			rlm.monitoringMiddleware.RecordFailedRequestTokens(rlm.requestID, state.endpointName, monitorTokens, failureReason)
 		}

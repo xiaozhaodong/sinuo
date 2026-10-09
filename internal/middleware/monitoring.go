@@ -253,8 +253,7 @@ func (mm *MonitoringMiddleware) broadcastRealConnectionStats(triggerConnID, trig
 	activeConnections := len(stats.ActiveConnections)
 
 	// 计算总Token使用量
-	totalTokens := stats.TotalTokenUsage.InputTokens + stats.TotalTokenUsage.OutputTokens +
-		stats.TotalTokenUsage.CacheCreationTokens + stats.TotalTokenUsage.CacheReadTokens
+	totalTokens := stats.TotalTokenUsage.TotalTokens()
 
 	// 构建真实的连接统计数据
 	connectionData := map[string]interface{}{

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
+	"cc-forwarder/internal/tokenusage"
 )
 
 type requestQuerySource string
@@ -548,7 +549,7 @@ const aggregatedRequestStatsSelectBase = `SELECT
 	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
 	COALESCE(SUM(CASE WHEN status IN (` + FailedRequestStatusesSQLList + `) THEN 1 ELSE 0 END), 0) as failed_requests,
 	COALESCE(SUM(CASE WHEN ` + clientInterruptionSQL + ` THEN 1 ELSE 0 END), 0) as interrupted_requests,
-	COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+	COALESCE(SUM(` + tokenusage.TotalTokensSQL + `), 0) as total_tokens,
 	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
@@ -618,7 +619,7 @@ func aggregatedStatsFromRequestDetails(details []RequestDetail) AggregatedReques
 		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
 			stats.FailedRequests++
 		}
-		stats.TotalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
+		stats.TotalTokens += tokenusage.TotalTokens(req.RequestFamily, req.Path, req.InputTokens, req.OutputTokens, req.CacheCreationTokens, req.CacheReadTokens)
 		stats.TotalCostUSD += req.TotalCostUSD
 		if req.DurationMs != nil && *req.DurationMs > 0 {
 			stats.TotalDurationMs += *req.DurationMs
@@ -1033,7 +1034,7 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 		COALESCE(upstream_type, '') as upstream_type,
 		COALESCE(upstream_name, '') as upstream_name,
 		COALESCE(upstream_id, 0) as upstream_id,
-		COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+		COALESCE(SUM(` + tokenusage.TotalTokensSQL + `), 0) as total_tokens,
 		COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 		COUNT(*) as request_count,
 		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,

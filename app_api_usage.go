@@ -10,6 +10,7 @@ import (
 	"time"
 
 	timezonepolicy "cc-forwarder/internal/timezone"
+	"cc-forwarder/internal/tokenusage"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -175,7 +176,7 @@ func sourceViewToUpstreamType(sourceView string) string {
 }
 
 func (a *App) queryStatsFromSingleTable(ctx context.Context, db *sql.DB, tableName string, startTime, endTime time.Time, upstreamType string) (cost float64, tokens int64, requests int64, err error) {
-	query := "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COUNT(*) FROM " + tableName
+	query := "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(" + tokenusage.TotalTokensSQL + "), 0), COUNT(*) FROM " + tableName
 
 	var conditions []string
 	var args []interface{}
@@ -695,8 +696,7 @@ func (a *App) getUsageStatsFromRuntime(period string) UsageStatsData {
 	}
 
 	// 计算总 Token
-	result.TotalTokens = stats.TotalTokenUsage.InputTokens + stats.TotalTokenUsage.OutputTokens +
-		stats.TotalTokenUsage.CacheCreationTokens + stats.TotalTokenUsage.CacheReadTokens
+	result.TotalTokens = stats.TotalTokenUsage.TotalTokens()
 
 	// 计算平均耗时（使用 Metrics 提供的方法）
 	avgResponseTime := metrics.GetAverageResponseTime()
@@ -742,6 +742,6 @@ func (a *App) GetTokenUsage() TokenUsageData {
 		OutputTokens:        tokenStats.OutputTokens,
 		CacheCreationTokens: tokenStats.CacheCreationTokens,
 		CacheReadTokens:     tokenStats.CacheReadTokens,
-		TotalTokens:         tokenStats.InputTokens + tokenStats.OutputTokens + tokenStats.CacheCreationTokens + tokenStats.CacheReadTokens,
+		TotalTokens:         tokenStats.TotalTokens(),
 	}
 }

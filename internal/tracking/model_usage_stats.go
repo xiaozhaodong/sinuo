@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"cc-forwarder/internal/tokenusage"
 )
 
 // ============================================================
@@ -67,6 +69,7 @@ type modelUsageGroup struct {
 	outputTokens        int64
 	cacheCreationTokens int64
 	cacheReadTokens     int64
+	totalTokens         int64
 	totalCostUSD        float64
 	totalDurationMs     int64
 	durationCount       int64
@@ -84,6 +87,7 @@ func (g *modelUsageGroup) add(other modelUsageGroup) {
 	g.outputTokens += other.outputTokens
 	g.cacheCreationTokens += other.cacheCreationTokens
 	g.cacheReadTokens += other.cacheReadTokens
+	g.totalTokens += other.totalTokens
 	g.totalCostUSD += other.totalCostUSD
 	g.totalDurationMs += other.totalDurationMs
 	g.durationCount += other.durationCount
@@ -97,6 +101,7 @@ func (g *modelUsageGroup) subtract(other modelUsageGroup) {
 	g.outputTokens -= other.outputTokens
 	g.cacheCreationTokens -= other.cacheCreationTokens
 	g.cacheReadTokens -= other.cacheReadTokens
+	g.totalTokens -= other.totalTokens
 	g.totalCostUSD -= other.totalCostUSD
 	g.totalDurationMs -= other.totalDurationMs
 	g.durationCount -= other.durationCount
@@ -122,6 +127,9 @@ func (g *modelUsageGroup) subtract(other modelUsageGroup) {
 	if g.cacheReadTokens < 0 {
 		g.cacheReadTokens = 0
 	}
+	if g.totalTokens < 0 {
+		g.totalTokens = 0
+	}
 	if g.totalCostUSD < 0 {
 		g.totalCostUSD = 0
 	}
@@ -141,7 +149,7 @@ func (g modelUsageGroup) toRow() ModelUsageRow {
 		RequestCount:  g.requestCount,
 		SuccessCount:  g.successCount,
 		FailedCount:   g.failedCount,
-		TotalTokens:   g.inputTokens + g.outputTokens + g.cacheCreationTokens + g.cacheReadTokens,
+		TotalTokens:   g.totalTokens,
 		TotalCostUSD:  g.totalCostUSD,
 		DurationCount: g.durationCount,
 	}
@@ -165,6 +173,7 @@ const modelUsageStatsSelectBase = `SELECT
 	COALESCE(SUM(output_tokens), 0) as output_tokens,
 	COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
 	COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+	COALESCE(SUM(` + tokenusage.TotalTokensSQL + `), 0) as total_tokens,
 	COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as total_duration_ms,
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
@@ -188,6 +197,7 @@ func scanModelUsageGroups(rows *sql.Rows) ([]modelUsageGroup, error) {
 			&g.modelName, &g.requestFamily, &g.upstreamType,
 			&g.requestCount, &g.successCount, &g.failedCount,
 			&g.inputTokens, &g.outputTokens, &g.cacheCreationTokens, &g.cacheReadTokens,
+			&g.totalTokens,
 			&g.totalCostUSD, &g.totalDurationMs, &g.durationCount,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan model usage group: %w", err)
@@ -258,6 +268,7 @@ func modelUsageGroupsFromRequestDetails(details []RequestDetail) map[modelUsageK
 		group.outputTokens += req.OutputTokens
 		group.cacheCreationTokens += req.CacheCreationTokens
 		group.cacheReadTokens += req.CacheReadTokens
+		group.totalTokens += tokenusage.TotalTokens(req.RequestFamily, req.Path, req.InputTokens, req.OutputTokens, req.CacheCreationTokens, req.CacheReadTokens)
 		group.totalCostUSD += req.TotalCostUSD
 		if req.DurationMs != nil && *req.DurationMs > 0 {
 			group.totalDurationMs += *req.DurationMs

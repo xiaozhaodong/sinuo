@@ -190,8 +190,8 @@ func (a *TokenAnalyzer) ParseJSONTokens(ctx context.Context, responseBody, endpo
 		}
 	}
 
-	// Wrap JSON as SSE message_delta event
-	tokenParser.ParseSSELine("event: message_delta")
+	// 按响应协议进入共用解析器，避免用 Claude 字段解释 Responses 的缓存明细。
+	tokenParser.ParseSSELine("event: " + jsonUsageEvent(jsonResp))
 	tokenParser.ParseSSELine("data: " + responseBody)
 	if tokenUsage := tokenParser.ParseSSELine(""); tokenUsage != nil {
 		// Record token usage
@@ -250,6 +250,11 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 					CacheCreationTokens: tokenUsage.CacheCreationTokens,
 					CacheReadTokens:     tokenUsage.CacheReadTokens,
 				}
+				requestFamily := ""
+				if tokenUsage.IncludesCacheInInput(r.URL.Path) {
+					requestFamily = tracking.RequestFamilyCodex
+				}
+				monitorTokenUsage.SetProtocol(requestFamily, r.URL.Path)
 				mm.RecordTokenUsage(connID, endpointName, monitorTokenUsage)
 				slog.InfoContext(ctx, "✅ [JSON解析] 成功记录token使用",
 					"endpoint", endpointName,
@@ -418,6 +423,22 @@ func (a *TokenAnalyzer) parseSSEForTokens(responseStr, connID, endpointName stri
 	return analysis
 }
 
+// jsonUsageEvent 只按协议结构选择共用解析入口，不根据模型名字猜测协议。
+func jsonUsageEvent(payload map[string]interface{}) string {
+	if object, _ := payload["object"].(string); object == "response" || object == "response.compaction" {
+		return "response.completed"
+	}
+	if _, ok := payload["output"].([]interface{}); ok {
+		return "response.completed"
+	}
+	if usage, ok := payload["usage"].(map[string]interface{}); ok {
+		if _, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+			return "response.completed"
+		}
+	}
+	return "message_delta"
+}
+
 // parseJSONForTokens 解析JSON格式响应获取Token信息（不直接记录）
 func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName string) ResponseAnalysis {
 	tokenParser := a.tokenParserProvider.NewTokenParserWithUsageTracker(connID, a.usageTracker)
@@ -440,9 +461,9 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 		}
 	}
 
-	// 将JSON包装为SSE message_delta事件进行解析
+	// 将 JSON 按协议包装为 SSE 事件，复用同一个 Token 解析器。
 	// v5.0+: 使用 ParseSSELine 触发解析，然后通过 GetFinalUsage 获取包含 5m/1h 缓存字段的完整结果
-	tokenParser.ParseSSELine("event: message_delta")
+	tokenParser.ParseSSELine("event: " + jsonUsageEvent(jsonResp))
 	tokenParser.ParseSSELine("data: " + responseStr)
 	if tokenParser.ParseSSELine("") != nil {
 		// 使用 GetFinalUsage 获取完整的 TokenUsage（包含 5m/1h 缓存字段）

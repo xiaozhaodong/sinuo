@@ -19,6 +19,7 @@ import (
 
 	"cc-forwarder/config"
 	timezonepolicy "cc-forwarder/internal/timezone"
+	"cc-forwarder/internal/tokenusage"
 
 	_ "modernc.org/sqlite"
 )
@@ -198,10 +199,11 @@ type RequestCompleteData struct {
 type TokenUsage struct {
 	InputTokens           int64
 	OutputTokens          int64
-	CacheCreationTokens   int64 // 总缓存创建 tokens（向后兼容，= 5m + 1h）
+	CacheCreationTokens   int64 // 缓存创建总量；Claude 可细分 5m / 1h，Codex 写入已包含在 InputTokens 中。
 	CacheReadTokens       int64
 	CacheCreation5mTokens int64 // 5分钟缓存创建 tokens (1.25x 定价)
 	CacheCreation1hTokens int64 // 1小时缓存创建 tokens (2x 定价)
+	InputIncludesCache    bool  `json:"-"` // 解析器提供的协议语义；落库后由请求族和路径识别。
 }
 
 // ModelPricing 模型定价配置
@@ -288,8 +290,9 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 	}
 
 	// 基础成本计算（每百万 token）
+	inputIncludesCache := usage.IncludesCacheInInput(path)
 	billableInputTokens := usage.InputTokens
-	if shouldExcludeCacheReadFromInput(path) {
+	if inputIncludesCache {
 		billableInputTokens -= usage.CacheReadTokens
 		if billableInputTokens < 0 {
 			billableInputTokens = 0
@@ -299,16 +302,18 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 	outputCost := float64(usage.OutputTokens) * pricing.Output / 1_000_000
 	cacheReadCost := float64(usage.CacheReadTokens) * pricing.CacheRead / 1_000_000
 
-	// 分开计算 5m 和 1h 缓存成本
+	// Codex 缓存写入只补统计，仍包含在上面的普通输入计费量中，不再追加创建费用。
+	// Claude 缓存创建独立于 input_tokens，继续按 5m / 1h 原价计费。
 	var cache5mCost, cache1hCost float64
-	if usage.CacheCreation5mTokens > 0 || usage.CacheCreation1hTokens > 0 {
-		// 有分开的缓存数据，分别计算
-		cache5mCost = float64(usage.CacheCreation5mTokens) * pricing.CacheCreation / 1_000_000
-		cache1hCost = float64(usage.CacheCreation1hTokens) * cacheCreation1hPrice / 1_000_000
-	} else {
-		// 向后兼容：只有总数，默认使用 5m 定价
-		cache5mCost = float64(usage.CacheCreationTokens) * pricing.CacheCreation / 1_000_000
-		cache1hCost = 0
+	if !inputIncludesCache {
+		if usage.CacheCreation5mTokens > 0 || usage.CacheCreation1hTokens > 0 {
+			// 有分开的缓存数据，分别计算
+			cache5mCost = float64(usage.CacheCreation5mTokens) * pricing.CacheCreation / 1_000_000
+			cache1hCost = float64(usage.CacheCreation1hTokens) * cacheCreation1hPrice / 1_000_000
+		} else {
+			// 向后兼容：只有总数，默认使用 5m 定价
+			cache5mCost = float64(usage.CacheCreationTokens) * pricing.CacheCreation / 1_000_000
+		}
 	}
 	cacheCreationCost := cache5mCost + cache1hCost
 
@@ -341,17 +346,6 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 		CacheReadCost:       cacheReadCost,
 		TotalCost:           inputCost + outputCost + cacheCreationCost + cacheReadCost,
 	}
-}
-
-func shouldExcludeCacheReadFromInput(path string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(path))
-	if normalized == "" {
-		return false
-	}
-	return normalized == "/v1/responses" ||
-		strings.HasSuffix(normalized, "/v1/responses") ||
-		strings.HasSuffix(normalized, "/responses") ||
-		strings.HasSuffix(normalized, "/responses/compact")
 }
 
 // CalculateCost 统一的成本计算函数（向后兼容）
@@ -1212,18 +1206,8 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 		inputTokens = tokens.InputTokens
 		outputTokens = tokens.OutputTokens
 		cacheCreationTokens = tokens.CacheCreationTokens
-		cacheCreation5mTokens = tokens.CacheCreation5mTokens
-		cacheCreation1hTokens = tokens.CacheCreation1hTokens
+		cacheCreation5mTokens, cacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
 		cacheReadTokens = tokens.CacheReadTokens
-
-		// 🔧 [向后兼容修复] v5.0.1+: 如果 5m/1h 都是 0 但总数不为 0，
-		// 将总数分配给 5m 字段，与成本计算逻辑保持一致（tracker.go:185-193）
-		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && cacheCreationTokens > 0 {
-			cacheCreation5mTokens = cacheCreationTokens // 默认按 5m 缓存处理
-			slog.Debug("🔄 [缓存Token分配] 向后兼容模式：将总缓存Token分配到5m字段",
-				"request_id", requestID,
-				"cache_creation_tokens", cacheCreationTokens)
-		}
 	}
 	// 如果 tokens 为 nil，所有 token 字段都是 0，但 duration 仍然会被记录
 
@@ -1280,15 +1264,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 	hasTokenUsage bool,
 	diag *ResponseDiagnostics,
 ) {
-	path := ""
-	if ut.hotPoolEnabled && ut.hotPool != nil {
-		if req, ok := ut.hotPool.Get(requestID); ok && req != nil {
-			path = req.Path
-		}
-	}
-	if path == "" {
-		path = ut.lookupRequestPath(requestID)
-	}
+	path := ut.requestPathForUsage(requestID)
 
 	event := RequestEvent{
 		Type:      "success",
@@ -1341,15 +1317,8 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 		inputTokens = tokens.InputTokens
 		outputTokens = tokens.OutputTokens
 		cacheCreationTokens = tokens.CacheCreationTokens
-		cacheCreation5mTokens = tokens.CacheCreation5mTokens
-		cacheCreation1hTokens = tokens.CacheCreation1hTokens
+		cacheCreation5mTokens, cacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
 		cacheReadTokens = tokens.CacheReadTokens
-
-		// 🔧 [向后兼容修复] v5.0.1+: 如果 5m/1h 都是 0 但总数不为 0，
-		// 将总数分配给 5m 字段，与成本计算逻辑保持一致
-		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && cacheCreationTokens > 0 {
-			cacheCreation5mTokens = cacheCreationTokens
-		}
 	}
 
 	// 🔥 v4.1 热池模式：完成失败请求并归档
@@ -1880,7 +1849,7 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 		COUNT(*) as total_requests,
 		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_requests,
 		SUM(CASE WHEN status IN ('error', 'failed') THEN 1 ELSE 0 END) as error_requests,
-		SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
+		SUM(` + tokenusage.TotalTokensSQL + `) as total_tokens,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time < ?`

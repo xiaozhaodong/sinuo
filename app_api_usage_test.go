@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -9,6 +11,68 @@ import (
 	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
+
+func TestCacheWriteUsageAPI_DeduplicatesTokensWithoutRepricingHistory(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	now := time.Now()
+	for _, row := range []struct {
+		id       string
+		creation int64
+		cost     float64
+	}{
+		{"cache-history", 0, 0.234567},
+		{"cache-current", 2000, 0.417889},
+	} {
+		_, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, path, upstream_type, model_name,
+			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_cost_usd
+		) VALUES (?, ?, 'completed', 'codex', '/v1/responses', 'account', 'gpt-6-astra', 272077, 1671, ?, 265159, ?)`,
+			row.id, timezonepolicy.FormatStorage(now), row.creation, row.cost)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, end := now.Add(-time.Hour), now.Add(time.Hour)
+	stats, err := app.GetUsageStats(UsageStatsQueryParams{
+		SourceView: "all", StartDate: start.Format(time.RFC3339Nano), EndDate: end.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantCost = 0.234567 + 0.417889
+	if stats.TotalTokens != 273748*2 || math.Abs(stats.TotalCostUSD-wantCost) > 1e-12 {
+		t.Fatalf("请求统计改变了费用或重复累计缓存：%+v", stats)
+	}
+	cost, tokens, requests, err := app.queryStatsFromSingleTable(context.Background(), app.usageTracker.GetWriteDB(), "request_logs", start, end, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens != 273748*2 || requests != 2 || math.Abs(cost-wantCost) > 1e-12 {
+		t.Fatalf("概览统计不一致：tokens=%d requests=%d cost=%f", tokens, requests, cost)
+	}
+	var historicalCreation int64
+	var historicalCost float64
+	if err := app.usageTracker.GetWriteDB().QueryRow(`SELECT cache_creation_tokens, total_cost_usd FROM request_logs WHERE request_id = ?`, "cache-history").Scan(&historicalCreation, &historicalCost); err != nil {
+		t.Fatal(err)
+	}
+	if historicalCreation != 0 || historicalCost != 0.234567 {
+		t.Fatal("历史记录被回填或重新计费")
+	}
+}
+
+func TestCacheWriteUsageAPI_RuntimeTotalsKeepCacheAsDetails(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	usage := &monitor.TokenUsage{InputTokens: 272077, OutputTokens: 1671, CacheCreationTokens: 2000, CacheReadTokens: 265159}
+	usage.SetProtocol("codex", "/v1/responses")
+	app.monitoringMiddleware.GetMetrics().RecordTokenUsage("synthetic", "unknown", usage)
+	got := app.GetTokenUsage()
+	if got.InputTokens != 272077 || got.OutputTokens != 1671 || got.CacheCreationTokens != 2000 || got.CacheReadTokens != 265159 || got.TotalTokens != 273748 {
+		t.Fatalf("运行时 API 不一致：%+v", got)
+	}
+	if stats := app.getUsageStatsFromRuntime("30d"); stats.TotalTokens != 273748 {
+		t.Fatalf("运行时统计重复累计缓存：%+v", stats)
+	}
+}
 
 func newUsageStatsTestApp(t *testing.T) *App {
 	t.Helper()

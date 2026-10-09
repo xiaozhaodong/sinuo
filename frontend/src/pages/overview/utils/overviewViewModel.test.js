@@ -163,8 +163,9 @@ test('模型表：接口无数据时返回空数组而不是假行', () => {
   assert.equal(modelDisplayName('gpt-6-astra'), 'gpt-6-astra');
 });
 
-test('Token 分布：按四类 Token 汇总并给出占比', () => {
+test('Token 分布：Claude 的输入与缓存为独立分项', () => {
   const breakdown = buildTokenBreakdown({
+    total_tokens: 1000,
     input_tokens: 500,
     output_tokens: 100,
     cache_creation_tokens: 0,
@@ -176,6 +177,38 @@ test('Token 分布：按四类 Token 汇总并给出占比', () => {
   assert.equal(breakdown.hasData, true);
   assert.equal(breakdown.items[0].percentText, '50%');
   assert.equal(breakdown.items[2].percentText, '—');
+});
+
+test('Token 分布：Codex 缓存读写从输入中拆出，不重复累计', () => {
+  const breakdown = buildTokenBreakdown({
+    total_tokens: 273748,
+    input_tokens: 272077,
+    output_tokens: 1671,
+    cache_creation_tokens: 2000,
+    cache_read_tokens: 265159
+  });
+
+  assert.equal(breakdown.total, 273748);
+  assert.equal(breakdown.items[0].name, '非缓存输入');
+  assert.deepEqual(breakdown.items.map((item) => item.value), [4918, 1671, 2000, 265159]);
+  assert.equal(breakdown.items.reduce((sum, item) => sum + item.value, 0), breakdown.total);
+  assert.ok(Math.abs(breakdown.items.reduce((sum, item) => sum + item.percent, 0) - 100) < 1e-10);
+});
+
+test('Token 分布：混合协议使用后端全量汇总，不从 Top N 模型行推算', () => {
+  const breakdown = buildTokenBreakdown({
+    total_tokens: 273928,
+    input_tokens: 272177,
+    output_tokens: 1721,
+    cache_creation_tokens: 2010,
+    cache_read_tokens: 265179,
+    rows: [],
+    truncated: true
+  });
+
+  assert.equal(breakdown.total, 273928);
+  assert.deepEqual(breakdown.items.map((item) => item.value), [5018, 1721, 2010, 265179]);
+  assert.equal(breakdown.items.reduce((sum, item) => sum + item.value, 0), breakdown.total);
 });
 
 test('Token 分布：全零时标记无数据', () => {

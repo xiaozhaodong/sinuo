@@ -99,7 +99,8 @@ func TestRequestKindsFilterAndUnknownUsageAcrossSummaryPaths(t *testing.T) {
 		t.Fatalf("compaction count = %d, err=%v", count, err)
 	}
 	stats, err := tracker.QueryAggregatedRequestStatsWithHotPool(ctx, &QueryOptions{UpstreamType: "all", RequestKinds: generationKinds})
-	if err != nil || stats.TotalRequests != 2 || stats.TotalTokens != 15 {
+	// Codex 的 3 个缓存读已经包含在 10 个输入中，总量应为 10 + 2。
+	if err != nil || stats.TotalRequests != 2 || stats.TotalTokens != 12 {
 		t.Fatalf("generation stats = %+v, err=%v", stats, err)
 	}
 

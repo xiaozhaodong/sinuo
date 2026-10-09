@@ -340,13 +340,10 @@ func (a *App) GetEndpointCosts() []EndpointCostItem {
 			name = "未知上游"
 		}
 
-		// 计算总 Token
-		totalTokens := cost.InputTokens + cost.OutputTokens + cost.CacheCreationTokens + cost.CacheReadTokens
-
 		result[i] = EndpointCostItem{
 			Name:          name,
 			RequestFamily: cost.RequestFamily,
-			Tokens:        totalTokens,
+			Tokens:        cost.TotalTokens,
 			Cost:          cost.TotalCostUSD,
 		}
 	}

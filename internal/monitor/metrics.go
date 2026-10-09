@@ -14,6 +14,7 @@ type TokenUsage struct {
 	OutputTokens        int64
 	CacheCreationTokens int64
 	CacheReadTokens     int64
+	cacheTokensInInput  int64 // 混合协议累计时保留输入内的缓存数量，不作为 API 字段输出。
 }
 
 // Metrics contains all monitoring metrics
@@ -532,26 +533,17 @@ func (m *Metrics) RecordTokenUsage(connID string, endpoint string, tokens *Token
 	}
 
 	// Update overall token metrics
-	m.TotalTokenUsage.InputTokens += tokens.InputTokens
-	m.TotalTokenUsage.OutputTokens += tokens.OutputTokens
-	m.TotalTokenUsage.CacheCreationTokens += tokens.CacheCreationTokens
-	m.TotalTokenUsage.CacheReadTokens += tokens.CacheReadTokens
+	m.TotalTokenUsage.add(*tokens)
 
 	// Update endpoint-specific token metrics
 	if endpoint != "unknown" && m.EndpointStats[endpoint] != nil {
-		m.EndpointStats[endpoint].TokenUsage.InputTokens += tokens.InputTokens
-		m.EndpointStats[endpoint].TokenUsage.OutputTokens += tokens.OutputTokens
-		m.EndpointStats[endpoint].TokenUsage.CacheCreationTokens += tokens.CacheCreationTokens
-		m.EndpointStats[endpoint].TokenUsage.CacheReadTokens += tokens.CacheReadTokens
+		m.EndpointStats[endpoint].TokenUsage.add(*tokens)
 	}
 
 	// Update connection info if available
 	if conn, exists := m.ActiveConnections[connID]; exists {
 		// Update token usage for this connection
-		conn.TokenUsage.InputTokens += tokens.InputTokens
-		conn.TokenUsage.OutputTokens += tokens.OutputTokens
-		conn.TokenUsage.CacheCreationTokens += tokens.CacheCreationTokens
-		conn.TokenUsage.CacheReadTokens += tokens.CacheReadTokens
+		conn.TokenUsage.add(*tokens)
 		conn.LastActivity = time.Now()
 	}
 
@@ -565,16 +557,10 @@ func (m *Metrics) RecordFailedRequestTokenUsage(connID, endpoint string, tokens 
 	defer m.mu.Unlock()
 
 	// 安全处理 nil tokens
-	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	var totalTokens int64
 	if tokens != nil {
-		inputTokens = tokens.InputTokens
-		outputTokens = tokens.OutputTokens
-		cacheCreationTokens = tokens.CacheCreationTokens
-		cacheReadTokens = tokens.CacheReadTokens
+		totalTokens = tokens.TotalTokens()
 	}
-
-	// 计算总Token数
-	totalTokens := inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
 
 	// 记录失败请求Token统计
 	m.FailedRequestTokens += totalTokens
@@ -647,7 +633,7 @@ func (m *Metrics) AddHistoryDataPoints() {
 		OutputTokens:        m.TotalTokenUsage.OutputTokens,
 		CacheCreationTokens: m.TotalTokenUsage.CacheCreationTokens,
 		CacheReadTokens:     m.TotalTokenUsage.CacheReadTokens,
-		TotalTokens:         m.TotalTokenUsage.InputTokens + m.TotalTokenUsage.OutputTokens + m.TotalTokenUsage.CacheCreationTokens + m.TotalTokenUsage.CacheReadTokens,
+		TotalTokens:         m.TotalTokenUsage.TotalTokens(),
 	}
 
 	// 只有当Token数据有变化时才添加新点，避免重复数据
