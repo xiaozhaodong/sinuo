@@ -68,7 +68,7 @@ const ModelRoutingSwitcher = ({ bindings = [], onPatch, loading = false, scopeLa
       <PopoverSection title={sorted.length ? `模型路由 · ${sorted.length} 个映射` : '模型路由'} aside={scopeLabel} />
       {sorted.length === 0
         ? <PopoverNote>尚无模型映射，所有 Claude 请求都会返回未分配错误；在下方「模型路由…」里添加</PopoverNote>
-        : <BindingTree bindings={sorted} expandedId={expandedId} onToggle={setExpandedId} isWebTools={isWebToolsBinding} summaryOf={summarizeBinding} renderTargets={renderTargets} />}
+        : <BindingTree bindings={sorted} expandedId={expandedId} onToggle={setExpandedId} isWebTools={isWebToolsBinding} summaryOf={summarizeBinding} strategyKeyOf={(b) => `${b.enabled}|${b.route_mode}|${b.route_target || ''}`} renderTargets={renderTargets} />}
     </>
   );
 };

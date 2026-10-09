@@ -278,7 +278,7 @@ func (t *appTray) runAction(action tray.Action) {
 	}
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	if err := t.app.executeTrayAction(action, t.confirm); err != nil {
+	if err := executeTrayActionWithReceipt(t.app, action, t.confirm, t.sendSwitchReceipt); err != nil {
 		t.showError(err)
 	}
 	// 包括失败或取消后的读回，清除原生 checkbox 在回调前自行切换的显示状态。

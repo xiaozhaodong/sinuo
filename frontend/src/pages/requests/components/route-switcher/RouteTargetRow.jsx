@@ -14,6 +14,7 @@ const RouteTargetRow = ({
   target,
   mode = 'auto',
   isCurrent = false,
+  flash = false,
   onCommit,
   loading = false,
   indent = false,
@@ -27,12 +28,12 @@ const RouteTargetRow = ({
     <div className={`group flex h-[26px] items-center gap-1.5 rounded-[5px] pr-1.5 hover:bg-surface-mut has-[:focus-visible]:bg-surface-mut ${indent ? 'pl-[22px]' : 'pl-1.5'}`}>
       <CheckSlot checked={isCurrent} />
       <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${target.indicatorClass || 'bg-fg-subtle/60'}`} />
-      <span className={`min-w-0 flex-1 truncate ${isCurrent ? 'font-medium text-fg' : 'text-fg-body'}`} title={target.title || (typeof target.name === 'string' ? target.name : undefined)}>{target.name}</span>
+      <span className={`min-w-0 flex-1 truncate transition-colors duration-700 ${isCurrent ? 'font-medium' : ''} ${flash ? 'text-accent' : isCurrent ? 'text-fg' : 'text-fg-body'}`} title={target.title || (typeof target.name === 'string' ? target.name : undefined)}>{target.name}</span>
       {target.lastHit && <span className="shrink-0 text-[11px] text-fg-subtle">最近命中</span>}
       {target.statusLabel && <span className={`shrink-0 text-[11px] ${target.statusClass || 'text-fg-subtle'}`}>{target.statusLabel}</span>}
       {showPriority && <span className="shrink-0 font-mono text-[11px] text-fg-subtle">P{target.priority}</span>}
       <div className="grid h-5 shrink-0 items-center justify-items-end">
-        {currentMode && <span className="col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-has-[:focus-visible]:opacity-0"><RouteModeTag mode={currentMode} /></span>}
+        {currentMode && <span className="pointer-events-none col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-has-[:focus-visible]:opacity-0"><RouteModeTag mode={currentMode} /></span>}
         <div className="col-start-1 row-start-1 whitespace-nowrap flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-has-[:focus-visible]:opacity-100">
           {Object.entries(ACTIONS).map(([actionMode, action]) => {
             const { Icon } = action;

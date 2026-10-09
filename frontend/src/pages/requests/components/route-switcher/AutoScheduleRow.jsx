@@ -3,7 +3,7 @@
 import { RotateCcw } from 'lucide-react';
 import { CheckSlot } from '@components/desktop/PopoverParts.jsx';
 
-const AutoScheduleRow = ({ isCurrent, onRestore, loading = false, disabled = false, label = '自动调度', meta = '', title, indent = false }) => (
+const AutoScheduleRow = ({ isCurrent, onRestore, loading = false, disabled = false, label = '自动调度', meta = '', title, indent = false, flash = false }) => (
   <button
     type="button"
     aria-pressed={isCurrent}
@@ -14,7 +14,7 @@ const AutoScheduleRow = ({ isCurrent, onRestore, loading = false, disabled = fal
   >
     <CheckSlot checked={isCurrent} />
     <RotateCcw size={13} className="shrink-0 text-fg-muted" />
-    <span className={`min-w-0 flex-1 truncate ${isCurrent ? 'font-medium text-fg' : 'text-fg-body'}`}>{label}</span>
+    <span className={`min-w-0 flex-1 truncate transition-colors duration-700 ${isCurrent ? 'font-medium' : ''} ${flash ? 'text-accent' : isCurrent ? 'text-fg' : 'text-fg-body'}`}>{label}</span>
     {meta && <span className="shrink-0 text-[11px] text-fg-subtle">{meta}</span>}
   </button>
 );
