@@ -47,15 +47,20 @@ export const PopoverMenuItem = ({ children, onClick, disabled = false }) => (
 );
 
 const ALERT_TONES = {
-  warn: 'bg-warn-soft text-warn',
-  danger: 'bg-danger-soft text-danger',
-  success: 'bg-success-soft text-success'
+  warn: { icon: 'text-warn-solid', text: 'text-fg-muted' },
+  danger: { icon: 'text-danger', text: 'text-danger' },
+  success: { icon: 'text-success-solid', text: 'text-fg-muted' }
 };
 
-// 浮层内的一条提示：浅色底、无边框，图标对齐勾选列
-export const PopoverAlert = ({ tone = 'warn', children, role = 'alert' }) => (
-  <div role={role} className={`mb-1 flex gap-1.5 rounded-md px-1.5 py-1.5 text-xs leading-relaxed ${ALERT_TONES[tone] || ALERT_TONES.warn}`}>
-    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-    <div className="min-w-0 flex-1">{children}</div>
-  </div>
-);
+// 浮层内的一条提示：沿用说明文字排版，图标对齐勾选列，仅错误提示文字着色
+export const PopoverAlert = ({ tone = 'warn', children, role = 'alert' }) => {
+  const toneClasses = ALERT_TONES[tone] || ALERT_TONES.warn;
+  return (
+    <div role={role} className={`flex items-start gap-1.5 pb-1.5 pl-1.5 pr-2 pt-px text-[11.5px] leading-relaxed ${toneClasses.text}`}>
+      <span className={`flex h-[19px] w-3.5 shrink-0 items-center justify-center ${toneClasses.icon}`} aria-hidden="true">
+        <AlertCircle size={12} />
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+};

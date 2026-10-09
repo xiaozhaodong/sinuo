@@ -87,8 +87,8 @@ const CodexAccessSwitcher = ({
 
   const accessStatus = (
     <>
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ready ? 'bg-success-solid' : configError || statusError ? 'bg-danger-solid' : 'bg-warn-solid'}`} />
-      <span className="truncate">独立入口{accessStateLabel}{config?.initialized && !ready ? ` · 已保存：${modeLabel}` : ''}</span>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${fallbackPanel ? 'bg-fg-subtle' : ready ? 'bg-success-solid' : configError || statusError ? 'bg-danger-solid' : 'bg-warn-solid'}`} />
+      <span className="truncate">{fallbackPanel ? '独立入口已停用' : <>独立入口{accessStateLabel}{config?.initialized && !ready ? ` · 已保存：${modeLabel}` : ''}</>}</span>
     </>
   );
 
@@ -118,13 +118,15 @@ const CodexAccessSwitcher = ({
 
   const noticeAlert = notice && !pending && <PopoverAlert tone={NOTICE_TONES[notice.type] || 'warn'} role="status">{notice.text}</PopoverAlert>;
 
-  const stoppedWarning = (
-    <PopoverAlert>
-      <span title="停用不会切换客户端接入地址；仍指向独立入口的客户端将无法连接。如需使用原有入口，请先修改客户端接入配置；重新启用独立入口请到 Codex 管理 → 客户端接入。">
-        独立入口已停用：下面的策略只作用于原有入口，仍指向独立入口的客户端会连不上。
-      </span>
-      <button type="button" onClick={handleNavigateToCodexAccess} className="ml-1 font-semibold hover:underline">去启用 →</button>
-    </PopoverAlert>
+  const stoppedSection = fallbackPanel && (
+    <>
+      <PopoverSection title="接入模式" aside={accessStatus} />
+      <div title="停用不会切换客户端接入地址；仍指向独立入口的客户端将无法连接。如需使用原有入口，请先修改客户端接入配置；重新启用独立入口请到 Codex 管理 → 客户端接入。">
+        <PopoverNote>下面的策略只作用于原有入口；仍指向独立入口的客户端会连不上</PopoverNote>
+      </div>
+      <PopoverMenuItem onClick={handleNavigateToCodexAccess}>启用独立入口…</PopoverMenuItem>
+      <PopoverSeparator />
+    </>
   );
 
   return (
@@ -132,7 +134,7 @@ const CodexAccessSwitcher = ({
       <SwitcherTrigger triggerRef={triggerRef} menuId={menuId} open={open} brand="Codex" label={displayLabel} ariaLabel={`Codex 接入与路由：${displayLabel}${displayDetail ? `（${displayDetail}）` : ''}`} warn={triggerIconWarn} busy={loading || busy} title={triggerTitle} onClick={() => { if (!open) refresh(); setOpen((value) => !value); }} />
       <SwitcherPanel open={open} position={position} panelRef={panelRef} panelId={menuId} title="Codex 接入">
         {noticeAlert}
-        {fallbackPanel && stoppedWarning}
+        {stoppedSection}
         {loading && !config && <PopoverNote>读取中…</PopoverNote>}
         {accessSection}
         {displayDetail && !fallbackPanel && <PopoverNote>{displayDetail} · 原有入口策略：{fallbackRouteLabel}</PopoverNote>}
