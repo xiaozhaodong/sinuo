@@ -110,6 +110,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(response_model, '') as response_model,
 	COALESCE(request_reasoning, '') as request_reasoning,
 	COALESCE(response_reasoning, '') as response_reasoning,
+	COALESCE(session_id, '') as session_id,
 	COALESCE(is_streaming, false) as is_streaming,
 	status, http_status_code, retry_count,
 	COALESCE(failure_reason, '') as failure_reason,
@@ -181,6 +182,10 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 	if opts.RequestID != "" {
 		query += " AND request_id = ?"
 		args = append(args, opts.RequestID)
+	}
+	if opts.SessionID != "" {
+		query += " AND session_id = ?"
+		args = append(args, opts.SessionID)
 	}
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
@@ -277,6 +282,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.ModelName,
 			&detail.RequestModel, &detail.UpstreamModel, &detail.ResponseModel,
 			&detail.RequestReasoning, &detail.ResponseReasoning,
+			&detail.SessionID,
 			&detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
@@ -418,6 +424,7 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
+	SessionID     string
 	RequestID     string
 	StartDate     *time.Time
 	EndDate       *time.Time
@@ -461,6 +468,7 @@ type UsageSummary struct {
 
 // RequestDetail represents a detailed request record
 type RequestDetail struct {
+	SessionID string `json:"session_id"`
 	ID        int64  `json:"id"`
 	RequestID string `json:"request_id"`
 	ClientIP  string `json:"client_ip"`

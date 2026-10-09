@@ -243,6 +243,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+		lifecycleManager.SetClientSession(clientSessionID(r))
 		if hasPoolMetadata {
 			lifecycleManager.SetRequestSource(poolMetadata.RequestSource)
 			lifecycleManager.SetRequestKind(poolMetadata.RequestKind)

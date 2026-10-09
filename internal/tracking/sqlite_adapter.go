@@ -212,6 +212,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "session_id",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN session_id TEXT DEFAULT ''",
+			description: "客户端会话字段",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "upstream_model",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_model TEXT DEFAULT ''",
 			description: "上游实际模型字段（模型一致性）",
@@ -518,6 +524,8 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 
 	// 索引迁移（幂等）
 	indexSQLs := []string{
+		// 旧 request_logs 必须先补 session_id 列，再创建会话索引。
+		"CREATE INDEX IF NOT EXISTS idx_request_logs_session_time ON request_logs(session_id, start_time)",
 		// 必须在 ensureUsageSummaryRequestKind 之后；旧库执行基础 schema 时尚无此列。
 		"CREATE INDEX IF NOT EXISTS idx_usage_summary_kind ON usage_summary(request_kind)",
 		"CREATE INDEX IF NOT EXISTS idx_request_logs_upstream_type ON request_logs(upstream_type)",

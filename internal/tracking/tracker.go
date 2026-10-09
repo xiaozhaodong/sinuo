@@ -124,6 +124,7 @@ type RequestEvent struct {
 
 // RequestStartData 请求开始事件数据
 type RequestStartData struct {
+	SessionID          string `json:"session_id,omitempty"`
 	ClientIP           string `json:"client_ip"`
 	UserAgent          string `json:"user_agent"`
 	Method             string `json:"method"`
@@ -143,6 +144,7 @@ type RequestStartData struct {
 
 // RequestDimensions 是开始记录时必须原子写入的来源与分类维度。
 type RequestDimensions struct {
+	SessionID          string
 	RequestSource      string
 	RequestKind        string
 	UpstreamType       string
@@ -996,6 +998,7 @@ func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent,
 			UsageKnown:         dimensions.UsageKnown,
 			RequestModel:       dimensions.RequestModel,
 			RequestReasoning:   dimensions.RequestReasoning,
+			SessionID:          dimensions.SessionID,
 		},
 	}
 
@@ -1932,7 +1935,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 
 	var output strings.Builder
 	writer := csv.NewWriter(&output)
-	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning"}); err != nil {
+	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "session_id"}); err != nil {
 		return nil, err
 	}
 
@@ -1977,6 +1980,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			ut.timezonePolicy.FormatDisplay(log.CreatedAt), ut.timezonePolicy.FormatDisplay(log.UpdatedAt),
 			log.RequestSource, log.RequestKind, strconv.FormatBool(log.UsageKnown), strconv.FormatBool(log.CostKnown),
 			log.RequestModel, log.UpstreamModel, log.ResponseModel, log.RequestReasoning, log.ResponseReasoning,
+			log.SessionID,
 		}); err != nil {
 			return nil, err
 		}
@@ -2356,6 +2360,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		ResponseModel:         req.ResponseModel,
 		RequestReasoning:      req.RequestReasoning,
 		ResponseReasoning:     req.ResponseReasoning,
+		SessionID:             req.SessionID,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,
 		HTTPStatusCode:        httpStatus,
@@ -2582,6 +2587,9 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 			}
 			// 状态过滤
 			if !requestStatusMatchesFilter(opts.Status, requestDisplayStatus(req.Status, req.RequestSource, req.FailureReason)) {
+				continue
+			}
+			if opts.SessionID != "" && req.SessionID != opts.SessionID {
 				continue
 			}
 			// 模型过滤

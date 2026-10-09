@@ -1,6 +1,10 @@
 package proxy
 
-import "strings"
+import (
+	"strings"
+
+	"cc-forwarder/internal/reasoning"
+)
 
 // filterResponseModel 把解析器内部的占位模型名（空 / default / unknown / error:*）过滤为空串。
 // response_model 列只允许真正来自上游响应的模型名。
@@ -35,7 +39,11 @@ func (tp *TokenParser) MergeResponseReasoningFromJSON(payload map[string]interfa
 		tp.responseState.MarkClaudeContent(payload)
 		return
 	}
-	tp.responseState.MergeCodex(payload)
+	fields := reasoning.ExtractCodexFields(payload)
+	if payload["object"] != "response" {
+		fields.Speed = ""
+	}
+	tp.responseState.MergeCodexFields(fields)
 }
 
 // ResponseDiagnostics 返回流式处理结束后的响应模型与思考串，供管线写入终态诊断。

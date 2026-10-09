@@ -14,7 +14,7 @@ var requestLogTargetColumns = []string{
 	"start_time", "end_time", "duration_ms", "first_token_ms", "completion_ms",
 	"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json",
 	"request_family", "request_source", "request_kind", "endpoint_name", "model_name",
-	"request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "upstream_type",
+	"request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "session_id", "upstream_type",
 	"upstream_source_name", "upstream_name", "upstream_id", "is_streaming",
 	"route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason",
 	"route_decision_at", "status", "http_status_code", "retry_count",
@@ -115,7 +115,7 @@ func requestHistoryExpression(column string, columns map[string]bool) string {
 	case "upstream_name":
 		return `COALESCE(NULLIF(` + value("upstream_name", "''") + `, ''), NULLIF(` +
 			value("effective_endpoint", "''") + `, ''), NULLIF(` + value("endpoint_name", "''") + `, ''), '')`
-	case "upstream_source_name", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning":
+	case "upstream_source_name", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "session_id":
 		return `COALESCE(` + value(column, "''") + `, '')`
 	case "upstream_type":
 		path := value("path", "''")
@@ -182,6 +182,7 @@ func requestLogsTargetSchema(table string) string {
 		response_model TEXT DEFAULT '',
 		request_reasoning TEXT DEFAULT '',
 		response_reasoning TEXT DEFAULT '',
+		session_id TEXT DEFAULT '',
 		upstream_type TEXT NOT NULL DEFAULT '',
 		upstream_source_name TEXT NOT NULL DEFAULT '',
 		upstream_name TEXT NOT NULL DEFAULT '',
@@ -220,6 +221,7 @@ func createRequestLogAuxiliarySchema(ctx context.Context, tx *sql.Tx) error {
 	statements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_request_id ON request_logs(request_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_start_time ON request_logs(start_time)`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_session_time ON request_logs(session_id, start_time)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_status ON request_logs(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON request_logs(endpoint_name)`,

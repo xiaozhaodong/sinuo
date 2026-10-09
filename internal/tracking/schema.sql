@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     response_model TEXT DEFAULT '',         -- v6.3: 仅由响应解析写入的模型；无响应模型时恒空
     request_reasoning TEXT DEFAULT '',      -- v6.3: 客户端请求的思考配置（归一化 token 串）
     response_reasoning TEXT DEFAULT '',     -- v6.3: 上游响应可观测的思考信息（归一化 token 串）
+    session_id TEXT DEFAULT '',             -- 客户端原始会话，只在开始记录时写入（索引在迁移后创建）
     upstream_type TEXT NOT NULL DEFAULT '', -- 内部来源形态: endpoint/account
     upstream_source_name TEXT NOT NULL DEFAULT '',
     upstream_name TEXT NOT NULL DEFAULT '', -- 用户可见的实际上游

@@ -10,7 +10,6 @@ import (
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/privacy"
 	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/reasoning"
 )
 
 // subscriptionSubmissionObserver 是 P2b 的同步生命周期接缝。
@@ -28,6 +27,7 @@ type subscriptionSubmissionObserver interface {
 // subscriptionSubmission 表示一条 WS 上的逻辑 response，而不是整条连接。
 type subscriptionSubmission struct {
 	RequestID          string
+	SessionID          string
 	ConnectionID       string
 	Sequence           uint64
 	Model              string
@@ -49,6 +49,7 @@ type subscriptionSubmission struct {
 type subscriptionSubmissionState struct {
 	mu           sync.Mutex
 	connectionID string
+	sessionID    string
 	baseContext  context.Context
 	observer     subscriptionSubmissionObserver
 	sequence     uint64
@@ -68,6 +69,7 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 	}
 	return &subscriptionSubmissionState{
 		connectionID: connectionID,
+		sessionID:    clientSessionFromContext(ctx),
 		baseContext:  ctx,
 		observer:     observer,
 		byResponseID: make(map[string]*subscriptionSubmission),
@@ -95,6 +97,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	ctx = handlers.WithPrivacyRequestState(ctx, privacyState)
 	submission := &subscriptionSubmission{
 		RequestID:          requestID,
+		SessionID:          s.sessionID,
 		ConnectionID:       s.connectionID,
 		Sequence:           s.sequence,
 		Model:              create.Model,
@@ -234,6 +237,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		requestID := monitor.NewConnectionID()
 		submission = &subscriptionSubmission{
 			RequestID:       requestID,
+			SessionID:       s.sessionID,
 			ConnectionID:    s.connectionID,
 			Sequence:        s.sequence,
 			Generate:        true,
@@ -398,71 +402,6 @@ func (s *subscriptionSubmissionState) warn(code string) {
 	if s.observer != nil {
 		s.observer.SubmissionWarning(s.connectionID, code)
 	}
-}
-
-type subscriptionCreate struct {
-	Generate           bool
-	Model              string
-	Reasoning          string // v6.3 归一化思考串（effort:x），envelope 与 nested response 都读
-	PreviousResponseID string
-	StreamID           string
-}
-
-type subscriptionReasoningField struct {
-	Effort string `json:"effort"`
-}
-
-func (f subscriptionReasoningField) normalized() string {
-	return reasoning.ParseCodexRequest(map[string]any{"reasoning": map[string]any{"effort": f.Effort}})
-}
-
-func parseSubscriptionCreate(payload []byte) (subscriptionCreate, bool) {
-	var envelope struct {
-		Type               string                     `json:"type"`
-		Generate           *bool                      `json:"generate"`
-		Model              string                     `json:"model"`
-		Reasoning          subscriptionReasoningField `json:"reasoning"`
-		PreviousResponseID string                     `json:"previous_response_id"`
-		StreamID           string                     `json:"stream_id"`
-		Response           json.RawMessage            `json:"response"`
-	}
-	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Type != "response.create" {
-		return subscriptionCreate{}, false
-	}
-	create := subscriptionCreate{
-		Generate:           envelope.Generate == nil || *envelope.Generate,
-		Model:              envelope.Model,
-		Reasoning:          envelope.Reasoning.normalized(),
-		PreviousResponseID: envelope.PreviousResponseID,
-		StreamID:           envelope.StreamID,
-	}
-	if len(envelope.Response) > 0 && string(envelope.Response) != "null" {
-		var nested struct {
-			Generate           *bool                      `json:"generate"`
-			Model              string                     `json:"model"`
-			Reasoning          subscriptionReasoningField `json:"reasoning"`
-			PreviousResponseID string                     `json:"previous_response_id"`
-			StreamID           string                     `json:"stream_id"`
-		}
-		if json.Unmarshal(envelope.Response, &nested) == nil {
-			if nested.Generate != nil {
-				create.Generate = *nested.Generate
-			}
-			if nested.Model != "" {
-				create.Model = nested.Model
-			}
-			if nestedReasoning := nested.Reasoning.normalized(); nestedReasoning != "" {
-				create.Reasoning = nestedReasoning
-			}
-			if nested.PreviousResponseID != "" {
-				create.PreviousResponseID = nested.PreviousResponseID
-			}
-			if nested.StreamID != "" {
-				create.StreamID = nested.StreamID
-			}
-		}
-	}
-	return create, true
 }
 
 func responsesEventType(payload []byte) string {

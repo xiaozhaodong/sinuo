@@ -21,6 +21,7 @@ const (
 // SubscriptionHTTPStart 是订阅 HTTP 入口与追踪器之间的正文无关契约。
 type SubscriptionHTTPStart struct {
 	RequestID    string
+	SessionID    string
 	ConnectionID string
 	StartedAt    time.Time
 	ClientIP     string
@@ -75,6 +76,7 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 			UsageKnown:         false,
 			RequestModel:       safeSubscriptionModel(start.RequestModel),
 			RequestReasoning:   strings.TrimSpace(start.RequestReasoning),
+			SessionID:          start.SessionID,
 		},
 	)
 	if err != nil {
@@ -421,6 +423,7 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	}
 	start := SubscriptionHTTPStart{
 		RequestID: submission.RequestID, StartedAt: submission.StartedAt,
+		SessionID:    submission.SessionID,
 		ConnectionID: submission.ConnectionID,
 		Method:       "POST", Path: "/v1/responses", RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
 	}

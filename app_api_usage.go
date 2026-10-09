@@ -239,6 +239,7 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 // RequestRecord 请求记录
 type RequestRecord struct {
+	SessionID             string  `json:"session_id,omitempty"`
 	ID                    string  `json:"id"`
 	RequestID             string  `json:"request_id"`
 	Timestamp             string  `json:"timestamp"`
@@ -295,6 +296,7 @@ type RequestListResult struct {
 
 // RequestQueryParams 请求查询参数
 type RequestQueryParams struct {
+	SessionID     string `json:"session_id"`
 	Page          int    `json:"page"`
 	PageSize      int    `json:"page_size"`
 	StartDate     string `json:"start_date"` // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
@@ -391,6 +393,7 @@ func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQue
 	}
 
 	opts := &tracking.QueryOptions{
+		SessionID:     params.SessionID,
 		StartDate:     &startTime,
 		EndDate:       &endTime,
 		ModelName:     params.Model,
@@ -447,6 +450,7 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		ResponseModel:         r.ResponseModel,
 		RequestReasoning:      r.RequestReasoning,
 		ResponseReasoning:     r.ResponseReasoning,
+		SessionID:             r.SessionID,
 	}
 
 	// 处理指针字段
@@ -520,6 +524,7 @@ type UsageStatsData struct {
 
 // UsageStatsQueryParams 使用统计查询参数
 type UsageStatsQueryParams struct {
+	SessionID     string `json:"session_id"`
 	Period        string `json:"period"`     // 时间周期: "1h", "1d", "7d", "30d", "90d"
 	StartDate     string `json:"start_date"` // 开始时间（优先于 period）
 	EndDate       string `json:"end_date"`   // 结束时间（优先于 period）
@@ -616,6 +621,7 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		defer cancel()
 
 		baseOpts := &tracking.QueryOptions{
+			SessionID:     params.SessionID,
 			StartDate:     &startTime,
 			EndDate:       &endTime,
 			ModelName:     params.Model,

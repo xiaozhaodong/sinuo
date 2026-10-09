@@ -77,6 +77,7 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	track := observer.StartHTTP(SubscriptionHTTPStart{
 		RequestID: requestID, StartedAt: time.Now(), Method: r.Method, Path: route.InternalPath,
 		RequestKind: kind, IsStreaming: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
+		SessionID: clientSessionID(r),
 	})
 	defer track.Complete(nil, "")
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {

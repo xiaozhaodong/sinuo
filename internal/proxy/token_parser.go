@@ -74,10 +74,11 @@ type ModelInfo struct {
 
 // UsageData 表示Claude API SSE事件中的usage字段
 type UsageData struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"` // 总数（向后兼容）
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	Speed                    string `json:"speed"`
+	InputTokens              int64  `json:"input_tokens"`
+	OutputTokens             int64  `json:"output_tokens"`
+	CacheCreationInputTokens int64  `json:"cache_creation_input_tokens"` // 总数（向后兼容）
+	CacheReadInputTokens     int64  `json:"cache_read_input_tokens"`
 	// v5.0+: 分开的缓存创建详情
 	CacheCreation *CacheCreationDetail `json:"cache_creation,omitempty"`
 }
@@ -553,18 +554,22 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(jsonData, &payload); err != nil {
 		result := parseResponsesEventRawJSON(eventType, jsonData)
-		attachResponsesReasoning(result, reasoning.ExtractCodexFieldsFromRaw(string(jsonData)))
+		attachResponsesReasoning(result, reasoning.ExtractCodexFieldsFromRaw(string(jsonData)), eventType)
 		return result
 	}
 	result := parseResponsesEventPayload(eventType, payload)
-	attachResponsesReasoning(result, reasoning.ExtractCodexFields(payload))
+	attachResponsesReasoning(result, reasoning.ExtractCodexFields(payload), eventType)
 	return result
 }
 
 // attachResponsesReasoning 把单事件思考字段与响应模型挂到无状态解析结果上。
-func attachResponsesReasoning(result *ParseResult, fields reasoning.CodexFields) {
+func attachResponsesReasoning(result *ParseResult, fields reasoning.CodexFields, eventType string) {
 	if result == nil {
 		return
+	}
+	// 开场回显仅代表请求档位；实际速度只采用 Responses 终态，通用 error 不作判断。
+	if !strings.HasPrefix(eventType, "response.") || !isResponsesTerminalEvent(eventType) {
+		fields.Speed = ""
 	}
 	result.ResponseReasoningFields = fields
 	result.ResponseModel = filterResponseModel(result.ModelName)
@@ -1108,6 +1113,7 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 	// 这样确保即使流被中断，也能保存有效的token使用信息
 	if messageStart.Message != nil && messageStart.Message.Usage != nil {
 		usage := messageStart.Message.Usage
+		tp.responseState.MergeClaudeSpeed(usage.Speed)
 
 		// v5.0+: 提取分开的 5m/1h 缓存 tokens
 		var cache5m, cache1h int64
@@ -1229,6 +1235,7 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 	// 2. cache tokens: 如果message_delta为0，保留message_start的值（防止缓存信息丢失）
 
 	usage := messageDelta.Usage
+	tp.responseState.MergeClaudeSpeed(usage.Speed)
 
 	// 获取message_delta中的基础值
 	inputTokens := usage.InputTokens
@@ -1366,6 +1373,7 @@ func (tp *TokenParser) parseMessageDelta() *monitor.TokenUsage {
 
 	// 转换为我们的TokenUsage格式
 	usage := messageDelta.Usage
+	tp.responseState.MergeClaudeSpeed(usage.Speed)
 
 	// v5.0+: 提取分开的 5m/1h 缓存 tokens
 	var cache5m, cache1h int64

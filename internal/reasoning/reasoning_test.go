@@ -51,6 +51,68 @@ func TestParseCodexRequest(t *testing.T) {
 	}
 }
 
+func TestParseRequestSpeed(t *testing.T) {
+	cases := []struct{ path, body, want string }{
+		{"/v1/responses", `{"service_tier":"priority"}`, "speed:priority"},
+		{"/v1/responses", `{"reasoning":{"effort":"high"},"service_tier":"ultrafast"}`, "effort:high speed:ultrafast"},
+		{"/v1/responses/compact", `{"service_tier":" Flex "}`, "speed:flex"},
+		{"/v1/responses", `{"service_tier":"auto"}`, "speed:auto"},
+		{"/v1/responses", `{"service_tier":"default"}`, "speed:default"},
+		{"/v1/responses", `{"speed":"fast"}`, ""},
+		{"/v1/responses", `{}`, ""},
+		{"/v1/responses", `{"service_tier":"bad tier"}`, ""},
+		{"/v1/responses", `{"service_tier":3}`, ""},
+		{"/v1/messages", `{"thinking":{"type":"adaptive"},"speed":" Fast "}`, "thinking:adaptive speed:fast"},
+		{"/v1/messages", `{"speed":"standard","service_tier":"priority"}`, "speed:standard"},
+		{"/v1/messages/count_tokens", `{"speed":"fast"}`, "speed:fast"},
+		{"/v1/messages", `{"service_tier":"priority"}`, ""},
+		{"/v1/images/generations", `{"speed":"fast","service_tier":"priority"}`, ""},
+	}
+	for _, tc := range cases {
+		if _, got := ParseRequest(tc.path, []byte(tc.body)); got != tc.want {
+			t.Errorf("%s %s => %q, want %q", tc.path, tc.body, got, tc.want)
+		}
+	}
+}
+
+func TestResponseStateSpeedMergeAndOrder(t *testing.T) {
+	var state ResponseState
+	state.MergeCodexFields(CodexFields{Speed: "AUTO"})
+	if !state.IsEmpty() || !(CodexFields{}).IsEmpty() || (CodexFields{Speed: "priority"}).IsEmpty() {
+		t.Fatal("speed 字段的空状态不正确")
+	}
+	state.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"response":{"service_tier":"priority","reasoning":{"effort":"high"}}}`)))
+	state.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"response":{"service_tier":"default","usage":{"output_tokens_details":{"reasoning_tokens":3}}}}`)))
+	state.MergeCodexFields(CodexFields{Speed: "auto"})
+	state.MergeCodexFields(CodexFields{})
+	state.MarkThinkingBlock()
+	if got := state.String(); got != "thinking:present effort:high reasoning_tokens:3 speed:default" {
+		t.Fatalf("终态覆盖、空字段保留或序列化顺序错误: %q", got)
+	}
+	var claude ResponseState
+	claude.MergeClaudeSpeed(" Fast ")
+	claude.MarkClaudeContent(mustJSON(t, `{"content":[],"usage":{"speed":"standard","service_tier":"priority"}}`))
+	claude.MergeClaudeSpeed("")
+	if got := claude.String(); got != "thinking:absent speed:standard" {
+		t.Fatalf("Claude 必须只合并 usage.speed: %q", got)
+	}
+}
+
+func TestExtractCodexRawSpeedTakesLastNonAuto(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"service_tier":"priority"}{"service_tier":"default"}{"service_tier":"auto"}`: "default",
+		`{"service_tier":"priority"}{"service_tier":"auto"}`:                           "priority",
+		`{"service_tier":"auto"}`:     "",
+		`{"service_tier":"Ultrafast"`: "ultrafast",
+		`{"service_tier":"bad tier"}`: "",
+		`{}`:                          "",
+	} {
+		if got := ExtractCodexFieldsFromRaw(raw).Speed; got != want {
+			t.Errorf("raw speed = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestParseRequestByPath(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","reasoning":{"effort":"high"},"thinking":{"type":"adaptive"}}`)
 	model, reasoning := ParseRequest("/v1/responses", body)
@@ -72,22 +134,22 @@ func TestParseRequestByPath(t *testing.T) {
 
 func TestResponseStateMergeByField(t *testing.T) {
 	var state ResponseState
-	state.MergeCodex(mustJSON(t, `{"type":"response.created","response":{"reasoning":{"effort":"xhigh"}}}`))
+	state.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"type":"response.created","response":{"reasoning":{"effort":"xhigh"}}}`)))
 	if got := state.String(); got != "effort:xhigh" {
 		t.Fatalf("after created: %q", got)
 	}
-	state.MergeCodex(mustJSON(t, `{"type":"response.completed","response":{"usage":{"output_tokens_details":{"reasoning_tokens":1234}}}}`))
+	state.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"type":"response.completed","response":{"usage":{"output_tokens_details":{"reasoning_tokens":1234}}}}`)))
 	if got := state.String(); got != "effort:xhigh reasoning_tokens:1234" {
 		t.Fatalf("after completed: %q", got)
 	}
 	// 缺失字段不覆盖
-	state.MergeCodex(mustJSON(t, `{"type":"response.in_progress","response":{}}`))
+	state.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"type":"response.in_progress","response":{}}`)))
 	if got := state.String(); got != "effort:xhigh reasoning_tokens:1234" {
 		t.Fatalf("missing fields must not clear: %q", got)
 	}
 	// 顶层对象（非流式）
 	var flat ResponseState
-	flat.MergeCodex(mustJSON(t, `{"object":"response","reasoning":{"effort":"medium"},"usage":{"output_tokens_details":{"reasoning_tokens":7}}}`))
+	flat.MergeCodexFields(ExtractCodexFields(mustJSON(t, `{"object":"response","reasoning":{"effort":"medium"},"usage":{"output_tokens_details":{"reasoning_tokens":7}}}`)))
 	if got := flat.String(); got != "effort:medium reasoning_tokens:7" {
 		t.Fatalf("flat: %q", got)
 	}

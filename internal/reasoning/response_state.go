@@ -9,6 +9,7 @@ import (
 var (
 	rawEffortRe          = regexp.MustCompile(`"effort"\s*:\s*"([^"]+)"`)
 	rawReasoningTokensRe = regexp.MustCompile(`"reasoning_tokens"\s*:\s*(\d+)`)
+	rawServiceTierRe     = regexp.MustCompile(`"service_tier"\s*:\s*"([^"]+)"`)
 )
 
 // ResponseState 累计上游响应里可观测的思考信息；按字段合并，序列化只在读取时发生。
@@ -20,21 +21,23 @@ type ResponseState struct {
 	ReasoningTokens *int64
 	SawThinking     bool
 	Complete        bool
+	Speed           string
 }
 
 // CodexFields 是单个 Responses 事件里可提取的思考字段（无状态解析产物）。
 type CodexFields struct {
 	Effort          string
 	ReasoningTokens *int64
+	Speed           string
 }
 
 // IsEmpty 表示该事件没有任何思考字段。
 func (f CodexFields) IsEmpty() bool {
-	return f.Effort == "" && f.ReasoningTokens == nil
+	return f.Effort == "" && f.ReasoningTokens == nil && f.Speed == ""
 }
 
 // ExtractCodexFields 从 Responses 事件 payload（顶层或 response 对象）提取 reasoning.effort 与
-// usage.output_tokens_details.reasoning_tokens。
+// usage.output_tokens_details.reasoning_tokens / service_tier；档位仅供终态调用方采用。
 func ExtractCodexFields(payload map[string]any) CodexFields {
 	var fields CodexFields
 	if payload == nil {
@@ -45,6 +48,9 @@ func ExtractCodexFields(payload map[string]any) CodexFields {
 		candidates = append([]map[string]any{responseObj}, candidates...)
 	}
 	for _, obj := range candidates {
+		if fields.Speed == "" {
+			fields.Speed = normalizeCodexSpeed(stringField(obj, "service_tier"))
+		}
 		if fields.Effort == "" {
 			if reasoning, ok := obj["reasoning"].(map[string]any); ok {
 				fields.Effort = normalizeToken(stringField(reasoning, "effort"))
@@ -74,7 +80,22 @@ func ExtractCodexFieldsFromRaw(raw string) CodexFields {
 			fields.ReasoningTokens = &value
 		}
 	}
+	matches := rawServiceTierRe.FindAllStringSubmatch(raw, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		if speed := normalizeCodexSpeed(matches[i][1]); speed != "" {
+			fields.Speed = speed
+			break
+		}
+	}
 	return fields
+}
+
+func normalizeCodexSpeed(value string) string {
+	value = normalizeToken(value)
+	if value == "auto" {
+		return ""
+	}
+	return value
 }
 
 // lastSubmatch 返回正则在文本中最后一次匹配的首个捕获组，无匹配返回空串。
@@ -90,11 +111,6 @@ func lastSubmatch(re *regexp.Regexp, raw string) string {
 	return last[1]
 }
 
-// MergeCodex 对 Responses 事件 payload 按字段合并；缺失字段不覆盖已有值。
-func (s *ResponseState) MergeCodex(payload map[string]any) {
-	s.MergeCodexFields(ExtractCodexFields(payload))
-}
-
 // MergeCodexFields 按字段合并单事件提取结果。
 func (s *ResponseState) MergeCodexFields(fields CodexFields) {
 	if fields.Effort != "" {
@@ -103,6 +119,16 @@ func (s *ResponseState) MergeCodexFields(fields CodexFields) {
 	if fields.ReasoningTokens != nil {
 		value := *fields.ReasoningTokens
 		s.ReasoningTokens = &value
+	}
+	if speed := normalizeCodexSpeed(fields.Speed); speed != "" {
+		s.Speed = speed
+	}
+}
+
+// MergeClaudeSpeed 按事件顺序合并 usage.speed，缺失值不覆盖已有档位。
+func (s *ResponseState) MergeClaudeSpeed(speed string) {
+	if speed = normalizeToken(speed); speed != "" {
+		s.Speed = speed
 	}
 }
 
@@ -114,6 +140,9 @@ func (s *ResponseState) MarkComplete() { s.Complete = true }
 
 // MarkClaudeContent 扫描非流式 Claude 响应的 content[] 并标记完成。
 func (s *ResponseState) MarkClaudeContent(payload map[string]any) {
+	if usage, ok := payload["usage"].(map[string]any); ok {
+		s.MergeClaudeSpeed(stringField(usage, "speed"))
+	}
 	blocks, _ := payload["content"].([]any)
 	for _, block := range blocks {
 		if obj, ok := block.(map[string]any); ok && IsThinkingBlockType(stringField(obj, "type")) {
@@ -142,6 +171,9 @@ func (s ResponseState) String() string {
 	}
 	if s.ReasoningTokens != nil {
 		parts = append(parts, KeyReasoningTokens+":"+strconv.FormatInt(*s.ReasoningTokens, 10))
+	}
+	if s.Speed != "" {
+		parts = append(parts, KeySpeed+":"+s.Speed)
 	}
 	return strings.Join(parts, " ")
 }

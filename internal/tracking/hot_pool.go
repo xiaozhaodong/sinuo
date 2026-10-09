@@ -11,6 +11,7 @@ import (
 // ActiveRequest 表示一个活跃的请求（完整状态）
 // 请求在内存中保持活跃状态，只有完成时才归档到数据库
 type ActiveRequest struct {
+	SessionID string `json:"session_id,omitempty"`
 	// 基础信息（创建时设置，不变）
 	RequestID     string    `json:"request_id"`
 	StartTime     time.Time `json:"start_time"`
@@ -249,6 +250,7 @@ func (hp *HotPool) Get(requestID string) (*ActiveRequest, bool) {
 func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 	clone := &ActiveRequest{
 		RequestID:             req.RequestID,
+		SessionID:             req.SessionID,
 		StartTime:             req.StartTime,
 		ClientIP:              req.ClientIP,
 		UserAgent:             req.UserAgent,
@@ -659,5 +661,6 @@ func NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path
 		CostKnown:          dimensions.UsageKnown,
 		RequestModel:       strings.TrimSpace(dimensions.RequestModel),
 		RequestReasoning:   strings.TrimSpace(dimensions.RequestReasoning),
+		SessionID:          dimensions.SessionID,
 	}
 }

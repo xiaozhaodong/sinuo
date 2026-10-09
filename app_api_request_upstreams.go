@@ -17,7 +17,7 @@ type RequestUpstreamOption struct {
 const requestUpstreamOptionsTimeout = 10 * time.Second
 
 // GetRequestUpstreamOptions 返回请求页上游筛选候选。
-// 参数与 GetRequests 相同，但只按时间范围、请求族、来源与种类收窄，忽略分页与上游 / 模型 / 状态筛选：
+// 参数与 GetRequests 相同，但只按时间范围、请求族、来源与种类收窄，忽略分页与上游 / 模型 / 状态 / 会话筛选：
 // 候选若跟着当前页或当前选中的上游走，选中一个上游后就切不到别的上游。
 func (a *App) GetRequestUpstreamOptions(params RequestQueryParams) ([]RequestUpstreamOption, error) {
 	a.mu.RLock()

@@ -465,8 +465,8 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	if err != nil {
 		return "", nil, err
 	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "request_source", "request_kind", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "request_model", "request_reasoning", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "request_source", "request_kind", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "request_model", "request_reasoning", "session_id", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd", "updated_at"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -487,6 +487,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.UpstreamID,
 		strings.TrimSpace(data.RequestModel),
 		strings.TrimSpace(data.RequestReasoning),
+		data.SessionID,
 	}
 	usageKnown := data.UsageKnown || data.RequestSource == "" || requestSource == RequestSourceLegacyProxy
 	for i := 0; i < 13; i++ {

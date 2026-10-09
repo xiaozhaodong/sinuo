@@ -55,6 +55,7 @@ type RequestLifecycleManager struct {
 	modelName             string                        // 模型名称（计费模型）
 	requestModel          string                        // v6.3 客户端原始请求模型
 	requestReasoning      string                        // v6.3 客户端请求思考配置（归一化串）
+	clientSessionID       string                        // 客户端原始会话，随开始记录写入
 	upstreamModel         string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
 	responseModel         string                        // v6.3 仅由响应解析写入的模型
 	responseReasoning     string                        // v6.3 响应侧思考信息（归一化串）
@@ -160,7 +161,7 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 // 调用 RecordRequestStart 记录请求开始，并发布请求开始事件
 func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
 	state := rlm.snapshotState()
-	requestModel, requestReasoning := rlm.requestProfile()
+	requestModel, requestReasoning, sessionID := rlm.requestProfile()
 
 	// 原有的数据记录逻辑
 	if rlm.usageTracker != nil && rlm.requestID != "" {
@@ -170,6 +171,7 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 			UpstreamName: state.upstreamName, UpstreamID: state.upstreamID,
 			UsageKnown:   state.requestSource == tracking.RequestSourceLegacyProxy,
 			RequestModel: requestModel, RequestReasoning: requestReasoning,
+			SessionID: sessionID,
 		}); err != nil {
 			slog.Error("请求分类非法，拒绝写入追踪记录", "request_id", rlm.requestID, "error", err)
 		}

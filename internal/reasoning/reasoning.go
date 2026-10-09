@@ -2,7 +2,7 @@
 // 从 Claude / Codex 请求体与响应对象里提取模型名与思考配置，序列化为家族无关的归一化 token 串。
 //
 // 文法（§3.2）：以空格分隔的 key:value，key 固定小写，value 小写；
-// key ∈ thinking / budget / effort / reasoning_tokens。不做默认值推断，字段缺失即省略。
+// key ∈ thinking / budget / effort / reasoning_tokens / speed。不做默认值推断，字段缺失即省略。
 package reasoning
 
 import (
@@ -20,6 +20,7 @@ const (
 	KeyBudget          = "budget"
 	KeyEffort          = "effort"
 	KeyReasoningTokens = "reasoning_tokens"
+	KeySpeed           = "speed"
 )
 
 // Claude 响应侧 thinking 取值。
@@ -49,14 +50,14 @@ func FamilyForPath(path string) Family {
 	}
 }
 
-// ParseRequest 用 gjson 单趟扫描只取 model / thinking / output_config / reasoning 四个顶层字段，
+// ParseRequest 用 gjson 只取模型、思考配置与速度档位的顶层字段，
 // 不校验、不构建 messages / input 等大块内容的树；找齐目标 key 即提前停止。
 // 顶层非对象或 key 缺失时相应字段为空。
 func ParseRequest(path string, body []byte) (model, reasoning string) {
 	if len(body) == 0 {
 		return "", ""
 	}
-	results := gjson.GetManyBytes(body, "model", "thinking", "output_config", "reasoning")
+	results := gjson.GetManyBytes(body, "model", "thinking", "output_config", "reasoning", "service_tier", "speed")
 	if results[0].Type == gjson.String {
 		model = strings.TrimSpace(results[0].Str)
 	}
@@ -65,16 +66,18 @@ func ParseRequest(path string, body []byte) (model, reasoning string) {
 		reasoning = ParseClaudeRequest(map[string]any{
 			"thinking":      results[1].Value(),
 			"output_config": results[2].Value(),
+			"speed":         results[5].Value(),
 		})
 	case FamilyCodex:
 		reasoning = ParseCodexRequest(map[string]any{
-			"reasoning": results[3].Value(),
+			"reasoning":    results[3].Value(),
+			"service_tier": results[4].Value(),
 		})
 	}
 	return model, reasoning
 }
 
-// ParseClaudeRequest 解析 thinking.type / thinking.budget_tokens / output_config.effort。
+// ParseClaudeRequest 解析 thinking.type / thinking.budget_tokens / output_config.effort / speed。
 func ParseClaudeRequest(payload map[string]any) string {
 	var parts []string
 	thinkingType := ""
@@ -97,20 +100,24 @@ func ParseClaudeRequest(payload map[string]any) string {
 			parts = append(parts, KeyEffort+":"+effort)
 		}
 	}
+	if speed := normalizeToken(stringField(payload, "speed")); speed != "" {
+		parts = append(parts, KeySpeed+":"+speed)
+	}
 	return strings.Join(parts, " ")
 }
 
-// ParseCodexRequest 解析 reasoning.effort。
+// ParseCodexRequest 解析 reasoning.effort / service_tier。
 func ParseCodexRequest(payload map[string]any) string {
-	reasoning, ok := payload["reasoning"].(map[string]any)
-	if !ok {
-		return ""
+	var parts []string
+	if reasoning, ok := payload["reasoning"].(map[string]any); ok {
+		if effort := normalizeToken(stringField(reasoning, "effort")); effort != "" {
+			parts = append(parts, KeyEffort+":"+effort)
+		}
 	}
-	effort := normalizeToken(stringField(reasoning, "effort"))
-	if effort == "" {
-		return ""
+	if speed := normalizeToken(stringField(payload, "service_tier")); speed != "" {
+		parts = append(parts, KeySpeed+":"+speed)
 	}
-	return KeyEffort + ":" + effort
+	return strings.Join(parts, " ")
 }
 
 // Parse 把归一化串还原成 map；非法片段忽略。后端仅测试 / 日志用，前端有同文法实现。
