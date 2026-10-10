@@ -1026,6 +1026,25 @@ export const getLatestAccountScheduleSnapshot = async () => {
   }
 };
 
+// 返回后端原始结果，字段归一化由 endpointScheduleApi.js 负责；后端未提供该方法时返回 { unsupported: true }
+export const getLatestEndpointScheduleSnapshot = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const method = getWailsMethod('GetLatestEndpointScheduleSnapshot', { optional: true });
+  if (!method) return { unsupported: true };
+
+  try {
+    return await method();
+  } catch (error) {
+    const errorText = error?.message || String(error || '');
+    if (/not found|undefined|is not a function/i.test(errorText)) {
+      return { unsupported: true };
+    }
+    throw error;
+  }
+};
+
 export const refreshUpstreamAccountProfile = async (id) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
