@@ -11,15 +11,22 @@ import PageTabs from '@components/layout/PageTabs.jsx';
 import AccountPoolPage from '@pages/account-pool/index.jsx';
 import CodexModelsPage from './models/CodexModelsPage.jsx';
 import CodexRoutingPage from './routing/CodexRoutingPage.jsx';
+import CodexSchedulePage from './schedule/CodexSchedulePage.jsx';
+import useCodexPoolData from './useCodexPoolData.js';
 
 const TABS = [
   { id: 'accounts', label: '账号池' },
+  { id: 'schedule', label: '调度编排' },
   { id: 'routing', label: '模型路由' },
   { id: 'models', label: '模型目录' },
   { id: 'client-access', label: '客户端接入' }
 ];
 
 const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
+  const poolData = useCodexPoolData({ enabled: activeTab === 'accounts' || activeTab === 'schedule' });
+  const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
+  const [scheduleVisited, setScheduleVisited] = useState(activeTab === 'schedule');
+  const [scheduleActionsTarget, setScheduleActionsTarget] = useState(null);
   // 客户端入口首次访问后保持挂载，页签切换不会清掉只展示一次的明文密钥；
   // 离开整个 Codex 管理页时组件仍会卸载，避免扩大明文留存范围。
   const [clientAccessVisited, setClientAccessVisited] = useState(activeTab === 'client-access');
@@ -30,8 +37,10 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
   const [modelsVisited, setModelsVisited] = useState(activeTab === 'models');
   // 接住托盘和请求页直接切页签，访问后保持挂载。
   if (activeTab === 'routing' && !routingVisited) setRoutingVisited(true);
+  if (activeTab === 'schedule' && !scheduleVisited) setScheduleVisited(true);
 
   const handleTabChange = (nextTab) => {
+    if (nextTab === 'schedule') setScheduleVisited(true);
     if (nextTab === 'routing') setRoutingVisited(true);
     if (nextTab === 'models') setModelsVisited(true);
     if (nextTab === 'client-access') {
@@ -40,12 +49,18 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
     onTabChange?.(nextTab);
   };
 
+  const handleViewInInventory = (groupKey) => {
+    setInventoryViewRequest({ type: 'focus-group', groupKey, requestId: Date.now() });
+    handleTabChange('accounts');
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageToolbar>
         <PageTabs tabs={TABS} activeTab={activeTab} onChange={handleTabChange} idPrefix="codex" ariaLabel="Codex 管理" />
         {/* 操作仍由账号池页面管理，投送到工具栏右侧。 */}
         <div ref={setAccountActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'accounts'} />
+        <div ref={setScheduleActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'schedule'} />
         <div ref={setRoutingActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'routing'} />
         <div ref={setModelsActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'models'} />
       </PageToolbar>
@@ -57,7 +72,11 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
         hidden={activeTab !== 'accounts'}
         className="flex min-h-0 flex-1"
       >
-        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} />
+        <AccountPoolPage embedded active={activeTab === 'accounts'} headerTarget={accountActionsTarget} poolData={poolData} inventoryViewRequest={inventoryViewRequest} />
+      </section>
+
+      <section id="codex-panel-schedule" role="tabpanel" aria-labelledby="codex-tab-schedule" hidden={activeTab !== 'schedule'} className="flex min-h-0 flex-1">
+        {scheduleVisited && <CodexSchedulePage active={activeTab === 'schedule'} headerTarget={scheduleActionsTarget} poolData={poolData} onViewInInventory={handleViewInInventory} />}
       </section>
 
       <section id="codex-panel-routing" role="tabpanel" aria-labelledby="codex-tab-routing" hidden={activeTab !== 'routing'} className="flex min-h-0 flex-1">

@@ -3,14 +3,15 @@
 // 2026-03-07
 // ============================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLatestAccountScheduleSnapshot } from '@utils/api.js';
 
 const scheduleSnapshotPollIntervalMs = 5000;
 
 const isPageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
-const useLatestScheduleSnapshot = ({ showNotice }) => {
+const useLatestScheduleSnapshot = ({ showNotice, enabled = true }) => {
+  const wasEnabled = useRef(enabled);
   const [latestScheduleSnapshot, setLatestScheduleSnapshot] = useState({ hasSnapshot: false, candidates: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
 
@@ -45,7 +46,16 @@ const useLatestScheduleSnapshot = ({ showNotice }) => {
   }, [loadLatestScheduleSnapshot]);
 
   useEffect(() => {
-    if (snapshotUnsupported || typeof document === 'undefined') {
+    if (enabled && !wasEnabled.current) {
+      // 切回账号池或调度编排时立即静默刷新；不等待下一个轮询周期。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadLatestScheduleSnapshot({ silent: true });
+    }
+    wasEnabled.current = enabled;
+  }, [enabled, loadLatestScheduleSnapshot]);
+
+  useEffect(() => {
+    if (!enabled || snapshotUnsupported || typeof document === 'undefined') {
       return undefined;
     }
 
@@ -57,10 +67,10 @@ const useLatestScheduleSnapshot = ({ showNotice }) => {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [loadLatestScheduleSnapshot, snapshotUnsupported]);
+  }, [enabled, loadLatestScheduleSnapshot, snapshotUnsupported]);
 
   useEffect(() => {
-    if (snapshotUnsupported) {
+    if (!enabled || snapshotUnsupported) {
       return undefined;
     }
 
@@ -71,7 +81,7 @@ const useLatestScheduleSnapshot = ({ showNotice }) => {
       loadLatestScheduleSnapshot({ silent: true });
     }, scheduleSnapshotPollIntervalMs);
     return () => clearInterval(timer);
-  }, [loadLatestScheduleSnapshot, snapshotUnsupported]);
+  }, [enabled, loadLatestScheduleSnapshot, snapshotUnsupported]);
 
   return {
     latestScheduleSnapshot,

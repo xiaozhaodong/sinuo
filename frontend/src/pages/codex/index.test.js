@@ -49,7 +49,7 @@ test('页签隐藏已挂载面板，并将账号池 portal 可见性绑定到当
 
   assert.match(accountPoolSource, /useNotice\(\{\s*enabled:\s*active\s*\}\)/);
   assert.match(accountPoolSource, /open=\{active && Boolean\(sharedDrawerRow\)\}/);
-  assert.match(accountPoolSource, /open=\{active && schedulerDrawerOpen\}/);
+  assert.doesNotMatch(accountPoolSource, /schedulerDrawerOpen|SchedulerDrawer/);
   assert.doesNotMatch(accountPoolSource, /CodexModelRoutingDrawer|codexModelRoutingOpen|modelRoutingOpenRequest/);
   assert.match(accountPoolSource, /open=\{active && accountModalOpen\}/);
   assert.match(accountPoolSource, /deleteTarget=\{active \? deleteTarget : null\}/);
@@ -92,7 +92,7 @@ test('嵌入账号池时只隐藏重复标题，账号操作以工具栏按钮�
   assert.match(source, /!embedded &&/);
   assert.match(source, /<ToolbarButton icon=\{Plus\} title="新增账号"/);
   assert.match(source, /<ToolbarButton icon=\{RefreshCw\} title="刷新数据"/);
-  assert.match(source, /onOpenScheduler/);
+  assert.doesNotMatch(source, /onOpenScheduler|label="调度编排"/);
 });
 
 test('一次性接入地址继续由客户端接入卡片内存承载', async () => {
@@ -126,4 +126,52 @@ test('模型目录首次访问挂载并保留页签状态，工具栏按当前�
   assert.match(modelsSource, /headerTarget && active && createPortal\(/);
   assert.doesNotMatch(accountPoolSource, /CodexModelsPanel|codexModelsOpen|onOpenCodexModels/);
   assert.doesNotMatch(headerSource, /title="Codex 模型"|onOpenCodexModels/);
+});
+
+test('调度编排在账号池后首次访问挂载，隐藏时保留视图并投送工具栏', async () => {
+  const source = await readFile(pageSourcePath, 'utf8');
+  assert.match(source, /id: 'accounts'[\s\S]*\{ id: 'schedule', label: '调度编排' \}[\s\S]*id: 'routing'/);
+  assert.match(source, /useState\(activeTab === 'schedule'\)/);
+  assert.match(source, /if \(nextTab === 'schedule'\) setScheduleVisited\(true\)/);
+  assert.match(source, /if \(activeTab === 'schedule' && !scheduleVisited\) setScheduleVisited\(true\)/);
+  assert.match(source, /scheduleVisited && <CodexSchedulePage active=\{activeTab === 'schedule'\}/);
+  assert.match(source, /id="codex-panel-schedule" role="tabpanel" aria-labelledby="codex-tab-schedule" hidden=\{activeTab !== 'schedule'\}/);
+  assert.match(source, /ref=\{setScheduleActionsTarget\}[\s\S]*?hidden=\{activeTab !== 'schedule'\}/);
+});
+
+test('两个页签共用一个账号与快照数据 hook，并可跳回账号池查看本组', async () => {
+  const [source, dataSource, accountSource] = await Promise.all([
+    readFile(pageSourcePath, 'utf8'),
+    readFile(join(here, 'useCodexPoolData.js'), 'utf8'),
+    readFile(accountPoolSourcePath, 'utf8')
+  ]);
+  assert.match(source, /useCodexPoolData\(\{ enabled: activeTab === 'accounts' \|\| activeTab === 'schedule' \}\)/);
+  assert.match(source, /<AccountPoolPage[^>]*poolData=\{poolData\}/);
+  assert.match(source, /<CodexSchedulePage[^>]*poolData=\{poolData\}/);
+  assert.match(dataSource, /useAccountPoolAccounts\(\)/);
+  assert.match(dataSource, /useLatestScheduleSnapshot\(\{ showNotice, enabled \}\)/);
+  assert.match(dataSource, /useNotice\(\{ enabled \}\)/);
+  assert.doesNotMatch(accountSource, /useAccountPoolAccounts|useLatestScheduleSnapshot/);
+  assert.match(source, /setInventoryViewRequest\(\{ type: 'focus-group', groupKey, requestId: Date\.now\(\) \}\);\s*handleTabChange\('accounts'\)/);
+});
+
+test('调度页面轮询不改变刷新加载态，检查器无副标题，列表时间和右键规则共用', async () => {
+  const [page, inspector, table] = await Promise.all([
+    readFile(join(here, 'schedule/CodexSchedulePage.jsx'), 'utf8'),
+    readFile(join(here, 'schedule/SchedulerInspector.jsx'), 'utf8'),
+    readFile(join(here, 'schedule/SchedulerGroupsTable.jsx'), 'utf8')
+  ]);
+  assert.match(page, /headerTarget && active && createPortal\(toolbar, headerTarget\)/);
+  assert.match(page, /loading=\{loading \|\| refreshing\}/);
+  assert.match(page, /Promise\.all\(\[loadData\(\{ silent: true \}\), loadLatestScheduleSnapshot\(\{ silent: true \}\)\]\)/);
+  assert.doesNotMatch(page, /setInterval/);
+  assert.doesNotMatch(inspector, /subtitle=/);
+  assert.match(inspector, /PropertyList labelWidth=\{96\}/);
+  assert.match(inspector, /formatTimestamp\(time\)/);
+  assert.match(page, /formatListTimestamp\(updatedAt\)/);
+  assert.match(table, /formatListTimestamp\(account\.lastSuccessAt\)/);
+  assert.doesNotMatch(table, /aria-selected/);
+  assert.match(page, /useContextMenu/);
+  assert.match(page, /buildAccountActionState\(account, group, actions\.busyKey\)/);
+  assert.match(table, /buildAccountActionState\(account, group, actions\.busyKey\)/);
 });

@@ -552,6 +552,8 @@ const buildSchedulerGroups = (rows) => {
       rawAccount: row.raw,
       account_name: row.name,
       name: row.name,
+      planLabel: row.planLabel,
+      lastSuccessAt: row.raw?.last_success_at ?? row.raw?.lastSuccessAt,
       stateLabel: row.stateLabel,
       stateTone: row.stateTone,
       enabled: row.enabled,
@@ -581,6 +583,7 @@ const buildSchedulerSummary = (snapshot = {}, rows = [], timezone) => {
   const pinnedAccount = (Array.isArray(rows) ? rows : []).find((row) => (row?.raw?.is_active_selection ?? row?.raw?.isActiveSelection) === true) || null;
   return {
     hasSnapshot,
+    selectedAccountId: snapshot?.selectedAccountId ?? snapshot?.selected_account_id ?? null,
     currentGroupLabel: snapshot?.selectedTierLabel || snapshot?.selected_tier_label || '暂无调度',
     activeAccountName: snapshot?.selectedAccountName || snapshot?.selected_account_name || '暂无命中账号',
     degraded: Boolean(snapshot?.degradedToLowerPriority || snapshot?.degraded_to_lower_priority),

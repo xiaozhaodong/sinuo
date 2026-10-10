@@ -9,19 +9,15 @@ import { createPortal } from 'react-dom';
 import { isWailsEnvironment, openExternalURL as openWailsExternalURL } from '@utils/wailsApi.js';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
 import {
-  enableAutomaticAccountSelection,
   moveUpstreamAccountToTier,
-  pinUpstreamAccountSelection,
   refreshUpstreamAccountProfile,
-  setGroupActiveAccount,
-  swapUpstreamAccountGroups,
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import { AccountDetailsDrawer, AccountFormDialog, AccountInventorySection, DeleteAccountDialog, PageHeader, SchedulerDrawer } from './components';
+import { AccountDetailsDrawer, AccountFormDialog, AccountInventorySection, DeleteAccountDialog, PageHeader } from './components';
 import { buildAccountPoolDashboardModel, isValidAccountId, resolveAccountId } from './utils.js';
 import { partitionRowsByTargetTier } from './utils/batchMove.js';
-import { useAccountPoolAccounts, useAccountPoolActions, useAccountPoolForm, useLatestScheduleSnapshot, useNotice } from './hooks';
+import { useAccountPoolActions, useAccountPoolForm, useNotice } from './hooks';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 
 const openExternalURL = (url = '') => {
@@ -63,15 +59,10 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
   return `${label}失败，失败 ${failedCount} 个${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}`;
 };
 
-const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null }) => {
+const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null, poolData, inventoryViewRequest = null }) => {
   const { timezone } = useTimezone();
   const { showNotice } = useNotice({ enabled: active });
-  const { accounts, loading, error, loadData } = useAccountPoolAccounts();
-  const {
-    latestScheduleSnapshot,
-    snapshotUnsupported,
-    loadLatestScheduleSnapshot
-  } = useLatestScheduleSnapshot({ showNotice });
+  const { accounts, loading, error, loadData, latestScheduleSnapshot, loadLatestScheduleSnapshot } = poolData;
 
   const {
     accountModalOpen,
@@ -114,9 +105,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
   });
 
   const [sharedDrawerRowId, setSharedDrawerRowId] = useState(null);
-  const [schedulerDrawerOpen, setSchedulerDrawerOpen] = useState(false);
-  const [inventoryViewRequest, setInventoryViewRequest] = useState(null);
-  const [schedulerBusyKey, setSchedulerBusyKey] = useState('');
 
   const dashboardModel = useMemo(
     () => buildAccountPoolDashboardModel({ accounts, latestScheduleSnapshot, timezone }),
@@ -150,138 +138,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
   const closeSharedDrawer = useCallback(() => {
     setSharedDrawerRowId(null);
   }, []);
-
-  const handleSchedulerSetActiveAccount = useCallback(async (account, group) => {
-    const groupKey = String(group?.key || '').trim().toLowerCase();
-    const accountId = resolveAccountId(account);
-    if (!groupKey || !isValidAccountId(accountId)) {
-      showNotice('error', '缺少组别或账号 ID，无法设置组内首选账号');
-      return;
-    }
-
-    const busyToken = `group-active-${groupKey}-${accountId}`;
-    setSchedulerBusyKey(busyToken);
-    try {
-      const result = await setGroupActiveAccount(groupKey, accountId);
-      if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持设置组内首选账号');
-        return;
-      }
-      if (result?.changed !== true) {
-        showNotice('info', result?.message || '当前组首选账号未发生变化');
-        return;
-      }
-
-      showNotice('success', result?.message || '已更新当前组首选账号');
-      await Promise.all([
-        loadData({ silent: true }),
-        loadLatestScheduleSnapshot({ silent: true })
-      ]);
-    } catch (err) {
-      showNotice('error', err.message || '设置组内首选账号失败');
-    } finally {
-      setSchedulerBusyKey('');
-    }
-  }, [loadData, loadLatestScheduleSnapshot, showNotice]);
-
-  const handleViewGroupInInventory = useCallback((groupKey) => {
-    setSchedulerDrawerOpen(false);
-    setInventoryViewRequest({
-      type: 'focus-group',
-      groupKey,
-      requestId: Date.now()
-    });
-  }, []);
-
-  const handleSchedulerPinAccount = useCallback(async (account) => {
-    const accountId = resolveAccountId(account);
-    const accountName = account?.account_name || account?.accountName || '目标账号';
-    if (!isValidAccountId(accountId)) {
-      showNotice('error', '缺少账号 ID，无法设为手动账号');
-      return;
-    }
-
-    setSchedulerBusyKey(`scheduler-pin-${accountId}`);
-    try {
-      const result = await pinUpstreamAccountSelection(accountId);
-      if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持固定账号');
-        return;
-      }
-      if (result?.changed !== true) {
-        showNotice('info', result?.message || `「${accountName}」已经是当前手动账号`);
-        return;
-      }
-
-      showNotice('success', result?.message || `已将「${accountName}」设为手动账号`);
-      await Promise.all([
-        loadData({ silent: true }),
-        loadLatestScheduleSnapshot({ silent: true })
-      ]);
-    } catch (err) {
-      showNotice('error', err.message || '设置手动账号失败');
-    } finally {
-      setSchedulerBusyKey('');
-    }
-  }, [loadData, loadLatestScheduleSnapshot, showNotice]);
-
-  const handleSchedulerEnableAutoSelection = useCallback(async () => {
-    setSchedulerBusyKey('scheduler-enable-auto');
-    try {
-      const result = await enableAutomaticAccountSelection();
-      if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持启用编排');
-        return;
-      }
-      if (result?.changed !== true) {
-        showNotice('info', result?.message || '当前已按编排自动调度');
-        return;
-      }
-
-      showNotice('success', result?.message || '已启用编排自动调度');
-      await Promise.all([
-        loadData({ silent: true }),
-        loadLatestScheduleSnapshot({ silent: true })
-      ]);
-    } catch (err) {
-      showNotice('error', err.message || '启用编排失败');
-    } finally {
-      setSchedulerBusyKey('');
-    }
-  }, [loadData, loadLatestScheduleSnapshot, showNotice]);
-
-  const handleSwapSchedulerGroup = useCallback(async (group, action) => {
-    const sourceGroup = String(group?.key || '').trim().toLowerCase();
-    const targetGroup = String(action?.targetGroupKey || '').trim().toLowerCase();
-    if (!sourceGroup || !targetGroup) {
-      showNotice('error', '缺少整组交换目标，无法执行编排动作');
-      return;
-    }
-
-    const busyToken = `group-swap-${sourceGroup}-${action?.key || 'swap'}`;
-    setSchedulerBusyKey(busyToken);
-    try {
-      const result = await swapUpstreamAccountGroups(sourceGroup, targetGroup);
-      if (result?.unsupported) {
-        showNotice('info', result.message || '当前后端版本暂不支持整组交换');
-        return;
-      }
-      if (result?.changed !== true) {
-        showNotice('info', result?.message || '当前整组交换未产生变化');
-        return;
-      }
-
-      showNotice('success', result?.message || '已完成相邻组整组交换');
-      await Promise.all([
-        loadData({ silent: true }),
-        loadLatestScheduleSnapshot({ silent: true })
-      ]);
-    } catch (err) {
-      showNotice('error', err.message || '整组交换失败');
-    } finally {
-      setSchedulerBusyKey('');
-    }
-  }, [loadData, loadLatestScheduleSnapshot, showNotice]);
 
   const executeBatchAction = useCallback(async (payload) => {
     const ids = Array.isArray(payload?.ids) ? payload.ids : [];
@@ -404,7 +260,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
       loading={busyKey === 'reload'}
       onCreate={openCreateAccount}
       onRefresh={handleRefreshAll}
-      onOpenScheduler={() => setSchedulerDrawerOpen(true)}
     />
   );
 
@@ -445,20 +300,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
           onEditAccount={openEditAccount}
         />
       </div>
-
-      <SchedulerDrawer
-        open={active && schedulerDrawerOpen}
-        onClose={() => setSchedulerDrawerOpen(false)}
-        scheduler={dashboardModel.scheduler}
-        latestScheduleSnapshot={latestScheduleSnapshot}
-        snapshotUnsupported={snapshotUnsupported}
-        onSwapGroup={handleSwapSchedulerGroup}
-        onSetActiveAccount={handleSchedulerSetActiveAccount}
-        onPinAccountSelection={handleSchedulerPinAccount}
-        onEnableAutoSelection={handleSchedulerEnableAutoSelection}
-        onViewInInventory={handleViewGroupInInventory}
-        busyKey={schedulerBusyKey}
-      />
 
       <AccountFormDialog
         open={active && accountModalOpen}

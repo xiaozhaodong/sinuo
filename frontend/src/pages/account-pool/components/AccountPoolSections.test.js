@@ -16,16 +16,16 @@ const readSource = async (relativePath) => {
   }
 };
 
-test('inventory area, scheduler drawer, and scheduler section expose redesigned workspace landmarks', async () => {
+test('inventory area and scheduler tab expose redesigned workspace landmarks', async () => {
   const [filtersSource, schedulerSource, schedulerDrawerSource, groupCardSource, tableSource, drawerSource, snapshotSource, candidateSource, actionsHookSource] = await Promise.all([
     readSource('./AccountInventoryFilters.jsx'),
-    readSource('./AccountPoolSchedulerSection.jsx'),
-    readSource('./SchedulerDrawer.jsx'),
-    readSource('./GroupBoardCard.jsx'),
+    readSource('../../codex/schedule/CodexSchedulePage.jsx'),
+    readSource('../../codex/schedule/SchedulerInspector.jsx'),
+    readSource('../../codex/schedule/SchedulerGroupsTable.jsx'),
     readSource('./AccountInventoryTable.jsx'),
     readSource('./AccountDetailsDrawer.jsx'),
-    readSource('./LatestScheduleSnapshotCard.jsx'),
-    readSource('./ScheduleCandidateCard.jsx'),
+    readSource('../../codex/schedule/ScheduleCandidatesTable.jsx'),
+    readSource('../../codex/schedule/ScheduleCandidatesTable.jsx'),
     readSource('../hooks/useAccountPoolActions.js')
   ]);
 
@@ -50,17 +50,17 @@ test('inventory area, scheduler drawer, and scheduler section expose redesigned 
   assert.doesNotMatch(drawerSource, /当前版本暂未支持独立冷备编排/);
 
   assert.match(schedulerDrawerSource, /调度编排/);
-  assert.match(schedulerDrawerSource, /LatestScheduleSnapshotCard/);
+  assert.match(schedulerDrawerSource, /LatestSection/);
   assert.match(schedulerDrawerSource, /busyKey/);
-  assert.match(schedulerDrawerSource, /onSwapGroup/);
+  assert.match(schedulerSource, /useSchedulerActions/);
   assert.match(schedulerDrawerSource, /启用编排|按编排/);
   assert.match(schedulerDrawerSource, /手动模式|Auto 模式|当前模式/);
   assert.match(schedulerSource, /主组/);
   assert.match(schedulerSource, /备组/);
   assert.match(schedulerSource, /冷备/);
-  assert.match(schedulerSource, /最新调度摘要|最近一次调度/);
+  assert.match(schedulerDrawerSource, /最新调度摘要|最近一次调度/);
   assert.match(schedulerSource, /onViewInInventory/);
-  assert.match(schedulerSource, /onSwapGroup/);
+  assert.match(groupCardSource, /swapGroup/);
 
   assert.match(groupCardSource, /当前组动作|整组交换/);
   assert.match(groupCardSource, /整组交换，不是单账号加入|与相邻组整组交换/);
@@ -69,11 +69,11 @@ test('inventory area, scheduler drawer, and scheduler section expose redesigned 
   assert.match(groupCardSource, /swap-down/);
   assert.doesNotMatch(groupCardSource, /promote-primary/);
   assert.doesNotMatch(groupCardSource, /move-backup/);
-  assert.match(groupCardSource, /展开全部.*个账号/);
-  assert.match(groupCardSource, /去账号资产查看本组全部账号/);
+  assert.match(groupCardSource, /group\.accounts\.map/);
+  assert.match(groupCardSource, /在账号池中查看本组/);
   assert.match(groupCardSource, /设为本组首选|本组首选/);
-  assert.match(groupCardSource, /全局手动|设为手动|固定为手动|手动账号/);
-  assert.match(groupCardSource, /ChevronDown|ChevronRight/);
+  assert.match(groupCardSource, /全局固定|设为全局固定/);
+  assert.doesNotMatch(groupCardSource, /visibleAccounts|DEFAULT_VISIBLE|showAll/);
 
   assert.match(snapshotSource, /命中账号、命中组别、组内顺序/);
   assert.doesNotMatch(snapshotSource, /命中层级/);
@@ -87,4 +87,10 @@ test('overview and anomaly center files are removed from the account pool worksp
   await assert.rejects(() => readFile(path.resolve(__dirname, './AccountPoolOverviewSection.jsx'), 'utf8'));
   await assert.rejects(() => readFile(path.resolve(__dirname, './AccountPoolAnomalySection.jsx'), 'utf8'));
   await assert.rejects(() => readFile(path.resolve(__dirname, './AnomalyQueueCard.jsx'), 'utf8'));
+});
+
+test('旧调度抽屉及卡片文件已删除', async () => {
+  for (const file of ['SchedulerDrawer', 'AccountPoolSchedulerSection', 'GroupBoardCard', 'LatestScheduleSnapshotCard', 'ScheduleCandidateCard']) {
+    await assert.rejects(() => readFile(path.resolve(__dirname, `${file}.jsx`), 'utf8'), { code: 'ENOENT' });
+  }
 });
