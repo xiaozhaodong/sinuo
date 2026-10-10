@@ -334,7 +334,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctx = r.Context()
 	}
 
-	// v6.3：同步解析请求模型与思考配置（一次 JSON 解码），早于 StartRequest，
+	// v6.3：同步解析请求模型与思考配置（只取顶层字段，不整体解码），早于 StartRequest，
 	// 保证 422 未分配 / 账号池未就绪 / 秒终态等路径的 start 行也带请求字段。
 	requestModel, requestReasoning := reasoning.ParseRequest(r.URL.Path, bodyBytes)
 	if r.URL.Path == openAIImagesEditsPath {

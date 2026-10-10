@@ -100,7 +100,8 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	requestModel, requestReasoning := reasoning.ParseRequest(route.InternalPath, body.normalizedBody)
 	track.SetModel(requestModel)
 	track.SetRequestProfile(requestModel, requestReasoning)
-	track.SetStreaming(gjson.GetBytes(body.normalizedBody, "stream").Bool() || strings.Contains(r.Header.Get("Accept"), "text/event-stream"))
+	// 先看 Accept：命中就不必为 stream 再扫一遍正文
+	track.SetStreaming(strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool())
 	privacyState := newSubscriptionPrivacyRequestState(requestID, func(_ string, result privacy.ApplyResult, policyErr *privacy.PolicyError) {
 		track.RecordPrivacy(result, policyErr)
 	})

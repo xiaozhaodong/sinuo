@@ -51,30 +51,41 @@ func FamilyForPath(path string) Family {
 }
 
 // ParseRequest 用 gjson 只取模型、思考配置与速度档位的顶层字段，
-// 不校验、不构建 messages / input 等大块内容的树；找齐目标 key 即提前停止。
+// 不校验、不构建 messages / input 等大块内容的树。
+// GetManyBytes 每个字段各扫一遍正文，缺失的字段会扫到末尾，所以按家族只查用得到的字段。
 // 顶层非对象或 key 缺失时相应字段为空。
 func ParseRequest(path string, body []byte) (model, reasoning string) {
 	if len(body) == 0 {
 		return "", ""
 	}
-	results := gjson.GetManyBytes(body, "model", "thinking", "output_config", "reasoning", "service_tier", "speed")
-	if results[0].Type == gjson.String {
-		model = strings.TrimSpace(results[0].Str)
-	}
 	switch FamilyForPath(path) {
 	case FamilyClaude:
+		results := gjson.GetManyBytes(body, "model", "thinking", "output_config", "speed")
+		model = requestModel(results[0])
 		reasoning = ParseClaudeRequest(map[string]any{
 			"thinking":      results[1].Value(),
 			"output_config": results[2].Value(),
-			"speed":         results[5].Value(),
+			"speed":         results[3].Value(),
 		})
 	case FamilyCodex:
+		results := gjson.GetManyBytes(body, "model", "reasoning", "service_tier")
+		model = requestModel(results[0])
 		reasoning = ParseCodexRequest(map[string]any{
-			"reasoning":    results[3].Value(),
-			"service_tier": results[4].Value(),
+			"reasoning":    results[1].Value(),
+			"service_tier": results[2].Value(),
 		})
+	default:
+		model = requestModel(gjson.GetBytes(body, "model"))
 	}
 	return model, reasoning
+}
+
+// requestModel 只接受字符串类型的 model。
+func requestModel(result gjson.Result) string {
+	if result.Type != gjson.String {
+		return ""
+	}
+	return strings.TrimSpace(result.Str)
 }
 
 // ParseClaudeRequest 解析 thinking.type / thinking.budget_tokens / output_config.effort / speed。
