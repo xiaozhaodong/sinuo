@@ -351,6 +351,25 @@ const fieldAliasMatchers = {
   healthy: (tokens) => !tokens.some((item) => /(风险|异常|warning|danger|紧急|auth|失效|耗尽)/.test(item))
 };
 
+// 授权 / 计划 / 组别 / 状态的下拉选项值取自行上的这几个键（见 dashboardViewModel 的 buildFilterOptions），
+// 按键精确匹配。不能拿显示文案比：「ChatGPT RT」对不上 chatgpt_refresh_token、「可用」对不上 active，
+// 包含式匹配还会让 disabled 误中 disabled_auth。风险筛选没有对应的键，仍走别名匹配。
+const FILTER_ROW_KEYS = { auth: 'authKey', plan: 'planKey', group: 'groupKey', status: 'stateKey' };
+
+export const matchesInventoryFilter = (row, field, value) => {
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue || normalizedValue === ALL_FILTER_VALUE) {
+    return true;
+  }
+
+  const rowKey = row?.[FILTER_ROW_KEYS[field]];
+  if (rowKey !== undefined && rowKey !== null && rowKey !== '') {
+    return normalizeText(rowKey) === normalizedValue;
+  }
+
+  return matchAliases(value, fieldTokens(row, field));
+};
+
 const matchesSavedView = (row, savedViewKey) => {
   switch (savedViewKey) {
     case 'primary-issues':
@@ -526,7 +545,7 @@ const useAccountPoolDashboardState = ({ inventory = {}, onBatchAction, externalV
           return true;
         }
 
-        return matchAliases(filterValues[config.key], fieldTokens(row, config.key));
+        return matchesInventoryFilter(row, config.key, filterValues[config.key]);
       });
     });
 
