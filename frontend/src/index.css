@@ -128,8 +128,8 @@
   --app-warn-line: #92400e;
 
   --app-danger: #fda4af;
-  --app-danger-soft: #4c0519;
-  --app-danger-line: #9f1239;
+  --app-danger-soft: #2c1520;
+  --app-danger-line: #6b2337;
 
   --app-info: #7dd3fc;
   --app-info-soft: #082f49;
@@ -453,9 +453,11 @@
  * 它会重写全部表单控件默认样式，与现有手写 input 冲突）。
  * 因此这里 appearance-none 自绘，勾选态用饱和实色 + 白勾，
  * 深浅两主题同值。
+ * 块级：放进表格单元格时按盒子垂直居中；行内会贴文字基线，在 32px 行里偏上约 2.5px。
  * ============================================================ */
 @layer components {
   .app-checkbox {
+    display: block;
     appearance: none;
     flex: none;
     width: 1rem;

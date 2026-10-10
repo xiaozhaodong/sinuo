@@ -73,7 +73,7 @@ const EndpointsTable = ({ endpoints, routingState, selectedName, busy, onSelect,
             <td className="text-center">
               <input
                 type="checkbox"
-                className="app-checkbox"
+                className="app-checkbox mx-auto"
                 checked={endpoint.availabilityEnabled}
                 disabled={busy}
                 onChange={(event) => onAvailabilityChange(endpoint.name, event.target.checked)}
@@ -84,7 +84,7 @@ const EndpointsTable = ({ endpoints, routingState, selectedName, busy, onSelect,
             <td className="text-center">
               <input
                 type="checkbox"
-                className="app-checkbox"
+                className="app-checkbox mx-auto"
                 checked={endpoint.failoverEnabled}
                 disabled={busy || !endpoint.availabilityEnabled}
                 onChange={(event) => onAutoScheduleChange(endpoint.name, event.target.checked)}

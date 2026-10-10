@@ -29,7 +29,7 @@ const CodexModelsTable = ({ models, summaries, selectedId, saving, onSelect, onT
             <td className="text-center">
               <input
                 type="checkbox"
-                className="app-checkbox"
+                className="app-checkbox mx-auto"
                 checked={model.enabled}
                 disabled={saving}
                 aria-label={`启用模型 ${model.id}`}

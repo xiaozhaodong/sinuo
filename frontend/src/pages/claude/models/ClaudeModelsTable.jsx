@@ -23,7 +23,7 @@ const ClaudeModelsTable = ({ models, selectedId, saving, onSelect, onToggleEnabl
             <td className="text-center">
               <input
                 type="checkbox"
-                className="app-checkbox"
+                className="app-checkbox mx-auto"
                 checked={model.enabled}
                 disabled={saving}
                 aria-label={`启用模型 ${model.id}`}
