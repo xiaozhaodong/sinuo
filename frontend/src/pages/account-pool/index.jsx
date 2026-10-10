@@ -18,7 +18,7 @@ import {
   testUpstreamAccount,
   toggleUpstreamAccount
 } from '@utils/api.js';
-import { AccountDetailsDrawer, AccountFormDialog, AccountInventorySection, DeleteAccountDialog, NoticeToast, PageHeader, SchedulerDrawer } from './components';
+import { AccountDetailsDrawer, AccountFormDialog, AccountInventorySection, DeleteAccountDialog, PageHeader, SchedulerDrawer } from './components';
 import { buildAccountPoolDashboardModel, isValidAccountId, resolveAccountId } from './utils.js';
 import { partitionRowsByTargetTier } from './utils/batchMove.js';
 import { useAccountPoolAccounts, useAccountPoolActions, useAccountPoolForm, useLatestScheduleSnapshot, useNotice } from './hooks';
@@ -65,7 +65,7 @@ const buildBatchResultMessage = (actionLabel, successCount, failedCount, skipped
 
 const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null }) => {
   const { timezone } = useTimezone();
-  const { notice, showNotice, closeNotice } = useNotice();
+  const { showNotice } = useNotice({ enabled: active });
   const { accounts, loading, error, loadData } = useAccountPoolAccounts();
   const {
     latestScheduleSnapshot,
@@ -413,8 +413,6 @@ const AccountPoolPage = ({ embedded = false, active = true, headerTarget = null 
       {headerTarget
         ? (active && createPortal(header, headerTarget))
         : (!embedded && <div className="shrink-0 border-b border-line px-4 py-2">{header}</div>)}
-
-      <NoticeToast notice={active ? notice : null} onClose={closeNotice} />
 
       <div className="flex min-h-0 flex-1">
         <AccountInventorySection

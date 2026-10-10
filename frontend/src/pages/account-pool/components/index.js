@@ -16,7 +16,6 @@ export { default as Badge } from './Badge.jsx';
 export { default as DeleteAccountDialog } from './DeleteAccountDialog.jsx';
 export { default as GroupBoardCard } from './GroupBoardCard.jsx';
 export { default as LatestScheduleSnapshotCard } from './LatestScheduleSnapshotCard.jsx';
-export { default as NoticeToast } from './NoticeToast.jsx';
 export { default as OAuthHelperPanel } from './OAuthHelperPanel.jsx';
 export { default as PageHeader } from './PageHeader.jsx';
 export { default as ScheduleCandidateCard } from './ScheduleCandidateCard.jsx';

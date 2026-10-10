@@ -39,7 +39,7 @@ export const normalizeNotification = (input) => {
     dedupeKey,
     kind,
     level: ['info', 'success', 'warning', 'error'].includes(payload.level) ? payload.level : 'info',
-    title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : '通知',
+    title: typeof payload.title === 'string' && payload.title.trim() ? payload.title : '',
     message: payload.message.trim(),
     lane,
     from,
@@ -50,7 +50,9 @@ export const normalizeNotification = (input) => {
     reasonLabel: typeof payload.reason_label === 'string' ? payload.reason_label : '',
     reasonDetail: typeof payload.reason_detail === 'string' ? payload.reason_detail : '',
     attempt,
-    duration: kind === 'failover' ? 7500 : DEFAULT_DURATION
+    duration: Number.isFinite(payload.duration) && payload.duration > 0
+      ? payload.duration
+      : kind === 'failover' ? 7500 : DEFAULT_DURATION
   };
 };
 

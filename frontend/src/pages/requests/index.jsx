@@ -16,7 +16,6 @@ import useResizablePane from '@components/desktop/useResizablePane.js';
 import useContextMenu from '@components/desktop/useContextMenu.jsx';
 import useListKeyboard from '@components/desktop/useListKeyboard.js';
 import { formatShortcut, isMacPlatform } from '@utils/platform.js';
-import { NoticeToast } from '@pages/account-pool/components';
 import { useNotice } from '@pages/account-pool/hooks';
 import {
   compareAccountsByManualPriority,
@@ -83,7 +82,7 @@ const isCopyShortcut = (event) => {
 
 const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNavigateToCodexAccess }) => {
   // ==================== 状态管理 ====================
-  const { notice, showNotice, closeNotice } = useNotice();
+  const { showNotice } = useNotice();
 
   // 数据状态
   const [requests, setRequests] = useState([]);
@@ -689,8 +688,6 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   return (
     <div className="motion-page relative flex min-h-0 flex-1 flex-col bg-surface">
-      <NoticeToast notice={notice} onClose={closeNotice} />
-
       {/* 工具栏：投送到窗口统一工具栏 */}
       <PageToolbar subtitle={`共 ${Number(pagination.total || 0).toLocaleString()} 条`}>
         <div className="flex min-w-0 flex-1 justify-end">

@@ -544,6 +544,7 @@
 @keyframes motion-overlay-in { from { opacity: 0; } }
 @keyframes motion-dialog-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
 @keyframes motion-drawer-in { from { opacity: 0; transform: translateX(16px); } }
+@keyframes motion-toast-in { from { opacity: 0; transform: translateY(-4px); } }
 /* 页面根节点：只给一个「换页了」的信号，不拖慢内容出现 */
 @keyframes motion-page-in { from { opacity: 0; } }
 /* 启动就绪：页头、背景与内容区从启动画面的同色底上整体淡入一次 */
@@ -555,6 +556,7 @@
   .motion-overlay { animation: motion-overlay-in 180ms ease-out; }
   .motion-dialog { animation: motion-dialog-in 220ms cubic-bezier(.22,1,.36,1); }
   .motion-drawer { animation: motion-drawer-in 200ms cubic-bezier(.22,1,.36,1); }
+  .motion-toast { animation: motion-toast-in 160ms cubic-bezier(.22,1,.36,1); }
   .motion-page { animation: motion-page-in 150ms ease-out; }
   .motion-app { animation: motion-app-in 200ms ease-out; }
 }

@@ -19,6 +19,7 @@ import { getMigrationStatus, getSystemStatus, isWailsEnvironment } from '@utils/
 import { connectTrayNavigation } from '@utils/trayNavigation.js';
 import { setPendingRequestsFilters } from '@utils/overviewHandoff.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
+import { ToastProvider } from '@contexts/ToastContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
 // 概览是启动首屏，直接打进入口：懒加载只会在启动时多出一段 Suspense 占位（React 19 至少停留 300ms）
 import OverviewPage from '@pages/overview/index.jsx';
@@ -253,37 +254,39 @@ const AppRoutes = () => {
   }
 
   return (
-    <TimezoneProvider>
-      <ToolbarProvider>
-        <div className={`motion-app flex h-screen overflow-hidden bg-canvas font-sans text-fg ${windowFocused ? '' : 'window-inactive'}`}>
-          <Sidebar
-            activeTab={activeTab}
-            onTabChange={switchTab}
-            connectionStatus={connectionStatus}
-            proxyStatus={proxyStatus}
-          />
+    <ToastProvider showToast={showToast}>
+      <TimezoneProvider>
+        <ToolbarProvider>
+          <div className={`motion-app flex h-screen overflow-hidden bg-canvas font-sans text-fg ${windowFocused ? '' : 'window-inactive'}`}>
+            <Sidebar
+              activeTab={activeTab}
+              onTabChange={switchTab}
+              connectionStatus={connectionStatus}
+              proxyStatus={proxyStatus}
+            />
 
-          <div className="flex min-w-0 flex-1 flex-col">
-            <AppToolbar title={pageTitleOf(activeTab)} />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <AppToolbar title={pageTitleOf(activeTab)} />
 
-            {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
-            <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
+              {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
+              <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
 
-            {/* 主内容区：铺满窗口，不加统一内边距——列表页贴边（表格 + 检查器），
-                滚动型页面自己加 p-5。内层固定为窗口剩余高度（h-full 而不是 min-h-full）：
-                列表页（flex-1 + min-h-0）恰好占满、在内部滚动，内容再高也不会把整页撑长、把状态栏挤出窗口；
-                滚动型页面的内容超出时照常由 main 滚动 */}
-            <main id="app-scroll-container" className="relative min-h-0 flex-1 overflow-y-auto overscroll-none">
-              <div className="flex h-full flex-col">
-                <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
-                  {renderPage()}
-                </Suspense>
-              </div>
-            </main>
+              {/* 主内容区：铺满窗口，不加统一内边距——列表页贴边（表格 + 检查器），
+                  滚动型页面自己加 p-5。内层固定为窗口剩余高度（h-full 而不是 min-h-full）：
+                  列表页（flex-1 + min-h-0）恰好占满、在内部滚动，内容再高也不会把整页撑长、把状态栏挤出窗口；
+                  滚动型页面的内容超出时照常由 main 滚动 */}
+              <main id="app-scroll-container" className="relative min-h-0 flex-1 overflow-y-auto overscroll-none">
+                <div className="flex h-full flex-col">
+                  <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
+                    {renderPage()}
+                  </Suspense>
+                </div>
+              </main>
+            </div>
           </div>
-        </div>
-      </ToolbarProvider>
-    </TimezoneProvider>
+        </ToolbarProvider>
+      </TimezoneProvider>
+    </ToastProvider>
   );
 };
 

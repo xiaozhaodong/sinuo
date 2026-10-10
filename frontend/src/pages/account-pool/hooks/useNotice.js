@@ -1,32 +1,28 @@
 // ============================================
-// Account Pool 通知状态 Hook
-// 2026-03-07
+// 页面操作反馈统一投递到全局通知队列
+// 2026-10-10
 // ============================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useShowToast } from '@contexts/ToastContext.jsx';
 
-const useNotice = () => {
-  const [notice, setNotice] = useState(null);
+const useNotice = ({ enabled = true } = {}) => {
+  const showToast = useShowToast();
+  const enabledRef = useRef(enabled);
 
-  useEffect(() => {
-    if (!notice) return undefined;
-    const timer = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(timer);
-  }, [notice]);
+  // 可见性变化只更新开关，避免改变业务回调依赖的 showNotice 引用。
+  useLayoutEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   const showNotice = useCallback((type, text) => {
-    setNotice({ type, text });
-  }, []);
+    if (!enabledRef.current || !showToast) return;
+    const message = String(text ?? '').trim();
+    if (!message) return;
+    showToast({ level: type, message, duration: 4000 });
+  }, [showToast]);
 
-  const closeNotice = useCallback(() => {
-    setNotice(null);
-  }, []);
-
-  return {
-    notice,
-    showNotice,
-    closeNotice
-  };
+  return { showNotice };
 };
 
 export default useNotice;

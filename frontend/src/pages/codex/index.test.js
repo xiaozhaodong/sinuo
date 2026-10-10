@@ -47,7 +47,7 @@ test('页签隐藏已挂载面板，并将账号池 portal 可见性绑定到当
   assert.match(source, /setClientAccessVisited\(true\)/);
   assert.doesNotMatch(source, /activeTab === 'accounts'\s*&&\s*<AccountPoolPage/);
 
-  assert.match(accountPoolSource, /notice=\{active \? notice : null\}/);
+  assert.match(accountPoolSource, /useNotice\(\{\s*enabled:\s*active\s*\}\)/);
   assert.match(accountPoolSource, /open=\{active && Boolean\(sharedDrawerRow\)\}/);
   assert.match(accountPoolSource, /open=\{active && schedulerDrawerOpen\}/);
   assert.doesNotMatch(accountPoolSource, /CodexModelRoutingDrawer|codexModelRoutingOpen|modelRoutingOpenRequest/);

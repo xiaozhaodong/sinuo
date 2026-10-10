@@ -35,6 +35,24 @@ test('normalizes Wails notification payloads for the global toast host', () => {
   assert.equal(notification.duration, 7500);
 });
 
+test('keeps absent or blank notification titles empty', () => {
+  for (const title of [undefined, '', '  ']) {
+    const notification = normalizeNotification({ title, message: '操作完成' });
+    assert.equal(notification.title, '');
+  }
+});
+
+test('honors positive finite notification durations and preserves defaults otherwise', () => {
+  for (const kind of ['notification', 'failover']) {
+    assert.equal(normalizeNotification({ kind, message: '操作完成', duration: 4000 }).duration, 4000);
+
+    for (const duration of [undefined, 0, -1, NaN, Infinity, '4000']) {
+      const notification = normalizeNotification({ kind, message: '操作完成', duration });
+      assert.equal(notification.duration, kind === 'failover' ? 7500 : 6500);
+    }
+  }
+});
+
 test('keeps separate failover attempts distinct while deduplicating the same event', () => {
   const first = {
     kind: 'failover',
