@@ -1,9 +1,8 @@
 import { buildQueryParamsFromFilters } from './filterTime.js';
 
-const buildTimeRangeSelectionState = (currentFilters = {}, nextTimeRange = {}, filterPatch = {}) => {
+const buildTimeRangeSelectionState = (currentFilters = {}, nextTimeRange = {}) => {
   const filters = {
     ...currentFilters,
-    ...filterPatch,
     ...nextTimeRange
   };
 

@@ -28,6 +28,17 @@ test('请求页顶部汇总与列表同口径', async () => {
   assert.match(source, /include_compaction: requestsQueryParams\.include_compaction !== false/);
 });
 
+test('只看此会话与只看模型 / 上游一致，保留当前时间范围', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const definition = source.match(/const applyContextFilter = useCallback\(\(patch\) => \{([\s\S]*?)\n  \}, \[/);
+
+  assert.ok(definition, '应找到 applyContextFilter 的定义体');
+  const body = definition[1];
+  assert.doesNotMatch(body, /selectRange/);
+  assert.doesNotMatch(body, /['"]30days['"]/);
+  assert.match(body, /applyQuickFilter\(patch\)/);
+});
+
 test('requests page surfaces upstream account load failures to users', async () => {
   const source = await readFile(sourcePath, 'utf8');
 

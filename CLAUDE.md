@@ -61,7 +61,7 @@
   - 请求两项在 `handler.go` 入口同步解析（`reasoning.ParseRequest`）并随 start 事件原子写入；上游模型每 attempt 覆盖（改写目标或空串 = 与请求相同）；响应两项与终态事件（`ResponseDiagnostics`）同一事件落库
   - 思考串文法：空格分隔 `key:value`，key ∈ `thinking / budget / effort / reasoning_tokens / speed`；Claude 响应只能观测有无思考块，不做默认值推断；Codex 响应按字段合并 `created` 的 effort 与 `completed` 的 reasoning_tokens
   - `speed` 记录请求与实际速度档位：Codex 请求读 `service_tier`，响应只采用终态 `service_tier`（忽略 `auto`，不采用开场回显）；Claude 请求读 `speed`，响应读 `usage.speed`，不把 Anthropic 的 `usage.service_tier` 当作 Fast。档位只在请求详情中展示「请求 / 上游回报」，不做一致性判定、不进列表告警与悬停提示（有中转按 Fast 计费却回报 `default`，回报值不代表实际处理档位）；只记录、不改变任何计费
-  - `request_logs.session_id` 在开始记录时写入客户端原始会话：订阅代理优先读 context association 的 session / thread，其他入口依次读 `X-Claude-Code-Session-Id`、`session-id`、`session_id`、`thread-id`；池模式头被剥离后仍从 association 取值。会话筛选只在请求页生效，「只看此会话」一次性切到近 30 天并同步列表与顶部统计；会话列默认隐藏，历史不回填，会话 ID 不写入 Go 后端日志
+  - `request_logs.session_id` 在开始记录时写入客户端原始会话：订阅代理优先读 context association 的 session / thread，其他入口依次读 `X-Claude-Code-Session-Id`、`session-id`、`session_id`、`thread-id`；池模式头被剥离后仍从 association 取值。会话筛选只在请求页生效，「只看此会话」与只看模型 / 上游一致，保留当前时间范围（跨天会话由用户手动扩大范围），列表与顶部统计同步筛选；会话列默认隐藏，历史不回填，会话 ID 不写入 Go 后端日志
   - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
 - Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：

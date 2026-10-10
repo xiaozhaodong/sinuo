@@ -22,7 +22,7 @@ export const useTimeRange = (onRangeChange, initialRange = 'today') => {
   const [activeRange, setActiveRange] = useState(initialRange);
 
   // 选择时间范围
-  const selectRange = useCallback((range, filterPatch) => {
+  const selectRange = useCallback((range) => {
     setActiveRange(range);
 
     let timeRange;
@@ -43,7 +43,7 @@ export const useTimeRange = (onRangeChange, initialRange = 'today') => {
     timeRange = { startDate: timeRange.start_date, endDate: timeRange.end_date };
 
     // 通知父组件时间范围变更
-    onRangeChange?.(timeRange, filterPatch);
+    onRangeChange?.(timeRange);
   }, [getRecentDaysRange, getTodayTimeRange, onRangeChange]);
 
   // 筛选条里应用了自定义区间：三个预设都不再高亮

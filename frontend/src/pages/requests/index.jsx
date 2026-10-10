@@ -155,8 +155,8 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   const columnMenuItems = buildColumnMenuItems(columnConfigs, visibleColumns, toggleColumn, resetColumns);
 
   // 时间范围 Hook
-  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange, filterPatch) => {
-    const nextState = buildTimeRangeSelectionState(filters, timeRange, filterPatch);
+  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange) => {
+    const nextState = buildTimeRangeSelectionState(filters, timeRange);
     updateFilters(nextState.filters);
     setAppliedQueryParams(nextState.appliedQueryParams);
     setPagination(prev => ({ ...prev, page: 1 }));
@@ -383,14 +383,9 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // 右键「只看此…」后把筛选条亮出来，生效的条件看得见
   const applyContextFilter = useCallback((patch) => {
-    if (patch.sessionId) {
-      // 会话与近 30 天一次性生效，避免先筛选再切时间触发两次查询。
-      selectRange('30days', patch);
-    } else {
-      applyQuickFilter(patch);
-    }
+    applyQuickFilter(patch);
     setFilterBarVisible(true);
-  }, [applyQuickFilter, selectRange, setFilterBarVisible]);
+  }, [applyQuickFilter, setFilterBarVisible]);
 
   const handleSessionFilter = useCallback((sessionId) => applyContextFilter({ sessionId }), [applyContextFilter]);
 
