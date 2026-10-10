@@ -9,5 +9,4 @@ export { default as EndpointCooldownInfo } from './EndpointCooldownInfo.jsx';
 export { default as EndpointQuickActions } from './EndpointQuickActions.jsx';
 export { default as DeleteConfirmDialog } from './DeleteConfirmDialog.jsx';
 export { default as ActionButtons } from './ActionButtons.jsx';
-export { default as EndpointScheduleDrawer, resolveSnapshotOutcome } from './EndpointScheduleDrawer.jsx';
 export { default as ViewModeSwitcher } from '@components/ViewModeSwitcher.jsx';

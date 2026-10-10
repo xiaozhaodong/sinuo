@@ -4,11 +4,12 @@
 // ============================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Database, Plus, RefreshCw, Route } from 'lucide-react';
+import { Activity, AlertTriangle, Database, Plus, RefreshCw } from 'lucide-react';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
 import { ToolbarButton } from '@components/layout/ToolbarButton.jsx';
 import useEndpointsData from '@hooks/useEndpointsData.js';
-import { DeleteConfirmDialog, EndpointForm, EndpointScheduleDrawer, resolveSnapshotOutcome } from './components';
+import { DeleteConfirmDialog, EndpointForm } from './components';
+import { resolveSnapshotOutcome } from '@pages/claude/schedule/scheduleSnapshotView.js';
 import EndpointsTable from './components/EndpointsTable.jsx';
 import EndpointInspector from './components/EndpointInspector.jsx';
 import { StatusBar, StatusItem, StatusSpacer } from '@components/desktop/StatusBar.jsx';
@@ -36,15 +37,14 @@ const initialRoutingState = { mode: 'auto', endpointName: '', fallbackEnabled: t
 const ROUTE_MODE_LABELS = { auto: '自动调度', manual_preferred: '手动优选', manual_fixed: '手动固定' };
 
 // embedded：嵌在「Claude 管理」页签内，标题交给外层，操作按钮渲染到 headerTarget；
-// active=false（切到其他页签）时暂停快照轮询、收起抽屉与弹窗
-const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, onOpenModelRouting }) => {
+// active=false（切到其他页签）时暂停快照轮询、收起弹窗
+const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, onOpenModelRouting, onOpenScheduleSnapshot }) => {
   const { formatTimestamp } = useTimezone();
   const { endpoints, loading, error, stats, lastUpdate, refresh, testEndpoint, testAllEndpoints, setAvailability, setAutoSchedule, clearCooldown } = useEndpointsData();
   const [routingState, setRoutingState] = useState(initialRoutingState);
   const [modelRoutingSettings, setModelRoutingSettings] = useState({ claude_enabled: false, binding_count: 0 });
   const [snapshot, setSnapshot] = useState({ hasSnapshot: false, decisions: [] });
   const [snapshotUnsupported, setSnapshotUnsupported] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -168,7 +168,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, o
     <div className="flex items-center gap-1">
       <ToolbarButton icon={RefreshCw} title="刷新" onClick={() => run('refresh', refresh)} loading={busyKey === 'refresh'} />
       <ToolbarButton icon={Activity} title="批量测试连通性" onClick={() => run('test:all', testAllEndpoints)} loading={busyKey === 'test:all'} />
-      <ToolbarButton icon={Route} title="调度快照" onClick={() => setDrawerOpen(true)} />
       <ToolbarButton icon={Plus} title="新建端点" onClick={() => { setEditingEndpoint(undefined); setFormOpen(true); }} />
     </div>
   );
@@ -189,9 +188,9 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, o
           </div>
         )}
         {snapshot.hasSnapshot && snapshotOutcome.isAbnormal && (
-          <button type="button" onClick={() => setDrawerOpen(true)} className="flex shrink-0 items-center justify-between gap-2 border-b border-warn-line bg-warn-soft px-4 py-1.5 text-left text-xs text-warn">
+          <button type="button" onClick={onOpenScheduleSnapshot} className="flex shrink-0 items-center justify-between gap-2 border-b border-warn-line bg-warn-soft px-4 py-1.5 text-left text-xs text-warn">
             <span>最近调度异常：{snapshotOutcome.label}{(snapshot.updatedAt || snapshot.capturedAt) ? ` · ${formatTimestamp(snapshot.updatedAt || snapshot.capturedAt)}` : ''}</span>
-            <span className="font-medium">查看明细</span>
+            <span className="font-medium">在「调度快照」查看 →</span>
           </button>
         )}
 
@@ -239,7 +238,6 @@ const EndpointsPage = ({ embedded = false, active = true, headerTarget = null, o
       />
 
       {contextMenu}
-      <EndpointScheduleDrawer open={active && drawerOpen} onClose={() => setDrawerOpen(false)} snapshot={snapshot} unsupported={snapshotUnsupported} />
       {active && formOpen && <EndpointForm endpoint={editingEndpoint} onSave={saveEndpoint} onCancel={() => { setFormOpen(false); setEditingEndpoint(undefined); }} loading={busyKey.startsWith('save:')} />}
       {active && deleteTarget && <DeleteConfirmDialog endpoint={deleteTarget} loading={busyKey === `delete:${deleteTarget.name}`} onCancel={() => setDeleteTarget(null)} onConfirm={async () => { await run(`delete:${deleteTarget.name}`, () => deleteEndpointRecord(deleteTarget.name)); setDeleteTarget(null); }} />}
     </div>
