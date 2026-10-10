@@ -401,11 +401,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 		}
 	}
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		// 使用线程安全的方式获取模型信息
-		modelName := rlm.GetModelName()
-		if modelName == "" {
-			modelName = "unknown"
-		}
+		modelName := rlm.billingModelName()
 		// 同时记录到监控中间件（用于Web图表显示）
 		if rlm.monitoringMiddleware != nil && tokens != nil {
 			monitorTokens := &monitor.TokenUsage{
@@ -445,10 +441,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
-	modelName := rlm.GetModelName()
-	if modelName == "" {
-		modelName = "unknown"
-	}
+	modelName := rlm.billingModelName()
 	if rlm.usageTracker != nil && rlm.requestID != "" {
 		rlm.usageTracker.RecordRequestSuccessWithCostAndDiagnostics(rlm.requestID, modelName, duration, costUSD, rlm.responseDiagnostics())
 		slog.Info("✅ [固定成本请求完成]",
@@ -475,10 +468,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 	// §9.1 不变量 10：QualityIncomplete 不视为完整成功，不清软失败、不更新 retained
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		modelName := rlm.GetModelName()
-		if modelName == "" {
-			modelName = "unknown"
-		}
+		modelName := rlm.billingModelName()
 
 		// 同时记录到监控中间件
 		if rlm.monitoringMiddleware != nil && tokens != nil {
@@ -1019,10 +1009,16 @@ func (rlm *RequestLifecycleManager) IncrementRetry() {
 	slog.Info(fmt.Sprintf("🔄 [重试计数] [%s] 重试次数: %d", rlm.requestID, retryCount))
 }
 
-// getModelNameForCost 获取用于成本计算的模型名
-// 🔧 [重构] 2025-12-11: 提取公共逻辑，避免代码重复
-func (rlm *RequestLifecycleManager) getModelNameForCost() string {
-	modelName := rlm.GetModelName()
+// billingModelName 获取终态计费模型；未拿到响应模型且当前模型仍是请求模型时，使用最终 attempt 的上游模型。
+func (rlm *RequestLifecycleManager) billingModelName() string {
+	rlm.modelMu.RLock()
+	defer rlm.modelMu.RUnlock()
+
+	modelName := rlm.modelName
+	if rlm.responseModel == "" && rlm.upstreamModel != "" &&
+		(modelName == rlm.requestModel || modelName == "" || modelName == "unknown") {
+		modelName = rlm.upstreamModel
+	}
 	if modelName == "" {
 		return "unknown"
 	}
@@ -1035,7 +1031,7 @@ func (rlm *RequestLifecycleManager) getModelNameForCost() string {
 // 注意: 失败追踪由 handler 层根据 RetryDecision.ShouldRecord 决定，这里不重复记录
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
 	duration := time.Since(rlm.startTime)
-	modelName := rlm.getModelNameForCost()
+	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
@@ -1077,7 +1073,7 @@ func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.Update
 // tokens参数可以为nil（无计费信息）或包含已产生的Token信息
 func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *tracking.TokenUsage) {
 	duration := time.Since(rlm.startTime)
-	modelName := rlm.getModelNameForCost()
+	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
@@ -1159,10 +1155,7 @@ func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *trackin
 		}
 
 		duration := time.Since(rlm.startTime)
-		modelName := rlm.GetModelName()
-		if modelName == "" {
-			modelName = "unknown"
-		}
+		modelName := rlm.billingModelName()
 
 		// ✅ 只记录Token统计到UsageTracker，不调用 RecordRequestComplete
 		if rlm.usageTracker != nil {

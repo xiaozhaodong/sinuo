@@ -8,6 +8,7 @@ import (
 
 // v6.3 模型一致性监控：请求 / 上游 / 响应模型与思考等级诊断字段。
 // 全部在 modelMu 下读写；model_name（计费模型）语义由 SetModel / SetModelWithComparison 维持，不在此改动。
+// 终态没有响应模型且计费模型仍是请求模型时，回落到最终 attempt 的上游模型。
 
 // SetClientSession 仅在入口设置一次，供 StartRequest 写入客户端原始会话。
 func (rlm *RequestLifecycleManager) SetClientSession(sessionID string) {
