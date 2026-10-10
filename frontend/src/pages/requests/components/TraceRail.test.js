@@ -294,8 +294,11 @@ test('表头与数据格同源 —— 否则表头会盖在错误的数据列上
   assert.doesNotMatch(TABLE_CODE, /visibleColumns\.map\(/,
     '<td> 不能再按 state 数组的顺序渲染');
 
-  assert.deepEqual(DEFAULT_VISIBLE_COLUMNS, TABLE_COLUMNS.map(col => col.id),
+  // defaultHidden 列不进入默认可见列，派生时仍保持 TABLE_COLUMNS 的顺序。
+  assert.deepEqual(DEFAULT_VISIBLE_COLUMNS, TABLE_COLUMNS.filter(col => !col.defaultHidden).map(col => col.id),
     '默认可见列必须派生自 TABLE_COLUMNS，手抄的版本会漏列、写错 id、失配顺序');
+  assert.ok(!DEFAULT_VISIBLE_COLUMNS.includes('sessionId'),
+    '会话列默认隐藏，不应进入默认可见列');
 });
 
 test('右对齐只有一份定义 —— 不靠列 id 猜', () => {
