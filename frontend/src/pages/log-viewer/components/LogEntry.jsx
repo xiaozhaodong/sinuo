@@ -23,7 +23,7 @@ function LogEntry({ log, searchQuery }) {
   const attrs = log.attrs ? Object.entries(log.attrs) : [];
 
   return (
-    <div className={`grid grid-cols-[104px_52px_minmax(0,1fr)_auto] gap-x-3 px-4 py-px font-mono text-xs leading-5 hover:bg-surface-mut ${log.level === 'ERROR' ? 'bg-danger-soft/60' : ''}`}>
+    <div className={`grid grid-cols-[8ch_5ch_minmax(0,1fr)_auto] gap-x-3 px-4 py-px font-mono text-xs leading-5 hover:bg-surface-mut ${log.level === 'ERROR' ? 'bg-danger-soft/60' : ''}`}>
       <span className="text-fg-subtle">{formatTimeOnly(log.timestamp)}</span>
       <span className={`font-semibold ${levelConfig.color}`}>{log.level}</span>
       <span className="break-all text-fg-body">
