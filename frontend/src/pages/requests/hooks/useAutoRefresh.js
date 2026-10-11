@@ -23,13 +23,15 @@ const FAILURE_THRESHOLD = 3;
  * 页面重新可见时主动校准一次。事件不可用或连续失败时每 30 秒降级刷新。
  *
  * @param {Function} onRefresh - 刷新回调函数
+ * @param {Function} [onEvent] - 每条 request:update 到达时同步调用，拿到原始负载（计时补丁用）
  * @returns {Object}
  */
-export const useAutoRefresh = (onRefresh) => {
+export const useAutoRefresh = (onRefresh, onEvent) => {
   const [mode, setMode] = useState(
     isWailsEnvironment() ? REALTIME_REFRESH_MODE.CONNECTING : REALTIME_REFRESH_MODE.FALLBACK
   );
   const onRefreshRef = useRef(onRefresh);
+  const onEventRef = useRef(onEvent);
   const schedulerRef = useRef(null);
   const subscriptionActiveRef = useRef(false);
   const consecutiveFailuresRef = useRef(0);
@@ -37,7 +39,8 @@ export const useAutoRefresh = (onRefresh) => {
   // 每次渲染时更新 ref 中的回调
   useEffect(() => {
     onRefreshRef.current = onRefresh;
-  }, [onRefresh]);
+    onEventRef.current = onEvent;
+  }, [onRefresh, onEvent]);
 
   const executeRefresh = useCallback(async () => {
     if (document.hidden) {
@@ -95,7 +98,8 @@ export const useAutoRefresh = (onRefresh) => {
           return;
         }
 
-        unsubscribe = subscribeToEvent('request:update', () => {
+        unsubscribe = subscribeToEvent('request:update', (payload) => {
+          onEventRef.current?.(payload);
           scheduleEventRefresh();
         });
         subscriptionActiveRef.current = true;

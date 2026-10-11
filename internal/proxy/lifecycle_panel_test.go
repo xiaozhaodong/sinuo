@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"cc-forwarder/internal/endpoint"
+	"cc-forwarder/internal/events"
 	"cc-forwarder/internal/proxy/handlers"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -281,5 +283,106 @@ func TestRouteDecisionAt_IsRequestScoped(t *testing.T) {
 		dataA.Detail.EffectiveEndpoint != "fallback-a" ||
 		dataA.Detail.FallbackReason != "manual_preferred_fallback" {
 		t.Fatalf("unexpected request A route diagnostics: %+v", dataA.Detail)
+	}
+}
+
+// timingEvents 按变更类型筛出计时事件。
+func timingEvents(published []events.Event, changeType string) []events.Event {
+	var matched []events.Event
+	for _, event := range published {
+		if event.Type == events.EventRequestUpdated && event.Data["change_type"] == changeType {
+			matched = append(matched, event)
+		}
+	}
+	return matched
+}
+
+// queryHotPoolDetail 从热池读取进行中请求的列表口径数据。
+func queryHotPoolDetail(t *testing.T, tracker *tracking.UsageTracker, requestID string) tracking.RequestDetail {
+	t.Helper()
+	rows, _, err := tracker.QueryRequestDetailsWithHotPool(context.Background(), &tracking.QueryOptions{RequestID: requestID, UpstreamType: "all", Limit: 1})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("query hot pool detail: count=%d err=%v", len(rows), err)
+	}
+	return rows[0]
+}
+
+// TestSetFirstTokenStartTime_TracksLatestAttemptAndPublishes 首响起点随重试后移并逐次通知；首响落定后不再变。
+func TestSetFirstTokenStartTime_TracksLatestAttemptAndPublishes(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	bus := &subscriptionPresentationEventBus{}
+	const requestID = "req-upstream-sent-event"
+
+	rlm := NewRequestLifecycleManager(tracker, nil, requestID, bus)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", true)
+	rlm.SetFirstTokenStartTime(time.Now().Add(-time.Second))
+	latestWrite := time.Now().Add(-100 * time.Millisecond)
+	rlm.SetFirstTokenStartTime(latestWrite)
+
+	sent := timingEvents(bus.published, requestChangeUpstreamSent)
+	if len(sent) != 2 || sent[1].Data["first_token_start_at"] != timezonepolicy.FormatStorage(latestWrite) {
+		t.Fatalf("upstream_sent events should follow each attempt, got %+v", sent)
+	}
+	if detail := queryHotPoolDetail(t, tracker, requestID); detail.FirstTokenStartAt == nil || !detail.FirstTokenStartAt.Equal(latestWrite) {
+		t.Fatalf("first_token_start_at = %v, want latest write %s", detail.FirstTokenStartAt, latestWrite)
+	}
+
+	rlm.RecordFirstToken()
+	rlm.SetFirstTokenStartTime(time.Now())
+	if got := len(timingEvents(bus.published, requestChangeUpstreamSent)); got != 2 {
+		t.Fatalf("write callback after first token must be ignored, upstream_sent events = %d", got)
+	}
+	detail := queryHotPoolDetail(t, tracker, requestID)
+	if detail.FirstTokenStartAt == nil || !detail.FirstTokenStartAt.Equal(latestWrite) {
+		t.Fatalf("first_token_start_at moved after first token: %v", detail.FirstTokenStartAt)
+	}
+	// 首响 = 首字时刻 - 起点：前端拿这两个时刻跑秒，定格时才不会跳
+	if detail.FirstTokenMs == nil || detail.FirstTokenAt == nil || detail.FirstTokenAt.Sub(latestWrite).Milliseconds() != *detail.FirstTokenMs {
+		t.Fatalf("first token timing inconsistent with start anchor: ms=%v at=%v", detail.FirstTokenMs, detail.FirstTokenAt)
+	}
+}
+
+// TestRecordFirstToken_PublishesOnceWithTiming 首响只通知一次，事件里的数值与热池一致。
+func TestRecordFirstToken_PublishesOnceWithTiming(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	bus := &subscriptionPresentationEventBus{}
+	const requestID = "req-first-response-event"
+
+	rlm := NewRequestLifecycleManager(tracker, nil, requestID, bus)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", true)
+	rlm.SetFirstTokenStartTime(time.Now())
+	rlm.RecordFirstToken()
+	rlm.RecordFirstToken()
+
+	firstResponses := timingEvents(bus.published, requestChangeFirstResponse)
+	if len(firstResponses) != 1 {
+		t.Fatalf("first_response events = %d, want 1", len(firstResponses))
+	}
+	detail := queryHotPoolDetail(t, tracker, requestID)
+	if detail.FirstTokenMs == nil || detail.FirstTokenAt == nil {
+		t.Fatalf("expected first token timing in hot pool, got ms=%v at=%v", detail.FirstTokenMs, detail.FirstTokenAt)
+	}
+	data := firstResponses[0].Data
+	if data["first_token_ms"] != *detail.FirstTokenMs || data["first_token_at"] != timezonepolicy.FormatStorage(*detail.FirstTokenAt) {
+		t.Fatalf("event timing %+v differs from hot pool ms=%d at=%s", data, *detail.FirstTokenMs, detail.FirstTokenAt)
+	}
+}
+
+// TestRecordStreamCompletion_PublishesCompletionMs 生成耗时随事件推送，数值与热池一致。
+func TestRecordStreamCompletion_PublishesCompletionMs(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	bus := &subscriptionPresentationEventBus{}
+	const requestID = "req-generation-completed-event"
+
+	rlm := NewRequestLifecycleManager(tracker, nil, requestID, bus)
+	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", true)
+	rlm.RecordFirstToken()
+	time.Sleep(5 * time.Millisecond)
+	rlm.RecordStreamCompletion()
+
+	completed := timingEvents(bus.published, requestChangeGenerationCompleted)
+	detail := queryHotPoolDetail(t, tracker, requestID)
+	if len(completed) != 1 || detail.CompletionMs == nil || completed[0].Data["completion_ms"] != *detail.CompletionMs {
+		t.Fatalf("generation_completed events = %+v, hot pool completion = %v", completed, detail.CompletionMs)
 	}
 }

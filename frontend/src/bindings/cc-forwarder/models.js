@@ -964,6 +964,8 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} [effective_endpoint]
  * @property {string} [fallback_reason]
  * @property {string} [route_decision_at]
+ * @property {string} [first_token_start_at] - 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
+ * @property {string} [first_token_at] - 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
  * @property {number} input_tokens
  * @property {number} output_tokens
  * @property {number} cache_creation_tokens - 总缓存创建（向后兼容）

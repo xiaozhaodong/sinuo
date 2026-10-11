@@ -6,6 +6,8 @@
 // 整张表必须是零定时器、零动画，这条不能被跑秒破坏。
 // ============================================
 
+import { parseTimestampOrNull } from './lifecycle.js';
+
 // 显示精度是 0.01s（formatTimingBadge），刷新必须比它细，否则数字会跳格。
 // 浏览器里走 requestAnimationFrame（~16.7ms，且窗口不可见时自动停摆）；
 // 这个常量只是 node 测试里没有 rAF 时的降级间隔。
@@ -22,6 +24,22 @@ export const resolveElapsedMs = (startedAt, baseMs, now) => (
   // clamp >= 0：桌面端 start_time 与 Date.now() 同源于一个系统时钟，
   // 正常不会为负；但时间戳解析异常或系统时钟被改时不能显示负数。
   Math.max(now - startedAt - baseMs, 0)
+);
+
+/**
+ * 生成位跑秒的起算锚点。
+ * 优先用后端给的首字到达时刻：与 completion_ms（完成时刻 - 首字时刻）同一起点，定稿时不跳。
+ * 拿不到时退回「请求开始 + 首响」：首响不含排队、连接和首字前的重试，
+ * 这个近似会把这几段多算进生成位，定稿时往回跳。
+ *
+ * @param {{ timestamp: string, firstTokenAt?: string }} request
+ * @param {number} firstResponseMs 后端写入的首响毫秒数
+ * @returns {{ timestamp: string, baseMs: number }}
+ */
+export const resolveGenerationTickAnchor = (request, firstResponseMs) => (
+  parseTimestampOrNull(request.firstTokenAt)
+    ? { timestamp: request.firstTokenAt, baseMs: 0 }
+    : { timestamp: request.timestamp, baseMs: firstResponseMs }
 );
 
 const subscribers = new Set();

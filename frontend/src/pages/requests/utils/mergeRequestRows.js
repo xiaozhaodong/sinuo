@@ -19,6 +19,8 @@ const TABLE_FIELDS = [
   'upstreamName',
   'duration',
   'firstTokenMs',
+  'firstTokenStartAt',
+  'firstTokenAt',
   'completionMs',
   'isStreaming',
   'inputTokens',

@@ -437,6 +437,8 @@ type UpdateOptions struct {
 	EndTime            *time.Time     // 结束时间
 	Duration           *time.Duration // 持续时间
 	FirstTokenMs       *int64         // 上游请求写完到首个有效流式响应耗时(毫秒)
+	FirstTokenStartAt  *time.Time     // 首响计时起点（最近一次上游请求写完）；首响前每次尝试覆盖，只留在热池供进行中跑秒，不落库
+	FirstTokenAt       *time.Time     // 首个有效响应到达时刻；随 FirstTokenMs 写入，只留在热池供进行中跑秒，不落库
 	CompletionMs       *int64         // 首个有效流式响应到流式完成耗时(毫秒)
 	FailureReason      *string        // 失败原因（用于中间过程记录）
 	RouteMode          *string        // Claude 路由模式
@@ -1095,9 +1097,18 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			if opts.ModelName != nil {
 				req.ModelName = *opts.ModelName
 			}
+			// 首响落定后起点就不再动：晚到的重试写完回调不能改写已经算出首响的那个起点
+			if opts.FirstTokenStartAt != nil && !opts.FirstTokenStartAt.IsZero() && req.FirstTokenMs == nil {
+				startAt := *opts.FirstTokenStartAt
+				req.FirstTokenStartAt = &startAt
+			}
 			if opts.FirstTokenMs != nil && *opts.FirstTokenMs >= 0 && req.FirstTokenMs == nil {
 				firstTokenMs := *opts.FirstTokenMs
 				req.FirstTokenMs = &firstTokenMs
+				if opts.FirstTokenAt != nil && !opts.FirstTokenAt.IsZero() {
+					firstTokenAt := *opts.FirstTokenAt
+					req.FirstTokenAt = &firstTokenAt
+				}
 			}
 			if opts.CompletionMs != nil && *opts.CompletionMs >= 0 && req.CompletionMs == nil {
 				completionMs := *opts.CompletionMs
@@ -2340,6 +2351,8 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		EndTime:               endTime,
 		DurationMs:            durationMs,
 		FirstTokenMs:          firstTokenMs,
+		FirstTokenStartAt:     req.FirstTokenStartAt,
+		FirstTokenAt:          req.FirstTokenAt,
 		CompletionMs:          completionMs,
 		EndpointName:          req.EndpointName,
 		RequestFamily:         req.RequestFamily,

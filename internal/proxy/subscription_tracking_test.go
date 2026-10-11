@@ -8,6 +8,7 @@ import (
 
 	"cc-forwarder/internal/proxy/handlers"
 	"cc-forwarder/internal/reasoning"
+	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tracking"
 )
 
@@ -253,5 +254,50 @@ func TestSubscriptionTrackingMergesReasoningFromInProgressEvent(t *testing.T) {
 	}
 	if detail.RequestReasoning != "effort:xhigh" || detail.ResponseModel != "gpt-5.4" {
 		t.Fatalf("request_reasoning=%q response_model=%q", detail.RequestReasoning, detail.ResponseModel)
+	}
+}
+
+// 订阅代理在开始与结算之间只靠计时事件推进跑秒：写出、首响、生成各一条，数值与热池一致。
+func TestSubscriptionTrackingPublishesTimingEvents(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	bus := &subscriptionPresentationEventBus{}
+	observer := newSubscriptionTrackingObserver(tracker, bus)
+	started := time.Now().Add(-20 * time.Millisecond)
+
+	handle := observer.StartHTTP(SubscriptionHTTPStart{
+		RequestID: "http-timing-events", StartedAt: started, Method: "POST", Path: "/v1/responses",
+		RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
+	})
+	outboundAt := started.Add(2 * time.Millisecond)
+	handle.MarkOutbound(41, outboundAt)
+	firstOutputAt := started.Add(7 * time.Millisecond)
+	handle.MarkFirstOutput(17, firstOutputAt)
+	handle.MarkFirstOutput(30, started.Add(9*time.Millisecond))
+
+	sent := timingEvents(bus.published, requestChangeUpstreamSent)
+	if len(sent) != 1 || sent[0].Data["first_token_start_at"] != timezonepolicy.FormatStorage(outboundAt) {
+		t.Fatalf("upstream_sent events = %+v", sent)
+	}
+	firstResponses := timingEvents(bus.published, requestChangeFirstResponse)
+	if len(firstResponses) != 1 || firstResponses[0].Data["first_token_ms"] != int64(5) ||
+		firstResponses[0].Data["first_token_at"] != timezonepolicy.FormatStorage(firstOutputAt) {
+		t.Fatalf("first_response events = %+v", firstResponses)
+	}
+	detail := queryHotPoolDetail(t, tracker, "http-timing-events")
+	if detail.FirstTokenStartAt == nil || !detail.FirstTokenStartAt.Equal(outboundAt) ||
+		detail.FirstTokenAt == nil || !detail.FirstTokenAt.Equal(firstOutputAt) {
+		t.Fatalf("hot pool anchors = start:%v first:%v", detail.FirstTokenStartAt, detail.FirstTokenAt)
+	}
+
+	handle.ApplyParseResult(&ParseResult{
+		ModelName: "synthetic-model", IsCompleted: true, Status: "completed",
+		HasTokenUsage: true, TokenUsage: &tracking.TokenUsage{},
+	})
+	completed := timingEvents(bus.published, requestChangeGenerationCompleted)
+	if len(completed) != 1 {
+		t.Fatalf("generation_completed events = %+v", completed)
+	}
+	if ms, ok := completed[0].Data["completion_ms"].(int64); !ok || ms < 0 {
+		t.Fatalf("completion_ms = %#v", completed[0].Data["completion_ms"])
 	}
 }

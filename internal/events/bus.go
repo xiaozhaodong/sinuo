@@ -122,11 +122,15 @@ func NewEventBus(logger *slog.Logger) EventBus {
 func (eb *eventBus) setupDefaultFilters() {
 	// 请求事件只作为前端重新查询权威数据的变更通知，不传递客户端信息等明细。
 	// 不在后端丢弃并发请求事件；前端负责短窗口合并刷新。
+	// 计时字段例外：请求页靠它们在事件到达时就把跑秒定格，不等合并刷新与查询。
 	requestChangeTransformer := func(event Event) map[string]interface{} {
 		data := map[string]interface{}{
 			"occurred_at": event.Timestamp.UTC().Format(time.RFC3339Nano),
 		}
-		for _, key := range []string{"request_id", "change_type", "status"} {
+		for _, key := range []string{
+			"request_id", "change_type", "status",
+			"first_token_start_at", "first_token_ms", "first_token_at", "completion_ms",
+		} {
 			if value, exists := event.Data[key]; exists {
 				data[key] = value
 			}

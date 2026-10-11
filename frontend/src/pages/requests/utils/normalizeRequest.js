@@ -56,6 +56,9 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
     null
   ),
   firstTokenMs: pick(request, ['first_token_ms', 'firstTokenMs'], null),
+  // 首响计时起点与首字到达时刻，只有进行中的热池请求才有，分别供首响位、生成位跑秒起算
+  firstTokenStartAt: pick(request, ['first_token_start_at', 'firstTokenStartAt'], ''),
+  firstTokenAt: pick(request, ['first_token_at', 'firstTokenAt'], ''),
   completionMs: pick(request, ['completion_ms', 'completionMs'], null),
   inputTokens: pick(request, ['input_tokens', 'inputTokens'], 0),
   outputTokens: pick(request, ['output_tokens', 'outputTokens'], 0),

@@ -51,9 +51,10 @@ func TestEventBus_RequestChangesAreSafeAndNotRateLimited(t *testing.T) {
 		Source:   "test",
 		Priority: PriorityNormal,
 		Data: map[string]interface{}{
-			"request_id":  "req-1",
-			"change_type": "request_completed",
-			"status":      "completed",
+			"request_id":    "req-1",
+			"change_type":   "request_completed",
+			"status":        "completed",
+			"completion_ms": int64(1234),
 		},
 	})
 
@@ -73,6 +74,9 @@ func TestEventBus_RequestChangesAreSafeAndNotRateLimited(t *testing.T) {
 			}
 			if _, exists := event.data["occurred_at"]; !exists {
 				t.Fatal("request change should include occurred_at")
+			}
+			if event.data["change_type"] == "request_completed" && event.data["completion_ms"] != int64(1234) {
+				t.Fatalf("timing field should be broadcast, got %#v", event.data["completion_ms"])
 			}
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for request change event")

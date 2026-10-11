@@ -266,6 +266,8 @@ type RequestRecord struct {
 	EffectiveEndpoint     string  `json:"effective_endpoint,omitempty"`
 	FallbackReason        string  `json:"fallback_reason,omitempty"`
 	RouteDecisionAt       string  `json:"route_decision_at,omitempty"`
+	FirstTokenStartAt     string  `json:"first_token_start_at,omitempty"` // 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
+	FirstTokenAt          string  `json:"first_token_at,omitempty"`       // 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
 	InputTokens           int64   `json:"input_tokens"`
 	OutputTokens          int64   `json:"output_tokens"`
 	CacheCreationTokens   int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
@@ -460,6 +462,12 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	}
 	if r.RouteDecisionAt != nil {
 		record.RouteDecisionAt = formatAPITime(*r.RouteDecisionAt)
+	}
+	if r.FirstTokenStartAt != nil {
+		record.FirstTokenStartAt = formatAPITime(*r.FirstTokenStartAt)
+	}
+	if r.FirstTokenAt != nil {
+		record.FirstTokenAt = formatAPITime(*r.FirstTokenAt)
 	}
 	record.FirstTokenMs = r.FirstTokenMs
 	record.CompletionMs = r.CompletionMs

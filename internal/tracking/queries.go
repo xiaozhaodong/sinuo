@@ -480,7 +480,10 @@ type RequestDetail struct {
 	EndTime      *time.Time `json:"end_time"`
 	DurationMs   *int64     `json:"duration_ms"`
 	FirstTokenMs *int64     `json:"first_token_ms"`
-	CompletionMs *int64     `json:"completion_ms"`
+	// 下面两项只有热池里的进行中请求才有，分别供首响位、生成位跑秒起算
+	FirstTokenStartAt *time.Time `json:"first_token_start_at,omitempty"`
+	FirstTokenAt      *time.Time `json:"first_token_at,omitempty"`
+	CompletionMs      *int64     `json:"completion_ms"`
 
 	RequestFamily      string     `json:"request_family"`
 	RequestSource      string     `json:"request_source"`

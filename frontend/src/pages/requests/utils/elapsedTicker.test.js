@@ -9,6 +9,7 @@ import { TIMING_THRESHOLDS_MS, getTimingPillClassName, getRunningPillClassName, 
 import {
   subscribeElapsedTick,
   resolveElapsedMs,
+  resolveGenerationTickAnchor,
   __getTickerState,
   TICK_INTERVAL_MS
 } from './elapsedTicker.js';
@@ -99,10 +100,37 @@ test('色阶跟着跑秒一起走 —— 卡住的请求会自己变黄变红', 
 });
 
 test('跑秒落在当前正在进行的那一段上', () => {
-  // 首字未到 -> 首响位在跑（threshold="first"，无 baseMs）
-  assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.timestamp\} threshold="first" \/>/);
-  // 首字已到 -> 生成位接过跑秒，扣掉首响那一段
-  assert.match(TABLE_SOURCE, /baseMs=\{firstResponseMs\}[\s\S]{0,40}threshold="duration"/);
+  // 首字未到 -> 首响位从上游请求写完开始跑（threshold="first"，无 baseMs）；还没写完只放等待点
+  assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.firstTokenStartAt\} threshold="first" \/>/);
+  assert.match(TABLE_SOURCE, /parseTimestampOrNull\(request\.firstTokenStartAt\)[\s\S]{0,400}···/);
+  // 生成耗时随事件先到时计时格先定格，不等状态刷新
+  assert.match(TABLE_SOURCE, /timingRunning = running && !Number\.isFinite\(request\.completionMs\)/);
+  // 首字已到 -> 生成位接过跑秒，起算点由 resolveGenerationTickAnchor 给出
+  assert.match(TABLE_SOURCE, /\.\.\.resolveGenerationTickAnchor\(request, firstResponseMs\)\}[\s\S]{0,40}threshold="duration"/);
+});
+
+test('生成位优先从首字到达时刻起算，与定稿的 completion_ms 同一起点', () => {
+  const request = {
+    timestamp: '2026-10-11T02:00:00.000000Z',
+    firstTokenAt: '2026-10-11T02:00:03.500000Z'
+  };
+  assert.deepEqual(resolveGenerationTickAnchor(request, 3000),
+    { timestamp: '2026-10-11T02:00:03.500000Z', baseMs: 0 },
+    '有首字时刻时不再用「开始 + 首响」，否则会把排队与连接多算进生成位');
+
+  // 3.5s 时首字到达、再过 2s：生成位应显示 2s，而不是旧算法的 2.5s
+  const anchor = resolveGenerationTickAnchor(request, 3000);
+  const startedAt = Date.parse(anchor.timestamp);
+  assert.equal(resolveElapsedMs(startedAt, anchor.baseMs, Date.parse('2026-10-11T02:00:05.500000Z')), 2000);
+});
+
+test('没有首字时刻时退回「请求开始 + 首响」', () => {
+  for (const firstTokenAt of [undefined, '', 'not-a-time']) {
+    assert.deepEqual(
+      resolveGenerationTickAnchor({ timestamp: '2026-10-11T02:00:00.000000Z', firstTokenAt }, 3000),
+      { timestamp: '2026-10-11T02:00:00.000000Z', baseMs: 3000 }
+    );
+  }
 });
 
 test('进行中不吃 resolveFirstResponseMs 的非流式降级', () => {

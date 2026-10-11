@@ -776,11 +776,15 @@ func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 	}
 	rlm.timingMu.Unlock()
 
-	if shouldPersistUpstreamWrite && rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
-			UpstreamWriteMs: &upstreamWriteMs,
-		})
+	if rlm.usageTracker == nil || rlm.requestID == "" {
+		return
 	}
+	opts := tracking.UpdateOptions{FirstTokenStartAt: &start}
+	if shouldPersistUpstreamWrite {
+		opts.UpstreamWriteMs = &upstreamWriteMs
+	}
+	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
+	rlm.publishTimingEvent(upstreamSentEventData(rlm.requestID, start))
 }
 
 // RecordFirstToken 记录首个有效响应到达耗时（首响）。
@@ -812,8 +816,10 @@ func (rlm *RequestLifecycleManager) RecordFirstTokenAndReturn() bool {
 
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 			FirstTokenMs: &firstTokenMs,
+			FirstTokenAt: &now,
 		})
 		recorded = true
+		rlm.publishTimingEvent(firstResponseEventData(rlm.requestID, firstTokenMs, now))
 
 		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录上游首个有效响应耗时: %dms",
 			rlm.requestID, firstTokenMs))
@@ -841,6 +847,7 @@ func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 		CompletionMs: &completionMs,
 	})
+	rlm.publishTimingEvent(generationCompletedEventData(rlm.requestID, completionMs))
 
 	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 记录首响后流式完成耗时: %dms",
 		rlm.requestID, completionMs))
@@ -856,6 +863,7 @@ func (rlm *RequestLifecycleManager) RecordNonStreamingResponseComplete() {
 	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 		CompletionMs: &completionMs,
 	})
+	rlm.publishTimingEvent(generationCompletedEventData(rlm.requestID, completionMs))
 	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 非流响应完整可用，生成耗时记为 0ms", rlm.requestID))
 }
 

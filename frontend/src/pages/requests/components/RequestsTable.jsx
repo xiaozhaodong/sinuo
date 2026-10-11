@@ -18,6 +18,8 @@ import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
+import { resolveGenerationTickAnchor } from '../utils/elapsedTicker.js';
+import { parseTimestampOrNull } from '../utils/lifecycle.js';
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -74,10 +76,31 @@ const TimingTooltip = ({ anchorRect, items }) => {
   );
 };
 
+// 首响位在跑的样子：从上游请求写完开始跑，与后端首响同一起点，定格时不跳。
+// 还没发到上游（排队、隐私扫描、建连）时首响还没开始计，只放等待点、不给数字：
+// 大多只停留零点几秒，文字会闪一下；居中点比句点在胶囊里不下沉。
+// 宽度钉成数字胶囊的 5 个等宽字符（border-box：内容 5ch + 左右 px-2 + 边框），换成数字时不抖。
+const PENDING_SEND_HINT = '尚未发到上游（排队 / 建连中）';
+
+const RunningFirstResponsePill = ({ request }) => (
+  parseTimestampOrNull(request.firstTokenStartAt)
+    ? <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />
+    : (
+      <span
+        className={`${TIMING_PILL_BASE} tone-slate w-[calc(5ch+1rem+2px)] justify-center`}
+        title={PENDING_SEND_HINT}
+        aria-label={PENDING_SEND_HINT}
+      >
+        ···
+      </span>
+    )
+);
 
 const RequestTimingCell = ({ request }) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
   const running = IN_FLIGHT_STATUSES.has(request.status);
+  // 计时可以比状态先定格：生成耗时随计时事件先到，状态与 token 要等下一次查询。
+  const timingRunning = running && !Number.isFinite(request.completionMs);
   // 进行中只认后端真实写入的 firstTokenMs。
   // resolveFirstResponseMs 对非流式请求会拿 duration 兜底首响，而那条降级的前提是
   // 「请求已结束」—— 进行中 duration 还是 0（tracker 只在终态写 duration_ms），
@@ -120,17 +143,17 @@ const RequestTimingCell = ({ request }) => {
         <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('first', firstResponseMs)}`}>
           {formatTimingBadge(firstResponseMs)}
         </span>
-      ) : running ? (
-        <LiveElapsedPill timestamp={request.timestamp} threshold="first" />
+      ) : timingRunning ? (
+        <RunningFirstResponsePill request={request} />
       ) : null}
 
       {/* 生成位。进行中且首字已到时，这一格接过跑秒 —— 交接的那一刻正是首字到达。
-          首字未到时不出这一格：生成还没开始，画一个 '-' 只是噪音。 */}
-      {running ? (
+          首字未到时不出这一格：生成还没开始，画一个 '-' 只是噪音。
+          起算点见 resolveGenerationTickAnchor：优先从首字到达时刻算，与定稿值同一起点。 */}
+      {timingRunning ? (
         hasFirstResponse && (
           <LiveElapsedPill
-            timestamp={request.timestamp}
-            baseMs={firstResponseMs}
+            {...resolveGenerationTickAnchor(request, firstResponseMs)}
             threshold="duration"
           />
         )

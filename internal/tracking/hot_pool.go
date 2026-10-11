@@ -53,12 +53,14 @@ type ActiveRequest struct {
 	CostKnown             bool  `json:"cost_known"`
 
 	// 完成信息（只在结束时填充）
-	EndTime         *time.Time `json:"end_time,omitempty"`
-	DurationMs      int64      `json:"duration_ms"`
-	FirstTokenMs    *int64     `json:"first_token_ms,omitempty"`
-	CompletionMs    *int64     `json:"completion_ms,omitempty"`
-	TotalCostUSD    float64    `json:"total_cost_usd"`
-	CostOverrideUSD *float64   `json:"cost_override_usd,omitempty"`
+	EndTime           *time.Time `json:"end_time,omitempty"`
+	DurationMs        int64      `json:"duration_ms"`
+	FirstTokenMs      *int64     `json:"first_token_ms,omitempty"`
+	FirstTokenStartAt *time.Time `json:"first_token_start_at,omitempty"` // 只在热池，归档不落库
+	FirstTokenAt      *time.Time `json:"first_token_at,omitempty"`       // 只在热池，归档不落库
+	CompletionMs      *int64     `json:"completion_ms,omitempty"`
+	TotalCostUSD      float64    `json:"total_cost_usd"`
+	CostOverrideUSD   *float64   `json:"cost_override_usd,omitempty"`
 
 	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`
 
@@ -301,6 +303,14 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 	if req.FirstTokenMs != nil {
 		value := *req.FirstTokenMs
 		clone.FirstTokenMs = &value
+	}
+	if req.FirstTokenStartAt != nil {
+		value := *req.FirstTokenStartAt
+		clone.FirstTokenStartAt = &value
+	}
+	if req.FirstTokenAt != nil {
+		value := *req.FirstTokenAt
+		clone.FirstTokenAt = &value
 	}
 	if req.CompletionMs != nil {
 		value := *req.CompletionMs

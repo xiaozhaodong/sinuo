@@ -58,6 +58,13 @@ import { bindingDisplayName, isWebToolsBinding, patchBindingPayload } from '../e
 import { buildTimeRangeSelectionState } from './utils/timeRangeSelection.js';
 import { buildChipPatch, buildClearChipsPatch, countActiveChips, resolveStoredPageSize } from './utils/filterBar.js';
 import { mergeRequestRows } from './utils/mergeRequestRows.js';
+import {
+  applyPendingTimingPatches,
+  applyTimingPatch,
+  carryLiveTiming,
+  extractTimingPatch,
+  stashTimingPatch
+} from './utils/liveTiming.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
 import { buildUpstreamFilterOptions, resolveUpstreamFilterOption } from './utils/requestSource.js';
 import { prefersReducedMotion } from '@utils/motion.js';
@@ -116,6 +123,8 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   // 上一批的 requestId 集合，用于 diff 出「哪些行是新到达的、各自排第几」。
   // 只在 refreshRequestData 这个 callback 里读写，不碰 render 期。
   const prevRequestIdsRef = useRef(null);
+  // 计时事件到达时行还不在列表里，补丁先存这里（requestId -> 补丁），等查询结果补上
+  const pendingTimingPatchesRef = useRef(new Map());
 
   // 面板状态：筛选条默认显示
   const [filterBarVisible, setFilterBarVisibleState] = useState(() => readStorage(FILTER_BAR_STORAGE_KEY) !== 'false');
@@ -249,7 +258,10 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, canAnimateEnter));
     prevRequestIdsRef.current = collectRequestIds(nextRequests);
     // 未变化的行复用旧引用，让 RequestRow 的 memo 生效。
-    setRequests(prev => mergeRequestRows(prev, nextRequests));
+    // 查询可能早于计时事件发出，先补回事件已经给过的计时，免得跑秒被冲回去重跑；
+    // 事件到达时还不在列表里的行，从暂存补丁里补。
+    const timedRequests = applyPendingTimingPatches(nextRequests, pendingTimingPatchesRef.current, Date.now());
+    setRequests(prev => mergeRequestRows(prev, carryLiveTiming(prev, timedRequests)));
     setPagination(prev => ({
       ...prev,
       total: requestsData.total,
@@ -350,7 +362,16 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
   // 包一层标记 live，使事件驱动的新行才播入场动画。
   const refreshLiveRequestData = useCallback(() => refreshRequestData({ live: true }), [refreshRequestData]);
-  const autoRefresh = useAutoRefresh(refreshLiveRequestData);
+  // 计时事件直接补到行上：跑秒在事件到达时定格，不等合并刷新与查询。
+  // 同时暂存一份，行还没出现时由下一次查询结果补上。
+  const applyRequestTimingEvent = useCallback((payload) => {
+    const patch = extractTimingPatch(payload);
+    if (patch) {
+      stashTimingPatch(pendingTimingPatchesRef.current, patch, Date.now());
+      setRequests(prev => applyTimingPatch(prev, patch));
+    }
+  }, []);
+  const autoRefresh = useAutoRefresh(refreshLiveRequestData, applyRequestTimingEvent);
 
   // 手动刷新：显式不传参，避免 onClick 的 event 对象被当成 silent 实参。
   const handleManualRefresh = useCallback(() => loadData(), [loadData]);

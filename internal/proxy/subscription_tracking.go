@@ -217,7 +217,8 @@ func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, at time.T
 		ms = 0
 	}
 	t.mu.Unlock()
-	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{UpstreamWriteMs: &ms})
+	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{UpstreamWriteMs: &ms, FirstTokenStartAt: &at})
+	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, upstreamSentEventData(t.requestID, at))
 }
 
 func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at time.Time) {
@@ -245,7 +246,9 @@ func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at ti
 		ms = 0
 	}
 	t.mu.Unlock()
-	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{FirstTokenMs: &ms})
+	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{FirstTokenMs: &ms, FirstTokenAt: &at})
+	// 订阅代理在开始与结算之间没有别的事件，不补这一条首响位会一直跑到请求结束。
+	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, firstResponseEventData(t.requestID, ms, at))
 }
 
 // MarkResponseBytes 更新截至当前的响应累计字节数，不产生逐帧事件。
@@ -345,6 +348,7 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 			completionMs = 0
 		}
 		t.observer.tracker.RecordRequestUpdate(requestID, tracking.UpdateOptions{CompletionMs: &completionMs})
+		t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, generationCompletedEventData(requestID, completionMs))
 	}
 	if err := t.observer.tracker.RecordRequestSettlement(requestID, tracking.RequestSettlement{
 		Status: status, ModelName: model, Path: path, FailureReason: failureCode,
