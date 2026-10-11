@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Property, PropertyList } from '@components/desktop/Inspector.jsx';
-import { buildLifecycleSegments, lifecycleSegmentColors } from '../utils/lifecycle.js';
+import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } from '../utils/lifecycle.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import {
@@ -178,10 +178,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
   // 账号池快照总能展开（空候选显示「无候选」）；端点快照有决策才给展开入口
   const decisionRows = snapshot ? (isAccountRequest ? toAccountRows(candidates) : toEndpointRows(endpointDecisions)) : EMPTY_CANDIDATES;
   const canExpand = Boolean(snapshot) && (isAccountRequest || endpointDecisions.length > 0);
-  const runtimeOutcomeCount = candidates.filter((candidate) => {
-    const outcome = candidate.runtime_outcome || candidate.runtimeOutcome || '';
-    return outcome && outcome !== 'success';
-  }).length;
+  const accountSwitchCount = countAccountSwitches(candidates);
 
   return (
     <div>
@@ -198,7 +195,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
           </Property>
           <Property label="重试" truncate={false}>
             <span className="font-mono">{request.retryCount ?? 0}</span> 次
-            {isAccountRequest && runtimeOutcomeCount > 0 && <span className="ml-1 text-xs text-fg-muted">换号 {runtimeOutcomeCount} 次</span>}
+            {isAccountRequest && accountSwitchCount > 0 && <span className="ml-1 text-xs text-fg-muted">换号 {accountSwitchCount} 次</span>}
             {!isAccountRequest && request.requestedEndpoint && request.effectiveEndpoint
               && request.requestedEndpoint !== request.effectiveEndpoint && (
               <span className="ml-1 text-xs text-warn">故障转移</span>

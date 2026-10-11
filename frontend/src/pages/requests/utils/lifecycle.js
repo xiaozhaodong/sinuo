@@ -253,3 +253,11 @@ export const railSegmentColors = {
   failure: 'bg-rose-400',
   cancelled: 'bg-slate-300 dark:bg-slate-500'
 };
+
+// countAccountSwitches 账号池请求的换号次数 = 实际尝试过的账号数 - 1。
+// 每次尝试都会给对应候选写 runtime_outcome（成功也写），所以「有 outcome 的候选」即已尝试账号。
+// 不能只数失败候选：流式中途出错时唯一的账号也是失败，那并不是换号。
+export const countAccountSwitches = (candidates = []) => {
+  const attempted = candidates.filter((candidate) => candidate?.runtime_outcome || candidate?.runtimeOutcome).length;
+  return Math.max(attempted - 1, 0);
+};

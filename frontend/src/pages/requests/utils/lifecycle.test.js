@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildLifecycleSegments,
+  countAccountSwitches,
   resolveConnectMs,
   resolveQueueMs,
   resolveRawQueueMs,
@@ -353,4 +354,33 @@ test('hot pool 清理的自由文本 failureReason 回退「失败」', () => {
   const seg = segments[segments.length - 1];
   assert.equal(seg.label, '失败');
   assert.equal(seg.detail, reason);
+});
+
+test('换号次数：只试一个账号且流式中途失败不算换号', () => {
+  const candidates = [
+    { account_id: 1, runtime_outcome: 'transient_failure' },
+    { account_id: 2 },
+    { account_id: 3 }
+  ];
+  assert.equal(countAccountSwitches(candidates), 0);
+});
+
+test('换号次数：失败后换到下一个账号成功算 1 次', () => {
+  const candidates = [
+    { account_id: 1, runtime_outcome: 'transient_failure' },
+    { account_id: 2, runtimeOutcome: 'success' },
+    { account_id: 3 }
+  ];
+  assert.equal(countAccountSwitches(candidates), 1);
+});
+
+test('换号次数：三个账号全部失败算 2 次，空候选为 0', () => {
+  const candidates = [
+    { account_id: 1, runtime_outcome: 'auth_failed' },
+    { account_id: 2, runtime_outcome: 'transient_failure' },
+    { account_id: 3, runtime_outcome: 'transient_failure' }
+  ];
+  assert.equal(countAccountSwitches(candidates), 2);
+  assert.equal(countAccountSwitches([]), 0);
+  assert.equal(countAccountSwitches(), 0);
 });
