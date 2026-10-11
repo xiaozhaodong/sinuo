@@ -1306,6 +1306,52 @@ func TestLatestAccountScheduleSnapshotStore_SaveDraftCleansExpiredPending(t *tes
 	}
 }
 
+func TestLatestAccountScheduleSnapshotStore_CancelledIsTerminal(t *testing.T) {
+	store := newLatestAccountScheduleSnapshotStore()
+	store.saveDraft(&LatestAccountScheduleSnapshot{
+		RequestID:   "req-cancel",
+		RequestPath: "/v1/responses",
+		Candidates:  []AccountScheduleCandidateDecision{{AccountID: 1}, {AccountID: 2}},
+	})
+	store.complete("req-cancel", 1, "acc-1", AccountScheduleOutcomeTransientFailure, "upstream returned 500")
+
+	snapshot, ok := store.complete("req-cancel", 2, "acc-2", AccountScheduleOutcomeCancelled, "client cancelled")
+	if !ok || snapshot.FinalOutcome != AccountScheduleOutcomeCancelled {
+		t.Fatalf("expected cancelled final outcome, got ok=%v snapshot=%+v", ok, snapshot)
+	}
+	if got := mustFindCandidateDecision(t, snapshot, 2).RuntimeOutcome; got != AccountScheduleOutcomeCancelled {
+		t.Fatalf("expected cancelled runtime outcome on current account, got %q", got)
+	}
+	if got := mustFindCandidateDecision(t, snapshot, 1).RuntimeOutcome; got != AccountScheduleOutcomeTransientFailure {
+		t.Fatalf("expected earlier failure to be kept, got %q", got)
+	}
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if _, ok := store.pending["req-cancel"]; ok {
+		t.Fatal("expected cancelled snapshot to leave pending")
+	}
+}
+
+func TestLatestAccountScheduleSnapshotStore_LongRequestCompletesAfterOtherDrafts(t *testing.T) {
+	store := newLatestAccountScheduleSnapshotStore()
+	tenMinutesAgo := time.Now().Add(-10 * time.Minute)
+	store.pending["long-request"] = &LatestAccountScheduleSnapshot{
+		RequestID:   "long-request",
+		CapturedAt:  tenMinutesAgo,
+		UpdatedAt:   tenMinutesAgo,
+		RequestPath: "/v1/responses",
+		Candidates:  []AccountScheduleCandidateDecision{{AccountID: 1}},
+	}
+	// 长请求跑着的时候别的请求进来，触发过期清理
+	store.saveDraft(&LatestAccountScheduleSnapshot{RequestID: "other-request", RequestPath: "/v1/responses"})
+
+	snapshot, ok := store.complete("long-request", 1, "acc-1", AccountScheduleOutcomeSuccess, "")
+	if !ok || snapshot.FinalOutcome != AccountScheduleOutcomeSuccess {
+		t.Fatalf("expected long request to finalize its own snapshot, got ok=%v snapshot=%+v", ok, snapshot)
+	}
+}
+
 func mustFindCandidateDecision(t *testing.T, snapshot *LatestAccountScheduleSnapshot, accountID int64) AccountScheduleCandidateDecision {
 	t.Helper()
 	for _, candidate := range snapshot.Candidates {

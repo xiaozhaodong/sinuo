@@ -384,3 +384,12 @@ test('换号次数：三个账号全部失败算 2 次，空候选为 0', () => 
   assert.equal(countAccountSwitches([]), 0);
   assert.equal(countAccountSwitches(), 0);
 });
+
+test('换号次数：换到下一个账号后客户端取消也算 1 次', () => {
+  const candidates = [
+    { account_id: 1, runtime_outcome: 'transient_failure' },
+    { account_id: 2, runtime_outcome: 'cancelled' },
+    { account_id: 3 }
+  ];
+  assert.equal(countAccountSwitches(candidates), 1);
+});

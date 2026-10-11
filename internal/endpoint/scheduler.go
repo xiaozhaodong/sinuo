@@ -49,7 +49,9 @@ const (
 	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
 	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
 	EndpointScheduleOutcomeRateLimited              = "rate_limited"
-	endpointScheduleSnapshotPendingTTL              = 5 * time.Minute
+	// 待完成快照的保留时长，与热池 MaxAge（30 分钟）对齐：长输出请求可能跑超过 5 分钟，
+	// 收尾时快照还得在，否则最终结果写不进去；超过 30 分钟的请求会被热池判超时，不必再等。
+	endpointScheduleSnapshotPendingTTL = 30 * time.Minute
 )
 
 // EndpointScheduleSnapshot 一次调度的完整决策快照（§4.5 观测）

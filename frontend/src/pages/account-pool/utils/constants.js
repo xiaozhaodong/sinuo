@@ -62,7 +62,8 @@ const SCHEDULE_OUTCOME_STYLE = {
   invalid_request: 'tone-amber',
   passthrough_no_available_providers: 'tone-sky',
   passthrough_other_4xx: 'tone-slate',
-  no_schedulable_accounts: 'tone-slate'
+  no_schedulable_accounts: 'tone-slate',
+  cancelled: 'tone-slate'
 };
 
 const SCHEDULE_DECISION_STYLE = {

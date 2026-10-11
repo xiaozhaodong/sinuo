@@ -33,7 +33,10 @@ const (
 	AccountScheduleOutcomeNoSchedulableAccounts          = "no_schedulable_accounts"
 	AccountScheduleOutcomePrivacyBlocked                 = "privacy_blocked"
 	AccountScheduleOutcomeInvalidRequest                 = "invalid_request"
-	latestAccountScheduleSnapshotPendingTTL              = 5 * time.Minute
+	AccountScheduleOutcomeCancelled                      = "cancelled"
+	// 待完成快照的保留时长，与热池 MaxAge（30 分钟）对齐：Codex 长推理请求可能跑超过 5 分钟，
+	// 收尾时快照还得在，否则最终结果写不进去；超过 30 分钟的请求会被热池判超时，不必再等。
+	latestAccountScheduleSnapshotPendingTTL = 30 * time.Minute
 
 	accountScheduleOutcomeSuccess                        = AccountScheduleOutcomeSuccess
 	accountScheduleOutcomeAuthFailed                     = AccountScheduleOutcomeAuthFailed
@@ -221,7 +224,8 @@ func isTerminalAccountScheduleSnapshotUpdate(outcome string, accountID int64) bo
 		accountScheduleOutcomePassthroughOther4xx,
 		accountScheduleOutcomeNoSchedulableAccounts,
 		AccountScheduleOutcomePrivacyBlocked,
-		AccountScheduleOutcomeInvalidRequest:
+		AccountScheduleOutcomeInvalidRequest,
+		AccountScheduleOutcomeCancelled:
 		return true
 	case accountScheduleOutcomeTransientFailure:
 		return accountID <= 0

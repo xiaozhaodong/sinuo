@@ -210,7 +210,8 @@ const toScheduleOutcomeLabel = (outcome = '') => {
     invalid_request: '请求无效',
     passthrough_no_available_providers: '透传 503',
     passthrough_other_4xx: '透传 4xx',
-    no_schedulable_accounts: '无可调度账号'
+    no_schedulable_accounts: '无可调度账号',
+    cancelled: '已取消'
   };
   return labels[normalized] || '未知';
 };

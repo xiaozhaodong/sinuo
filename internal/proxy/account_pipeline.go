@@ -37,6 +37,7 @@ const (
 	accountSoftFailureCategoryRateLimit     = "rate_limit"
 	accountSoftFailureCategoryServerError   = "server_error"
 	localNoAvailableProvidersMarker         = "no_available_providers::ccf_local"
+	accountScheduleCancelledByClient        = "client cancelled"
 
 	chatGPTCodexResponsesURL  = "https://chatgpt.com/backend-api/codex/responses"
 	chatGPTCodexCompactURL    = "https://chatgpt.com/backend-api/codex/responses/compact"
@@ -481,8 +482,11 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if processErr != nil {
 			if isCancelledAccountStreamError(processErr) {
 				if modelRouted {
-					h.codexModelRouter.Settle(codexScope, acc.ID, "cancelled")
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeCancelled)
 				}
+				// 客户端取消不是账号的错：不冷却、不记软失败，但要给当前账号写结果并收口快照，
+				// 否则换号后取消时快照里只剩前面失败的账号，换号次数会少算。
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomeCancelled, accountScheduleCancelledByClient)
 				return
 			}
 			lastErr = processErr

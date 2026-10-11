@@ -2600,6 +2600,72 @@ func TestAccountPipeline_ResponsesStreamingCompletedAfterClientCancel_TreatedAsS
 	}
 }
 
+func TestAccountPipeline_ClientCancelAfterFailover_RecordsCancelledOnCurrentAccount(t *testing.T) {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "busy", http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	streamStarted := make(chan struct{})
+	streaming := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.in_progress\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.in_progress","response":{"id":"resp_1","model":"gpt-5.4"}}` + "\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(streamStarted)
+		<-r.Context().Done()
+	}))
+	defer streaming.Close()
+
+	service := &mockAccountPoolService{
+		accounts: []*store.UpstreamAccountRecord{
+			{ID: 71, AccountName: "acc-failing", ProviderType: "api_key", CredentialRaw: "sk-a", BaseURL: failing.URL, Enabled: true},
+			{ID: 72, AccountName: "acc-streaming", ProviderType: "api_key", CredentialRaw: "sk-b", BaseURL: streaming.URL, Enabled: true},
+		},
+	}
+	handler := newAccountPipelineTestHandler(t, failing.URL, service)
+
+	body := bytes.NewBufferString(`{"model":"gpt-5.4","stream":true,"input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
+	req.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(rec, req)
+	}()
+
+	<-streamStarted
+	cancel()
+	<-done
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if len(service.completeCalls) != 2 {
+		t.Fatalf("expected failed attempt and cancelled attempt in snapshot, got %+v", service.completeCalls)
+	}
+	first, last := service.completeCalls[0], service.completeCalls[1]
+	if first.accountID != 71 || first.outcome != servicepkg.AccountScheduleOutcomeTransientFailure {
+		t.Fatalf("expected first account recorded as transient failure, got %+v", first)
+	}
+	if last.accountID != 72 || last.outcome != servicepkg.AccountScheduleOutcomeCancelled || last.finalError != accountScheduleCancelledByClient {
+		t.Fatalf("expected current account recorded as cancelled, got %+v", last)
+	}
+	for _, call := range service.softFailureCalls {
+		if call.id == 72 {
+			t.Fatalf("client cancel must not count as soft failure, got %+v", service.softFailureCalls)
+		}
+	}
+	if len(service.transientCalls) != 0 {
+		t.Fatalf("client cancel must not cool down account, got %+v", service.transientCalls)
+	}
+}
+
 func TestAccountPipeline_SoftFailurePolicy_独立阈值触发换号(t *testing.T) {
 	var primaryHits, backupHits int32
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
