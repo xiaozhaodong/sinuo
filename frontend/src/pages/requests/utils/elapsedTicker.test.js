@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { IN_FLIGHT_STATUSES } from './constants.js';
-import { TIMING_THRESHOLDS_MS, getTimingPillClassName, getRunningPillClassName, formatTimingBadge } from './timing.js';
+import {
+  TIMING_THRESHOLDS_MS,
+  PENDING_SEND_THRESHOLDS_MS,
+  getTimingPillClassName,
+  getRunningPillClassName,
+  getPendingSendPillState,
+  formatTimingBadge
+} from './timing.js';
 import {
   subscribeElapsedTick,
   resolveElapsedMs,
@@ -19,6 +26,8 @@ const readSource = (relativePath) => readFileSync(join(HERE, relativePath), 'utf
 
 const PILL_SOURCE = readSource('../components/LiveElapsedPill.jsx');
 const TABLE_SOURCE = readSource('../components/RequestsTable.jsx');
+const PENDING_SOURCE = readSource('../components/PendingSendPill.jsx');
+const CSS_SOURCE = readSource('../../../index.css');
 
 test('订阅者归零时定时器被清掉 —— 没有进行中的请求，整张表零定时器', async () => {
   assert.deepEqual(__getTickerState(), { subscriberCount: 0, running: false });
@@ -102,11 +111,30 @@ test('色阶跟着跑秒一起走 —— 卡住的请求会自己变黄变红', 
 test('跑秒落在当前正在进行的那一段上', () => {
   // 首字未到 -> 首响位从上游请求写完开始跑（threshold="first"，无 baseMs）；还没写完只放等待点
   assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.firstTokenStartAt\} threshold="first" \/>/);
-  assert.match(TABLE_SOURCE, /parseTimestampOrNull\(request\.firstTokenStartAt\)[\s\S]{0,400}···/);
+  assert.match(TABLE_SOURCE, /parseTimestampOrNull\(request\.firstTokenStartAt\)[\s\S]{0,200}<PendingSendPill timestamp=\{request\.timestamp\} \/>/);
   // 生成耗时随事件先到时计时格先定格，不等状态刷新
   assert.match(TABLE_SOURCE, /timingRunning = running && !Number\.isFinite\(request\.completionMs\)/);
   // 首字已到 -> 生成位接过跑秒，起算点由 resolveGenerationTickAnchor 给出
   assert.match(TABLE_SOURCE, /\.\.\.resolveGenerationTickAnchor\(request, firstResponseMs\)\}[\s\S]{0,40}threshold="duration"/);
+});
+
+test('等待点 1 秒内静止，超过 1 秒才动，再久变黄 / 变红', () => {
+  assert.deepEqual(getPendingSendPillState(0), { tone: 'tone-slate', animate: false });
+  assert.deepEqual(getPendingSendPillState(PENDING_SEND_THRESHOLDS_MS.animate - 1), { tone: 'tone-slate', animate: false },
+    '大多零点几秒就发出去了，一圈动画都走不完，动了像闪');
+  assert.deepEqual(getPendingSendPillState(PENDING_SEND_THRESHOLDS_MS.animate), { tone: 'tone-slate', animate: true });
+  assert.deepEqual(getPendingSendPillState(PENDING_SEND_THRESHOLDS_MS.warning + 1), { tone: 'tone-amber', animate: true });
+  assert.deepEqual(getPendingSendPillState(PENDING_SEND_THRESHOLDS_MS.critical + 1), { tone: 'tone-rose', animate: true });
+  assert.deepEqual(getPendingSendPillState(Number.NaN), { tone: 'tone-slate', animate: false }, '时间异常按刚进入处理');
+});
+
+test('等待点与跑秒共用时钟、直写 className，动画只在超过 1 秒的阶段挂上', () => {
+  assert.match(PENDING_SOURCE, /subscribeElapsedTick\(paint\)/);
+  assert.match(PENDING_SOURCE, /node\.className = className/);
+  assert.doesNotMatch(PENDING_SOURCE, /useState/, '阶段切换不进 React 渲染状态');
+  assert.match(CSS_SOURCE, /\.pending-send-dots--waiting > i \{\s*animation: pending-send-dot [^;]*infinite;/);
+  assert.match(CSS_SOURCE, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pending-send-dots--waiting > i,[\s\S]*?animation: none;/,
+    '减弱动效时等待点不动，只靠变色示警');
 });
 
 test('生成位优先从首字到达时刻起算，与定稿的 completion_ms 同一起点', () => {

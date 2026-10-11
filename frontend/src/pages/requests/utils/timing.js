@@ -107,3 +107,30 @@ export const getRunningPillClassName = (type, ms) => {
   const className = getTimingPillClassName(type, ms);
   return className === 'tone-emerald' ? 'tone-slate' : className;
 };
+
+/**
+ * 首响位「尚未发到上游」等待点的阈值（从请求进入算起）。
+ * 排队、隐私扫描、建连大多零点几秒就过去：1 秒内保持静止 —— 一圈动画都走不完，动了反而像闪；
+ * 超过 1 秒才开始动，说明真的卡在发出前；再久按跑秒同样的语义变黄 / 变红。
+ */
+export const PENDING_SEND_THRESHOLDS_MS = Object.freeze({
+  animate: 1000,
+  warning: 3000,
+  critical: 10000
+});
+
+/**
+ * @param {number} waitingMs 从请求进入到现在的毫秒数
+ * @returns {{ tone: string, animate: boolean }}
+ */
+export const getPendingSendPillState = (waitingMs) => {
+  const value = toSafeMs(waitingMs);
+  const animate = value >= PENDING_SEND_THRESHOLDS_MS.animate;
+  if (value > PENDING_SEND_THRESHOLDS_MS.critical) {
+    return { tone: 'tone-rose', animate };
+  }
+  if (value > PENDING_SEND_THRESHOLDS_MS.warning) {
+    return { tone: 'tone-amber', animate };
+  }
+  return { tone: 'tone-slate', animate };
+};

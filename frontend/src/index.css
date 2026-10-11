@@ -844,6 +844,25 @@
 .trace-rail--completed.is-settling .trace-rail__track::after { background: var(--app-success-solid); }
 .trace-rail--failed.is-settling .trace-rail__track::after { background: var(--app-danger-solid); }
 
+/* 首响位「尚未发到上游」的等待点（PendingSendPill）。超过 1 秒才挂 --waiting：
+   三个点错开依次变暗再亮回，读起来是一道从左往右的波，不做整体呼吸。
+   起止都是不透明，从静止切进来、发出后被跑秒替换时都不会跳一下。 */
+.pending-send-dots > i {
+  font-style: normal;
+}
+
+@keyframes pending-send-dot {
+  0%, 70%, 100% { opacity: 1; }
+  35% { opacity: 0.25; }
+}
+
+.pending-send-dots--waiting > i {
+  animation: pending-send-dot 1.2s ease-in-out infinite;
+}
+
+.pending-send-dots--waiting > i:nth-child(2) { animation-delay: 0.2s; }
+.pending-send-dots--waiting > i:nth-child(3) { animation-delay: 0.4s; }
+
 /* 刷新进度条：表格保持在位，只在顶部走一条 indeterminate 条 */
 @keyframes indeterminate-slide {
   from { transform: translateX(-100%); }
@@ -871,6 +890,7 @@
   .trace-rail__flow,
   .trace-rail.is-settling .trace-rail__fill,
   .trace-rail.is-settling .trace-rail__cap,
+  .pending-send-dots--waiting > i,
   .kpi-value-flash {
     animation: none;
   }

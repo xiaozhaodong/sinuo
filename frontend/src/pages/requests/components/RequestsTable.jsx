@@ -13,6 +13,7 @@ import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { RequestTraceCell } from './TraceRail.jsx';
 import LiveElapsedPill from './LiveElapsedPill.jsx';
+import PendingSendPill from './PendingSendPill.jsx';
 import ModelTag from './ModelTag.jsx';
 import { getRequestFamilyMeta } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
@@ -77,23 +78,11 @@ const TimingTooltip = ({ anchorRect, items }) => {
 };
 
 // 首响位在跑的样子：从上游请求写完开始跑，与后端首响同一起点，定格时不跳。
-// 还没发到上游（排队、隐私扫描、建连）时首响还没开始计，只放等待点、不给数字：
-// 大多只停留零点几秒，文字会闪一下；居中点比句点在胶囊里不下沉。
-// 宽度钉成数字胶囊的 5 个等宽字符（border-box：内容 5ch + 左右 px-2 + 边框），换成数字时不抖。
-const PENDING_SEND_HINT = '尚未发到上游（排队 / 建连中）';
-
+// 还没发到上游时首响还没开始计，只放等待点、不给数字（见 PendingSendPill）。
 const RunningFirstResponsePill = ({ request }) => (
   parseTimestampOrNull(request.firstTokenStartAt)
     ? <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />
-    : (
-      <span
-        className={`${TIMING_PILL_BASE} tone-slate w-[calc(5ch+1rem+2px)] justify-center`}
-        title={PENDING_SEND_HINT}
-        aria-label={PENDING_SEND_HINT}
-      >
-        ···
-      </span>
-    )
+    : <PendingSendPill timestamp={request.timestamp} />
 );
 
 const RequestTimingCell = ({ request }) => {
