@@ -327,7 +327,7 @@ func TestRelayValidatedImageAPIStream_AcceptsCompletedImageEdit(t *testing.T) {
 				`data: {"type":"image_edit.completed","b64_json":"ZWRpdGVk"}` + "\n\n",
 		)),
 	}
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesEditsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesEditsPath, imageAPIStreamTiming{})
 	if err != nil {
 		t.Fatalf("relay event stream failed: %v", err)
 	}

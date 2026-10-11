@@ -105,12 +105,16 @@ func TestImageGeneration_ForwardsConfiguredProviderAndTracksRequest(t *testing.T
 		if detail.TotalCostUSD != 0.25 {
 			t.Fatalf("expected tracked image cost 0.25, got %f", detail.TotalCostUSD)
 		}
+		// 非流响应读完即首响，生成耗时记 0，与端点 / 账号池非流链路一致
+		if detail.FirstTokenMs == nil || detail.CompletionMs == nil || *detail.CompletionMs != 0 {
+			t.Fatalf("expected non-stream image first response and zero completion, got first=%v completion=%v", detail.FirstTokenMs, detail.CompletionMs)
+		}
 		lifecycleData, err := tracker.GetRequestLifecycleData(context.Background(), detail.RequestID)
 		if err != nil {
 			t.Fatalf("query image lifecycle data failed: %v", err)
 		}
 		if lifecycleData == nil || lifecycleData.UpstreamWriteMs == nil {
-			t.Fatalf("expected image request upstream_write_ms without first-token callback, got %+v", lifecycleData)
+			t.Fatalf("expected image request upstream_write_ms, got %+v", lifecycleData)
 		}
 		return
 	}
@@ -376,7 +380,7 @@ func TestRelayValidatedImageAPIStream_RejectsHTMLBeforeCommit(t *testing.T) {
 		Header:        http.Header{"Content-Type": []string{"text/html"}},
 		Body:          io.NopCloser(strings.NewReader("<html><body>error</body></html>")),
 	}
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{})
 	if err == nil || result.Committed || recorder.Code != http.StatusOK || recorder.Body.Len() != 0 {
 		t.Fatalf("HTML stream response must fail before commit, result=%+v status=%d body=%s err=%v", result, recorder.Code, recorder.Body.String(), err)
 	}
@@ -392,7 +396,7 @@ func TestRelayValidatedImageAPIStream_RejectsCompressedStreamBeforeCommit(t *tes
 		},
 		Body: io.NopCloser(strings.NewReader("compressed stream")),
 	}
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{})
 	if err == nil || result.Committed || recorder.Body.Len() != 0 {
 		t.Fatalf("compressed stream must fail before commit, result=%+v body=%s err=%v", result, recorder.Body.String(), err)
 	}
@@ -414,7 +418,7 @@ func TestRelayValidatedImageAPIStream_AllowsUnknownFieldsAndTextEvents(t *testin
 		)),
 	}
 
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{})
 	if err != nil {
 		t.Fatalf("relay compatible event stream failed: %v", err)
 	}
@@ -437,7 +441,7 @@ func TestRelayValidatedImageAPIStream_KnownCompletedEventStillRequiresJSON(t *te
 		)),
 	}
 
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{})
 	if err == nil || result.Committed || recorder.Body.Len() != 0 {
 		t.Fatalf("known completed event must remain strict, result=%+v body=%s err=%v", result, recorder.Body.String(), err)
 	}
@@ -451,9 +455,40 @@ func TestRelayValidatedImageAPIStream_DONESentinelIsNotCompletion(t *testing.T) 
 		Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
 	}
 
-	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath)
+	result, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{})
 	if err == nil || result.Committed || recorder.Body.Len() != 0 {
 		t.Fatalf("DONE sentinel must not complete the request, result=%+v body=%s err=%v", result, recorder.Body.String(), err)
+	}
+}
+
+func TestRelayValidatedImageAPIStream_TimingHooksFollowFirstAndTerminalEvents(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"event: ping\n" +
+				"data: pong\n\n" +
+				"event: image_generation.partial_image\n" +
+				`data: {"type":"image_generation.partial_image","b64_json":"cGFydGlhbA==","partial_image_index":0}` + "\n\n" +
+				"event: image_generation.partial_image\n" +
+				`data: {"type":"image_generation.partial_image","b64_json":"cGFydGlhbA==","partial_image_index":1}` + "\n\n" +
+				"event: image_generation.completed\n" +
+				`data: {"type":"image_generation.completed","b64_json":"ZmluYWw="}` + "\n\n",
+		)),
+	}
+
+	var calls []string
+	_, err := relayValidatedImageAPIStream(recorder, resp, openAIImagesGenerationsPath, imageAPIStreamTiming{
+		OnFirstEvent: func() { calls = append(calls, "first") },
+		OnCompleted:  func() { calls = append(calls, "completed") },
+	})
+	if err != nil {
+		t.Fatalf("relay stream failed: %v", err)
+	}
+	// ping 这类未识别事件不算首响；多个 partial 只记一次首响
+	if strings.Join(calls, ",") != "first,completed" {
+		t.Fatalf("expected first then completed exactly once, got %v", calls)
 	}
 }
 
@@ -483,6 +518,9 @@ func TestImageGeneration_StreamRequiresCompletedEventBeforeCharging(t *testing.T
 	detail := findTrackedImageRequest(t, tracker, "req-image-stream-completed")
 	if detail.Status != "completed" || !detail.IsStreaming || detail.TotalCostUSD != 0.25 {
 		t.Fatalf("expected completed charged stream, got %+v", detail)
+	}
+	if detail.FirstTokenMs == nil || detail.CompletionMs == nil {
+		t.Fatalf("expected stream image first response and completion timing, got first=%v completion=%v", detail.FirstTokenMs, detail.CompletionMs)
 	}
 }
 

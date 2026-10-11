@@ -157,7 +157,10 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	}
 
 	if isStreaming {
-		result, relayErr := relayValidatedImageAPIStream(w, resp, r.URL.Path)
+		result, relayErr := relayValidatedImageAPIStream(w, resp, r.URL.Path, imageAPIStreamTiming{
+			OnFirstEvent: lifecycleManager.RecordFirstToken,
+			OnCompleted:  lifecycleManager.RecordStreamCompletion,
+		})
 		if relayErr != nil {
 			if result.WriteFailure {
 				lifecycleManager.FailRequest("image_generation_response_write_error", relayErr.Error(), resp.StatusCode)
@@ -182,6 +185,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 		writeImageGenerationError(w, http.StatusBadGateway, "image_api_invalid_upstream_response", "Image upstream returned an invalid response")
 		return
 	}
+	lifecycleManager.RecordNonStreamingResponseComplete()
 	copyImageAPIResponseHeaders(resp, w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -26,6 +26,13 @@ type imageAPIStreamRelayResult struct {
 	WriteFailure  bool
 }
 
+// imageAPIStreamTiming 流式生图的计时回调：首个有效事件（partial / completed）到达记首响，
+// 完成事件写出后记生成耗时。零值表示不计时。
+type imageAPIStreamTiming struct {
+	OnFirstEvent func()
+	OnCompleted  func()
+}
+
 type imageAPIStreamEvent struct {
 	Raw       []byte
 	EventType string
@@ -121,7 +128,7 @@ func validateImageAPIJSONResponse(body []byte) error {
 	return nil
 }
 
-func relayValidatedImageAPIStream(w http.ResponseWriter, resp *http.Response, path string) (imageAPIStreamRelayResult, error) {
+func relayValidatedImageAPIStream(w http.ResponseWriter, resp *http.Response, path string, timing imageAPIStreamTiming) (imageAPIStreamRelayResult, error) {
 	result := imageAPIStreamRelayResult{}
 	if resp == nil || resp.Body == nil {
 		return result, fmt.Errorf("image upstream response is missing body")
@@ -174,6 +181,9 @@ func relayValidatedImageAPIStream(w http.ResponseWriter, resp *http.Response, pa
 		}
 
 		if !result.Committed {
+			if timing.OnFirstEvent != nil {
+				timing.OnFirstEvent()
+			}
 			copyImageAPIResponseHeaders(resp, w)
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
@@ -192,6 +202,9 @@ func relayValidatedImageAPIStream(w http.ResponseWriter, resp *http.Response, pa
 			return result, err
 		}
 		if validation.Terminal {
+			if timing.OnCompleted != nil {
+				timing.OnCompleted()
+			}
 			return result, nil
 		}
 	}
