@@ -16,7 +16,7 @@ type RequestUpstreamOption struct {
 	UpstreamName  string `json:"upstream_name"`
 }
 
-// 空上游名（无端点可路由等）筛选不出东西，不进候选；NULL <> '' 也为假，一并排除。
+// 空上游名（无端点可路由等）筛选不出东西，不进候选；NULL 与空串做 <> 比较不为真，一并排除。
 const requestUpstreamOptionsSelect = `SELECT DISTINCT
 	COALESCE(request_family, 'other'),
 	COALESCE(upstream_type, 'endpoint'),
