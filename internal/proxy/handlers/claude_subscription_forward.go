@@ -51,7 +51,7 @@ var claudeSubscriptionHopByHopHeaders = []string{
 // ForwardClaudeSubscription 把订阅直通请求带着客户端自己的 OAuth 凭据发往 Anthropic 官方。
 // 不经过端点调度：没有端点凭据、自定义头与模型改写；隐私规则按 subscription 上游类型匹配。
 // baseURL 为空时使用官方地址（测试注入本地上游）。
-func (f *Forwarder) ForwardClaudeSubscription(ctx context.Context, r *http.Request, bodyBytes []byte, baseURL string, isSSE, detachUpstream bool, onWroteRequest func(time.Time)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+func (f *Forwarder) ForwardClaudeSubscription(ctx context.Context, r *http.Request, bodyBytes []byte, baseURL string, isSSE, detachUpstream bool, onWroteRequest func(UpstreamWriteTiming)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
 	bodyBytes, err := ApplyPrivacyFilter(f.privacyFilter, r, privacy.Request{
 		Path:         r.URL.Path,
 		Method:       r.Method,

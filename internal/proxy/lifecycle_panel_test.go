@@ -85,7 +85,7 @@ func TestUpstreamWriteMs_PersistedBeforeFirstToken(t *testing.T) {
 	}
 }
 
-// TestFirstTokenStartTime_RetryUsesLatestWrite 重试只更新 FRT 起点，不覆盖首次 upstream_write_ms。
+// TestFirstTokenStartTime_RetryUsesLatestWrite 首响前重试同时更新 FRT 起点与最终写完偏移。
 func TestFirstTokenStartTime_RetryUsesLatestWrite(t *testing.T) {
 	tracker := newLifecyclePanelTestTracker(t)
 	const requestID = "req-upstream-write-retry"
@@ -127,8 +127,8 @@ func TestFirstTokenStartTime_RetryUsesLatestWrite(t *testing.T) {
 	if latestData == nil || latestData.UpstreamWriteMs == nil {
 		t.Fatalf("expected upstream_write_ms retained, got %+v", latestData)
 	}
-	if *latestData.UpstreamWriteMs != firstUpstreamWriteMs {
-		t.Fatalf("retry must not overwrite upstream_write_ms, got %d want %d", *latestData.UpstreamWriteMs, firstUpstreamWriteMs)
+	if want := latestWrite.Sub(rlm.startTime).Milliseconds(); *latestData.UpstreamWriteMs != want {
+		t.Fatalf("retry must overwrite upstream_write_ms before first token, got %d want %d", *latestData.UpstreamWriteMs, want)
 	}
 
 	rlm.RecordFirstToken()
@@ -173,7 +173,7 @@ func TestUpstreamWriteMs_IgnoresFailedWroteRequest(t *testing.T) {
 
 	rlm := NewRequestLifecycleManager(tracker, nil, requestID, nil)
 	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses", true)
-	traceCtx, _ := handlers.WithUpstreamTrace(context.Background(), rlm.SetFirstTokenStartTime)
+	traceCtx, _ := handlers.WithUpstreamTrace(context.Background(), rlm.RecordUpstreamWrite)
 	trace := httptrace.ContextClientTrace(traceCtx)
 	trace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("partial write")})
 

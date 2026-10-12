@@ -407,17 +407,19 @@ export const safeParseJson = (value) => {
 
 /**
  * 获取单请求生命周期详情（B5.2 权威接口，桌面专用）。
- * 返回解析好的对象：found / request（已过 normalizeRequest）/ upstreamWriteMs / scheduleSnapshot / privacyScan。
+ * 返回解析好的对象：权威行、分段计时偏移、调度快照与隐私摘要。
  */
 export const fetchRequestLifecycleDetail = async (requestId) => {
   if (!isWailsEnvironment()) {
-    return { found: false, request: null, upstreamWriteMs: null, scheduleSnapshot: null, privacyScan: null };
+    return { found: false, request: null, upstreamWriteMs: null, upstreamDispatchMs: null, upstreamConnMs: null, scheduleSnapshot: null, privacyScan: null };
   }
   const detail = await WailsApi.getRequestLifecycleDetail(requestId);
   return {
     found: detail?.found === true,
     request: detail?.request ? normalizeRequest(detail.request) : null,
     upstreamWriteMs: detail?.upstream_write_ms ?? null,
+    upstreamDispatchMs: detail?.upstream_dispatch_ms ?? null,
+    upstreamConnMs: detail?.upstream_conn_ms ?? null,
     scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),
     privacyScan: safeParseJson(detail?.privacy_scan_json)
   };

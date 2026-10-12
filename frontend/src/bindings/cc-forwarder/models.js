@@ -900,12 +900,14 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 
 /**
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
- * 三个新字段不在列表 DTO 中，只在本接口返回。
+ * 生命周期字段不在列表 DTO 中，只在本接口返回。
  * @typedef {Object} RequestLifecycleDetail
  * @property {boolean} found
  * @property {string} [source] - hot_pool | database
  * @property {RequestRecord | null} [request]
  * @property {number | null} [upstream_write_ms]
+ * @property {number | null} [upstream_dispatch_ms]
+ * @property {number | null} [upstream_conn_ms]
  * @property {string} [schedule_snapshot_json]
  * @property {string} [privacy_scan_json]
  */

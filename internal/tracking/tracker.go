@@ -448,7 +448,9 @@ type UpdateOptions struct {
 	RouteDecisionAt    *time.Time     // 路由决策时间
 
 	// v6.2 生命周期面板新增字段
-	UpstreamWriteMs      *int64  // 上游请求写完相对 start_time 的偏移（毫秒），write-once
+	UpstreamWriteMs      *int64  // 最终尝试写完偏移（毫秒），首响前覆盖、首响后冻结
+	UpstreamDispatchMs   *int64  // 最终尝试开始取连接偏移（毫秒），仅调度型链路
+	UpstreamConnMs       *int64  // 最终尝试连接就绪偏移（毫秒），HTTP 链路
 	ScheduleSnapshotJSON *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
 	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写
 
@@ -1098,6 +1100,20 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 				req.ModelName = *opts.ModelName
 			}
 			// 首响落定后起点就不再动：晚到的重试写完回调不能改写已经算出首响的那个起点
+			if req.FirstTokenMs == nil {
+				if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 {
+					value := *opts.UpstreamWriteMs
+					req.UpstreamWriteMs = &value
+				}
+				if opts.UpstreamDispatchMs != nil && *opts.UpstreamDispatchMs >= 0 {
+					value := *opts.UpstreamDispatchMs
+					req.UpstreamDispatchMs = &value
+				}
+				if opts.UpstreamConnMs != nil && *opts.UpstreamConnMs >= 0 {
+					value := *opts.UpstreamConnMs
+					req.UpstreamConnMs = &value
+				}
+			}
 			if opts.FirstTokenStartAt != nil && !opts.FirstTokenStartAt.IsZero() && req.FirstTokenMs == nil {
 				startAt := *opts.FirstTokenStartAt
 				req.FirstTokenStartAt = &startAt
@@ -1116,10 +1132,6 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.FailureReason != nil {
 				req.FailureReason = *opts.FailureReason
-			}
-			if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 && req.UpstreamWriteMs == nil {
-				upstreamWriteMs := *opts.UpstreamWriteMs
-				req.UpstreamWriteMs = &upstreamWriteMs
 			}
 			if opts.ScheduleSnapshotJSON != nil {
 				req.ScheduleSnapshotJSON = *opts.ScheduleSnapshotJSON

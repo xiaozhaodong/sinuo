@@ -313,10 +313,14 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     return <InspectorEmpty icon={MousePointerClick}>选择一条请求查看详情</InspectorEmpty>;
   }
 
-  // 详情接口为唯一权威数据源；upstreamWriteMs 仅详情携带，需合并进有效行数据，
-  // 否则 LifecyclePanel 的 buildLifecycleSegments 永远拿不到它，「连接/准备」段不展示。
+  // 详情接口为唯一权威数据源；分段计时偏移仅详情携带，合并后才能拆出排队、建连与发送。
   const request = lifecycle?.request
-    ? { ...lifecycle.request, upstreamWriteMs: lifecycle.upstreamWriteMs ?? null }
+    ? {
+      ...lifecycle.request,
+      upstreamWriteMs: lifecycle.upstreamWriteMs ?? null,
+      upstreamDispatchMs: lifecycle.upstreamDispatchMs ?? null,
+      upstreamConnMs: lifecycle.upstreamConnMs ?? null
+    }
     : initialRequest;
   const presentation = getRequestPresentation(request);
 

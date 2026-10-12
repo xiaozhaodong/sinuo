@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// UpstreamWriteTiming 是同一次成功写出尝试的三个时刻。
+type UpstreamWriteTiming struct {
+	ConnStartAt time.Time
+	ConnReadyAt time.Time
+	WroteAt     time.Time
+}
+
 // UpstreamTraceState 记录单次上游转发的连接级事件（端点侧与账号池侧共用）。
 // 以 WroteHeaders 是否触发作为「重放安全 / 歧义」分界：
 // WroteHeaders 前失败 = 请求确定未发出（DNS / refused / dial 超时 / TLS 握手失败），
@@ -19,6 +26,7 @@ type UpstreamTraceState struct {
 	wroteHeaders     bool
 	wroteRequest     bool
 	wroteRequestErr  error
+	writeTiming      UpstreamWriteTiming
 	upstreamModel    string // v6.3 本 attempt 改写后实际发出的模型；未改写为空
 }
 
@@ -41,9 +49,17 @@ func (s *UpstreamTraceState) UpstreamModel() string {
 	return s.upstreamModel
 }
 
+func (s *UpstreamTraceState) markGetConn() {
+	s.mu.Lock()
+	// transport 内部换连接重发时，连接时刻必须来自新的尝试。
+	s.writeTiming = UpstreamWriteTiming{ConnStartAt: time.Now()}
+	s.mu.Unlock()
+}
+
 func (s *UpstreamTraceState) markGotConn() {
 	s.mu.Lock()
 	s.gotConn = true
+	s.writeTiming.ConnReadyAt = time.Now()
 	s.mu.Unlock()
 }
 
@@ -59,11 +75,13 @@ func (s *UpstreamTraceState) markWroteHeaders() {
 	s.mu.Unlock()
 }
 
-func (s *UpstreamTraceState) markWroteRequest(err error) {
+func (s *UpstreamTraceState) markWroteRequest(err error) UpstreamWriteTiming {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.wroteRequest = true
 	s.wroteRequestErr = err
-	s.mu.Unlock()
+	s.writeTiming.WroteAt = time.Now()
+	return s.writeTiming
 }
 
 // WroteHeaders 返回请求头是否已写向上游。
@@ -91,12 +109,13 @@ func (s *UpstreamTraceState) MarkWroteHeadersForTest() {
 	s.markWroteHeaders()
 }
 
-// WithUpstreamTrace 在 ctx 上挂载 GotConn / TLSHandshakeDone / WroteHeaders /
-// WroteRequest 四事件 trace，返回记录事件的状态结构。
-// onWroteRequest 保留首字计时用途（可为 nil）。
-func WithUpstreamTrace(ctx context.Context, onWroteRequest func(time.Time)) (context.Context, *UpstreamTraceState) {
+// WithUpstreamTrace 挂载连接与写出事件；成功写完后在锁外回调同次尝试的时刻。
+func WithUpstreamTrace(ctx context.Context, onWroteRequest func(UpstreamWriteTiming)) (context.Context, *UpstreamTraceState) {
 	state := &UpstreamTraceState{}
 	trace := &httptrace.ClientTrace{
+		GetConn: func(string) {
+			state.markGetConn()
+		},
 		GotConn: func(httptrace.GotConnInfo) {
 			state.markGotConn()
 		},
@@ -107,11 +126,11 @@ func WithUpstreamTrace(ctx context.Context, onWroteRequest func(time.Time)) (con
 			state.markWroteHeaders()
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			state.markWroteRequest(info.Err)
+			timing := state.markWroteRequest(info.Err)
 			// 只有完整写出成功才形成有效 upstream_write_ms；写出阶段报错时
 			// 请求可能只发送了部分内容，不能伪造“上游写完”时间。
 			if info.Err == nil && onWroteRequest != nil {
-				onWroteRequest(time.Now())
+				onWroteRequest(timing)
 			}
 		},
 	}

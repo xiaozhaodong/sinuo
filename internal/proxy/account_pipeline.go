@@ -758,9 +758,9 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if isSSE {
 		requestCtx, release = h.newAccountStreamForwardContext(ctx)
 	}
-	var onWroteRequest func(time.Time)
+	var onWroteRequest func(handlers.UpstreamWriteTiming)
 	if lifecycleManager != nil {
-		onWroteRequest = lifecycleManager.SetFirstTokenStartTime
+		onWroteRequest = lifecycleManager.RecordUpstreamWrite
 	}
 	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, onWroteRequest)
 

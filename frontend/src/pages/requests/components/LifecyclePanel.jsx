@@ -2,7 +2,7 @@
 // LifecyclePanel - 请求生命周期面板（方案 F2）
 // 2026-08-13
 // 2026-10-07 桌面化：去掉卡片外框，作为详情面板的一栏；
-//            耗时标签 + 分段耗时条 + 图例，下方「调度 / 隐私 / 重试」属性行。
+//            耗时标签 + 分段耗时条 + 分段明细，下方「调度 / 隐私 / 重试」属性行。
 //            原来的「计费输入」格移到详情面板的「Token 与成本」。
 // 组件不持有调度器；拉取由 useRequestLifecycleDetail 负责。
 // ============================================
@@ -30,8 +30,8 @@ const TIMING_CHIP = 'inline-flex items-center rounded border px-1.5 py-px';
 const LoadingLine = () => <span className="block h-3 w-24 animate-pulse rounded bg-surface-mut" />;
 const DashText = () => <span className="text-fg-subtle">—</span>;
 
-// 顶部耗时标签：首字 / 生成 / 总耗 / TPS。
-// 未落定时只给首字：后端只在终态写 duration，此刻的 0 是「还不知道」，算出来的生成 / 总耗 / TPS 都是假值。
+// 顶部耗时标签：首字 / 生成 / 总耗时 / TPS。
+// 未落定时只给首字：后端只在终态写 duration，此刻的 0 是「还不知道」。
 const TimingChips = ({ request }) => {
   const settled = !UNSETTLED_STATUSES.has(request.status);
   const firstResponseMs = settled
@@ -47,20 +47,20 @@ const TimingChips = ({ request }) => {
       {Number.isFinite(firstResponseMs) && <span className={`tone-violet ${TIMING_CHIP}`}>首字 {formatOptionalTimingBadge(firstResponseMs)}</span>}
       {Number.isFinite(completionMs) && <span className={`tone-emerald ${TIMING_CHIP}`}>生成 {formatOptionalTimingBadge(completionMs)}</span>}
       {settled
-        ? <span className={`tone-slate ${TIMING_CHIP}`}>总耗 {formatTimingBadge(request.duration)}</span>
+        ? <span className={`tone-slate ${TIMING_CHIP}`}>总耗时 {formatTimingBadge(request.duration)}</span>
         : <span className="font-sans text-xs text-fg-subtle">进行中，完成后显示完整耗时</span>}
       {Number.isFinite(tokensPerSecond) && <span className={`tone-slate ${TIMING_CHIP}`}>TPS {formatTpsBadge(tokensPerSecond)}</span>}
     </div>
   );
 };
 
-// 分段耗时条：块宽按耗时比例伸展；栏宽有限，放不下的标签截断，完整信息见 title 与图例
-const SegmentBar = ({ segments, totalMs }) => (
+// 分段耗时条：块宽按耗时比例伸展；完整信息见 title 与下方明细。
+const SegmentBar = ({ segments, totalMs, duration, settled }) => (
   <>
     <div className="mt-2 flex h-6 items-stretch gap-0.5 overflow-hidden">
       {segments.map((segment) => {
         const pct = (segment.ms / totalMs) * 100;
-        // 栏宽只有三百多像素：占比不到四分之一的段只显示时间，名称见图例；
+        // 栏宽只有三百多像素：占比不到四分之一的段只显示时间，名称见明细；
         // 终态段 label 为短标签，原始错误全文经 detail 走 tooltip
         const showLabel = pct >= 25;
         const tooltip = `${segment.label} ${formatTimingBadge(segment.ms)}${segment.detail ? `\n${segment.detail}` : ''}`;
@@ -83,8 +83,13 @@ const SegmentBar = ({ segments, totalMs }) => (
         <span key={segment.key} className="inline-flex min-w-0 items-center gap-1.5" title={segment.detail || undefined}>
           <span className={`h-2 w-2 shrink-0 rounded-sm ${lifecycleSegmentColors[segment.key] || FALLBACK_SEGMENT_COLOR}`} />
           <span className="max-w-[180px] truncate">{segment.label}</span>
+          <span className="font-mono">{formatTimingBadge(segment.ms)}</span>
         </span>
       ))}
+      <span className={`inline-flex items-center gap-1.5 border-l border-line-soft pl-3 font-semibold ${settled ? 'text-fg' : 'text-fg-subtle'}`}>
+        <span>总耗时</span>
+        <span className={settled ? 'font-mono' : undefined}>{settled ? formatTimingBadge(duration) : '进行中'}</span>
+      </span>
     </div>
   </>
 );
@@ -167,7 +172,8 @@ const PrivacyValue = ({ privacyScan }) => {
 
 const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = false }) => {
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
-  const segments = buildLifecycleSegments(request);
+  const settled = !UNSETTLED_STATUSES.has(request.status);
+  const segments = buildLifecycleSegments(request).filter((segment) => settled || segment.key !== 'total');
   // 进行中 duration 还是 0：按已有分段之和算占比，否则每段都会被当成「大段」而挂上被截断的长标签
   const totalMs = Math.max(request.duration || 0, segments.reduce((sum, segment) => sum + segment.ms, 0), 1);
 
@@ -183,7 +189,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
   return (
     <div>
       <TimingChips request={request} />
-      <SegmentBar segments={segments} totalMs={totalMs} />
+      <SegmentBar segments={segments} totalMs={totalMs} duration={request.duration} settled={settled} />
 
       <div className="mt-3">
         <PropertyList labelWidth={40} align="start">

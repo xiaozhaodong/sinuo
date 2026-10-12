@@ -12,7 +12,7 @@ import (
 var requestLogTargetColumns = []string{
 	"id", "request_id", "client_ip", "user_agent", "method", "path",
 	"start_time", "end_time", "duration_ms", "first_token_ms", "completion_ms",
-	"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json",
+	"upstream_write_ms", "upstream_dispatch_ms", "upstream_conn_ms", "schedule_snapshot_json", "privacy_scan_json",
 	"request_family", "request_source", "request_kind", "endpoint_name", "model_name",
 	"request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "session_id", "upstream_type",
 	"upstream_source_name", "upstream_name", "upstream_id", "is_streaming",
@@ -170,6 +170,8 @@ func requestLogsTargetSchema(table string) string {
 		first_token_ms INTEGER,
 		completion_ms INTEGER,
 		upstream_write_ms INTEGER,
+		upstream_dispatch_ms INTEGER,
+		upstream_conn_ms INTEGER,
 		schedule_snapshot_json TEXT,
 		privacy_scan_json TEXT,
 		request_family TEXT NOT NULL DEFAULT 'other' CHECK (request_family IN ('claude', 'codex', 'image', 'other')),

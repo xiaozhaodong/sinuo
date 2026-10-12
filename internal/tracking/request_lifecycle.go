@@ -1,6 +1,6 @@
 // request_lifecycle.go
 // 请求生命周期详情读取：热池安全快照 + DB 单行查询的统一出口。
-// 三个新列（upstream_write_ms / schedule_snapshot_json / privacy_scan_json）
+// 分段计时、调度快照与隐私摘要列
 // 不进入通用 RequestDetail 与列表读链路，只在本路径单独返回。
 
 package tracking
@@ -12,10 +12,12 @@ import (
 )
 
 // RequestLifecycleData 弹窗权威详情数据。
-// Detail 复用既有 RequestDetail 映射；三个新字段仅在此结构返回。
+// Detail 复用既有 RequestDetail 映射；生命周期字段仅在此结构返回。
 type RequestLifecycleData struct {
 	Detail               RequestDetail // 弹窗权威行数据（status/timing/tokens/route/failure 等）
 	UpstreamWriteMs      *int64
+	UpstreamDispatchMs   *int64
+	UpstreamConnMs       *int64
 	ScheduleSnapshotJSON string
 	PrivacyScanJSON      string
 	Source               string // "hot_pool" | "database"
@@ -35,6 +37,8 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 			return &RequestLifecycleData{
 				Detail:               ut.ActiveRequestToDetail(snapshot),
 				UpstreamWriteMs:      snapshot.UpstreamWriteMs,
+				UpstreamDispatchMs:   snapshot.UpstreamDispatchMs,
+				UpstreamConnMs:       snapshot.UpstreamConnMs,
 				ScheduleSnapshotJSON: snapshot.ScheduleSnapshotJSON,
 				PrivacyScanJSON:      snapshot.PrivacyScanJSON,
 				Source:               "hot_pool",
@@ -55,14 +59,14 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 		return nil, nil
 	}
 
-	var upstreamWriteMs sql.NullInt64
+	var upstreamWriteMs, upstreamDispatchMs, upstreamConnMs sql.NullInt64
 	var scheduleJSON, privacyJSON string
 	row := ut.readDB.QueryRowContext(ctx, `
-		SELECT upstream_write_ms,
+		SELECT upstream_write_ms, upstream_dispatch_ms, upstream_conn_ms,
 			COALESCE(schedule_snapshot_json, ''),
 			COALESCE(privacy_scan_json, '')
 		FROM request_logs WHERE request_id = ?`, requestID)
-	if err := row.Scan(&upstreamWriteMs, &scheduleJSON, &privacyJSON); err != nil {
+	if err := row.Scan(&upstreamWriteMs, &upstreamDispatchMs, &upstreamConnMs, &scheduleJSON, &privacyJSON); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -77,6 +81,12 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 	}
 	if upstreamWriteMs.Valid {
 		data.UpstreamWriteMs = &upstreamWriteMs.Int64
+	}
+	if upstreamDispatchMs.Valid {
+		data.UpstreamDispatchMs = &upstreamDispatchMs.Int64
+	}
+	if upstreamConnMs.Valid {
+		data.UpstreamConnMs = &upstreamConnMs.Int64
 	}
 	return data, nil
 }

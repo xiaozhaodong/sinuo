@@ -32,7 +32,7 @@ func newRequestLifecycleTestTracker(t *testing.T, hotPoolEnabled bool, flushInte
 	return tracker
 }
 
-// TestGetRequestLifecycleData_HotPoolPath 热池命中：三个新字段逐项一致，UpstreamWriteMs write-once。
+// TestGetRequestLifecycleData_HotPoolPath 热池命中：首响前写完偏移覆盖，首响后冻结。
 func TestGetRequestLifecycleData_HotPoolPath(t *testing.T) {
 	tracker := newRequestLifecycleTestTracker(t, true, time.Hour)
 	ctx := context.Background()
@@ -48,9 +48,13 @@ func TestGetRequestLifecycleData_HotPoolPath(t *testing.T) {
 	tracker.RecordRequestUpdate(requestID, UpdateOptions{ScheduleSnapshotJSON: &scheduleJSON})
 	tracker.RecordRequestUpdate(requestID, UpdateOptions{PrivacyScanJSON: &privacyJSON})
 
-	// write-once：第二次 UpstreamWriteMs 必须被忽略。
+	// 首响前第二次成功写完覆盖为最终尝试。
 	lateWrite := int64(999)
 	tracker.RecordRequestUpdate(requestID, UpdateOptions{UpstreamWriteMs: &lateWrite})
+	firstTokenMs := int64(20)
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{FirstTokenMs: &firstTokenMs})
+	afterFirstTokenWrite := int64(1500)
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{UpstreamWriteMs: &afterFirstTokenWrite})
 
 	data, err := tracker.GetRequestLifecycleData(ctx, requestID)
 	if err != nil {
@@ -62,8 +66,8 @@ func TestGetRequestLifecycleData_HotPoolPath(t *testing.T) {
 	if data.Source != "hot_pool" {
 		t.Fatalf("expected source hot_pool, got %q", data.Source)
 	}
-	if data.UpstreamWriteMs == nil || *data.UpstreamWriteMs != 321 {
-		t.Fatalf("expected upstream_write_ms 321, got %v", data.UpstreamWriteMs)
+	if data.UpstreamWriteMs == nil || *data.UpstreamWriteMs != 999 {
+		t.Fatalf("expected latest upstream_write_ms 999 frozen after first token, got %v", data.UpstreamWriteMs)
 	}
 	if data.ScheduleSnapshotJSON != scheduleJSON {
 		t.Fatalf("expected schedule snapshot preserved, got %q", data.ScheduleSnapshotJSON)

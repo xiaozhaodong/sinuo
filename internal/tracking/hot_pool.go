@@ -66,6 +66,8 @@ type ActiveRequest struct {
 
 	// v6.2 生命周期面板新增字段（热池合并；归档 INSERT 时落库）
 	UpstreamWriteMs      *int64 `json:"upstream_write_ms,omitempty"`
+	UpstreamDispatchMs   *int64 `json:"upstream_dispatch_ms,omitempty"`
+	UpstreamConnMs       *int64 `json:"upstream_conn_ms,omitempty"`
 	ScheduleSnapshotJSON string `json:"schedule_snapshot_json,omitempty"`
 	PrivacyScanJSON      string `json:"privacy_scan_json,omitempty"`
 
@@ -327,6 +329,14 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 	if req.UpstreamWriteMs != nil {
 		value := *req.UpstreamWriteMs
 		clone.UpstreamWriteMs = &value
+	}
+	if req.UpstreamDispatchMs != nil {
+		value := *req.UpstreamDispatchMs
+		clone.UpstreamDispatchMs = &value
+	}
+	if req.UpstreamConnMs != nil {
+		value := *req.UpstreamConnMs
+		clone.UpstreamConnMs = &value
 	}
 	return clone
 }

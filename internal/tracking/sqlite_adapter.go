@@ -194,6 +194,18 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "upstream_dispatch_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_dispatch_ms INTEGER",
+			description: "最终尝试开始取连接偏移字段（仅调度链路）",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "upstream_conn_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_conn_ms INTEGER",
+			description: "最终尝试连接就绪偏移字段（HTTP 链路）",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "schedule_snapshot_json",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN schedule_snapshot_json TEXT",
 			description: "账号池调度快照字段（生命周期面板）",

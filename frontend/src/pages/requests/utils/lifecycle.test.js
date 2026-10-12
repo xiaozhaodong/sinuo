@@ -393,3 +393,90 @@ test('换号次数：换到下一个账号后客户端取消也算 1 次', () =>
   ];
   assert.equal(countAccountSwitches(candidates), 1);
 });
+
+const timedRequest = {
+  duration: 10000,
+  upstreamDispatchMs: 1000,
+  upstreamConnMs: 1500,
+  upstreamWriteMs: 2500,
+  firstTokenMs: 3000,
+  completionMs: 4500,
+  isStreaming: true,
+  status: 'completed'
+};
+
+test('新数据：排队、建连、发送、首字、流式输出首尾相接', () => {
+  const segments = buildLifecycleSegments(timedRequest);
+  assert.deepEqual(segments.map(({ key, label, ms }) => [key, label, ms]), [
+    ['queue', '排队', 1000], ['connect', '建连', 500], ['send', '发送', 1000],
+    ['first', '首字', 3000], ['stream', '流式输出', 4500]
+  ]);
+  assert.match(segments[0].detail, /此前失败/);
+  assert.match(segments[1].detail, /DNS、TCP、TLS/);
+  assert.match(segments[2].detail, /请求体越大/);
+});
+
+test('新数据直通：无 dispatch 时忽略 routeDecisionAt，不制造排队', () => {
+  const segments = buildLifecycleSegments({ ...timedRequest, ...base, upstreamDispatchMs: null, upstreamConnMs: 1500, upstreamWriteMs: 2500, duration: 11500 });
+  assert.equal(segments.some(({ key }) => key === 'queue'), false);
+  assert.deepEqual(segments.slice(0, 2).map(({ key, ms }) => [key, ms]), [['connect', 1500], ['send', 1000]]);
+});
+
+test('复用连接：conn 等于 dispatch 时不显示建连，0ms 排队与发送同样不显示', () => {
+  const segments = buildLifecycleSegments({ ...timedRequest, upstreamConnMs: 1000 });
+  assert.equal(segments.some(({ key }) => key === 'connect'), false);
+  assert.equal(segments.find(({ key }) => key === 'send').ms, 1500);
+  const zero = buildLifecycleSegments({ ...timedRequest, upstreamDispatchMs: 0, upstreamConnMs: 0, upstreamWriteMs: 0, duration: 7500 });
+  assert.deepEqual(zero.map(({ key }) => key), ['first', 'stream']);
+});
+
+test('新数据非单调输入：向写完时刻钳制，段无负差、无重叠', () => {
+  for (const [dispatch, conn, write, expected] of [
+    [3000, 2000, 1000, [['queue', 1000]]],
+    [2000, 500, 1000, [['queue', 500], ['send', 500]]],
+    [-100, -50, 1000, [['send', 1000]]]
+  ]) {
+    const segments = buildLifecycleSegments({ ...timedRequest, upstreamDispatchMs: dispatch, upstreamConnMs: conn, upstreamWriteMs: write, duration: write + 7500 });
+    assert.deepEqual(segments.filter(({ key }) => ['queue', 'connect', 'send'].includes(key)).map(({ key, ms }) => [key, ms]), expected);
+    assert.equal(segments.reduce((sum, { ms }) => sum + ms, 0), write + 7500);
+    assert.ok(segments.every(({ ms }) => ms >= 0));
+  }
+});
+
+test('缺 conn 或 write：完整保留旧数据降级规则，不使用新 dispatch', () => {
+  for (const request of [
+    { ...base, upstreamWriteMs: 2500 },
+    { ...base },
+    { duration: 8000, status: 'completed' },
+    { ...base, status: 'failed', failureReason: 'server_error' }
+  ]) {
+    const expected = buildLifecycleSegments(request);
+    assert.deepEqual(buildLifecycleSegments({ ...request, upstreamConnMs: null, upstreamDispatchMs: 9000 }), expected);
+    if (request.upstreamWriteMs === undefined) {
+      assert.deepEqual(buildLifecycleSegments({ ...request, upstreamConnMs: 9000, upstreamDispatchMs: 9000 }), expected);
+    }
+  }
+});
+
+test('旧订阅直通：无 conn 与选路时刻时显示连接与发送，其他旧标签保持', () => {
+  const request = { ...timedRequest, upstreamConnMs: null, upstreamDispatchMs: null, upstreamType: 'subscription' };
+  assert.deepEqual(buildLifecycleSegments(request)[0], { key: 'connect', label: '连接与发送', ms: 2500 });
+  assert.equal(buildLifecycleSegments({ ...request, upstreamType: 'endpoint' })[0].label, '准备（排队+连接）');
+  assert.equal(buildLifecycleSegments({ ...request, ...base, upstreamWriteMs: 2500 })[1].label, '连接');
+});
+
+test('新数据落定：成功、小残差、大收尾、失败、取消各段之和等于总耗时', () => {
+  for (const request of [
+    timedRequest,
+    { ...timedRequest, duration: 10050 },
+    { ...timedRequest, duration: 10500 },
+    { ...timedRequest, duration: 10500, status: 'failed', failureReason: 'server_error' },
+    { ...timedRequest, duration: 10500, status: 'cancelled', cancelReason: 'client disconnected' },
+    { ...timedRequest, firstTokenMs: null, completionMs: null, duration: 5000, status: 'failed', failureReason: 'server_error' }
+  ]) {
+    const segments = buildLifecycleSegments(request);
+    assert.equal(segments.reduce((sum, { ms }) => sum + ms, 0), request.duration);
+  }
+  assert.equal(buildLifecycleSegments({ ...timedRequest, duration: 10050 }).at(-1).ms, 4550);
+  assert.deepEqual(buildLifecycleSegments({ ...timedRequest, duration: 10500 }).at(-1), { key: 'tail', label: '收尾', ms: 500 });
+});

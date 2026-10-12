@@ -475,12 +475,14 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 }
 
 // RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
-// 三个新字段不在列表 DTO 中，只在本接口返回。
+// 生命周期字段不在列表 DTO 中，只在本接口返回。
 type RequestLifecycleDetail struct {
 	Found                bool           `json:"found"`
 	Source               string         `json:"source,omitempty"` // hot_pool | database
 	Request              *RequestRecord `json:"request,omitempty"`
 	UpstreamWriteMs      *int64         `json:"upstream_write_ms,omitempty"`
+	UpstreamDispatchMs   *int64         `json:"upstream_dispatch_ms,omitempty"`
+	UpstreamConnMs       *int64         `json:"upstream_conn_ms,omitempty"`
 	ScheduleSnapshotJSON string         `json:"schedule_snapshot_json,omitempty"`
 	PrivacyScanJSON      string         `json:"privacy_scan_json,omitempty"`
 }
@@ -509,6 +511,8 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 		Source:               data.Source,
 		Request:              &record,
 		UpstreamWriteMs:      data.UpstreamWriteMs,
+		UpstreamDispatchMs:   data.UpstreamDispatchMs,
+		UpstreamConnMs:       data.UpstreamConnMs,
 		ScheduleSnapshotJSON: data.ScheduleSnapshotJSON,
 		PrivacyScanJSON:      data.PrivacyScanJSON,
 	}, nil

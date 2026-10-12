@@ -103,7 +103,7 @@ const RequestTimingCell = ({ request }) => {
     : null;
   const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
   const timingTooltipItems = [
-    { label: '总耗', value: formatTimingBadge(request.duration) },
+    { label: '总耗时', value: formatTimingBadge(request.duration) },
     { label: 'TPS', value: formatTpsBadge(tokensPerSecond) }
   ];
 

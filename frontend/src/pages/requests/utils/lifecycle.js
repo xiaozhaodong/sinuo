@@ -151,10 +151,11 @@ const terminalSegment = (request = {}, ms = 0) => {
 };
 
 // buildLifecycleSegments 分段推导（毫秒，全部防御 NULL 与非单调输入）。
-// 降级规则（自旧向新）：
+// 有 conn 与 write 时：排队 · 建连 · 发送 · 首字 · 流式输出（· 收尾）。
+// 缺任一项时保持旧数据降级规则：
 //   1. 全无 timing → 单段「总耗时」
 //   2. 只有 first/completion（旧数据）→ 前置 / 首字 / 流式输出
-//   3. 有 upstreamWriteMs 无 routeDecisionAt → 准备（排队+连接）/ 首字 / 流式输出
+//   3. 有 upstreamWriteMs 无 routeDecisionAt → 准备（排队+连接）/ 首字 / 流式输出；订阅直通改为「连接与发送」
 //   4. 全量 → 排队 · 连接 · 首字 · 流式输出（· 收尾）
 //   5. failed/cancelled → 已知段照画，末尾补红/灰标注段
 export const buildLifecycleSegments = (request = {}) => {
@@ -162,8 +163,18 @@ export const buildLifecycleSegments = (request = {}) => {
   const firstMs = toNullableMs(request.firstTokenMs);
   const completionMs = toNullableMs(request.completionMs);
   const isStreaming = request.isStreaming !== false;
-  const queueMs = resolveQueueMs(request);
-  const connectMs = resolveConnectMs(request);
+  const writeMs = toNullableMs(request.upstreamWriteMs);
+  const connMs = toNullableMs(request.upstreamConnMs);
+  const hasConnectionTiming = connMs !== null && writeMs !== null;
+  // 写完偏移是首字的起点；向前钳制连接与取连接偏移，确保不与首字重叠。
+  const readyMs = hasConnectionTiming ? Math.min(connMs, writeMs) : null;
+  const dispatchMs = toNullableMs(request.upstreamDispatchMs);
+  const queueMs = hasConnectionTiming
+    ? (dispatchMs === null ? null : Math.min(dispatchMs, readyMs))
+    : resolveQueueMs(request);
+  const connectMs = hasConnectionTiming
+    ? Math.max(0, readyMs - (queueMs ?? 0))
+    : resolveConnectMs(request);
 
   const hasTiming = firstMs !== null || completionMs !== null || queueMs !== null || connectMs !== null;
 
@@ -176,13 +187,20 @@ export const buildLifecycleSegments = (request = {}) => {
   const segments = [];
 
   if (queueMs !== null && queueMs > 0) {
-    segments.push({ key: 'queue', label: '排队', ms: queueMs });
+    segments.push(hasConnectionTiming
+      ? { key: 'queue', label: '排队', ms: queueMs, detail: '调度选路、本地处理（隐私扫描、请求体压缩），以及此前失败的尝试（如有）' }
+      : { key: 'queue', label: '排队', ms: queueMs });
   }
   if (connectMs !== null && connectMs > 0) {
     // 降级规则 3：无 routeDecisionAt 时排队与连接不可分，合并为「准备」段。
-    segments.push(queueMs === null
-      ? { key: 'connect', label: '准备（排队+连接）', ms: connectMs }
-      : { key: 'connect', label: '连接', ms: connectMs });
+    segments.push(hasConnectionTiming
+      ? { key: 'connect', label: '建连', ms: connectMs, detail: '取得上游连接：新建连接含 DNS、TCP、TLS 与代理握手，复用连接接近 0；直通请求另含几毫秒本地处理' }
+      : (queueMs === null
+        ? { key: 'connect', label: request.upstreamType === 'subscription' ? '连接与发送' : '准备（排队+连接）', ms: connectMs }
+        : { key: 'connect', label: '连接', ms: connectMs }));
+  }
+  if (hasConnectionTiming && writeMs > readyMs) {
+    segments.push({ key: 'send', label: '发送', ms: writeMs - readyMs, detail: '写出请求头与请求体；请求体越大、上行越慢，这段越长' });
   }
   // 降级规则 2：无排队/连接信息时，用总耗时扣除首字与流式推算「前置」。
   if (queueMs === null && connectMs === null && firstMs !== null) {
@@ -226,6 +244,7 @@ export const buildLifecycleSegments = (request = {}) => {
 export const lifecycleSegmentColors = {
   queue: 'bg-slate-200 dark:bg-slate-600',
   connect: 'bg-indigo-200 dark:bg-indigo-800',
+  send: 'bg-sky-200 dark:bg-sky-800',
   pre: 'bg-slate-200 dark:bg-slate-600',
   first: 'bg-violet-300 dark:bg-violet-700',
   stream: 'bg-emerald-300 dark:bg-emerald-700',
@@ -245,6 +264,7 @@ export const lifecycleSegmentColors = {
 export const railSegmentColors = {
   queue: 'bg-slate-300 dark:bg-slate-500',
   connect: 'bg-indigo-300 dark:bg-indigo-400',
+  send: 'bg-sky-300 dark:bg-sky-400',
   pre: 'bg-slate-300 dark:bg-slate-500',
   first: 'bg-violet-400',
   stream: 'bg-emerald-400',

@@ -43,52 +43,51 @@ type RetryContext struct {
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
-	usageTracker          *tracking.UsageTracker        // 使用跟踪器
-	monitoringMiddleware  MonitoringMiddlewareInterface // 监控中间件
-	errorRecovery         *ErrorRecoveryManager         // 错误恢复管理器
-	eventBus              events.EventBus               // EventBus事件总线
-	endpointManager       *endpoint.Manager             // 端点管理器（用于失败追踪）
-	requestID             string                        // 请求唯一标识符
-	startTime             time.Time                     // 请求开始时间
-	modelMu               sync.RWMutex                  // 保护模型字段的读写锁
-	stateMu               sync.RWMutex                  // 保护生命周期状态字段
-	modelName             string                        // 模型名称（计费模型）
-	requestModel          string                        // v6.3 客户端原始请求模型
-	requestReasoning      string                        // v6.3 客户端请求思考配置（归一化串）
-	clientSessionID       string                        // 客户端原始会话，随开始记录写入
-	upstreamModel         string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
-	responseModel         string                        // v6.3 仅由响应解析写入的模型
-	responseReasoning     string                        // v6.3 响应侧思考信息（归一化串）
-	requestFamily         string                        // 请求类型 claude/codex/image/other
-	requestSource         string                        // 入口来源 legacy_proxy/codex_subscription_proxy
-	requestKind           string                        // legacy/generation/compaction
-	endpointName          string                        // 端点名称
-	endpointRevision      int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
-	upstreamType          string                        // 上游类型：endpoint/account
-	upstreamSourceName    string                        // 上游来源名（订阅源等）
-	upstreamName          string                        // 上游名称（账号或端点）
-	upstreamID            int64                         // 上游ID（账号ID，可空）
-	routeMode             string                        // 本请求最近一次端点路由模式
-	requestedEndpoint     string                        // 本请求手动指定端点
-	effectiveEndpoint     string                        // 本请求实际选中端点
-	fallbackReason        string                        // 本请求 fallback/阻塞原因
-	routeDecisionAt       time.Time                     // 本请求最近一次路由决策时间
-	retryCount            int                           // 重试计数
-	lastStatus            string                        // 最后状态
-	lastError             error                         // 最后一次错误
-	finalStatusCode       int                           // 最终状态码
-	modelUpdatedInDB      bool                          // 标记是否已在数据库中更新过模型
-	modelUpdateMu         sync.Mutex                    // 保护模型更新标记
-	firstTokenOnce        sync.Once                     // 确保首响耗时仅记录一次
-	firstTokenStartTime   time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
-	firstTokenAt          time.Time                     // 首个有效响应到达时间
-	upstreamWriteRecorded bool                          // 是否已持久化首个成功的上游写完回调；不限制重试更新首响起点
-	timingMu              sync.RWMutex                  // 保护首响计时字段
-	attemptCounter        int                           // 内部尝试计数器（语义修复：统一重试计数）
-	attemptMu             sync.Mutex                    // 保护尝试计数器的互斥锁
-	pendingErrorContext   *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
-	pendingErrorOriginal  error                         // 预先计算上下文对应的原始错误，用于校验匹配
-	pendingErrorMu        sync.Mutex                    // 保护预先计算错误上下文的互斥锁
+	usageTracker         *tracking.UsageTracker        // 使用跟踪器
+	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
+	errorRecovery        *ErrorRecoveryManager         // 错误恢复管理器
+	eventBus             events.EventBus               // EventBus事件总线
+	endpointManager      *endpoint.Manager             // 端点管理器（用于失败追踪）
+	requestID            string                        // 请求唯一标识符
+	startTime            time.Time                     // 请求开始时间
+	modelMu              sync.RWMutex                  // 保护模型字段的读写锁
+	stateMu              sync.RWMutex                  // 保护生命周期状态字段
+	modelName            string                        // 模型名称（计费模型）
+	requestModel         string                        // v6.3 客户端原始请求模型
+	requestReasoning     string                        // v6.3 客户端请求思考配置（归一化串）
+	clientSessionID      string                        // 客户端原始会话，随开始记录写入
+	upstreamModel        string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
+	responseModel        string                        // v6.3 仅由响应解析写入的模型
+	responseReasoning    string                        // v6.3 响应侧思考信息（归一化串）
+	requestFamily        string                        // 请求类型 claude/codex/image/other
+	requestSource        string                        // 入口来源 legacy_proxy/codex_subscription_proxy
+	requestKind          string                        // legacy/generation/compaction
+	endpointName         string                        // 端点名称
+	endpointRevision     int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
+	upstreamType         string                        // 上游类型：endpoint/account
+	upstreamSourceName   string                        // 上游来源名（订阅源等）
+	upstreamName         string                        // 上游名称（账号或端点）
+	upstreamID           int64                         // 上游ID（账号ID，可空）
+	routeMode            string                        // 本请求最近一次端点路由模式
+	requestedEndpoint    string                        // 本请求手动指定端点
+	effectiveEndpoint    string                        // 本请求实际选中端点
+	fallbackReason       string                        // 本请求 fallback/阻塞原因
+	routeDecisionAt      time.Time                     // 本请求最近一次路由决策时间
+	retryCount           int                           // 重试计数
+	lastStatus           string                        // 最后状态
+	lastError            error                         // 最后一次错误
+	finalStatusCode      int                           // 最终状态码
+	modelUpdatedInDB     bool                          // 标记是否已在数据库中更新过模型
+	modelUpdateMu        sync.Mutex                    // 保护模型更新标记
+	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
+	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
+	firstTokenAt         time.Time                     // 首个有效响应到达时间
+	timingMu             sync.RWMutex                  // 保护首响计时字段
+	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
+	pendingErrorContext  *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal error                         // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu       sync.Mutex                    // 保护预先计算错误上下文的互斥锁
 }
 
 type lifecycleStateSnapshot struct {
@@ -752,11 +751,23 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 	return time.Since(rlm.startTime)
 }
 
-// SetFirstTokenStartTime 接受成功的上游写完时刻。
-// upstream_write_ms 仅持久化第一次成功写完，保留此前失败尝试耗时；
-// 首响到达前允许后续重试更新计时起点，使 first_token_ms 仍接近最终尝试的服务端 FRT。
+// SetFirstTokenStartTime 测试辅助：只有写完时刻时复用最终尝试的记录规则。
 func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
-	if start.IsZero() {
+	rlm.RecordUpstreamWrite(handlers.UpstreamWriteTiming{WroteAt: start})
+}
+
+// RecordUpstreamWrite 调度型链路记录最终尝试的取连接、连接就绪与写完偏移。
+func (rlm *RequestLifecycleManager) RecordUpstreamWrite(timing handlers.UpstreamWriteTiming) {
+	rlm.recordUpstreamWrite(timing, false)
+}
+
+// RecordDirectUpstreamWrite 直通链路只记录连接就绪与写完，不制造排队段。
+func (rlm *RequestLifecycleManager) RecordDirectUpstreamWrite(timing handlers.UpstreamWriteTiming) {
+	rlm.recordUpstreamWrite(timing, true)
+}
+
+func (rlm *RequestLifecycleManager) recordUpstreamWrite(timing handlers.UpstreamWriteTiming, direct bool) {
+	if timing.WroteAt.IsZero() {
 		return
 	}
 	rlm.timingMu.Lock()
@@ -764,27 +775,30 @@ func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 		rlm.timingMu.Unlock()
 		return
 	}
-	rlm.firstTokenStartTime = start
-	shouldPersistUpstreamWrite := !rlm.upstreamWriteRecorded
-	var upstreamWriteMs int64
-	if shouldPersistUpstreamWrite {
-		rlm.upstreamWriteRecorded = true
-		upstreamWriteMs = start.Sub(rlm.startTime).Milliseconds()
-		if upstreamWriteMs < 0 {
-			upstreamWriteMs = 0
-		}
-	}
-	rlm.timingMu.Unlock()
-
+	rlm.firstTokenStartTime = timing.WroteAt
 	if rlm.usageTracker == nil || rlm.requestID == "" {
+		rlm.timingMu.Unlock()
 		return
 	}
-	opts := tracking.UpdateOptions{FirstTokenStartAt: &start}
-	if shouldPersistUpstreamWrite {
-		opts.UpstreamWriteMs = &upstreamWriteMs
+	offset := func(at time.Time) *int64 {
+		if at.IsZero() {
+			return nil
+		}
+		ms := max(at.Sub(rlm.startTime).Milliseconds(), 0)
+		return &ms
 	}
+	opts := tracking.UpdateOptions{
+		FirstTokenStartAt: &timing.WroteAt,
+		UpstreamWriteMs:   offset(timing.WroteAt),
+		UpstreamConnMs:    offset(timing.ConnReadyAt),
+	}
+	if !direct {
+		opts.UpstreamDispatchMs = offset(timing.ConnStartAt)
+	}
+	// 与首响和其他写完回调串行，三列及首字起点始终属于同一次尝试。
 	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
-	rlm.publishTimingEvent(upstreamSentEventData(rlm.requestID, start))
+	rlm.timingMu.Unlock()
+	rlm.publishTimingEvent(upstreamSentEventData(rlm.requestID, timing.WroteAt))
 }
 
 // RecordFirstToken 记录首个有效响应到达耗时（首响）。

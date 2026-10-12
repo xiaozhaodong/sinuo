@@ -19,7 +19,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptrace"
 	"strings"
 	"sync"
 	"time"
@@ -133,11 +132,10 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	p.logger.Debug(fmt.Sprintf("🗜️ [Codex 订阅代理] [%s] 出站正文编码: %s", requestID, bodyMode),
 		"conn_id", requestID, "kind", string(route.Kind), "mode", bodyMode,
 		"plaintext_bytes", len(body.normalizedBody), "wire_bytes", len(wireBody))
-	r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			track.MarkOutbound(int64(len(wireBody)), time.Now())
-		}
-	}}))
+	traceCtx, _ := handlers.WithUpstreamTrace(r.Context(), func(timing handlers.UpstreamWriteTiming) {
+		track.MarkOutbound(int64(len(wireBody)), timing.ConnReadyAt, timing.WroteAt)
+	})
+	r = r.WithContext(traceCtx)
 
 	resp, cancel, err := p.roundTrip(r, route, wireBody, outboundEncoding)
 	if err != nil {

@@ -198,12 +198,12 @@ func (t *subscriptionRequestTracking) SetHTTPStatus(status int) {
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{HttpStatus: &status})
 }
 
-func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, at time.Time) {
+func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, connReadyAt, at time.Time) {
 	if requestBytes < 0 {
 		requestBytes = 0
 	}
 	t.mu.Lock()
-	if !t.active || t.settled || !t.outboundAt.IsZero() {
+	if !t.active || t.settled || !t.firstOutputAt.IsZero() {
 		t.mu.Unlock()
 		return
 	}
@@ -216,8 +216,13 @@ func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, at time.T
 	if ms < 0 {
 		ms = 0
 	}
+	opts := tracking.UpdateOptions{UpstreamWriteMs: &ms, FirstTokenStartAt: &at}
+	if !connReadyAt.IsZero() {
+		connMs := max(connReadyAt.Sub(t.startedAt).Milliseconds(), 0)
+		opts.UpstreamConnMs = &connMs
+	}
+	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 	t.mu.Unlock()
-	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{UpstreamWriteMs: &ms, FirstTokenStartAt: &at})
 	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, upstreamSentEventData(t.requestID, at))
 }
 
@@ -499,7 +504,7 @@ func (o *subscriptionTrackingObserver) SubmissionWarning(connectionID, code stri
 
 func (o *subscriptionTrackingObserver) SubmissionOutbound(submission *subscriptionSubmission, size int64, at time.Time) {
 	if handle := o.submissionHandle(submission, false); handle != nil {
-		handle.MarkOutbound(size, at)
+		handle.MarkOutbound(size, time.Time{}, at)
 	}
 }
 

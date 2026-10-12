@@ -658,9 +658,17 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "route_decision_at = ?")
 		args = append(args, timezonepolicy.FormatStorage(*opts.RouteDecisionAt))
 	}
-	if opts.UpstreamWriteMs != nil {
-		setParts = append(setParts, "upstream_write_ms = COALESCE(upstream_write_ms, ?)")
+	if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 {
+		setParts = append(setParts, "upstream_write_ms = CASE WHEN first_token_ms IS NULL THEN ? ELSE upstream_write_ms END")
 		args = append(args, *opts.UpstreamWriteMs)
+	}
+	if opts.UpstreamDispatchMs != nil && *opts.UpstreamDispatchMs >= 0 {
+		setParts = append(setParts, "upstream_dispatch_ms = CASE WHEN first_token_ms IS NULL THEN ? ELSE upstream_dispatch_ms END")
+		args = append(args, *opts.UpstreamDispatchMs)
+	}
+	if opts.UpstreamConnMs != nil && *opts.UpstreamConnMs >= 0 {
+		setParts = append(setParts, "upstream_conn_ms = CASE WHEN first_token_ms IS NULL THEN ? ELSE upstream_conn_ms END")
+		args = append(args, *opts.UpstreamConnMs)
 	}
 	if opts.ScheduleSnapshotJSON != nil {
 		setParts = append(setParts, "schedule_snapshot_json = ?")
