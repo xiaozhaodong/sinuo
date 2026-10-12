@@ -36,12 +36,48 @@ func TestCacheWriteEndpointCosts_UsesDeduplicatedTotalsAndStoredCosts(t *testing
 		t.Fatalf("上游成本分组不正确：%+v", got)
 	}
 	want := []EndpointCostItem{
-		{Name: "codex", RequestFamily: "codex", Tokens: 273748 * 2, Cost: 0.123456 + 0.417889},
-		{Name: "claude", RequestFamily: "claude", Tokens: 180, Cost: 0.5},
+		{Name: "codex", RequestFamily: "codex", UpstreamType: "endpoint", Tokens: 273748 * 2, Cost: 0.123456 + 0.417889},
+		{Name: "claude", RequestFamily: "claude", UpstreamType: "endpoint", Tokens: 180, Cost: 0.5},
 	}
 	for i, row := range got {
-		if row.Name != want[i].Name || row.RequestFamily != want[i].RequestFamily || row.Tokens != want[i].Tokens || math.Abs(row.Cost-want[i].Cost) > 1e-12 {
+		if row.Name != want[i].Name || row.RequestFamily != want[i].RequestFamily || row.UpstreamType != want[i].UpstreamType || row.Tokens != want[i].Tokens || math.Abs(row.Cost-want[i].Cost) > 1e-12 {
 			t.Fatalf("上游排行重复累计缓存或改变了已存费用：got=%+v want=%+v", got, want)
+		}
+	}
+}
+
+func TestGetEndpointCosts_NormalizesAndReturnsUpstreamTypes(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	now := timezonepolicy.FormatStorage(time.Now())
+	for _, row := range []struct {
+		id, upstreamType, upstreamName string
+	}{
+		{id: "cost-account", upstreamType: "account", upstreamName: "账号上游"},
+		{id: "cost-subscription", upstreamType: "subscription", upstreamName: "订阅上游"},
+		{id: "cost-empty", upstreamType: "", upstreamName: "空类型上游"},
+	} {
+		_, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name,
+			input_tokens, output_tokens, total_cost_usd
+		) VALUES (?, ?, 'completed', 'claude', ?, ?, 100, 20, 0.1)`,
+			row.id, now, row.upstreamType, row.upstreamName)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := app.GetEndpointCosts()
+	byName := make(map[string]string, len(got))
+	for _, row := range got {
+		byName[row.Name] = row.UpstreamType
+	}
+	for name, wantType := range map[string]string{
+		"账号上游":  "account",
+		"订阅上游":  "subscription",
+		"空类型上游": "endpoint",
+	} {
+		if gotType := byName[name]; gotType != wantType {
+			t.Errorf("上游 %q 类型不正确：got %q want %q；全部结果=%+v", name, gotType, wantType, got)
 		}
 	}
 }

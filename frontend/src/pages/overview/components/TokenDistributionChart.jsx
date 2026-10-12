@@ -7,104 +7,59 @@
 // ============================================
 
 import Panel from '@components/desktop/Panel.jsx';
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer
-} from 'recharts';
 import useChartTheme from '@hooks/useChartTheme.js';
 import SectionError from './SectionError.jsx';
 import { buildTokenBreakdown } from '../utils/overviewViewModel.js';
 
-// 自定义 Tooltip
-const CustomTooltip = ({ active, payload }) => {
-  if (!active || !payload || !payload.length) return null;
-
-  const data = payload[0].payload;
-  return (
-    <div className="bg-surface p-3 rounded-lg shadow-lg border border-line-soft text-sm">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: data.color }} />
-        <span className="font-medium text-fg">{data.name}</span>
-      </div>
-      <div className="text-fg-body">
-        <span className="font-mono">{data.valueText}</span>
-        <span className="text-fg-subtle ml-2">({data.percent.toFixed(1)}%)</span>
-      </div>
-    </div>
-  );
-};
-
 const TokenDistributionChart = ({ modelUsage, periodCaption = '', loading, error, onRetry }) => {
   const chart = useChartTheme();
   const breakdown = buildTokenBreakdown(modelUsage);
-  const chartData = breakdown.items
-    .map((item) => ({ ...item, color: chart.series[item.key] }))
-    .filter((item) => item.value > 0);
+  const chartData = breakdown.items.filter((item) => item.value > 0);
+  const subtitle = !loading && !error && breakdown.hasData
+    ? `${periodCaption ? `${periodCaption} · ` : ''}共 ${breakdown.totalText}`
+    : periodCaption;
 
   return (
-    <Panel title="Token 分布" subtitle={periodCaption || undefined} className="h-full" bodyClassName="flex flex-col px-3 py-3">
-      <div className="flex-1 min-h-[180px] flex items-center justify-center relative overflow-visible">
-        {loading ? (
-          <div className="h-32 w-32 animate-pulse rounded-full bg-surface-mut" />
-        ) : error ? (
-          <SectionError error={error} onRetry={onRetry} compact />
-        ) : !breakdown.hasData ? (
-          <div className="text-fg-subtle text-sm">暂无 Token 数据</div>
-        ) : (
-          <>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={chartData}
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={3}
-                  dataKey="value"
-                  animationBegin={0}
-                  animationDuration={500}
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={entry.color}
-                      stroke="none"
-                      className="transition-opacity hover:opacity-80"
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={<CustomTooltip />}
-                  wrapperStyle={{ zIndex: 1000, pointerEvents: 'none' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-lg font-semibold tabular-nums text-fg">{breakdown.totalText}</span>
-              <span className="text-xs text-fg-subtle">总计</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* 图例 */}
-      {!loading && !error && breakdown.hasData && (
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-line-soft pt-2.5">
-          {breakdown.items.map((item) => (
-            <div key={item.key} className="flex items-center justify-between text-xs">
-              <div className="flex items-center text-fg-body">
-                <span
-                  className="w-2.5 h-2.5 rounded-full mr-2 flex-shrink-0"
-                  style={{ backgroundColor: chart.series[item.key] }}
-                />
-                <span className="truncate">{item.name}</span>
-              </div>
-              <span className="font-mono text-fg-muted ml-2">{item.percentText}</span>
-            </div>
-          ))}
+    <Panel
+      title="Token 分布"
+      subtitle={subtitle}
+      className="h-full"
+      bodyClassName="flex flex-col px-3 py-3"
+    >
+      {loading ? (
+        <div className="min-h-[180px] pt-2">
+          <div className="h-2.5 w-full animate-pulse rounded-full bg-surface-mut" />
         </div>
+      ) : error ? (
+        <div className="flex min-h-[180px] items-center justify-center">
+          <SectionError error={error} onRetry={onRetry} compact />
+        </div>
+      ) : !breakdown.hasData ? (
+        <div className="flex min-h-[180px] items-center justify-center text-sm text-fg-subtle">暂无 Token 数据</div>
+      ) : (
+        <>
+          <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full" aria-label="Token 分布条">
+            {chartData.map((item) => (
+              <span
+                key={item.key}
+                className="block min-w-0"
+                style={{ flex: `${item.value} 1 0%`, backgroundColor: chart.series[item.key] }}
+                title={`${item.name} ${item.valueText}（${item.percentText}）`}
+              />
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-line-soft pt-2.5">
+            {breakdown.items.map((item) => (
+              <div key={item.key} className="flex min-w-0 items-center gap-1.5 text-xs">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: chart.series[item.key] }} />
+                <span className="min-w-0 truncate text-fg-body">{item.name}</span>
+                <span className="ml-auto shrink-0 font-mono tabular-nums text-fg-body">{item.valueText}</span>
+                <span className="w-8 shrink-0 text-right text-fg-muted">{item.percentText}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </Panel>
   );

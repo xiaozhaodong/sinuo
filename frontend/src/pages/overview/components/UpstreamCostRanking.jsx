@@ -31,8 +31,11 @@ const UpstreamCostRanking = ({ data = [], loading, error, onRetry }) => {
         ) : (
           <div className="space-y-2.5">
             {rows.map((row) => (
-              <div key={row.name} className="grid grid-cols-[140px_1fr_64px] items-center gap-3">
-                <span className="truncate text-[12.5px] text-fg-body" title={row.name}>{row.name}</span>
+              <div key={row.key} className="grid grid-cols-[160px_1fr_64px] items-center gap-3">
+                <span className="flex min-w-0 truncate text-[12.5px] text-fg-body" title={row.typeLabel ? `${row.name} · ${row.typeLabel}` : row.name}>
+                  <span className="truncate">{row.name}</span>
+                  {row.typeLabel ? <span className="ml-1.5 shrink-0 text-[11px] text-fg-subtle">{row.typeLabel}</span> : null}
+                </span>
                 <span className="h-1.5 overflow-hidden rounded-full bg-surface-mut">
                   <span
                     className="block h-full rounded-full bg-accent-ring/80"

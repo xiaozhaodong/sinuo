@@ -29,6 +29,7 @@ const LIGHT_CHART_THEME = {
     total: '#6366f1',
     success: '#10b981',
     fail: '#f43f5e',
+    trendOther: '#cbd5e1',
     // Token 成本
     tokens: '#818cf8',
     cost: '#f43f5e',
@@ -42,7 +43,8 @@ const LIGHT_CHART_THEME = {
     input: '#6366f1',
     output: '#10b981',
     cacheCreation: '#f59e0b',
-    cacheRead: '#8b5cf6',
+    // 缓存读取占比最大但最便宜，使用中性灰避免抢主视觉。
+    cacheRead: '#94a3b8',
     // 端点连通性
     healthy: '#10b981',
     unhealthy: '#ef4444'
@@ -70,6 +72,7 @@ const DARK_CHART_THEME = {
     total: '#818cf8',
     success: '#34d399',
     fail: '#fb7185',
+    trendOther: '#475569',
     tokens: '#a5b4fc',
     cost: '#fb7185',
     avg: '#22d3ee',
@@ -79,7 +82,8 @@ const DARK_CHART_THEME = {
     input: '#818cf8',
     output: '#34d399',
     cacheCreation: '#fbbf24',
-    cacheRead: '#a78bfa',
+    // 缓存读取占比最大但最便宜，使用中性灰避免抢主视觉。
+    cacheRead: '#64748b',
     healthy: '#34d399',
     unhealthy: '#f87171'
   }

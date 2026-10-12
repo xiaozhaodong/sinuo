@@ -5,8 +5,9 @@
 // 2026-10-07 桌面化：面板样式，表头去掉全大写小字
 // ============================================
 
-import { ExternalLink, Filter } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import Panel from '@components/desktop/Panel.jsx';
+import ModelTag from '@pages/requests/components/ModelTag.jsx';
 import SectionError from './SectionError.jsx';
 import { buildModelRows, formatCount, formatCostUSD, isUnresolvedModelName } from '../utils/overviewViewModel.js';
 
@@ -32,6 +33,10 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
   };
   const hasSummary = familyCounts.claude > 0 || familyCounts.codex > 0;
   const canOpen = !loading && !error && Boolean(modelUsage?.start_time && modelUsage?.end_time);
+  const footerText = [
+    modelUsage?.truncated ? `Top ${rows.length} · 按请求数排序` : '',
+    unresolvedRequestCount > 0 ? `${formatCount(unresolvedRequestCount)} 个请求未解析模型` : ''
+  ].filter(Boolean).join(' · ');
 
   const openRequests = (filter) => {
     if (canOpen && onOpenRequests) onOpenRequests(filter);
@@ -92,42 +97,52 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
             {unresolvedRequestCount > 0 ? `${formatCount(unresolvedRequestCount)} 个请求未解析模型` : '暂无模型调用数据'}
           </div>
         ) : (
-          <div className="max-h-[340px] overflow-auto">
-            {/* table-fixed：模型列固定占 38%，剩余 5 列等分，避免 auto 布局把
-                多余宽度摊给数字列、把模型名挤到只剩省略号 */}
-            <table className="w-full min-w-[400px] table-fixed border-collapse">
-              <thead className="sticky top-0 z-10 bg-surface">
+          <div className="@container max-h-[290px] overflow-auto">
+            <table className="desk-table desk-dense table-fixed">
+              <colgroup>
+                <col />
+                <col className="w-[52px]" />
+                <col className="w-[64px]" />
+                <col className="w-[56px]" />
+                <col className="w-[60px]" />
+                <col className="@max-[440px]:hidden w-[88px]" />
+              </colgroup>
+              <thead>
                 <tr>
-                  {['模型', '请求数', '成功率', '平均耗时', 'Token', '成本'].map((label, index) => (
-                    <th
-                      key={label}
-                      className={`h-7 whitespace-nowrap border-b border-line px-2 text-xs font-medium text-fg-muted first:pl-3 last:pr-3 ${index === 0 ? 'w-[38%] text-left' : 'text-right'}`}
-                    >
-                      {label}
-                    </th>
-                  ))}
+                  <th>模型</th>
+                  <th className="text-right">请求</th>
+                  <th className="text-right">成功率</th>
+                  <th className="text-right">Token</th>
+                  <th className="text-right">成本</th>
+                  <th className="@max-[440px]:hidden text-right" title="占全部生成请求的比例">占比</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.key} className="border-b border-line-soft last:border-b-0 hover:bg-surface-sub">
-                    <td className="py-2 pl-3 pr-2 text-left">
+                  <tr key={row.key} title={row.hoverText} className="hover:bg-surface-sub">
+                    <td className="min-w-0">
                       <button
                         type="button"
                         onClick={() => openRequests({ model: row.rawModelName, requestFamily: row.requestFamily, sourceView: row.upstreamType })}
                         disabled={!canOpen || !row.rawModelName}
-                        className="block w-full truncate text-left text-xs font-semibold text-fg enabled:hover:text-accent"
-                        title={row.rawModelName ? row.modelName : '记录缺少模型名，无法按具体模型筛选'}
+                        className="flex min-w-0 w-full items-center gap-1.5 text-left text-xs text-fg enabled:hover:text-accent"
                       >
-                        {row.modelName}
+                        <ModelTag model={row.rawModelName} compact />
+                        {row.upstreamLabel && <span className="shrink-0 text-[11px] text-fg-subtle">{row.upstreamLabel}</span>}
                       </button>
-                      <span className="mt-0.5 block truncate text-[10px] text-fg-muted">{row.sourceLabel}</span>
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.requestCountText}</td>
-                    <td className={`whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] ${SUCCESS_TONE_CLASSES[row.successRateTone] || SUCCESS_TONE_CLASSES.neutral}`}>{row.successRateText}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.durationText}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-fg-body">{row.tokensText}</td>
-                    <td className="whitespace-nowrap py-2 pl-2 pr-3 text-right font-mono text-[11px] font-semibold text-fg">{row.costText}</td>
+                    <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.requestCountText}</td>
+                    <td className={`text-right font-mono tabular-nums text-xs ${SUCCESS_TONE_CLASSES[row.successRateTone] || SUCCESS_TONE_CLASSES.neutral}`}>{row.successRateText}</td>
+                    <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.tokensText}</td>
+                    <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.costText}</td>
+                    <td className="@max-[440px]:hidden text-right">
+                      <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                        <span className="h-1 w-[36px] overflow-hidden rounded-full bg-surface-mut">
+                          <span className="block h-full rounded-full bg-accent-ring/80" style={{ width: `${row.sharePercent}%` }} />
+                        </span>
+                        <span className="font-mono tabular-nums text-xs text-fg-muted">{row.shareText}</span>
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -136,20 +151,9 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
         )}
       </div>
 
-      {!loading && !error && (rows.length > 0 || unresolvedRequestCount > 0) && (
+      {!loading && !error && footerText && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-soft px-3 py-2">
-          <span className="text-[11px] text-fg-subtle">
-            {modelUsage?.truncated ? `Top ${rows.length} · 按请求数排序` : `共 ${rows.length} 个模型`}
-            {unresolvedRequestCount > 0 ? ` · ${formatCount(unresolvedRequestCount)} 个请求未解析模型` : ''}
-          </span>
-          <button
-            type="button"
-            onClick={() => openRequests({})}
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:text-accent-fg"
-          >
-            <Filter size={12} />
-            按模型 / 来源筛选
-          </button>
+          <span className="text-[11px] text-fg-subtle">{footerText}</span>
         </div>
       )}
     </Panel>

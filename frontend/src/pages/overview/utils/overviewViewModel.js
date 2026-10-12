@@ -251,28 +251,49 @@ export const successRateTone = (rate, requestCount) => {
   return 'neutral';
 };
 
+/** 按全部生成请求计算模型占比，非零小占比不显示为 0%。 */
+export const formatRequestShare = (requestCount, totalRequests) => {
+  const count = Number(requestCount) || 0;
+  const total = Number(totalRequests) || 0;
+  if (count <= 0 || total <= 0) return { sharePercent: 0, shareText: EMPTY_VALUE };
+
+  const percent = (count / total) * 100;
+  const sharePercent = Math.round(percent);
+  const shareText = percent < 1 ? '<1%' : `${sharePercent}%`;
+  return { sharePercent, shareText };
+};
+
 /**
  * 把模型聚合结果转成表格行视图模型。
  * 平均耗时为 0（无有效样本）时显示占位符，而不是 0ms。
  */
 export const buildModelRows = (modelUsage) => {
   const rows = Array.isArray(modelUsage?.rows) ? modelUsage.rows : [];
-  return rows.filter((row) => !isUnresolvedModelName(row?.model_name)).map((row) => ({
-    key: `${row.model_name}|${row.request_family}|${row.upstream_type}`,
-    modelName: modelDisplayName(row.model_name),
-    rawModelName: String(row.model_name || ''),
-    requestFamily: row.request_family,
-    upstreamType: row.upstream_type,
-    sourceLabel: `${familyLabel(row.request_family)} · ${upstreamTypeLabel(row.upstream_type)}`,
-    requestCount: Number(row.request_count) || 0,
-    requestCountText: formatCount(row.request_count),
-    successRate: Number(row.success_rate) || 0,
-    successRateText: formatSuccessRate(row.success_rate, row.request_count),
-    successRateTone: successRateTone(row.success_rate, row.request_count),
-    durationText: formatDurationMs(row.avg_duration_ms),
-    tokensText: formatTokenCount(row.total_tokens),
-    costText: formatCostUSD(row.total_cost_usd)
-  }));
+  const totalRequests = Number(modelUsage?.total_requests) || 0;
+  return rows.filter((row) => !isUnresolvedModelName(row?.model_name)).map((row) => {
+    const upstreamLabel = upstreamTypeLabel(row.upstream_type);
+    const sourceLabel = `${familyLabel(row.request_family)} · ${upstreamLabel}`;
+    const durationText = formatDurationMs(row.avg_duration_ms);
+    return {
+      key: `${row.model_name}|${row.request_family}|${row.upstream_type}`,
+      modelName: modelDisplayName(row.model_name),
+      rawModelName: String(row.model_name || ''),
+      requestFamily: row.request_family,
+      upstreamType: row.upstream_type,
+      sourceLabel,
+      upstreamLabel,
+      requestCount: Number(row.request_count) || 0,
+      requestCountText: formatCount(row.request_count),
+      successRate: Number(row.success_rate) || 0,
+      successRateText: formatSuccessRate(row.success_rate, row.request_count),
+      successRateTone: successRateTone(row.success_rate, row.request_count),
+      durationText,
+      hoverText: `${sourceLabel} · 平均耗时 ${durationText}`,
+      tokensText: formatTokenCount(row.total_tokens),
+      costText: formatCostUSD(row.total_cost_usd),
+      ...formatRequestShare(row.request_count, totalRequests)
+    };
+  });
 };
 
 /** Token 分布视图模型：范围与页面时间范围一致。 */
@@ -309,12 +330,18 @@ export const buildTokenBreakdown = (modelUsage) => {
  * 成本全为 0 时返回空列表，避免画一排零宽度空条。
  */
 export const buildCostRanking = (endpointCosts, limit = 6) => {
-  const list = (Array.isArray(endpointCosts) ? endpointCosts : [])
-    .map((item) => ({
-      name: String(item?.name || '').trim() || '未知上游',
-      cost: Number(item?.cost) || 0,
-      tokens: Number(item?.tokens) || 0
-    }))
+  const merged = new Map();
+  (Array.isArray(endpointCosts) ? endpointCosts : []).forEach((item) => {
+    const upstreamType = String(item?.upstream_type || '').trim();
+    const name = String(item?.name || '').trim() || '未知上游';
+    const key = `${upstreamType}|${name}`;
+    const current = merged.get(key) || { key, name, upstreamType, cost: 0, tokens: 0 };
+    current.cost += Number(item?.cost) || 0;
+    current.tokens += Number(item?.tokens) || 0;
+    merged.set(key, current);
+  });
+
+  const list = [...merged.values()]
     .filter((item) => item.cost > 0)
     .sort((a, b) => b.cost - a.cost)
     .slice(0, limit);
@@ -323,6 +350,7 @@ export const buildCostRanking = (endpointCosts, limit = 6) => {
 
   return list.map((item) => ({
     ...item,
+    typeLabel: UPSTREAM_TYPE_LABELS[item.upstreamType] || '',
     costText: formatCostUSD(item.cost),
     tokensText: formatTokenCount(item.tokens),
     percent: maxCost > 0 ? Math.max((item.cost / maxCost) * 100, 2) : 0
@@ -335,20 +363,31 @@ export const buildCostRanking = (endpointCosts, limit = 6) => {
 export const buildTrendSummary = (chartData) => {
   const points = Array.isArray(chartData) ? chartData : [];
   if (points.length === 0) {
-    return { hasData: false, requestsText: '0', failedText: '0', successText: '0' };
+    return { hasData: false, hasOther: false, requestsText: '0', failedText: '0', successText: '0', otherText: '0' };
   }
 
   const sum = (key) => points.reduce((total, point) => total + (Number(point?.[key]) || 0), 0);
 
+  const other = sum('other');
   return {
     hasData: true,
     requestsText: formatCount(sum('total')),
     successText: formatCount(sum('success')),
-    failedText: formatCount(sum('fail'))
+    failedText: formatCount(sum('fail')),
+    otherText: formatCount(other),
+    hasOther: other > 0
   };
 };
 
-/** 趋势桶粒度 → x 轴标签格式：天桶显示月-日，其余显示时分。 */
+/** 给趋势柱状图补出既非成功也非失败的请求数。 */
+export const withTrendOther = (points) => (Array.isArray(points) ? points : []).map((point) => {
+  const total = Number(point?.total) || 0;
+  const success = Number(point?.success) || 0;
+  const fail = Number(point?.fail) || 0;
+  return { ...point, other: Math.max(total - success - fail, 0) };
+});
+
+/** 趋势桶粒度 → x 轴标签格式：天桶显示月-日，其余显示时:分。 */
 export const formatTrendBucketLabel = (timestamp, granularity, { formatTimeOnly, formatMonthDayTime }) => {
   if (!timestamp) return '';
   if (granularity === 'day') {
@@ -356,5 +395,5 @@ export const formatTrendBucketLabel = (timestamp, granularity, { formatTimeOnly,
     // formatMonthDayTime 形如 "09-09 10:00"，天桶只需要日期部分
     return String(label).split(' ')[0] || String(label);
   }
-  return formatTimeOnly(timestamp);
+  return String(formatTimeOnly(timestamp)).split(':').slice(0, 2).join(':');
 };

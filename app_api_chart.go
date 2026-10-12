@@ -298,6 +298,7 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 type EndpointCostItem struct {
 	Name          string  `json:"name"`
 	RequestFamily string  `json:"request_family"`
+	UpstreamType  string  `json:"upstream_type"`
 	Tokens        int64   `json:"tokens"`
 	Cost          float64 `json:"cost"`
 }
@@ -339,10 +340,15 @@ func (a *App) GetEndpointCosts() []EndpointCostItem {
 		if name == "" {
 			name = "未知上游"
 		}
+		upstreamType := strings.TrimSpace(cost.UpstreamType)
+		if upstreamType == "" {
+			upstreamType = "endpoint"
+		}
 
 		result[i] = EndpointCostItem{
 			Name:          name,
 			RequestFamily: cost.RequestFamily,
+			UpstreamType:  upstreamType,
 			Tokens:        cost.TotalTokens,
 			Cost:          cost.TotalCostUSD,
 		}

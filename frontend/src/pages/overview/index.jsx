@@ -101,7 +101,7 @@ const OverviewPage = ({ onNavigate }) => {
       />
 
       {/* 二级信息：请求趋势 + 模型调用情况 */}
-      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-3">
         <RequestTrendChart
           data={snapshot.trend}
           period={period}
@@ -120,7 +120,7 @@ const OverviewPage = ({ onNavigate }) => {
       </div>
 
       {/* 三级信息：上游成本排行 + Token 使用分布 */}
-      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-3">
         <UpstreamCostRanking
           data={snapshot.endpointCosts}
           loading={false}

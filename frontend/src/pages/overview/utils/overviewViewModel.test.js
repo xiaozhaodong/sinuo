@@ -12,13 +12,15 @@ import {
   buildTokenBreakdown,
   buildTrendSummary,
   formatDurationMs,
+  formatRequestShare,
   formatSuccessRate,
   formatTrendBucketLabel,
   isUnresolvedModelName,
   modelDisplayName,
   resolveOverviewPeriod,
   successRateTone,
-  upstreamTypeLabel
+  upstreamTypeLabel,
+  withTrendOther
 } from './overviewViewModel.js';
 
 test('upstreamTypeLabel 认识订阅直通来源', () => {
@@ -163,6 +165,64 @@ test('模型表：接口无数据时返回空数组而不是假行', () => {
   assert.equal(modelDisplayName('gpt-6-astra'), 'gpt-6-astra');
 });
 
+test('模型表：上游标签、悬停耗时与请求占比保持生成请求口径', () => {
+  const rows = buildModelRows({
+    total_requests: 200,
+    rows: [
+      {
+        model_name: 'claude-opus-4-7',
+        request_family: 'claude',
+        upstream_type: 'account',
+        request_count: 80,
+        avg_duration_ms: 5100
+      },
+      {
+        model_name: 'gpt-5.6-sol',
+        request_family: 'codex',
+        upstream_type: 'endpoint',
+        request_count: 2,
+        avg_duration_ms: 0
+      },
+      {
+        model_name: 'claude-haiku-4-5',
+        request_family: 'claude',
+        upstream_type: 'subscription',
+        request_count: 0,
+        avg_duration_ms: 0
+      }
+    ]
+  });
+
+  assert.equal(rows[0].upstreamLabel, '账号池');
+  assert.equal(rows[0].hoverText, 'Claude · 账号池 · 平均耗时 5.1s');
+  assert.equal(rows[0].sharePercent, 40);
+  assert.equal(rows[0].shareText, '40%');
+  assert.equal(rows[1].sharePercent, 1);
+  assert.equal(rows[1].shareText, '1%');
+  assert.equal(rows[2].sharePercent, 0);
+  assert.equal(rows[2].shareText, '—');
+});
+
+test('模型表：不足 1% 的请求占比显示 <1%', () => {
+  const [row] = buildModelRows({
+    total_requests: 1000,
+    rows: [{ model_name: 'm', request_family: 'codex', upstream_type: 'endpoint', request_count: 1 }]
+  });
+
+  assert.equal(row.sharePercent, 0);
+  assert.equal(row.shareText, '<1%');
+});
+
+test('请求占比格式化：零值占位、小占比与四舍五入边界', () => {
+  for (const [count, total] of [[0, 100], [-1, 100], [10, 0], [10, -100], [undefined, undefined]]) {
+    assert.deepEqual(formatRequestShare(count, total), { sharePercent: 0, shareText: '—' });
+  }
+  assert.deepEqual(formatRequestShare(1, 1000), { sharePercent: 0, shareText: '<1%' });
+  assert.deepEqual(formatRequestShare(8, 1000), { sharePercent: 1, shareText: '<1%' });
+  assert.deepEqual(formatRequestShare(1, 100), { sharePercent: 1, shareText: '1%' });
+  assert.deepEqual(formatRequestShare(41, 200), { sharePercent: 21, shareText: '21%' });
+});
+
 test('Token 分布：Claude 的输入与缓存为独立分项', () => {
   const breakdown = buildTokenBreakdown({
     total_tokens: 1000,
@@ -239,6 +299,22 @@ test('成本排行：空数据返回空列表', () => {
   assert.deepEqual(buildCostRanking([{ name: 'a', cost: 0 }]), []);
 });
 
+test('成本排行：同名同类型合并、不同类型分开、缺失类型不显示标签', () => {
+  const rows = buildCostRanking([
+    { name: 'shared', upstream_type: 'account', cost: 0.2, tokens: 100 },
+    { name: 'shared', upstream_type: 'account', cost: 0.3, tokens: 200 },
+    { name: 'shared', upstream_type: 'endpoint', cost: 0.4, tokens: 300 },
+    { name: 'untyped', cost: 0.1, tokens: 50 }
+  ]);
+
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map((row) => row.key), ['account|shared', 'endpoint|shared', '|untyped']);
+  assert.equal(rows[0].cost, 0.5);
+  assert.equal(rows[1].cost, 0.4);
+  assert.equal(rows[0].typeLabel, '账号池');
+  assert.equal(rows[2].typeLabel, '');
+});
+
 test('趋势摘要：分桶口径下窗口内总量就是各桶之和', () => {
   const summary = buildTrendSummary([
     { total: 100, success: 90, fail: 10 },
@@ -252,19 +328,33 @@ test('趋势摘要：分桶口径下窗口内总量就是各桶之和', () => {
   assert.equal(summary.failedText, '30');
 });
 
+test('趋势摘要：补出其他状态并只在窗口内有其他时显示', () => {
+  const points = withTrendOther([
+    { total: 12, success: 8, fail: 2 },
+    { total: 3, success: 3, fail: 0 },
+    { total: 2, success: 4, fail: 0 }
+  ]);
+  assert.deepEqual(points.map((point) => point.other), [2, 0, 0]);
+
+  const summary = buildTrendSummary(points);
+  assert.equal(summary.otherText, '2');
+  assert.equal(summary.hasOther, true);
+  assert.equal(buildTrendSummary([{ total: 3, success: 3, fail: 0 }]).hasOther, false);
+});
+
 test('趋势摘要：空数据标记无数据', () => {
   assert.equal(buildTrendSummary([]).hasData, false);
   assert.equal(buildTrendSummary(undefined).requestsText, '0');
 });
 
-test('趋势桶标签：天桶只显示月-日，其余显示时分秒', () => {
+test('趋势桶标签：天桶只显示月-日，其余显示时:分', () => {
   const formatters = {
     formatTimeOnly: () => '10:05:00',
     formatMonthDayTime: () => '09-09 10:00'
   };
 
   assert.equal(formatTrendBucketLabel('2026-09-09T02:05:00Z', 'day', formatters), '09-09');
-  assert.equal(formatTrendBucketLabel('2026-09-09T02:05:00Z', 'hour', formatters), '10:05:00');
+  assert.equal(formatTrendBucketLabel('2026-09-09T02:05:00Z', 'hour', formatters), '10:05');
   assert.equal(formatTrendBucketLabel('', 'hour', formatters), '');
 });
 

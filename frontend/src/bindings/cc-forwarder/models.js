@@ -370,6 +370,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @typedef {Object} EndpointCostItem
  * @property {string} name
  * @property {string} request_family
+ * @property {string} upstream_type
  * @property {number} tokens
  * @property {number} cost
  */
