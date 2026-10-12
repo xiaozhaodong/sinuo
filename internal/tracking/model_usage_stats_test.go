@@ -85,13 +85,14 @@ func modelUsageQueryRange(now time.Time) *QueryOptions {
 	return &QueryOptions{StartDate: &start, EndDate: &end}
 }
 
-func TestQueryModelUsageStatsWithHotPool_GroupsByModelFamilyAndUpstream(t *testing.T) {
+// 同一模型走不同上游类型（端点 / 订阅直通）合并为一行，不按上游拆分。
+func TestQueryModelUsageStatsWithHotPool_GroupsByModelAndFamily(t *testing.T) {
 	tracker := newModelUsageTestTracker(t)
 	now := time.Now()
 
 	seedModelUsageRequests(t, tracker, []seededModelUsageRequest{
 		{requestID: "req-mu-1", modelName: "claude-sonnet-4", requestFamily: "claude", upstreamType: "endpoint", upstreamName: "duckcoding", status: "completed", inputTokens: 100, outputTokens: 50, cacheCreation: 10, cacheRead: 20, cost: 0.5, durationMs: 200, startTime: now.Add(-10 * time.Minute)},
-		{requestID: "req-mu-2", modelName: "claude-sonnet-4", requestFamily: "claude", upstreamType: "endpoint", upstreamName: "duckcoding", status: "failed", inputTokens: 0, outputTokens: 0, cost: 0, durationMs: 0, startTime: now.Add(-9 * time.Minute)},
+		{requestID: "req-mu-2", modelName: "claude-sonnet-4", requestFamily: "claude", upstreamType: "subscription", upstreamName: "claude-subscription", status: "failed", inputTokens: 0, outputTokens: 0, cost: 0, durationMs: 0, startTime: now.Add(-9 * time.Minute)},
 		{requestID: "req-mu-3", modelName: "gpt-5-codex", requestFamily: "codex", upstreamType: "account", upstreamName: "acct-1", status: "processing", inputTokens: 40, outputTokens: 10, cost: 0.25, durationMs: 400, startTime: now.Add(-8 * time.Minute)},
 		{requestID: "req-mu-4", modelName: "gpt-5-codex", requestFamily: "codex", upstreamType: "account", upstreamName: "acct-2", status: "completed", inputTokens: 60, outputTokens: 20, cost: 0.75, durationMs: 600, startTime: now.Add(-7 * time.Minute)},
 		{requestID: "req-mu-5", modelName: "", requestFamily: "other", upstreamType: "endpoint", upstreamName: "", status: "cancelled", inputTokens: 5, outputTokens: 5, cost: 0.1, durationMs: 0, startTime: now.Add(-6 * time.Minute)},
@@ -109,13 +110,13 @@ func TestQueryModelUsageStatsWithHotPool_GroupsByModelFamilyAndUpstream(t *testi
 		t.Fatal("expected no truncation with limit 8")
 	}
 
-	// 按请求数降序：claude-sonnet-4(2) > gpt-5-codex/account(2) > 未知模型(1)
+	// 按请求数降序：claude-sonnet-4(2) > gpt-5-codex(2) > 未知模型(1)
 	if stats.Rows[0].ModelName != "claude-sonnet-4" {
 		t.Fatalf("expected claude-sonnet-4 first, got %q", stats.Rows[0].ModelName)
 	}
 	first := stats.Rows[0]
-	if first.RequestFamily != "claude" || first.UpstreamType != "endpoint" {
-		t.Fatalf("unexpected first row source: family=%q upstream=%q", first.RequestFamily, first.UpstreamType)
+	if first.RequestFamily != "claude" {
+		t.Fatalf("unexpected first row family: %q", first.RequestFamily)
 	}
 	if first.RequestCount != 2 || first.SuccessCount != 1 || first.FailedCount != 1 {
 		t.Fatalf("unexpected first row counts: %+v", first)
@@ -260,6 +261,47 @@ func TestQueryModelUsageStatsWithHotPool_DeduplicatesOverlap(t *testing.T) {
 	_ = tracker.hotPool.Remove("req-mu-overlap")
 }
 
+// 库里走端点、热池里走订阅直通的同一模型：热池补偿后仍合并为一行。
+func TestQueryModelUsageStatsWithHotPool_MergesHotPoolAcrossUpstreamTypes(t *testing.T) {
+	tracker := newModelUsageTestTracker(t)
+	now := time.Now()
+
+	seedModelUsageRequests(t, tracker, []seededModelUsageRequest{
+		{requestID: "req-mu-db", modelName: "claude-opus-5-5", requestFamily: "claude", upstreamType: "endpoint", status: "completed", inputTokens: 100, outputTokens: 20, cost: 1, durationMs: 300, startTime: now.Add(-3 * time.Minute)},
+	})
+
+	tracker.RecordRequestStart("req-mu-hot", "127.0.0.1", "stats-agent", "POST", "/v1/messages", false)
+	status := "processing"
+	modelName := "claude-opus-5-5"
+	tracker.RecordRequestUpdate("req-mu-hot", UpdateOptions{
+		Status:    &status,
+		ModelName: &modelName,
+	})
+	if err := tracker.hotPool.Update("req-mu-hot", func(req *ActiveRequest) {
+		req.UpstreamType = "subscription"
+		req.UpstreamName = "claude-subscription"
+		req.InputTokens = 30
+		req.OutputTokens = 10
+	}); err != nil {
+		t.Fatalf("UpdateActiveRequest failed: %v", err)
+	}
+
+	stats, err := tracker.QueryModelUsageStatsWithHotPool(context.Background(), modelUsageQueryRange(now), 8)
+	if err != nil {
+		t.Fatalf("QueryModelUsageStatsWithHotPool failed: %v", err)
+	}
+
+	if len(stats.Rows) != 1 {
+		t.Fatalf("expected one row across upstream types, got %+v", stats.Rows)
+	}
+	// 热池成本按价格表重算，测试库无该模型价格，这里只校验次数与 Token
+	row := stats.Rows[0]
+	if row.ModelName != "claude-opus-5-5" || row.RequestCount != 2 || row.TotalTokens != 160 {
+		t.Fatalf("unexpected merged row: %+v", row)
+	}
+	_ = tracker.hotPool.Remove("req-mu-hot")
+}
+
 func TestQueryModelUsageStatsWithHotPool_DropsEmptyGroupLeftByOverlap(t *testing.T) {
 	tracker := newModelUsageTestTracker(t)
 	now := time.Now()
@@ -302,8 +344,8 @@ func TestQueryModelUsageStatsWithHotPool_KeepsDimensionsForHotPoolOnlyModel(t *t
 	tracker := newModelUsageTestTracker(t)
 	now := time.Now()
 
-	// 数据库里没有任何记录，请求只存在于热池：分组必须带上模型名 / 请求族 / 上游类型，
-	// 否则模型表会显示空模型、空来源，Claude/Codex 汇总也会漏计。
+	// 数据库里没有任何记录，请求只存在于热池：分组必须带上模型名 / 请求族，
+	// 否则模型表会显示空模型，Claude/Codex 汇总也会漏计。
 	tracker.RecordRequestStart("req-hot-only", "127.0.0.1", "stats-agent", "POST", "/v1/responses", false)
 	status := "processing"
 	modelName := "gpt-6-astra"
@@ -337,9 +379,6 @@ func TestQueryModelUsageStatsWithHotPool_KeepsDimensionsForHotPoolOnlyModel(t *t
 	}
 	if row.RequestFamily != "codex" {
 		t.Fatalf("expected codex family from request path, got %q", row.RequestFamily)
-	}
-	if row.UpstreamType != "account" {
-		t.Fatalf("expected account upstream type, got %q", row.UpstreamType)
 	}
 	if row.RequestCount != 1 || row.TotalTokens != 50 || row.AvgDurationMs != 900 {
 		t.Fatalf("unexpected hot-pool-only row: %+v", row)

@@ -14,7 +14,7 @@ const UpstreamCostRanking = ({ data = [], loading, error, onRetry }) => {
   const rows = buildCostRanking(data);
 
   return (
-    <Panel title="上游成本排行" subtitle="今日 · 按真实上游汇总 Token 与预估成本" bodyClassName="px-3 py-3">
+    <Panel title="上游成本排行" subtitle="今日" bodyClassName="px-3 py-3">
       <div className="flex-1 min-h-[180px]">
         {loading ? (
           <div className="space-y-3">

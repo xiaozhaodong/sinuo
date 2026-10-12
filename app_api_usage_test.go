@@ -295,7 +295,7 @@ func TestGetModelUsageStats_SourceViewFiltersUpstreamType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetModelUsageStats(endpoint) failed: %v", err)
 	}
-	if endpointResult.TotalRequests != 1 || len(endpointResult.Rows) != 1 || endpointResult.Rows[0].UpstreamType != "endpoint" {
+	if endpointResult.TotalRequests != 1 || len(endpointResult.Rows) != 1 || endpointResult.Rows[0].RequestCount != 1 {
 		t.Fatalf("unexpected endpoint view: %+v", endpointResult)
 	}
 
@@ -303,8 +303,17 @@ func TestGetModelUsageStats_SourceViewFiltersUpstreamType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetModelUsageStats(account) failed: %v", err)
 	}
-	if accountResult.TotalRequests != 1 || len(accountResult.Rows) != 1 || accountResult.Rows[0].UpstreamType != "account" {
+	if accountResult.TotalRequests != 1 || len(accountResult.Rows) != 1 || accountResult.Rows[0].RequestCount != 1 {
 		t.Fatalf("unexpected account view: %+v", accountResult)
+	}
+
+	// 全部来源：同一模型走两种上游类型合并为一行
+	allResult, err := app.GetModelUsageStats(ModelUsageQueryParams{Period: params.Period, StartDate: params.StartDate, EndDate: params.EndDate, SourceView: "all"})
+	if err != nil {
+		t.Fatalf("GetModelUsageStats(all) failed: %v", err)
+	}
+	if allResult.TotalRequests != 2 || len(allResult.Rows) != 1 || allResult.Rows[0].RequestCount != 2 {
+		t.Fatalf("unexpected all view: %+v", allResult)
 	}
 }
 

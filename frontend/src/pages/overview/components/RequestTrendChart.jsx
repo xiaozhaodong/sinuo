@@ -31,12 +31,6 @@ import {
   withTrendOther
 } from '../utils/overviewViewModel.js';
 
-const GRANULARITY_LABELS = {
-  minute: '5 分钟聚合',
-  hour: '按小时聚合',
-  day: '按天聚合'
-};
-
 const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 const TrendTooltip = ({ active, payload, label, chart }) => {
@@ -82,7 +76,7 @@ const RequestTrendChart = ({ data, period, loading, error, onRetry }) => {
   return (
     <Panel
       title="请求趋势"
-      subtitle={`${caption} · ${GRANULARITY_LABELS[granularity] || '按时间聚合'}`}
+      subtitle={caption}
       actions={(
         <div className="flex gap-3 text-[11.5px] text-fg-muted">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: chart.series.total }} />成功</span>

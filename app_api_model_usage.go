@@ -13,11 +13,10 @@ import (
 // 模型维度调用统计 API（概览页「模型调用情况」）
 // ============================================================
 
-// ModelUsageRowData 单个模型的调用统计
+// ModelUsageRowData 单个模型的调用统计（同一模型走不同上游类型合并为一行）
 type ModelUsageRowData struct {
 	ModelName     string  `json:"model_name"`     // 请求模型名，空值原样返回（前端标记为未知模型）
 	RequestFamily string  `json:"request_family"` // claude/codex/image/other
-	UpstreamType  string  `json:"upstream_type"`  // endpoint/account/subscription
 	RequestCount  int64   `json:"request_count"`
 	SuccessCount  int64   `json:"success_count"` // completed + processing，与 GetUsageStats 同口径
 	FailedCount   int64   `json:"failed_count"`
@@ -156,7 +155,6 @@ func (a *App) GetModelUsageStats(params ModelUsageQueryParams) (ModelUsageStatsD
 		result.Rows = append(result.Rows, ModelUsageRowData{
 			ModelName:     row.ModelName,
 			RequestFamily: row.RequestFamily,
-			UpstreamType:  row.UpstreamType,
 			RequestCount:  row.RequestCount,
 			SuccessCount:  row.SuccessCount,
 			FailedCount:   row.FailedCount,

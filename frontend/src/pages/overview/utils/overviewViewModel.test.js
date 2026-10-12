@@ -19,14 +19,8 @@ import {
   modelDisplayName,
   resolveOverviewPeriod,
   successRateTone,
-  upstreamTypeLabel,
   withTrendOther
 } from './overviewViewModel.js';
-
-test('upstreamTypeLabel 认识订阅直通来源', () => {
-  assert.equal(upstreamTypeLabel('subscription'), '订阅直通');
-  assert.equal(upstreamTypeLabel('endpoint'), '端点');
-});
 
 test('时间范围解析：默认 24h，未知值回退到默认项', () => {
   assert.equal(DEFAULT_OVERVIEW_PERIOD, '1d');
@@ -114,7 +108,6 @@ test('模型表：未解析模型不作为正常模型行展示', () => {
       {
         model_name: 'claude-sonnet-4',
         request_family: 'claude',
-        upstream_type: 'endpoint',
         request_count: 18420,
         success_rate: 99.6,
         avg_duration_ms: 428,
@@ -124,7 +117,6 @@ test('模型表：未解析模型不作为正常模型行展示', () => {
       {
         model_name: '',
         request_family: 'codex',
-        upstream_type: 'account',
         request_count: 3,
         success_rate: 33.3,
         avg_duration_ms: 0,
@@ -136,7 +128,7 @@ test('模型表：未解析模型不作为正常模型行展示', () => {
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].modelName, 'claude-sonnet-4');
-  assert.equal(rows[0].sourceLabel, 'Claude · 端点');
+  assert.equal(rows[0].familyText, 'Claude');
   assert.equal(rows[0].requestCountText, '18,420');
   assert.equal(rows[0].successRateText, '99.60%');
   assert.equal(rows[0].durationText, '428ms');
@@ -172,29 +164,25 @@ test('模型表：上游标签、悬停耗时与请求占比保持生成请求�
       {
         model_name: 'claude-opus-4-7',
         request_family: 'claude',
-        upstream_type: 'account',
         request_count: 80,
         avg_duration_ms: 5100
       },
       {
         model_name: 'gpt-5.6-sol',
         request_family: 'codex',
-        upstream_type: 'endpoint',
         request_count: 2,
         avg_duration_ms: 0
       },
       {
         model_name: 'claude-haiku-4-5',
         request_family: 'claude',
-        upstream_type: 'subscription',
         request_count: 0,
         avg_duration_ms: 0
       }
     ]
   });
 
-  assert.equal(rows[0].upstreamLabel, '账号池');
-  assert.equal(rows[0].hoverText, 'Claude · 账号池 · 平均耗时 5.1s');
+  assert.equal(rows[0].hoverText, 'Claude · 平均耗时 5.1s');
   assert.equal(rows[0].sharePercent, 40);
   assert.equal(rows[0].shareText, '40%');
   assert.equal(rows[1].sharePercent, 1);
@@ -203,10 +191,26 @@ test('模型表：上游标签、悬停耗时与请求占比保持生成请求�
   assert.equal(rows[2].shareText, '—');
 });
 
+test('模型表：同名模型分属多个请求族时才标注请求族', () => {
+  const rows = buildModelRows({
+    total_requests: 30,
+    rows: [
+      { model_name: 'shared-model', request_family: 'claude', request_count: 20 },
+      { model_name: 'shared-model', request_family: 'codex', request_count: 6 },
+      { model_name: 'gpt-6-luna', request_family: 'codex', request_count: 3 },
+      { model_name: 'unknown', request_family: 'codex', request_count: 1 }
+    ]
+  });
+
+  assert.deepEqual(rows.map((row) => row.showFamilyLabel), [true, true, false]);
+  assert.deepEqual(rows.map((row) => row.key), ['shared-model|claude', 'shared-model|codex', 'gpt-6-luna|codex']);
+  assert.equal(rows[2].hoverText, 'Codex · 平均耗时 —');
+});
+
 test('模型表：不足 1% 的请求占比显示 <1%', () => {
   const [row] = buildModelRows({
     total_requests: 1000,
-    rows: [{ model_name: 'm', request_family: 'codex', upstream_type: 'endpoint', request_count: 1 }]
+    rows: [{ model_name: 'm', request_family: 'codex', request_count: 1 }]
   });
 
   assert.equal(row.sharePercent, 0);

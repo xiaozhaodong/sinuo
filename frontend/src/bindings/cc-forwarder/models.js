@@ -663,11 +663,10 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
- * ModelUsageRowData 单个模型的调用统计
+ * ModelUsageRowData 单个模型的调用统计（同一模型走不同上游类型合并为一行）
  * @typedef {Object} ModelUsageRowData
  * @property {string} model_name - 请求模型名，空值原样返回（前端标记为未知模型）
  * @property {string} request_family - claude/codex/image/other
- * @property {string} upstream_type - endpoint/account/subscription
  * @property {number} request_count
  * @property {number} success_count - completed + processing，与 GetUsageStats 同口径
  * @property {number} failed_count

@@ -250,7 +250,7 @@ import * as $models from "./models.js";
  */
 
 /**
- * ModelUsageRowData 单个模型的调用统计
+ * ModelUsageRowData 单个模型的调用统计（同一模型走不同上游类型合并为一行）
  * @typedef {$models.ModelUsageRowData} ModelUsageRowData
  */
 

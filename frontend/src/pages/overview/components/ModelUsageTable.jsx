@@ -45,7 +45,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
   return (
     <Panel
       title="模型调用"
-      subtitle={`${periodCaption ? `${periodCaption} · ` : ''}次数仅计生成，用量含独立压缩`}
+      subtitle={periodCaption}
       actions={(
         <button
           type="button"
@@ -123,12 +123,12 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
                     <td className="min-w-0">
                       <button
                         type="button"
-                        onClick={() => openRequests({ model: row.rawModelName, requestFamily: row.requestFamily, sourceView: row.upstreamType })}
+                        onClick={() => openRequests({ model: row.rawModelName, requestFamily: row.requestFamily })}
                         disabled={!canOpen || !row.rawModelName}
                         className="flex min-w-0 w-full items-center gap-1.5 text-left text-xs text-fg enabled:hover:text-accent"
                       >
                         <ModelTag model={row.rawModelName} compact />
-                        {row.upstreamLabel && <span className="shrink-0 text-[11px] text-fg-subtle">{row.upstreamLabel}</span>}
+                        {row.showFamilyLabel && <span className="shrink-0 text-[11px] text-fg-subtle">{row.familyText}</span>}
                       </button>
                     </td>
                     <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.requestCountText}</td>
@@ -136,7 +136,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
                     <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.tokensText}</td>
                     <td className="text-right font-mono tabular-nums text-xs text-fg-body">{row.costText}</td>
                     <td className="@max-[440px]:hidden text-right">
-                      <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                      <span className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                         <span className="h-1 w-[36px] overflow-hidden rounded-full bg-surface-mut">
                           <span className="block h-full rounded-full bg-accent-ring/80" style={{ width: `${row.sharePercent}%` }} />
                         </span>

@@ -42,9 +42,9 @@ const LIGHT_CHART_THEME = {
     // Token 分布
     input: '#6366f1',
     output: '#10b981',
+    // 缓存按冷暖区分读写：创建是写入、价格高用暖色，读取是读出、价格低用冷色
     cacheCreation: '#f59e0b',
-    // 缓存读取占比最大但最便宜，使用中性灰避免抢主视觉。
-    cacheRead: '#94a3b8',
+    cacheRead: '#38bdf8',
     // 端点连通性
     healthy: '#10b981',
     unhealthy: '#ef4444'
@@ -82,8 +82,7 @@ const DARK_CHART_THEME = {
     input: '#818cf8',
     output: '#34d399',
     cacheCreation: '#fbbf24',
-    // 缓存读取占比最大但最便宜，使用中性灰避免抢主视觉。
-    cacheRead: '#64748b',
+    cacheRead: '#38bdf8',
     healthy: '#34d399',
     unhealthy: '#f87171'
   }

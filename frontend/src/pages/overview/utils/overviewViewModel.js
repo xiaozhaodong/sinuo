@@ -228,8 +228,6 @@ const UPSTREAM_TYPE_LABELS = {
 
 export const familyLabel = (family) => FAMILY_LABELS[family] || '其他';
 
-export const upstreamTypeLabel = (upstreamType) => UPSTREAM_TYPE_LABELS[upstreamType] || '未知来源';
-
 /** 模型尚未解析时不应伪装成一个可筛选的真实模型。 */
 export const isUnresolvedModelName = (modelName) => {
   const name = String(modelName || '').trim().toLowerCase();
@@ -264,31 +262,37 @@ export const formatRequestShare = (requestCount, totalRequests) => {
 };
 
 /**
- * 把模型聚合结果转成表格行视图模型。
+ * 把模型聚合结果转成表格行视图模型。后端按「模型 + 请求族」聚合，不按上游类型拆行。
  * 平均耗时为 0（无有效样本）时显示占位符，而不是 0ms。
+ * 同名模型同时出现在 Claude 与 Codex 请求里才会分出多行，此时才标注请求族。
  */
 export const buildModelRows = (modelUsage) => {
-  const rows = Array.isArray(modelUsage?.rows) ? modelUsage.rows : [];
+  const rows = (Array.isArray(modelUsage?.rows) ? modelUsage.rows : [])
+    .filter((row) => !isUnresolvedModelName(row?.model_name));
   const totalRequests = Number(modelUsage?.total_requests) || 0;
-  return rows.filter((row) => !isUnresolvedModelName(row?.model_name)).map((row) => {
-    const upstreamLabel = upstreamTypeLabel(row.upstream_type);
-    const sourceLabel = `${familyLabel(row.request_family)} · ${upstreamLabel}`;
+  const modelRowCounts = new Map();
+  rows.forEach((row) => {
+    const name = String(row.model_name || '');
+    modelRowCounts.set(name, (modelRowCounts.get(name) || 0) + 1);
+  });
+  return rows.map((row) => {
+    const rawModelName = String(row.model_name || '');
+    const familyText = familyLabel(row.request_family);
     const durationText = formatDurationMs(row.avg_duration_ms);
     return {
-      key: `${row.model_name}|${row.request_family}|${row.upstream_type}`,
+      key: `${row.model_name}|${row.request_family}`,
       modelName: modelDisplayName(row.model_name),
-      rawModelName: String(row.model_name || ''),
+      rawModelName,
       requestFamily: row.request_family,
-      upstreamType: row.upstream_type,
-      sourceLabel,
-      upstreamLabel,
+      familyText,
+      showFamilyLabel: modelRowCounts.get(rawModelName) > 1,
       requestCount: Number(row.request_count) || 0,
       requestCountText: formatCount(row.request_count),
       successRate: Number(row.success_rate) || 0,
       successRateText: formatSuccessRate(row.success_rate, row.request_count),
       successRateTone: successRateTone(row.success_rate, row.request_count),
       durationText,
-      hoverText: `${sourceLabel} · 平均耗时 ${durationText}`,
+      hoverText: `${familyText} · 平均耗时 ${durationText}`,
       tokensText: formatTokenCount(row.total_tokens),
       costText: formatCostUSD(row.total_cost_usd),
       ...formatRequestShare(row.request_count, totalRequests)

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
-	"strings"
 
 	"cc-forwarder/internal/tokenusage"
 )
@@ -17,13 +16,13 @@ import (
 // DefaultModelUsageLimit 模型聚合的默认 Top N。
 const DefaultModelUsageLimit = 8
 
-// ModelUsageRow 表示按「模型 + 请求族 + 上游类型」聚合的请求统计。
+// ModelUsageRow 表示按「模型 + 请求族」聚合的请求统计；同一模型走不同上游类型
+// （端点 / 账号池 / 订阅直通）合并为一行，按上游拆分看上游成本排行。
 // 成功率口径与 AggregatedRequestStats 保持一致：completed/processing 计入成功分子，
 // 分母为全部请求，避免概览与请求页出现两套成功率。
 type ModelUsageRow struct {
 	ModelName     string  `json:"model_name"`
 	RequestFamily string  `json:"request_family"`
-	UpstreamType  string  `json:"upstream_type"`
 	RequestCount  int64   `json:"request_count"`
 	SuccessCount  int64   `json:"success_count"`
 	FailedCount   int64   `json:"failed_count"`
@@ -55,13 +54,11 @@ type ModelUsageStats struct {
 type modelUsageKey struct {
 	modelName     string
 	requestFamily string
-	upstreamType  string
 }
 
 type modelUsageGroup struct {
 	modelName           string
 	requestFamily       string
-	upstreamType        string
 	requestCount        int64
 	successCount        int64
 	failedCount         int64
@@ -76,7 +73,7 @@ type modelUsageGroup struct {
 }
 
 func (g modelUsageGroup) key() modelUsageKey {
-	return modelUsageKey{modelName: g.modelName, requestFamily: g.requestFamily, upstreamType: g.upstreamType}
+	return modelUsageKey{modelName: g.modelName, requestFamily: g.requestFamily}
 }
 
 func (g *modelUsageGroup) add(other modelUsageGroup) {
@@ -145,7 +142,6 @@ func (g modelUsageGroup) toRow() ModelUsageRow {
 	row := ModelUsageRow{
 		ModelName:     g.modelName,
 		RequestFamily: g.requestFamily,
-		UpstreamType:  g.upstreamType,
 		RequestCount:  g.requestCount,
 		SuccessCount:  g.successCount,
 		FailedCount:   g.failedCount,
@@ -165,7 +161,6 @@ func (g modelUsageGroup) toRow() ModelUsageRow {
 const modelUsageStatsSelectBase = `SELECT
 	COALESCE(model_name, '') as model_name,
 	COALESCE(request_family, 'other') as request_family,
-	COALESCE(upstream_type, 'endpoint') as upstream_type,
 	COUNT(*) as request_count,
 	COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_count,
 	COALESCE(SUM(CASE WHEN status IN (` + FailedRequestStatusesSQLList + `) THEN 1 ELSE 0 END), 0) as failed_count,
@@ -179,22 +174,14 @@ const modelUsageStatsSelectBase = `SELECT
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
 	FROM request_logs WHERE 1=1`
 
-const modelUsageStatsGroupByClause = ` GROUP BY COALESCE(model_name, ''), COALESCE(request_family, 'other'), COALESCE(upstream_type, 'endpoint')`
-
-// normalizeModelUsageUpstreamType 与 SQL 侧 COALESCE(upstream_type, 'endpoint') 对齐。
-func normalizeModelUsageUpstreamType(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "endpoint"
-	}
-	return value
-}
+const modelUsageStatsGroupByClause = ` GROUP BY COALESCE(model_name, ''), COALESCE(request_family, 'other')`
 
 func scanModelUsageGroups(rows *sql.Rows) ([]modelUsageGroup, error) {
 	var groups []modelUsageGroup
 	for rows.Next() {
 		var g modelUsageGroup
 		if err := rows.Scan(
-			&g.modelName, &g.requestFamily, &g.upstreamType,
+			&g.modelName, &g.requestFamily,
 			&g.requestCount, &g.successCount, &g.failedCount,
 			&g.inputTokens, &g.outputTokens, &g.cacheCreationTokens, &g.cacheReadTokens,
 			&g.totalTokens,
@@ -251,12 +238,10 @@ func modelUsageGroupsFromRequestDetails(details []RequestDetail) map[modelUsageK
 		key := modelUsageKey{
 			modelName:     req.ModelName,
 			requestFamily: normalizeRequestFamily(req.RequestFamily),
-			upstreamType:  normalizeModelUsageUpstreamType(req.UpstreamType),
 		}
 		group := groups[key]
 		group.modelName = key.modelName
 		group.requestFamily = key.requestFamily
-		group.upstreamType = key.upstreamType
 		group.requestCount++
 		switch {
 		case req.Status == "completed" || req.Status == "processing":
@@ -309,17 +294,16 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 	rowsByKey := make(map[modelUsageKey]*ModelUsageRow, len(generationRows)+len(usageRows))
 	for _, row := range generationRows {
 		copied := row
-		rowsByKey[modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily, upstreamType: row.UpstreamType}] = &copied
+		rowsByKey[modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily}] = &copied
 	}
 	for _, row := range usageRows {
-		key := modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily, upstreamType: row.UpstreamType}
+		key := modelUsageKey{modelName: row.ModelName, requestFamily: row.RequestFamily}
 		existing, ok := rowsByKey[key]
 		if !ok {
 			// 只出现在用量口径的模型（压缩专用）：保留 0 次调用行。
 			rowsByKey[key] = &ModelUsageRow{
 				ModelName:     row.ModelName,
 				RequestFamily: row.RequestFamily,
-				UpstreamType:  row.UpstreamType,
 				TotalTokens:   row.TotalTokens,
 				TotalCostUSD:  row.TotalCostUSD,
 			}
@@ -341,10 +325,7 @@ func (ut *UsageTracker) QueryModelUsageStatsWithHotPool(ctx context.Context, opt
 		if allRows[i].ModelName != allRows[j].ModelName {
 			return allRows[i].ModelName < allRows[j].ModelName
 		}
-		if allRows[i].RequestFamily != allRows[j].RequestFamily {
-			return allRows[i].RequestFamily < allRows[j].RequestFamily
-		}
-		return allRows[i].UpstreamType < allRows[j].UpstreamType
+		return allRows[i].RequestFamily < allRows[j].RequestFamily
 	})
 
 	stats := &ModelUsageStats{
@@ -416,7 +397,7 @@ func (ut *UsageTracker) aggregateModelUsageByKinds(ctx context.Context, opts *Qu
 
 		for key, hotPoolGroup := range modelUsageGroupsFromRequestDetails(uniqueHotPoolRequests) {
 			// 只存在于热池、数据库里还没有记录的模型：零值 group 的
-			// modelName/requestFamily/upstreamType 都是空串，直接 add 会丢掉维度，
+			// modelName/requestFamily 都是空串，直接 add 会丢掉维度，
 			// 所以未命中时整体以热池分组初始化。
 			existing, ok := groupsByKey[key]
 			if !ok {
