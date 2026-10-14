@@ -14,7 +14,6 @@ func TestAcquireEndpointAttemptBuildsImmutableFlatTarget(t *testing.T) {
 	availability := true
 	autoSchedule := true
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
 		Failover: config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		Endpoints: []config.EndpointConfig{{
 			Name:                "primary",
@@ -72,7 +71,6 @@ func TestAcquireEndpointAttemptBuildsImmutableFlatTarget(t *testing.T) {
 
 func TestUpdateEndpointPriorityInvalidatesExistingPlan(t *testing.T) {
 	cfg := &config.Config{
-		Strategy:  config.StrategyConfig{Type: "priority"},
 		Failover:  config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		Endpoints: []config.EndpointConfig{{Name: "priority-target", URL: "https://example.com", Priority: 1, Timeout: time.Second}},
 	}
@@ -94,7 +92,6 @@ func TestUpdateEndpointPriorityInvalidatesExistingPlan(t *testing.T) {
 
 func TestAcquireEndpointAttemptUsesCredentialsCapturedDuringPlanning(t *testing.T) {
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
 		Failover: config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		Endpoints: []config.EndpointConfig{{
 			Name: "credential-target", URL: "https://example.com", Priority: 1,
@@ -124,7 +121,6 @@ func TestAcquireEndpointAttemptUsesCredentialsCapturedDuringPlanning(t *testing.
 
 func TestAttemptSettlementDoesNotMutateNewRevision(t *testing.T) {
 	cfg := &config.Config{
-		Strategy:       config.StrategyConfig{Type: "priority"},
 		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
 		Endpoints:      []config.EndpointConfig{{Name: "settlement-target", URL: "https://old.example.com", Priority: 1}},
@@ -169,7 +165,6 @@ func TestAttemptSettlementDoesNotMutateNewRevision(t *testing.T) {
 // Reset 后重新规划,新 plan 携带推进后的 epoch
 func TestFailureEpochPropagationChain(t *testing.T) {
 	cfg := &config.Config{
-		Strategy:       config.StrategyConfig{Type: "priority"},
 		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
 		Endpoints:      []config.EndpointConfig{{Name: "epoch-chain", URL: "https://old.example.com", Priority: 1}},
@@ -217,7 +212,6 @@ func TestFailureEpochPropagationChain(t *testing.T) {
 // epoch 不匹配 / revision 不匹配 → 不执行返回 false
 func TestApplyEndpointFailureSettlementEntryCheck(t *testing.T) {
 	cfg := &config.Config{
-		Strategy:       config.StrategyConfig{Type: "priority"},
 		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
 		Endpoints:      []config.EndpointConfig{{Name: "settlement-epoch", URL: "https://old.example.com", Priority: 1}},
@@ -258,7 +252,6 @@ func TestPrepareRouteCandidatesUsesConsistentFlatSnapshotsDuringUpdates(t *testi
 	cfgA := config.EndpointConfig{Name: "moving", URL: "https://a.example.com", Priority: 1, Timeout: time.Second, SupportsCountTokens: true, FailoverEnabled: &auto, Token: "a"}
 	cfgB := config.EndpointConfig{Name: "moving", URL: "https://b.example.com", Priority: 3, Timeout: 3 * time.Second, SupportsCountTokens: false, FailoverEnabled: &auto, Token: "b"}
 	cfg := &config.Config{
-		Strategy:  config.StrategyConfig{Type: "priority"},
 		Failover:  config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		Endpoints: []config.EndpointConfig{cfgA, {Name: "stable", URL: "https://stable.example.com", Priority: 2, Timeout: 2 * time.Second}},
 	}
@@ -319,7 +312,6 @@ func TestPrepareRouteCandidatesUsesConsistentFlatSnapshotsDuringUpdates(t *testi
 
 func TestRemoveEndpointClearsNameKeyedRuntimeStateBeforeRecreate(t *testing.T) {
 	cfg := &config.Config{
-		Strategy:       config.StrategyConfig{Type: "priority"},
 		Failover:       config.FailoverConfig{Enabled: true, MaxCandidateAttempts: 3},
 		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: time.Minute, Threshold: 3},
 		Endpoints:      []config.EndpointConfig{{Name: "recreated", URL: "https://old.example.com", Priority: 1}},

@@ -55,7 +55,7 @@ func TestDesktopSettings_VisibleOnlyWhereSupported(t *testing.T) {
 			}
 		}
 	}
-	if !SettingVisible(CategoryStrategy, "tray_hint_shown", "linux") {
+	if !SettingVisible(CategoryRequest, "eof_retry_hint", "linux") {
 		t.Fatal("其他分类不受桌面过滤影响")
 	}
 }

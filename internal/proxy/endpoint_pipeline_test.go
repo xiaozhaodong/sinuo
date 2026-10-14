@@ -19,23 +19,15 @@ import (
 
 func newEndpointPipelineTestHandler(t *testing.T, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {
 	t.Helper()
-	return newEndpointPipelineTestHandlerWithAction(t, "failover", endpoints...)
-}
-
-func newEndpointPipelineTestHandlerWithAction(t *testing.T, failureTrackerAction string, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {
-	t.Helper()
 
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
 		Failover: config.FailoverConfig{
-			Enabled:         true,
-			DefaultCooldown: 10 * time.Minute,
+			Enabled: true,
 		},
 		FailureTracker: config.FailureTrackerConfig{
 			Enabled:    true,
 			TimeWindow: 5 * time.Minute,
 			Threshold:  3,
-			Action:     failureTrackerAction,
 		},
 		Streaming: config.StreamingConfig{
 			ResponseHeaderTimeout: 2 * time.Second,
@@ -585,34 +577,33 @@ func TestEndpointPipeline_CandidateAttemptBudgetStopsAtThree(t *testing.T) {
 	}
 }
 
-// [Phase1 D15 §12] reject 语义：第一逻辑候选处于软失败阈值型冷却即拒绝，
-// 不尝试健康备用端点。
-func TestEndpointPipeline_RejectModeRejectsWhenFirstLogicalCandidateTripped(t *testing.T) {
-	var backupHits int32
-	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&backupHits, 1)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	t.Cleanup(backup.Close)
-
-	handler, manager := newEndpointPipelineTestHandlerWithAction(t, "reject",
-		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
-		endpointPipelineConfig("backup", backup.URL, 2),
-	)
-	manager.SetEndpointCooldown("primary", time.Minute,
-		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
-
-	recorder := performEndpointPipelineRequest(t, handler, false)
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected reject-mode 503, got status=%d body=%s", recorder.Code, recorder.Body.String())
+// 首选端点软失败冷却时，自动与手动优选模式都继续使用健康备用端点。
+func TestEndpointPipeline_SoftFailureCooldownFailsOverToBackup(t *testing.T) {
+	for _, mode := range []string{endpoint.RouteModeAuto, endpoint.RouteModeManualPreferred} {
+		t.Run(mode, func(t *testing.T) {
+			var backupHits int32
+			backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&backupHits, 1)
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			t.Cleanup(backup.Close)
+			handler, manager := newEndpointPipelineTestHandler(t,
+				endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1),
+				endpointPipelineConfig("backup", backup.URL, 2),
+			)
+			manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
+				Mode: mode, EndpointName: "primary", FallbackEnabled: true,
+			})
+			manager.SetEndpointCooldown("primary", time.Minute,
+				endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
+			recorder := performEndpointPipelineRequest(t, handler, false)
+			if recorder.Code != http.StatusOK || atomic.LoadInt32(&backupHits) != 1 {
+				t.Fatalf("首选冷却后应命中备用端点: status=%d hits=%d body=%s",
+					recorder.Code, atomic.LoadInt32(&backupHits), recorder.Body.String())
+			}
+			requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeSuccess, "backup")
+		})
 	}
-	if !strings.Contains(recorder.Body.String(), "failure threshold reached") {
-		t.Fatalf("expected failure threshold message, got %s", recorder.Body.String())
-	}
-	if got := atomic.LoadInt32(&backupHits); got != 0 {
-		t.Fatalf("reject mode must skip healthy backup, hits=%d", got)
-	}
-	requireLatestEndpointScheduleSnapshot(t, manager, endpoint.EndpointScheduleOutcomeRejectedByFailureTracker, "")
 }
 
 // TestEndpointPipeline_StaleEpochSettlementDropped
@@ -701,35 +692,6 @@ func runEndpointPipelineWithLifecycle(t *testing.T, handler *Handler) (*httptest
 	lifecycleManager := NewRequestLifecycleManager(nil, nil, "req-endpoint-pipeline", nil)
 	handler.handleEndpointPipeline(req.Context(), recorder, req, []byte(body), lifecycleManager, false)
 	return recorder, lifecycleManager.snapshotState()
-}
-
-// 前置拒绝发生在候选循环外，SetEndpointAttempt 不会执行。
-// 不补归属则请求追踪落空上游，前端只能显示「未知上游」，看不出是哪个端点触发的阈值。
-// ShouldRejectRequest 的第一逻辑候选优先取 manual 目标，路由上下文同样不能丢。
-func TestEndpointPipeline_RejectMode_RecordsRejectedEndpointAsUpstream(t *testing.T) {
-	handler, manager := newEndpointPipelineTestHandlerWithAction(t, "reject",
-		endpointPipelineConfig("primary", endpointPipelineClosedURL(t), 1))
-	manager.SetClaudeRoutingOverride(endpoint.RouteOverrideState{
-		Mode:            endpoint.RouteModeManualPreferred,
-		EndpointName:    "primary",
-		FallbackEnabled: true,
-	})
-	manager.SetEndpointCooldown("primary", time.Minute,
-		endpoint.SoftFailureCooldownReason(endpoint.SoftFailureCategoryRateLimit))
-
-	recorder, state := runEndpointPipelineWithLifecycle(t, handler)
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected reject-mode 503, got status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if state.endpointName != "primary" || state.upstreamName != "primary" {
-		t.Fatalf("被拒绝端点须落进上游归属: endpoint=%q upstream=%q", state.endpointName, state.upstreamName)
-	}
-	if state.routeMode != endpoint.RouteModeManualPreferred || state.requestedEndpoint != "primary" {
-		t.Fatalf("route_mode 须落真实值而非默认 auto: mode=%q requested=%q", state.routeMode, state.requestedEndpoint)
-	}
-	if state.fallbackReason != "rejected_by_failure_tracker" || state.routeDecisionAt.IsZero() {
-		t.Fatalf("路由诊断缺失: fallback=%q decisionAt=%v", state.fallbackReason, state.routeDecisionAt)
-	}
 }
 
 // manual_fixed 被 block 时端点是已知的，必须落进上游归属；

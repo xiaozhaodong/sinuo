@@ -91,7 +91,7 @@ func newEndpointCooldownAPITestApp(t *testing.T) (*App, *store.SQLiteEndpointRun
 	cfg := &config.Config{
 		Health: config.HealthConfig{Timeout: 5 * time.Second},
 		FailureTracker: config.FailureTrackerConfig{
-			Enabled: true, TimeWindow: 5 * time.Minute, Threshold: 3, Action: "failover",
+			Enabled: true, TimeWindow: 5 * time.Minute, Threshold: 3,
 		},
 		Endpoints: []config.EndpointConfig{},
 	}

@@ -216,8 +216,7 @@ func TestRunStartupEndpointChecks_DoesNotLogWrapperCompletionOnSuccess(t *testin
 	app.logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	app.endpointManager = endpoint.NewManager(&config.Config{
 		Health: config.HealthConfig{
-			Timeout:    time.Second,
-			HealthPath: "/v1/models",
+			Timeout: time.Second,
 		},
 		Endpoints: []config.EndpointConfig{
 			{

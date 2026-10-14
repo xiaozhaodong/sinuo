@@ -11,7 +11,7 @@ const SoftFailurePolicyFields = ({ value, onChange, disabled = false, error = ''
       <FormRow
         label="自定义统计窗口和失败阈值"
         description={[
-          !value.softFailureCustom && '跟随全局设置，初始默认值为 5 分钟内累计 3 次失败。',
+          !value.softFailureCustom && '未自定义时使用默认值：5 分钟内累计 3 次失败。',
           '累计达到阈值后按现有规则处理冷却和切换。修改此策略会重新累计失败次数。'
         ].filter(Boolean).join(' ')}
       >

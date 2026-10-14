@@ -18,12 +18,10 @@ func newSchedulerTestManager(t *testing.T, cfg *config.Config) *Manager {
 func schedulerTestConfig(failoverEnabled bool, names ...string) *config.Config {
 	cfg := &config.Config{
 		Failover: config.FailoverConfig{Enabled: failoverEnabled},
-		Strategy: config.StrategyConfig{Type: "priority"},
 		FailureTracker: config.FailureTrackerConfig{
 			Enabled:    true,
 			TimeWindow: 5 * time.Minute,
 			Threshold:  3,
-			Action:     "failover",
 		},
 	}
 	for i, name := range names {

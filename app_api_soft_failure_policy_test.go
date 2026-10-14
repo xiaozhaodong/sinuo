@@ -87,8 +87,8 @@ func TestSoftFailurePolicy_JSON拒绝小数与非整数(t *testing.T) {
 	}
 }
 
-func TestSoftFailurePolicy_页面全局设置保存后更新继承策略(t *testing.T) {
-	app, db := newAccountPoolAPITestApp(t)
+func TestSoftFailurePolicy_保存设置不改写软失败策略(t *testing.T) {
+	app, _ := newAccountPoolAPITestApp(t)
 	app.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	app.config = &config.Config{
 		FailureTracker: config.FailureTrackerConfig{Enabled: true, TimeWindow: 5 * time.Minute, Threshold: 3},
@@ -99,55 +99,29 @@ func TestSoftFailurePolicy_页面全局设置保存后更新继承策略(t *test
 	}
 	app.endpointManager = endpoint.NewManager(app.config)
 	t.Cleanup(app.endpointManager.Stop)
-	ctx := context.Background()
-	if err := app.settingsService.InitDefaults(ctx); err != nil {
+	if err := app.settingsService.InitDefaults(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	app.settingsService.SetOnChangeCallback(app.applySettingsToConfig)
 	for _, name := range []string{"inherited", "custom"} {
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			app.endpointManager.RecordSoftFailure(name, endpoint.SoftFailureScopeMessages, endpoint.SoftFailureCategoryRateLimit)
 		}
 	}
-	if err := app.BatchUpdateSettings(BatchUpdateSettingsInput{Settings: []UpdateSettingInput{
+	for _, setting := range []UpdateSettingInput{
 		{Category: service.CategoryRequest, Key: "global_timeout", Value: "400s"},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if got := app.endpointManager.GetSoftFailureCounts("inherited", endpoint.SoftFailureScopeMessages)[endpoint.SoftFailureCategoryRateLimit]; got != 2 {
-		t.Fatal("保存无关设置清空了继承计数")
-	}
-	if err := app.BatchUpdateSettings(BatchUpdateSettingsInput{Settings: []UpdateSettingInput{
-		{Category: service.CategoryRequest, Key: "failure_time_window", Value: "10m"},
-		{Category: service.CategoryRequest, Key: "failure_threshold", Value: "4"},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if app.settingsService.GetDuration(ctx, service.CategoryRequest, "failure_time_window", 0) != 10*time.Minute ||
-		app.settingsService.GetInt(ctx, service.CategoryRequest, "failure_threshold", 0) != 4 {
-		t.Fatal("页面设置未持久化")
-	}
-	if app.endpointManager.SoftFailureThreshold("inherited") != 4 {
-		t.Fatal("页面设置未发布到运行态")
-	}
-	if got := app.endpointManager.GetSoftFailureCounts("custom", endpoint.SoftFailureScopeMessages)[endpoint.SoftFailureCategoryRateLimit]; got != 2 {
-		t.Fatal("保存全局设置改变了自定义端点计数")
-	}
-	if count, hit := app.endpointManager.RecordSoftFailure("inherited", endpoint.SoftFailureScopeMessages, endpoint.SoftFailureCategoryRateLimit); count != 1 || hit {
-		t.Errorf("页面保存后仍沿用旧累计: count=%d hit=%v", count, hit)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.BatchUpdateSettings(BatchUpdateSettingsInput{Settings: []UpdateSettingInput{
-		{Category: service.CategoryRequest, Key: "failure_threshold", Value: "5"},
-	}}); err == nil {
-		t.Fatal("未报告保存失败")
-	}
-	if app.endpointManager.SoftFailureThreshold("inherited") != 4 {
-		t.Fatal("保存失败发布了新策略")
-	}
-	if got := app.endpointManager.GetSoftFailureCounts("inherited", endpoint.SoftFailureScopeMessages)[endpoint.SoftFailureCategoryRateLimit]; got != 1 {
-		t.Errorf("保存失败改变了已有计数: %d", got)
+		{Category: service.CategoryRequest, Key: "eof_retry_hint", Value: "true"},
+	} {
+		if err := app.BatchUpdateSettings(BatchUpdateSettingsInput{Settings: []UpdateSettingInput{setting}}); err != nil {
+			t.Fatal(err)
+		}
+		for name, want := range map[string]int{"inherited": 3, "custom": 5} {
+			if got := app.endpointManager.SoftFailureThreshold(name); got != want {
+				t.Fatalf("保存普通设置改变了 %s 阈值: want=%d got=%d", name, want, got)
+			}
+			if got := app.endpointManager.GetSoftFailureCounts(name, endpoint.SoftFailureScopeMessages)[endpoint.SoftFailureCategoryRateLimit]; got != 2 {
+				t.Fatalf("保存普通设置改变了 %s 计数: %d", name, got)
+			}
+		}
 	}
 }

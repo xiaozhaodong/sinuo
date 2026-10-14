@@ -14,7 +14,6 @@ export const resolveSnapshotOutcome = (snapshot = {}) => {
     manual_fixed_blocked: { label: '固定目标不可用', className: 'tone-amber', isAbnormal: true },
     model_routing_unassigned: { label: '模型未配置上游端点', className: 'tone-amber', isAbnormal: true },
     all_candidates_failed: { label: '全部候选失败', className: 'tone-amber', isAbnormal: true },
-    rejected_by_failure_tracker: { label: '失败阈值拦截', className: 'tone-amber', isAbnormal: true },
     rate_limited: { label: '限流', className: 'tone-amber', isAbnormal: true }
   };
   return config[outcome] || {

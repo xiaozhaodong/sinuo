@@ -20,7 +20,6 @@ func testManagerWithFailureTracker(t *testing.T, name string) *Manager {
 			Enabled:    true,
 			TimeWindow: time.Hour,
 			Threshold:  3,
-			Action:     "failover",
 		},
 		Endpoints: []config.EndpointConfig{
 			{Name: name, URL: "http://127.0.0.1:1", Priority: 1, Timeout: 5 * time.Second},

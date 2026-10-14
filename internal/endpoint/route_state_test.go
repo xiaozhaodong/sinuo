@@ -136,7 +136,6 @@ func TestLegacyRouteHelpersReadConfigRaceFree(t *testing.T) {
 	}()
 	for i := 0; i < 200; i++ {
 		_ = manager.GetEndpointByNameAny("fixed")
-		_ = manager.firstLogicalCandidateName()
 		_ = manager.GetManualFixedRouteBlock(RouteRequestProfile{Path: "/v1/messages"})
 		_ = manager.PrepareRouteCandidates(context.Background(), RouteRequestProfile{Path: "/v1/messages"})
 	}

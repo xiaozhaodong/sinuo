@@ -39,14 +39,9 @@ func (h *Handler) handleSSERequest(w http.ResponseWriter, r *http.Request, bodyB
 		connID = connIDValue
 	}
 
-	// Get healthy endpoints with fast testing if enabled
+	// 获取健康端点
 	ctx := r.Context()
-	var endpoints []*endpoint.Endpoint
-	if h.endpointManager.GetConfig().Strategy.Type == "fastest" && h.endpointManager.GetConfig().Strategy.FastTestEnabled {
-		endpoints = h.endpointManager.GetFastestEndpointsWithRealTimeTest(ctx)
-	} else {
-		endpoints = h.endpointManager.GetHealthyEndpoints()
-	}
+	endpoints := h.endpointManager.GetHealthyEndpoints()
 
 	if len(endpoints) == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)

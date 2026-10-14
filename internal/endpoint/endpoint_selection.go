@@ -1,5 +1,5 @@
 // endpoint_selection.go - 端点选择/路由功能
-// 包含健康端点获取、故障转移端点选择、排序策略等
+// 包含健康端点获取与故障转移端点选择
 
 package endpoint
 
@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"time"
 )
 
 func (m *Manager) GetHealthyEndpoints() []*Endpoint {
@@ -78,69 +77,6 @@ func (m *Manager) applyRouteOverrideOrder(endpoints []*Endpoint) []*Endpoint {
 		return false
 	})
 	return endpoints
-}
-
-// sortHealthyEndpoints sorts healthy endpoints based on strategy with optional logging
-func (m *Manager) sortHealthyEndpoints(healthy []*Endpoint, showLogs bool) []*Endpoint {
-	cfg := m.getConfigSnapshot()
-
-	// Sort based on strategy
-	switch cfg.Strategy.Type {
-	case "priority":
-		sort.Slice(healthy, func(i, j int) bool {
-			return healthy[i].Config.Priority < healthy[j].Config.Priority
-		})
-	case "fastest":
-		// Log endpoint latencies for fastest strategy (only if showLogs is true)
-		if len(healthy) > 1 && showLogs {
-			slog.Info("📊 [Fastest Strategy] 基于最近记录的响应时间排序:")
-			for _, ep := range healthy {
-				ep.mutex.RLock()
-				responseTime := ep.Status.ResponseTime
-				ep.mutex.RUnlock()
-				slog.Info(fmt.Sprintf("  ⏱️ %s - 延迟: %dms (来源: 最近连通性记录)",
-					ep.Config.Name, responseTime.Milliseconds()))
-			}
-		}
-
-		type endpointLatency struct {
-			endpoint     *Endpoint
-			responseTime time.Duration
-		}
-
-		latencies := make([]endpointLatency, 0, len(healthy))
-		for _, ep := range healthy {
-			ep.mutex.RLock()
-			responseTime := ep.Status.ResponseTime
-			ep.mutex.RUnlock()
-			latencies = append(latencies, endpointLatency{
-				endpoint:     ep,
-				responseTime: responseTime,
-			})
-		}
-
-		sort.SliceStable(latencies, func(i, j int) bool {
-			if latencies[i].responseTime == latencies[j].responseTime {
-				return latencies[i].endpoint.Config.Priority < latencies[j].endpoint.Config.Priority
-			}
-			return latencies[i].responseTime < latencies[j].responseTime
-		})
-
-		for i := range latencies {
-			healthy[i] = latencies[i].endpoint
-		}
-	}
-
-	return healthy
-}
-
-// GetFastestEndpointsWithRealTimeTest 保留旧 API，候选与排序统一由新调度器负责。
-func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*Endpoint {
-	return m.GetFastestEndpointsWithRealTimeTestForRoute(ctx, RouteRequestProfile{})
-}
-
-func (m *Manager) GetFastestEndpointsWithRealTimeTestForRoute(ctx context.Context, profile RouteRequestProfile) []*Endpoint {
-	return m.PrepareRouteCandidates(ctx, profile).Candidates
 }
 
 // GetEndpointByName 返回可路由的同名端点。

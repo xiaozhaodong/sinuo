@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-forwarder/config"
@@ -466,17 +467,18 @@ type UpdateOptions struct {
 // UsageTracker 使用跟踪器
 type UsageTracker struct {
 	// 原有字段（兼容性）
-	db           *sql.DB
-	eventChan    chan RequestEvent
-	config       *Config
-	pricing      map[string]ModelPricing       // 模型定价缓存
-	endpointMu   map[string]EndpointMultiplier // 端点倍率缓存
-	accountMu    map[int64]EndpointMultiplier  // 账号倍率缓存
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	mu           sync.RWMutex
-	errorHandler *ErrorHandler
+	db            *sql.DB
+	eventChan     chan RequestEvent
+	config        *Config
+	pricing       map[string]ModelPricing       // 模型定价缓存
+	endpointMu    map[string]EndpointMultiplier // 端点倍率缓存
+	accountMu     map[int64]EndpointMultiplier  // 账号倍率缓存
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+	errorHandler  *ErrorHandler
+	retentionDays atomic.Int64
 
 	// 配置时区的共享原子快照。
 	timezonePolicy *timezonepolicy.Policy
@@ -573,7 +575,11 @@ func NewUsageTracker(config *Config, globalTimezone ...string) (*UsageTracker, e
 
 func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*UsageTracker, error) {
 	if config == nil || !config.Enabled {
-		return &UsageTracker{config: config, timezonePolicy: policy}, nil
+		ut := &UsageTracker{config: config, timezonePolicy: policy}
+		if config != nil {
+			ut.SetRetentionDays(config.RetentionDays)
+		}
+		return ut, nil
 	}
 	if policy == nil || policy.Name() == "" {
 		return nil, fmt.Errorf("timezone policy is required")
@@ -641,6 +647,8 @@ func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*
 		writeDB:    writeDB,
 		writeQueue: make(chan WriteRequest, config.BufferSize), // 与事件队列容量一致
 	}
+
+	ut.SetRetentionDays(config.RetentionDays)
 
 	// 初始化错误处理器
 	ut.errorHandler = NewErrorHandler(ut, slog.Default())

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,7 +91,6 @@ type Manager struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	wg                  sync.WaitGroup
-	fastTester          *FastTester
 	softFailures        *SoftFailureTracker // 分类软失败追踪器（§9.3）
 	pendingGates        *pendingGateSet     // §7.6 停用中的安全阻断 gate
 	autoRetention       *autoRetentionState // §8.4 Auto retained 运行态
@@ -141,7 +139,6 @@ func NewManager(cfg *config.Config) *Manager {
 		},
 		ctx:               ctx,
 		cancel:            cancel,
-		fastTester:        NewFastTester(cfg),
 		routeOverride:     NewRouteOverride(),
 		pendingGates:      newPendingGateSet(),
 		autoRetention:     newAutoRetentionState(),
@@ -167,9 +164,6 @@ func NewManager(cfg *config.Config) *Manager {
 		}
 		manager.endpoints = append(manager.endpoints, endpoint)
 	}
-
-	// Set manager reference in fast tester for dynamic token resolution
-	manager.fastTester.SetManager(manager)
 
 	return manager
 }
@@ -199,11 +193,6 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 	m.configMu.Unlock()
 
 	slog.Debug("🔄 [热更新] 更新配置参数完成，端点保持不变")
-
-	// Update fast tester with new config
-	if m.fastTester != nil {
-		m.fastTester.UpdateConfig(cfg)
-	}
 
 	// 🔧 [热更新] 同步更新软失败追踪器配置
 	if m.softFailures != nil {
@@ -407,91 +396,4 @@ func (m *Manager) UpdateFailureTrackerConfig(enabled bool, timeWindow time.Durat
 		}
 		ep.mutex.Unlock()
 	}
-}
-
-// ShouldRejectRequest 检查是否应该拒绝请求（D15 冻结语义，§12）：
-// action=reject 时，检查"第一逻辑候选"是否处于软失败阈值型 cooldown；
-// tripped 即拒绝，不尝试备用端点。第一逻辑候选优先取 manual fixed/preferred
-// 目标，否则按 hard 资格 + 自动调度资格取 priority 最小值端点。
-func (m *Manager) ShouldRejectRequest(profiles ...RouteRequestProfile) (bool, string) {
-	cfg := m.getConfigSnapshot()
-	if !cfg.FailureTracker.Enabled || cfg.FailureTracker.Action != "reject" {
-		return false, ""
-	}
-
-	var profile RouteRequestProfile
-	if len(profiles) > 0 {
-		profile = profiles[0]
-	}
-	name := m.firstLogicalCandidateName(profile)
-	if name == "" {
-		return false, ""
-	}
-	// 直接读 messages 槽：effective cooldown 取"截止最晚"者，更晚到期的 global
-	// auth/quota 冷却会掩盖软失败 reason，导致 reject 误放行（§12）
-	ep := m.GetEndpointByNameAny(name)
-	if ep == nil {
-		return false, ""
-	}
-	ep.mutex.RLock()
-	until := ep.Status.CooldownUntil
-	reason := ep.Status.CooldownReason
-	ep.mutex.RUnlock()
-	if !until.IsZero() && time.Now().Before(until) && strings.HasPrefix(reason, SoftFailureCooldownReasonPrefix) {
-		return true, name
-	}
-	return false, ""
-}
-
-// firstLogicalCandidateName 计算第一逻辑候选（忽略健康/冷却状态）：
-// manual fixed/preferred 目标优先（硬启用时）；否则按 hard 资格 + 自动调度资格
-// 取 priority 最小值端点（v8：legacy active 已退役，不再参与判定）。
-
-func (m *Manager) firstLogicalCandidateName(profiles ...RouteRequestProfile) string {
-	var profile RouteRequestProfile
-	if len(profiles) > 0 {
-		profile = profiles[0]
-	}
-	scope := m.ResolveRouteScope(profile)
-	if scope.Kind == RouteScopeUnassigned {
-		return ""
-	}
-	if scope.Mode != RouteModeAuto && scope.Target != "" {
-		if ep := m.GetEndpointByNameAny(scope.Target); ep != nil && m.EndpointHardEnabled(ep) {
-			return scope.Target
-		}
-	}
-	memberSet := make(map[string]struct{}, len(scope.Members))
-	for _, member := range scope.Members {
-		memberSet[member] = struct{}{}
-	}
-
-	m.endpointsMu.RLock()
-	defer m.endpointsMu.RUnlock()
-	bestName := ""
-	bestPriority := 0
-	for _, ep := range m.endpoints {
-		if ep == nil {
-			continue
-		}
-		ep.mutex.RLock()
-		name := ep.Config.Name
-		priority := ep.Config.Priority
-		hardEnabled := ep.Config.IsAvailabilityEnabled()
-		autoScheduleEnabled := ep.Config.IsAutoScheduleEnabled()
-		ep.mutex.RUnlock()
-		if !hardEnabled || !autoScheduleEnabled {
-			continue
-		}
-		if scope.Kind == RouteScopeUpstreamGroup {
-			if _, ok := memberSet[name]; !ok {
-				continue
-			}
-		}
-		if bestName == "" || priority < bestPriority {
-			bestName = name
-			bestPriority = priority
-		}
-	}
-	return bestName
 }

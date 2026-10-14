@@ -67,7 +67,6 @@ const ConfigPage = () => {
     'server',
     'web',
     'health',
-    'request_suspend',
     'usage_tracking',
     'token_counting',
     'timezone',
@@ -128,18 +127,9 @@ const ConfigPage = () => {
         {config?.health && (
           <ConfigSection title="连通性测试" icon={Shield}>
             <ConfigItem
-              label="轮询间隔"
-              value={config.health.CheckInterval}
-              type="duration"
-            />
-            <ConfigItem
               label="检测超时"
               value={config.health.Timeout}
               type="duration"
-            />
-            <ConfigItem
-              label="检测路径"
-              value={config.health.HealthPath || '直接访问端点 URL'}
             />
           </ConfigSection>
         )}

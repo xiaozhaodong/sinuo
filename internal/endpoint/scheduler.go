@@ -12,8 +12,6 @@ import (
 
 // 端点调度器（方案 §4.2）：纯读候选计算，无路由状态写副作用
 //（不修改冷却 / 激活 / 失败追踪 / 负缓存）。
-// fastest 策略的实时测速属 IO 行为，由转发管线在调用本方法前显式执行
-//（测速只更新测速缓存，非路由状态）；本方法按测速缓存排序。
 
 // EndpointScheduleDecision 单个端点的调度决策记录
 type EndpointScheduleDecision struct {
@@ -35,20 +33,19 @@ const (
 	EndpointScheduleRuntimeAttempting = "attempting"
 	EndpointScheduleRuntimeTryNext    = "try_next"
 
-	EndpointScheduleOutcomePending                  = "pending"
-	EndpointScheduleOutcomeSuccess                  = "success"
-	EndpointScheduleOutcomeQualityIncomplete        = "quality_incomplete"
-	EndpointScheduleOutcomeFailedAfterCommit        = "failed_after_commit"
-	EndpointScheduleOutcomeCancelled                = "cancelled"
-	EndpointScheduleOutcomePrivacyBlocked           = "privacy_blocked"
-	EndpointScheduleOutcomePassthroughError         = "passthrough_error"
-	EndpointScheduleOutcomePassthroughRaw           = "passthrough_raw"
-	EndpointScheduleOutcomeNoCandidates             = "no_candidates"
-	EndpointScheduleOutcomeManualFixedBlocked       = "manual_fixed_blocked"
-	EndpointScheduleOutcomeModelRoutingUnassigned   = "model_routing_unassigned"
-	EndpointScheduleOutcomeAllCandidatesFailed      = "all_candidates_failed"
-	EndpointScheduleOutcomeRejectedByFailureTracker = "rejected_by_failure_tracker"
-	EndpointScheduleOutcomeRateLimited              = "rate_limited"
+	EndpointScheduleOutcomePending                = "pending"
+	EndpointScheduleOutcomeSuccess                = "success"
+	EndpointScheduleOutcomeQualityIncomplete      = "quality_incomplete"
+	EndpointScheduleOutcomeFailedAfterCommit      = "failed_after_commit"
+	EndpointScheduleOutcomeCancelled              = "cancelled"
+	EndpointScheduleOutcomePrivacyBlocked         = "privacy_blocked"
+	EndpointScheduleOutcomePassthroughError       = "passthrough_error"
+	EndpointScheduleOutcomePassthroughRaw         = "passthrough_raw"
+	EndpointScheduleOutcomeNoCandidates           = "no_candidates"
+	EndpointScheduleOutcomeManualFixedBlocked     = "manual_fixed_blocked"
+	EndpointScheduleOutcomeModelRoutingUnassigned = "model_routing_unassigned"
+	EndpointScheduleOutcomeAllCandidatesFailed    = "all_candidates_failed"
+	EndpointScheduleOutcomeRateLimited            = "rate_limited"
 	// 待完成快照的保留时长，与热池 MaxAge（30 分钟）对齐：长输出请求可能跑超过 5 分钟，
 	// 收尾时快照还得在，否则最终结果写不进去；超过 30 分钟的请求会被热池判超时，不必再等。
 	endpointScheduleSnapshotPendingTTL = 30 * time.Minute
@@ -582,7 +579,7 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 		eligible = append(eligible, candidate)
 	}
 
-	// §8.3：priority 层级；最优层内 retained 优先，其余按策略排序
+	// §8.3：priority 层级；最优层内 retained 优先，其余保持原顺序
 	sort.SliceStable(eligible, func(i, j int) bool {
 		return eligible[i].config.Priority < eligible[j].config.Priority
 	})
@@ -601,7 +598,6 @@ func (m *Manager) PrepareRouteCandidates(ctx context.Context, profile RouteReque
 			}
 		}
 
-		bestTier = m.sortEndpointCandidateSnapshots(ctx, bestTier)
 		retainedName := m.RetainedInTierForScope(scope.Key(), bestPriority)
 		if retainedName != "" {
 			for i, candidate := range bestTier {
@@ -752,70 +748,4 @@ func (m *Manager) classifyEndpointRoutable(ep *Endpoint, profile RouteRequestPro
 	}
 
 	return true, "", time.Time{}
-}
-
-// sortEndpointCandidateSnapshots 只使用值快照排序；实时测速也使用脱离 Manager 的配置副本。
-func (m *Manager) sortEndpointCandidateSnapshots(ctx context.Context, rest []endpointScheduleCandidateSnapshot) []endpointScheduleCandidateSnapshot {
-	cfg := m.getConfigSnapshot()
-	if cfg.Strategy.Type == "fastest" && cfg.Strategy.FastTestEnabled && len(rest) > 1 && m.fastTester != nil {
-		testEndpoints := make([]*Endpoint, 0, len(rest))
-		for _, candidate := range rest {
-			testConfig := cloneEndpointConfig(candidate.config)
-			// 强制命中快照凭据，禁止 FastTester 再回查运行态。
-			testConfig.Token = candidate.token
-			testConfig.ApiKey = candidate.apiKey
-			testEndpoints = append(testEndpoints, &Endpoint{Config: testConfig, Status: candidate.status})
-		}
-		results, _ := m.fastTester.TestEndpointsParallel(ctx, testEndpoints)
-		if ordered := orderEndpointSnapshotsByFastTestResults(rest, results); len(ordered) == len(rest) {
-			return ordered
-		}
-	}
-	if cfg.Strategy.Type == "fastest" {
-		sort.SliceStable(rest, func(i, j int) bool {
-			if rest[i].status.ResponseTime == rest[j].status.ResponseTime {
-				return rest[i].config.Priority < rest[j].config.Priority
-			}
-			return rest[i].status.ResponseTime < rest[j].status.ResponseTime
-		})
-	}
-	return rest
-}
-
-// orderEndpointSnapshotsByFastTestResults 按实时测速结果排序：成功者按响应时间升序在前，
-// 失败/未覆盖者保持原相对顺序在后。
-func orderEndpointSnapshotsByFastTestResults(rest []endpointScheduleCandidateSnapshot, results []*FastTestResult) []endpointScheduleCandidateSnapshot {
-	if len(results) == 0 {
-		return nil
-	}
-	type timing struct {
-		candidate    endpointScheduleCandidateSnapshot
-		responseTime time.Duration
-	}
-	successTimes := make(map[string]time.Duration, len(results))
-	for _, result := range results {
-		if result != nil && result.Success && result.Endpoint != nil {
-			successTimes[result.Endpoint.Config.Name] = result.ResponseTime
-		}
-	}
-	fast := make([]timing, 0, len(rest))
-	slow := make([]endpointScheduleCandidateSnapshot, 0, len(rest))
-	for _, candidate := range rest {
-		if responseTime, ok := successTimes[candidate.config.Name]; ok {
-			fast = append(fast, timing{candidate: candidate, responseTime: responseTime})
-		} else {
-			slow = append(slow, candidate)
-		}
-	}
-	sort.SliceStable(fast, func(i, j int) bool {
-		if fast[i].responseTime == fast[j].responseTime {
-			return fast[i].candidate.config.Priority < fast[j].candidate.config.Priority
-		}
-		return fast[i].responseTime < fast[j].responseTime
-	})
-	ordered := make([]endpointScheduleCandidateSnapshot, 0, len(rest))
-	for _, item := range fast {
-		ordered = append(ordered, item.candidate)
-	}
-	return append(ordered, slow...)
 }

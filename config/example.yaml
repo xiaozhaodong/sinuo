@@ -10,26 +10,9 @@ server:
   host: "0.0.0.0"      # Docker环境中监听所有接口，默认: localhost
   port: 8087             # 监听端口，默认: 8080
 
-# 路由策略配置(适用于组内)
-strategy:
-  type: "fastest"                  # 路由策略: "priority" (优先级) 或 "fastest" (最快响应)
-  fast_test_enabled: true          # 启用快速测试 (仅在 fastest 策略下生效)
-  fast_test_cache_ttl: "30s"       # 快速测试结果缓存时间，默认: 3s
-  fast_test_timeout: "5s"          # 快速测试超时时间，默认: 1s  
-  fast_test_path: "/v1/models"     # 快速测试路径，默认使用健康检查路径
-
-# 重试配置
-retry:
-  max_attempts: 3        # 最大重试次数，默认: 3
-  base_delay: "1s"       # 基础延迟时间，默认: 1s
-  max_delay: "30s"       # 最大延迟时间，默认: 30s
-  multiplier: 2.0        # 延迟倍数，默认: 2.0
-
 # 健康检查配置
 health:
-  check_interval: "30s"  # 健康检查间隔，默认: 30s
   timeout: "5s"          # 健康检查超时，默认: 5s
-  health_path: "/v1/models"  # 健康检查路径，默认: /v1/models
 
 # 日志配置
 logging:
@@ -111,7 +94,6 @@ web:
 # Token计数配置
 token_counting:
   enabled: true              # 是否启用count_tokens端点支持，默认: false
-  estimation_ratio: 4.0      # Token估算比例 (1 token ≈ 4 字符)，默认: 4.0
 
 # =================================================================
 # 🗄️  Claude 端点存储配置
@@ -169,7 +151,7 @@ usage_tracking:
   # - 内存缓冲，平滑处理突发请求
   
   # 数据保留策略
-  retention_days: 0                     # 数据保留天数 (0=永久保留)，默认: 90
+  retention_days: 0                     # 数据保留天数，默认: 0（永久保留）
   cleanup_interval: "24h"                # 清理任务执行间隔，默认: 24h
 
   # =================================================================

@@ -1257,10 +1257,6 @@ func (a *App) setupSettingsStore() {
 		return
 	}
 
-	if err := a.migrateLegacyConnectivitySettings(ctx); err != nil {
-		a.logger.Warn("⚠️ 连通性设置迁移失败", "error", err)
-	}
-
 	// 从数据库加载设置并应用到配置
 	a.applySettingsToConfig()
 
@@ -1269,48 +1265,6 @@ func (a *App) setupSettingsStore() {
 	a.portManager = utils.NewPortManager(preferredPort)
 
 	a.logger.Info("✅ 系统设置存储已启用 (SQLite)")
-}
-
-func (a *App) migrateLegacyConnectivitySettings(ctx context.Context) error {
-	if a.settingsService == nil || a.settingsStore == nil {
-		return nil
-	}
-
-	legacyPath := "/v1/models"
-	updates := make([]*store.SettingRecord, 0, 2)
-
-	checks := []struct {
-		category string
-		key      string
-	}{
-		{category: service.CategoryHealth, key: "health_path"},
-		{category: service.CategoryStrategy, key: "fast_test_path"},
-	}
-
-	for _, item := range checks {
-		record, err := a.settingsService.Get(ctx, item.category, item.key)
-		if err != nil {
-			return err
-		}
-		if record != nil && record.Value == legacyPath {
-			updates = append(updates, &store.SettingRecord{
-				Category: item.category,
-				Key:      item.key,
-				Value:    "",
-			})
-		}
-	}
-
-	if len(updates) == 0 {
-		return nil
-	}
-
-	if err := a.settingsStore.BatchUpdateValues(ctx, updates); err != nil {
-		return err
-	}
-
-	a.logger.Info("🔄 已迁移旧版连通性路径默认值", "updated", len(updates), "from", legacyPath, "to", "<endpoint-url>")
-	return nil
 }
 
 // setupAccountPoolStore 设置账号池存储 (v6.0+ SQLite)
@@ -1348,50 +1302,17 @@ func (a *App) applySettingsToConfig() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 策略配置
-	a.config.Strategy.Type = a.getSettingString(ctx, service.CategoryStrategy, "type", a.config.Strategy.Type)
-	a.config.Strategy.FastTestEnabled = a.settingsService.GetBool(ctx, service.CategoryStrategy, "fast_test_enabled", a.config.Strategy.FastTestEnabled)
-	a.config.Strategy.FastTestCacheTTL = a.settingsService.GetDuration(ctx, service.CategoryStrategy, "fast_test_cache_ttl", a.config.Strategy.FastTestCacheTTL)
-	a.config.Strategy.FastTestTimeout = a.settingsService.GetDuration(ctx, service.CategoryStrategy, "fast_test_timeout", a.config.Strategy.FastTestTimeout)
-	a.config.Strategy.FastTestPath = a.getSettingString(ctx, service.CategoryStrategy, "fast_test_path", a.config.Strategy.FastTestPath)
-
-	// 重试配置
-	a.config.Retry.MaxAttempts = a.settingsService.GetInt(ctx, service.CategoryRetry, "max_attempts", a.config.Retry.MaxAttempts)
-	a.config.Retry.BaseDelay = a.settingsService.GetDuration(ctx, service.CategoryRetry, "base_delay", a.config.Retry.BaseDelay)
-	a.config.Retry.MaxDelay = a.settingsService.GetDuration(ctx, service.CategoryRetry, "max_delay", a.config.Retry.MaxDelay)
-	a.config.Retry.Multiplier = a.settingsService.GetFloat(ctx, service.CategoryRetry, "multiplier", a.config.Retry.Multiplier)
-
 	// 健康检查配置
-	a.config.Health.CheckInterval = a.settingsService.GetDuration(ctx, service.CategoryHealth, "check_interval", a.config.Health.CheckInterval)
 	a.config.Health.Timeout = a.settingsService.GetDuration(ctx, service.CategoryHealth, "timeout", a.config.Health.Timeout)
-	a.config.Health.HealthPath = a.getSettingString(ctx, service.CategoryHealth, "health_path", a.config.Health.HealthPath)
 
 	// 请求控制配置
 	a.config.GlobalTimeout = a.settingsService.GetDuration(ctx, service.CategoryRequest, "global_timeout", a.config.GlobalTimeout)
 	// v7：eof_retry_hint 设置键不变，赋值目标迁移到 Streaming（挂起体系已删除）
 	a.config.Streaming.EOFRetryHint = a.settingsService.GetBool(ctx, service.CategoryRequest, "eof_retry_hint", a.config.Streaming.EOFRetryHint)
 
-	// 失败处理配置（默认开启）
+	// 失败统计与请求内故障转移恒为开启。
 	a.config.FailureTracker.Enabled = true
-	a.config.FailureTracker.TimeWindow = a.settingsService.GetDuration(ctx, service.CategoryRequest, "failure_time_window", a.config.FailureTracker.TimeWindow)
-	a.config.FailureTracker.Threshold = a.settingsService.GetInt(ctx, service.CategoryRequest, "failure_threshold", a.config.FailureTracker.Threshold)
-	a.config.FailureTracker.Action = a.getSettingString(ctx, service.CategoryRequest, "failure_action", a.config.FailureTracker.Action)
-	a.config.Failover.DefaultCooldown = a.settingsService.GetDuration(ctx, service.CategoryRequest, "failover_cooldown", a.config.Failover.DefaultCooldown)
-
-	// v7 D2 迁移：挂起体系已删除，旧值 suspend 一次性改写为 failover 并落库
-	if a.config.FailureTracker.Action == "suspend" {
-		slog.Warn("⚠️ [设置迁移] failure_action='suspend' 已废弃（挂起体系删除），自动改写为 'failover'")
-		a.config.FailureTracker.Action = "failover"
-		if err := a.settingsService.Set(ctx, service.CategoryRequest, "failure_action", "failover"); err != nil {
-			slog.Warn("⚠️ [设置迁移] failure_action 落库失败（不影响本次运行）", "error", err)
-		}
-	}
-
-	// v8：failure_action 与 Failover.Enabled 独立——reject 语义由 ShouldRejectRequest
-	// 在请求入口判定（§12 D15），不再关闭「请求内换候选」总开关；
-	// count_tokens 与重放安全硬失败 fallback 不受 failure_action 影响
 	a.config.Failover.Enabled = true
-	// 🔧 同步更新旧字段
 
 	// 流式传输配置
 	a.config.Streaming.HeartbeatInterval = a.settingsService.GetDuration(ctx, service.CategoryStreaming, "heartbeat_interval", a.config.Streaming.HeartbeatInterval)
@@ -1405,11 +1326,9 @@ func (a *App) applySettingsToConfig() {
 
 	// Token 计数配置
 	a.config.TokenCounting.Enabled = a.settingsService.GetBool(ctx, service.CategoryTokenCounting, "enabled", a.config.TokenCounting.Enabled)
-	a.config.TokenCounting.EstimationRatio = a.settingsService.GetFloat(ctx, service.CategoryTokenCounting, "estimation_ratio", a.config.TokenCounting.EstimationRatio)
 
-	// 数据保留配置
-	a.config.UsageTracking.RetentionDays = a.settingsService.GetInt(ctx, service.CategoryRetention, "retention_days", a.config.UsageTracking.RetentionDays)
-	a.config.UsageTracking.CleanupInterval = a.settingsService.GetDuration(ctx, service.CategoryRetention, "cleanup_interval", a.config.UsageTracking.CleanupInterval)
+	// 数据保留：追踪器先于设置服务创建，启动与每次保存时同步保留天数。
+	a.applyRetentionSettings(ctx)
 
 	a.logger.Debug("已从数据库加载设置")
 

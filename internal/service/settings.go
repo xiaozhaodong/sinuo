@@ -17,8 +17,6 @@ import (
 
 // SettingCategory 设置分类常量
 const (
-	CategoryStrategy        = "strategy"
-	CategoryRetry           = "retry"
 	CategoryHealth          = "health"
 	CategoryRequest         = "request"
 	CategoryStreaming       = "streaming"
@@ -39,6 +37,7 @@ var ErrProtectedSettingsCategory = errors.New("该设置分类受保护，请使
 
 // protectedSettingsCategories 列出禁止经通用 Set/BatchSet/UpdateAndApply/Delete/ResetCategory 修改的分类。
 var protectedSettingsCategories = map[string]struct{}{
+	CategoryClaudeRouting:          {},
 	CategoryCodexSubscriptionProxy: {},
 	CategoryClaudeCodeEntry:        {},
 	categoryCodexIdentityInternal:  {},
@@ -94,13 +93,14 @@ type CategoryInfo struct {
 
 // SettingsService 设置管理业务服务
 type SettingsService struct {
-	identityMu      sync.Mutex // 身份设置校验、写入和请求快照读取串行化
-	identityCacheMu sync.RWMutex
-	identityCached  bool
-	identityPolicy  codexidentity.Policy
-	store           store.SettingsStore
-	onChangeFunc    func() // 配置变更回调
-	categoryLabels  map[string]CategoryInfo
+	identityMu         sync.Mutex // 身份设置校验、写入和请求快照读取串行化
+	identityCacheMu    sync.RWMutex
+	identityCached     bool
+	identityPolicy     codexidentity.Policy
+	store              store.SettingsStore
+	onChangeFunc       func() // 配置变更回调
+	categoryLabels     map[string]CategoryInfo
+	registeredSettings map[[2]string]struct{}
 }
 
 // NewSettingsService 创建设置服务实例
@@ -116,31 +116,17 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Icon:        "🔐",
 				Order:       1,
 			},
-			CategoryStrategy: {
-				Name:        CategoryStrategy,
-				Label:       "路由策略",
-				Description: "配置请求路由策略和快速测试",
-				Icon:        "🔀",
-				Order:       2,
-			},
-			CategoryRetry: {
-				Name:        CategoryRetry,
-				Label:       "重试配置",
-				Description: "配置请求失败重试行为",
-				Icon:        "🔄",
-				Order:       3,
-			},
 			CategoryHealth: {
 				Name:        CategoryHealth,
 				Label:       "连通性测试",
-				Description: "配置手动/批量连通性测试参数",
+				Description: "Claude 端点连通性测试，结果只做展示，不影响路由",
 				Icon:        "❤️",
 				Order:       4,
 			},
 			CategoryRequest: {
 				Name:        CategoryRequest,
 				Label:       "请求控制",
-				Description: "配置全局超时和失败处理",
+				Description: "非流式请求超时与流式中断处理",
 				Icon:        "⏱️",
 				Order:       5,
 			},
@@ -149,7 +135,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 			CategoryTokenCounting: {
 				Name:        CategoryTokenCounting,
 				Label:       "Token 计数",
-				Description: "配置 Token 计数功能",
+				Description: "Claude count_tokens 请求的处理方式",
 				Icon:        "🔢",
 				Order:       6,
 			},
@@ -159,13 +145,6 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Description: "配置历史数据保留策略",
 				Icon:        "📦",
 				Order:       7,
-			},
-			CategoryClaudeRouting: {
-				Name:        CategoryClaudeRouting,
-				Label:       "Claude 路由",
-				Description: "记录 Claude 端点手动切换状态",
-				Icon:        "🧭",
-				Order:       8,
 			},
 			CategoryCodexIdentity: {Name: CategoryCodexIdentity, Label: "Codex 身份", Description: "默认自动适配账号，无需随接入或路由模式切换", Icon: "🔗", Order: 10},
 			CategoryImageGeneration: {
@@ -183,6 +162,10 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Order:       0, // 最前（特殊处理，单独显示）
 			},
 		},
+	}
+	svc.registeredSettings = make(map[[2]string]struct{})
+	for _, record := range svc.GetAllDefaults() {
+		svc.registeredSettings[[2]string{record.Category, record.Key}] = struct{}{}
 	}
 	return svc
 }
@@ -407,9 +390,8 @@ func (s *SettingsService) InitDefaults(ctx context.Context) error {
 		return err
 	}
 
-	// 🔄 [v5.2.6+] 自动迁移旧配置到新分类
-	if err := s.migrateOldSettings(ctx); err != nil {
-		slog.Warn(fmt.Sprintf("⚠️ [设置迁移] 迁移旧配置失败（不影响使用）: %v", err))
+	if err := s.removeRetiredSettings(ctx); err != nil {
+		slog.Warn("⚠️ [设置迁移] 清除退役设置失败（不影响使用）", "error", err)
 	}
 
 	return nil
@@ -429,12 +411,6 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 
 	// Server 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryServer)...)
-
-	// Strategy 设置
-	defaults = append(defaults, s.getDefaultsForCategory(CategoryStrategy)...)
-
-	// Retry 设置
-	defaults = append(defaults, s.getDefaultsForCategory(CategoryRetry)...)
 
 	// Health 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryHealth)...)
@@ -474,37 +450,14 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryServer, Key: "preferred_port", Value: "8087", ValueType: ValueTypeInt, Label: "首选端口", Description: "API 服务首选端口，被占用时自动递增", DisplayOrder: 1, RequiresRestart: true},
 		}
 
-	case CategoryStrategy:
-		return []*store.SettingRecord{
-			{Category: CategoryStrategy, Key: "type", Value: "priority", ValueType: ValueTypeString, Label: "策略类型", Description: "路由策略: priority (优先级) 或 fastest (最快响应)", DisplayOrder: 1},
-			{Category: CategoryStrategy, Key: "fast_test_enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用快速测试", Description: "仅在 fastest 策略下生效，执行请求前连通性测试", DisplayOrder: 2},
-			{Category: CategoryStrategy, Key: "fast_test_cache_ttl", Value: "3s", ValueType: ValueTypeDuration, Label: "缓存时间", Description: "快速测试结果缓存时间", DisplayOrder: 3},
-			{Category: CategoryStrategy, Key: "fast_test_timeout", Value: "1s", ValueType: ValueTypeDuration, Label: "测试超时", Description: "快速测试超时时间", DisplayOrder: 4},
-			{Category: CategoryStrategy, Key: "fast_test_path", Value: "", ValueType: ValueTypeString, Label: "测试路径", Description: "快速测试请求路径，留空则直接访问端点 URL", DisplayOrder: 5},
-		}
-
-	case CategoryRetry:
-		return []*store.SettingRecord{
-			{Category: CategoryRetry, Key: "max_attempts", Value: "3", ValueType: ValueTypeInt, Label: "最大重试次数", Description: "请求失败后的最大重试次数", DisplayOrder: 1},
-			{Category: CategoryRetry, Key: "base_delay", Value: "1s", ValueType: ValueTypeDuration, Label: "基础延迟", Description: "首次重试前的等待时间", DisplayOrder: 2},
-			{Category: CategoryRetry, Key: "max_delay", Value: "30s", ValueType: ValueTypeDuration, Label: "最大延迟", Description: "重试延迟的上限", DisplayOrder: 3},
-			{Category: CategoryRetry, Key: "multiplier", Value: "2.0", ValueType: ValueTypeFloat, Label: "延迟倍数", Description: "每次重试延迟的倍增系数", DisplayOrder: 4},
-		}
-
 	case CategoryHealth:
 		return []*store.SettingRecord{
-			{Category: CategoryHealth, Key: "check_interval", Value: "30s", ValueType: ValueTypeDuration, Label: "轮询间隔", Description: "旧版后台轮询间隔，当前仅保留兼容，不再触发自动检测", DisplayOrder: 1},
-			{Category: CategoryHealth, Key: "timeout", Value: "5s", ValueType: ValueTypeDuration, Label: "检测超时", Description: "手动/批量连通性测试的超时时间", DisplayOrder: 2},
-			{Category: CategoryHealth, Key: "health_path", Value: "", ValueType: ValueTypeString, Label: "检测路径", Description: "连通性测试请求路径，留空则直接访问端点 URL", DisplayOrder: 3},
+			{Category: CategoryHealth, Key: "timeout", Value: "5s", ValueType: ValueTypeDuration, Label: "检测超时", Description: "Claude 端点手动、批量与启动连通性测试的超时时间", DisplayOrder: 2},
 		}
 
 	case CategoryRequest:
 		return []*store.SettingRecord{
-			{Category: CategoryRequest, Key: "global_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "全局超时", Description: "非流式请求的默认超时时间", DisplayOrder: 1},
-			{Category: CategoryRequest, Key: "failure_time_window", Value: "5m", ValueType: ValueTypeDuration, Label: "失败时间窗口", Description: "统计失败次数的时间窗口", DisplayOrder: 2},
-			{Category: CategoryRequest, Key: "failure_threshold", Value: "3", ValueType: ValueTypeInt, Label: "失败阈值", Description: "触发失败处理的次数阈值", DisplayOrder: 3},
-			{Category: CategoryRequest, Key: "failure_action", Value: "failover", ValueType: ValueTypeString, Label: "失败处理动作", Description: "failover (故障转移) / reject (拒绝)", DisplayOrder: 4},
-			{Category: CategoryRequest, Key: "failover_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "故障冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 5},
+			{Category: CategoryRequest, Key: "global_timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "全局超时", Description: "非流式请求的总超时，作用于 Codex 账号池与 Claude 订阅直通；Claude 端点使用各自的超时设置", DisplayOrder: 1, RequiresRestart: true},
 			{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false", ValueType: ValueTypeBool, Label: "流式中断重试提示", Description: "流式传输中断时发送特定格式响应，触发客户端自动重试", DisplayOrder: 6},
 		}
 
@@ -524,14 +477,12 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 
 	case CategoryTokenCounting:
 		return []*store.SettingRecord{
-			{Category: CategoryTokenCounting, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用 Token 计数", Description: "是否启用 count_tokens 端点支持", DisplayOrder: 1},
-			{Category: CategoryTokenCounting, Key: "estimation_ratio", Value: "4.0", ValueType: ValueTypeFloat, Label: "估算比例", Description: "Token 估算比例 (1 token ≈ N 字符)", DisplayOrder: 2},
+			{Category: CategoryTokenCounting, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用 Token 计数", Description: "拦截 Claude 的 count_tokens：转发给勾选「支持 count_tokens」的端点，无可用端点时本地估算；关闭后按普通请求转发。不影响订阅直通", DisplayOrder: 1},
 		}
 
 	case CategoryRetention:
 		return []*store.SettingRecord{
-			{Category: CategoryRetention, Key: "retention_days", Value: "0", ValueType: ValueTypeInt, Label: "数据保留天数", Description: "请求日志保留天数，0 表示永久保留", DisplayOrder: 1},
-			{Category: CategoryRetention, Key: "cleanup_interval", Value: "24h", ValueType: ValueTypeDuration, Label: "清理间隔", Description: "自动清理任务的执行间隔", DisplayOrder: 2},
+			{Category: CategoryRetention, Key: "retention_days", Value: "0", ValueType: ValueTypeInt, Label: "数据保留天数", Description: "请求记录保留天数，0 表示永久保留；超期记录每 24 小时清理一次", DisplayOrder: 1},
 		}
 
 	case CategoryClaudeRouting:
@@ -542,15 +493,14 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryClaudeRouting, Key: "set_at", Value: "", ValueType: ValueTypeString, Label: "设置时间", Description: "最近一次路由模式修改时间", DisplayOrder: 4},
 			{Category: CategoryClaudeRouting, Key: "fallback_enabled", Value: "true", ValueType: ValueTypeBool, Label: "允许回退", Description: "手动优选模式下允许失败后回退其他端点", DisplayOrder: 5},
 			{Category: CategoryClaudeRouting, Key: "revision", Value: "0", ValueType: ValueTypeInt, Label: "状态修订号", Description: "路由状态持久化修订号（协调器并发保护）", DisplayOrder: 6},
-			{Category: CategoryClaudeRouting, Key: "state_model_version", Value: "1", ValueType: ValueTypeInt, Label: "状态模型版本", Description: "v8 调度状态模型迁移标记（2=已迁移）", DisplayOrder: 7},
 		}
 
 	case CategoryImageGeneration:
 		return []*store.SettingRecord{
 			{Category: CategoryImageGeneration, Key: "enabled", Value: "false", ValueType: ValueTypeBool, Label: "启用图像生成", Description: "接管 POST /v1/images/generations 与 /v1/images/edits 并转发到下方配置的上游", DisplayOrder: 1},
 			{Category: CategoryImageGeneration, Key: "direct_connect", Value: "false", ValueType: ValueTypeBool, Label: "图像 API 直连", Description: "开启后仅图像生成与编辑连接使用下方专用源端口；需在 Surge 规则中将同一 SRC-PORT 范围设为 DIRECT", DisplayOrder: 2},
-			{Category: CategoryImageGeneration, Key: "direct_source_port_range", Value: "31080-31179", ValueType: ValueTypeString, Label: "直连源端口范围", Description: "Surge 规则示例：SRC-PORT,31080-31179,DIRECT；必须放在 MyAiCode 等域名规则之前", DisplayOrder: 3},
-			{Category: CategoryImageGeneration, Key: "endpoint_url", Value: "", ValueType: ValueTypeString, Label: "生图完整请求 URL", Description: "例如 https://api.duckcoding.ai/v1/images/generations；编辑请求自动使用同源 /images/edits", DisplayOrder: 4},
+			{Category: CategoryImageGeneration, Key: "direct_source_port_range", Value: "31080-31179", ValueType: ValueTypeString, Label: "直连源端口范围", Description: "Surge 规则示例：SRC-PORT,31080-31179,DIRECT；需放在会代理图像上游域名的规则之前", DisplayOrder: 3},
+			{Category: CategoryImageGeneration, Key: "endpoint_url", Value: "", ValueType: ValueTypeString, Label: "生图完整请求 URL", Description: "例如 https://api.example.com/v1/images/generations；编辑请求自动使用同源 /images/edits", DisplayOrder: 4},
 			{Category: CategoryImageGeneration, Key: "api_key", Value: "", ValueType: ValueTypePassword, Label: "API Key", Description: "仅保存在本机数据库且不会回显；重置本分类可清除", DisplayOrder: 5},
 			{Category: CategoryImageGeneration, Key: "model", Value: "gpt-image-2", ValueType: ValueTypeString, Label: "默认模型", Description: "请求未提供 model 时使用；通常为 gpt-image-2", DisplayOrder: 6},
 			{Category: CategoryImageGeneration, Key: "fixed_price_usd", Value: "0", ValueType: ValueTypeFloat, Label: "每次图像请求价格（USD）", Description: "每个成功的生成或编辑请求固定记录这一笔成本；0 表示暂不计费", DisplayOrder: 7},
@@ -569,75 +519,4 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	default:
 		return nil
 	}
-}
-
-// migrateOldSettings 迁移旧版本配置到新分类
-// v5.2.6+: 从 failure_tracker/failover 分类迁移到 request 分类
-func (s *SettingsService) migrateOldSettings(ctx context.Context) error {
-	// 定义迁移映射：旧分类.key → 新分类.key
-	migrations := []struct {
-		oldCategory string
-		oldKey      string
-		newCategory string
-		newKey      string
-	}{
-		// FailureTracker 迁移
-		{"failure_tracker", "time_window", CategoryRequest, "failure_time_window"},
-		{"failure_tracker", "threshold", CategoryRequest, "failure_threshold"},
-		{"failure_tracker", "action", CategoryRequest, "failure_action"},
-		// Failover 迁移
-		{"failover", "default_cooldown", CategoryRequest, "failover_cooldown"},
-	}
-
-	migratedCount := 0
-	for _, m := range migrations {
-		// 检查旧配置是否存在
-		oldRecord, err := s.store.Get(ctx, m.oldCategory, m.oldKey)
-		if err != nil || oldRecord == nil {
-			continue // 旧配置不存在，跳过
-		}
-
-		// 检查新配置是否已经有用户设置的值
-		newRecord, err := s.store.Get(ctx, m.newCategory, m.newKey)
-		if err != nil {
-			continue
-		}
-
-		// 获取新配置的默认值
-		defaultValue := s.getDefaultValue(m.newCategory, m.newKey)
-
-		// 只有当新配置还是默认值时，才迁移旧值（避免覆盖用户新设置）
-		if newRecord != nil && newRecord.Value != defaultValue {
-			slog.Debug(fmt.Sprintf("⏭️ [设置迁移] 跳过 %s.%s（新配置已有用户设置值）", m.newCategory, m.newKey))
-			continue
-		}
-
-		// 执行迁移：将旧值写入新配置
-		if err := s.store.Set(ctx, m.newCategory, m.newKey, oldRecord.Value); err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ [设置迁移] 迁移 %s.%s → %s.%s 失败: %v",
-				m.oldCategory, m.oldKey, m.newCategory, m.newKey, err))
-			continue
-		}
-
-		migratedCount++
-		slog.Info(fmt.Sprintf("✅ [设置迁移] %s.%s (%s) → %s.%s",
-			m.oldCategory, m.oldKey, oldRecord.Value, m.newCategory, m.newKey))
-	}
-
-	if migratedCount > 0 {
-		slog.Info(fmt.Sprintf("🔄 [设置迁移] 成功迁移 %d 个旧配置到新分类", migratedCount))
-	}
-
-	return nil
-}
-
-// getDefaultValue 获取指定配置的默认值
-func (s *SettingsService) getDefaultValue(category, key string) string {
-	defaults := s.getDefaultsForCategory(category)
-	for _, d := range defaults {
-		if d.Key == key {
-			return d.Value
-		}
-	}
-	return ""
 }

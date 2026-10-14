@@ -58,9 +58,7 @@ func (m *Manager) notifyHealthCheckComplete() {
 // 2xx/4xx 代表链路可达，网络错误与 5xx 代表连通失败。
 func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	start := time.Now()
-	cfg := m.getConfigSnapshot()
-
-	healthURL := endpoint.Config.URL + cfg.Health.HealthPath
+	healthURL := endpoint.Config.URL
 	req, err := http.NewRequestWithContext(m.ctx, "GET", healthURL, nil)
 	if err != nil {
 		m.updateEndpointStatus(endpoint, false, 0)

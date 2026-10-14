@@ -315,7 +315,6 @@ func newPrivacyEndpointTestHandler(t *testing.T, upstreamURL string) *Handler {
 			{Name: "privacy-ep", URL: upstreamURL, Priority: 1, Timeout: 5 * time.Second, Token: "tok"},
 		},
 		Failover: config.FailoverConfig{Enabled: true},
-		Retry:    config.RetryConfig{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: 2 * time.Millisecond, Multiplier: 1.0},
 	}
 	endpointManager := endpoint.NewManager(cfg)
 	return NewHandler(endpointManager, cfg)
@@ -392,7 +391,7 @@ func TestCountTokens_PrivacyPolicyErrorReturnsPolicyStatus(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := &config.Config{
-		TokenCounting: config.TokenCountingConfig{Enabled: true, EstimationRatio: 4},
+		TokenCounting: config.TokenCountingConfig{Enabled: true},
 		Failover:      config.FailoverConfig{Enabled: true},
 		Endpoints: []config.EndpointConfig{
 			{Name: "count-ep", URL: upstream.URL, Priority: 1, Timeout: 5 * time.Second, SupportsCountTokens: true},

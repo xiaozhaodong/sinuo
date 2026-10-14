@@ -68,16 +68,13 @@ func TestCountTokensTryForwardRewritesEndpointModel(t *testing.T) {
 func newCountTokensBaselineHandler(t *testing.T, endpoints ...config.EndpointConfig) (*CountTokensHandler, *endpoint.Manager) {
 	t.Helper()
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
-		Failover: config.FailoverConfig{Enabled: true, DefaultCooldown: 10 * time.Minute},
+		Failover: config.FailoverConfig{Enabled: true},
 		FailureTracker: config.FailureTrackerConfig{
 			Enabled:    true,
 			TimeWindow: 5 * time.Minute,
 			Threshold:  3,
-			Action:     "failover",
 		},
-		TokenCounting: config.TokenCountingConfig{EstimationRatio: 4.0},
-		Endpoints:     endpoints,
+		Endpoints: endpoints,
 	}
 	manager := endpoint.NewManager(cfg)
 	t.Cleanup(manager.Stop)

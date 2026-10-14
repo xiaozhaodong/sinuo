@@ -372,7 +372,7 @@ func TestCodexSubscriptionProxySettings_GenericSettingsWritesAreRejected(t *test
 		},
 		"BatchSet": func() error { return generic.BatchSet(ctx, []*store.SettingRecord{record}) },
 		"UpdateAndApply": func() error {
-			return generic.UpdateAndApply(ctx, []*store.SettingRecord{{Category: CategoryStrategy, Key: "type", Value: "priority"}, record})
+			return generic.UpdateAndApply(ctx, []*store.SettingRecord{{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false"}, record})
 		},
 		"ResetCategory": func() error { return generic.ResetCategory(ctx, CategoryCodexSubscriptionProxy) },
 	}
@@ -387,13 +387,13 @@ func TestCodexSubscriptionProxySettings_GenericSettingsWritesAreRejected(t *test
 	}
 
 	// 其他分类不受影响
-	if err := generic.Set(ctx, CategoryStrategy, "type", "fastest"); err != nil {
-		t.Fatalf("generic set on strategy failed: %v", err)
+	if err := generic.Set(ctx, CategoryRequest, "eof_retry_hint", "true"); err != nil {
+		t.Fatalf("generic set on request failed: %v", err)
 	}
-	if err := generic.ResetCategory(ctx, CategoryRetry); err != nil {
-		t.Fatalf("generic reset on retry failed: %v", err)
+	if err := generic.ResetCategory(ctx, CategoryHealth); err != nil {
+		t.Fatalf("generic reset on health failed: %v", err)
 	}
-	if err := generic.UpdateAndApply(ctx, []*store.SettingRecord{{Category: CategoryStrategy, Key: "type", Value: "priority"}}); err != nil {
+	if err := generic.UpdateAndApply(ctx, []*store.SettingRecord{{Category: CategoryRequest, Key: "eof_retry_hint", Value: "false"}}); err != nil {
 		t.Fatalf("generic batch update failed: %v", err)
 	}
 }

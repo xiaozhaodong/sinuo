@@ -57,25 +57,6 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		slog.Warn(fmt.Sprintf("🧭 [模型路由] [%s] model=%s web_tools=%v server_tools=%v 未分配上游组，返回 422", connID, scope.Model, profile.WebTools, profile.ServerToolTypes))
 	}
 
-	// reject 模式前置检查（保留现状语义）
-	if shouldReject, rejectedEndpoint := h.endpointManager.ShouldRejectRequest(profile); shouldReject {
-		h.endpointManager.BeginEndpointScheduleSnapshotForScope(connID, r.URL.Path, scope)
-		slog.Warn(fmt.Sprintf("❌ [失败追踪] [%s] 端点 %s 达到失败阈值，拒绝请求（reject 模式）", connID, rejectedEndpoint))
-		message := fmt.Sprintf("Service temporarily unavailable: endpoint %s failure threshold reached", rejectedEndpoint)
-		// 拒绝前置发生在候选循环之外，SetEndpointAttempt 不会执行；
-		// 不补归属则追踪记录落空上游，排障时看不出是哪个端点触发的阈值。
-		// ShouldRejectRequest 的第一逻辑候选优先取 manual fixed/preferred 目标，
-		// 路由上下文同样要落库，否则手动路由期间的拒绝会被读成自动调度。
-		lifecycleManager.SetEndpoint(rejectedEndpoint)
-		h.noteRequestRouteContext(lifecycleManager, scope, "rejected_by_failure_tracker")
-		lifecycleManager.FailRequest("rejected_by_failure_tracker",
-			fmt.Sprintf("Endpoint %s reached failure threshold, request rejected", rejectedEndpoint),
-			http.StatusServiceUnavailable)
-		h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeRejectedByFailureTracker, message)
-		http.Error(w, message, http.StatusServiceUnavailable)
-		return
-	}
-
 	var flusher http.Flusher
 	hasCommitted := func() bool { return false }
 	if isSSE {
@@ -298,8 +279,8 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 				slog.Info("跳过旧配置 attempt 的限流结算", "endpoint", ep.Config.Name, "revision", target.Revision())
 			}
 			if tripped {
-				// §9.2 规则 9：阈值触发可在本次请求内换下一候选（action=reject 时不换）
-				if h.config.FailureTracker.Action != "reject" && i+1 < len(result.Candidates) && attemptedEndpoints < maxCandidates && ctx.Err() == nil {
+				// §9.2 规则 9：阈值触发可在本次请求内换下一候选
+				if i+1 < len(result.Candidates) && attemptedEndpoints < maxCandidates && ctx.Err() == nil {
 					lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
 					h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
 					h.notifyFailover(FailoverEvent{

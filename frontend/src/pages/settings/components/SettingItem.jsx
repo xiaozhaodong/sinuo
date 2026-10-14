@@ -18,18 +18,6 @@ const VALUE_TYPE_CONFIG = {
   password: { type: 'password', step: null }
 };
 
-// 策略类型选项
-const STRATEGY_OPTIONS = [
-  { value: 'priority', label: 'priority (优先级)' },
-  { value: 'fastest', label: 'fastest (最快响应)' }
-];
-
-// 失败处理动作选项
-const FAILURE_ACTION_OPTIONS = [
-  { value: 'failover', label: 'failover - 故障转移到其他端点' },
-  { value: 'reject', label: 'reject - 直接拒绝返回错误' }
-];
-
 // 菜单栏文字（仅 macOS），取值与后端 tray.MenuBar* 常量一致
 const MENUBAR_LABEL_OPTIONS = [
   { value: 'off', label: '不显示' },
@@ -40,8 +28,6 @@ const MENUBAR_LABEL_OPTIONS = [
 
 // 用下拉框编辑的设置：category.key → 选项
 const SELECT_SETTING_OPTIONS = {
-  'strategy.type': STRATEGY_OPTIONS,
-  'request.failure_action': FAILURE_ACTION_OPTIONS,
   'desktop.menubar_label': MENUBAR_LABEL_OPTIONS
 };
 

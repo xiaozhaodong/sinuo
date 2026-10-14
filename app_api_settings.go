@@ -156,6 +156,9 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 		if service.IsProtectedSettingsCategory(r.Category) || !service.SettingVisible(r.Category, r.Key, runtime.GOOS) {
 			continue
 		}
+		if !a.settingsService.IsRegisteredSetting(r.Category, r.Key) {
+			continue
+		}
 		result = append(result, a.settingRecordToInfo(r))
 	}
 
@@ -224,6 +227,9 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := validateRetentionSettingUpdates([]UpdateSettingInput{input}); err != nil {
+		return err
+	}
 	if input.Category == service.CategoryImageGeneration {
 		if err := a.validateImageGenerationSettingUpdates(ctx, []UpdateSettingInput{input}); err != nil {
 			return err
@@ -261,6 +267,9 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := validateRetentionSettingUpdates(input.Settings); err != nil {
+		return err
+	}
 	if err := a.validateImageGenerationSettingUpdates(ctx, input.Settings); err != nil {
 		return err
 	}

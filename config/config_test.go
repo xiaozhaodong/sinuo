@@ -8,6 +8,17 @@ import (
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
+func TestLoadConfig_RetentionDefaultsToPermanent(t *testing.T) {
+	path := writeConfigFixture(t, "endpoints_storage:\n  type: sqlite\nusage_tracking:\n  enabled: true\n")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UsageTracking.RetentionDays != 0 || cfg.UsageTracking.CleanupInterval != 24*time.Hour {
+		t.Fatalf("未配置保留天数应永久保留、每 24 小时清理: %+v", cfg.UsageTracking)
+	}
+}
+
 func TestConfigValidateEndpointModelRewriteRules(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -38,7 +49,6 @@ func TestConfigValidateEndpointModelRewriteRules(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
-				Strategy:         StrategyConfig{Type: "priority"},
 				EndpointsStorage: EndpointsStorageConfig{Type: "sqlite"},
 				Endpoints: []EndpointConfig{{
 					Name:              "test-endpoint",

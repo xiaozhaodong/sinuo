@@ -11,8 +11,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Server,
-  Shuffle,
-  RotateCcw,
   HeartPulse,
   Clock,
   Lock,
@@ -62,8 +60,6 @@ const MESSAGE_TONES = {
 // 分类名称到 Lucide 图标的映射
 const CATEGORY_ICONS = {
   server: Server,
-  strategy: Shuffle,
-  retry: RotateCcw,
   health: HeartPulse,
   request: Clock,
   auth: Lock,

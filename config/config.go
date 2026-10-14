@@ -19,8 +19,6 @@ import (
 
 type Config struct {
 	Server              ServerConfig               `yaml:"server"`
-	Strategy            StrategyConfig             `yaml:"strategy"`
-	Retry               RetryConfig                `yaml:"retry"`
 	Health              HealthConfig               `yaml:"health"`
 	Logging             LoggingConfig              `yaml:"logging"`
 	Streaming           StreamingConfig            `yaml:"streaming"`
@@ -45,25 +43,8 @@ type ServerConfig struct {
 	Port int    `yaml:"port"`
 }
 
-type StrategyConfig struct {
-	Type             string        `yaml:"type"`                // "priority" or "fastest"
-	FastTestEnabled  bool          `yaml:"fast_test_enabled"`   // Enable pre-request fast testing
-	FastTestCacheTTL time.Duration `yaml:"fast_test_cache_ttl"` // Cache TTL for fast test results
-	FastTestTimeout  time.Duration `yaml:"fast_test_timeout"`   // Timeout for individual fast tests
-	FastTestPath     string        `yaml:"fast_test_path"`      // Path for fast testing (default: health path)
-}
-
-type RetryConfig struct {
-	MaxAttempts int           `yaml:"max_attempts"`
-	BaseDelay   time.Duration `yaml:"base_delay"`
-	MaxDelay    time.Duration `yaml:"max_delay"`
-	Multiplier  float64       `yaml:"multiplier"`
-}
-
 type HealthConfig struct {
-	CheckInterval time.Duration `yaml:"check_interval"`
-	Timeout       time.Duration `yaml:"timeout"`
-	HealthPath    string        `yaml:"health_path"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 type LoggingConfig struct {
@@ -101,7 +82,6 @@ type StreamingConfig struct {
 // FailoverConfig v4.0 故障转移配置（v8 收敛方案 §12 扩展）
 type FailoverConfig struct {
 	Enabled              bool                 `yaml:"enabled"`                // 请求内是否允许换不同端点，默认: true
-	DefaultCooldown      time.Duration        `yaml:"default_cooldown"`       // 默认冷却时间，默认: 10m
 	MaxCandidateAttempts int                  `yaml:"max_candidate_attempts"` // 单请求最多尝试的不同端点数，默认: 3
 	RateLimitRetry       RateLimitRetryConfig `yaml:"rate_limit_retry"`       // 普通 429 同端点短重试
 	AuthCooldown         time.Duration        `yaml:"auth_cooldown"`          // 鉴权失败冷却，默认: 30m
@@ -125,12 +105,11 @@ func (c *FailoverConfig) RateLimitRetryEnabled() bool {
 }
 
 // FailureTrackerConfig v5.2.6 失败追踪器配置
-// 追踪端点失败次数，用于触发故障转移或拒绝请求
+// 追踪端点失败次数，用于触发冷却与故障转移
 type FailureTrackerConfig struct {
 	Enabled    bool          `yaml:"enabled"`     // 启用失败追踪，默认: false
 	TimeWindow time.Duration `yaml:"time_window"` // 时间窗口，默认: 5m
 	Threshold  int           `yaml:"threshold"`   // 失败次数阈值，默认: 3
-	Action     string        `yaml:"action"`      // 触发动作: failover|reject，默认: failover
 }
 
 // LegacyRequestSuspendConfig 仅用于 YAML 解析兼容（挂起体系已随 v7 重构删除）。
@@ -166,7 +145,7 @@ type UsageTrackingConfig struct {
 	BatchSize       int           `yaml:"batch_size"`       // Batch write size, default: 100
 	FlushInterval   time.Duration `yaml:"flush_interval"`   // Force flush interval, default: 30s
 	MaxRetry        int           `yaml:"max_retry"`        // Max retry count for write failures, default: 3
-	RetentionDays   int           `yaml:"retention_days"`   // Data retention days (0=permanent), default: 90
+	RetentionDays   int           `yaml:"retention_days"`   // 请求记录保留天数，默认: 0（永久保留）
 	CleanupInterval time.Duration `yaml:"cleanup_interval"` // Cleanup task execution interval, default: 24h
 
 	// Deprecated: v5.0+ 以下定价配置已废弃，迁移到 SQLite model_pricing 表
@@ -225,8 +204,7 @@ type TUIConfig struct {
 
 // TokenCountingConfig Token计数配置
 type TokenCountingConfig struct {
-	Enabled         bool    `yaml:"enabled"`          // 启用count_tokens支持
-	EstimationRatio float64 `yaml:"estimation_ratio"` // Token估算比例 (1 token ≈ N 字符)
+	Enabled bool `yaml:"enabled"` // 启用count_tokens支持
 }
 
 // EndpointsStorageConfig Claude 端点存储配置；Runtime 只支持 SQLite。
@@ -372,39 +350,8 @@ func (c *Config) setDefaults() {
 	if c.Server.Port == 0 {
 		c.Server.Port = 8080
 	}
-	if c.Strategy.Type == "" {
-		c.Strategy.Type = "priority"
-	}
-	// Set fast test defaults
-	if c.Strategy.FastTestCacheTTL == 0 {
-		c.Strategy.FastTestCacheTTL = 3 * time.Second // Default 3 seconds cache
-	}
-	if c.Strategy.FastTestTimeout == 0 {
-		c.Strategy.FastTestTimeout = 1 * time.Second // Default 1 second timeout for fast tests
-	}
-	if c.Strategy.FastTestPath == "" {
-		c.Strategy.FastTestPath = c.Health.HealthPath // Default to health path
-	}
-	if c.Retry.MaxAttempts == 0 {
-		c.Retry.MaxAttempts = 3
-	}
-	if c.Retry.BaseDelay == 0 {
-		c.Retry.BaseDelay = time.Second
-	}
-	if c.Retry.MaxDelay == 0 {
-		c.Retry.MaxDelay = 30 * time.Second
-	}
-	if c.Retry.Multiplier == 0 {
-		c.Retry.Multiplier = 2.0
-	}
-	if c.Health.CheckInterval == 0 {
-		c.Health.CheckInterval = 30 * time.Second
-	}
 	if c.Health.Timeout == 0 {
 		c.Health.Timeout = 5 * time.Second
-	}
-	if c.Health.HealthPath == "" {
-		c.Health.HealthPath = ""
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"
@@ -459,9 +406,6 @@ func (c *Config) setDefaults() {
 	// Set failover defaults (v4.0+)
 	// Failover.Enabled defaults to true if not explicitly set
 	// Note: We check for zero value and set default here
-	if c.Failover.DefaultCooldown == 0 {
-		c.Failover.DefaultCooldown = 600 * time.Second // Default 10 minutes cooldown
-	}
 	if c.Failover.MaxCandidateAttempts <= 0 {
 		c.Failover.MaxCandidateAttempts = 3 // §8.5 D4
 	}
@@ -489,11 +433,7 @@ func (c *Config) setDefaults() {
 	if c.FailureTracker.Threshold == 0 {
 		c.FailureTracker.Threshold = DefaultSoftFailureThreshold
 	}
-	if c.FailureTracker.Action == "" {
-		c.FailureTracker.Action = "failover" // Default action: failover
-	}
 	// v5.2.6+: FailureTracker.Enabled defaults to true for better fault tolerance
-	// 用户可以通过设置页面禁用
 
 	// Set account pool failure policy defaults (v6.0+)
 	if c.AccountPool.FailurePolicy.SoftFailureWindow == 0 {
@@ -550,9 +490,6 @@ func (c *Config) setDefaults() {
 	if c.UsageTracking.MaxRetry == 0 {
 		c.UsageTracking.MaxRetry = 3 // Default max retry count
 	}
-	if c.UsageTracking.RetentionDays == 0 {
-		c.UsageTracking.RetentionDays = 90 // Default retention 90 days
-	}
 	if c.UsageTracking.CleanupInterval == 0 {
 		c.UsageTracking.CleanupInterval = 24 * time.Hour // Default cleanup interval
 	}
@@ -564,10 +501,6 @@ func (c *Config) setDefaults() {
 
 	// TUI has been removed in v4.0 - no defaults needed
 
-	// Set Token Counting defaults
-	if c.TokenCounting.EstimationRatio == 0 {
-		c.TokenCounting.EstimationRatio = 4.0 // Default: 1 token ≈ 4 characters
-	}
 	// TokenCounting.Enabled defaults to false (zero value) for backward compatibility
 
 	for i := range c.Endpoints {
@@ -599,10 +532,6 @@ func (c *Config) validate() error {
 
 	if c.EndpointsStorage.Type != "sqlite" {
 		return fmt.Errorf("endpoints_storage.type must be 'sqlite'")
-	}
-
-	if c.Strategy.Type != "priority" && c.Strategy.Type != "fastest" {
-		return fmt.Errorf("strategy type must be 'priority' or 'fastest'")
 	}
 
 	// Validate proxy configuration
@@ -844,12 +773,6 @@ func (cw *ConfigWatcher) logConfigChanges(oldConfig, newConfig *Config) {
 		cw.logger.Info("🌐 服务器端口变更",
 			"old_port", oldConfig.Server.Port,
 			"new_port", newConfig.Server.Port)
-	}
-
-	if oldConfig.Strategy.Type != newConfig.Strategy.Type {
-		cw.logger.Info("🎯 策略类型变更",
-			"old_strategy", oldConfig.Strategy.Type,
-			"new_strategy", newConfig.Strategy.Type)
 	}
 
 	if oldConfig.Auth.Enabled != newConfig.Auth.Enabled {

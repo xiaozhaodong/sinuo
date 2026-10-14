@@ -33,8 +33,8 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 
 				// Verify it's checking the correct path
-				if r.URL.Path != "/v1/models" {
-					t.Errorf("Expected request to /v1/models, got %s", r.URL.Path)
+				if r.URL.Path != "/" {
+					t.Errorf("Expected request to endpoint URL itself, got path %s", r.URL.Path)
 				}
 				// Verify Authorization header is present
 				if r.Header.Get("Authorization") != "Bearer test-token" {
@@ -47,9 +47,7 @@ func TestHealthCheckWithAPIEndpoint(t *testing.T) {
 			// Create config with test server URL
 			cfg := &config.Config{
 				Health: config.HealthConfig{
-					CheckInterval: 30 * time.Second,
-					Timeout:       5 * time.Second,
-					HealthPath:    "/v1/models",
+					Timeout: 5 * time.Second,
 				},
 				Endpoints: []config.EndpointConfig{
 					{
@@ -92,9 +90,7 @@ func TestManagerStartDoesNotPerformAutomaticConnectivityChecks(t *testing.T) {
 
 	cfg := &config.Config{
 		Health: config.HealthConfig{
-			CheckInterval: 20 * time.Millisecond,
-			Timeout:       1 * time.Second,
-			HealthPath:    "/v1/models",
+			Timeout: 1 * time.Second,
 		},
 		Endpoints: []config.EndpointConfig{
 			{
@@ -186,9 +182,7 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 	}()
 
 	cfg := &config.Config{
-		Health: config.HealthConfig{
-			CheckInterval: time.Hour,
-		},
+		Health: config.HealthConfig{},
 		FailureTracker: config.FailureTrackerConfig{
 			Enabled:    true,
 			TimeWindow: 10 * time.Millisecond,
@@ -223,78 +217,5 @@ func TestManagerStartCleansExpiredFailureTrackerEntries(t *testing.T) {
 
 	if got := trackedEndpointCount(); got != 0 {
 		t.Fatalf("expected expired failure tracker entries to be cleaned, got %d", got)
-	}
-}
-
-func TestFastestStrategyLogging(t *testing.T) {
-	// Create multiple test servers with different response times
-	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond) // Simulate slow response
-		w.WriteHeader(200)
-	}))
-	defer slowServer.Close()
-
-	fastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Millisecond) // Simulate fast response
-		w.WriteHeader(200)
-	}))
-	defer fastServer.Close()
-
-	cfg := &config.Config{
-		Strategy: config.StrategyConfig{
-			Type: "fastest",
-		},
-		Health: config.HealthConfig{
-			CheckInterval: 30 * time.Second,
-			Timeout:       5 * time.Second,
-			HealthPath:    "/v1/models",
-		},
-		Endpoints: []config.EndpointConfig{
-			{
-				Name:     "slow-endpoint",
-				URL:      slowServer.URL,
-				Priority: 1,
-				Timeout:  30 * time.Second,
-			},
-			{
-				Name:     "fast-endpoint",
-				URL:      fastServer.URL,
-				Priority: 2,
-				Timeout:  30 * time.Second,
-			},
-		},
-	}
-
-	manager := NewManager(cfg)
-
-	// Perform health checks to populate response times
-	for _, endpoint := range manager.GetAllEndpoints() {
-		manager.checkEndpointHealth(endpoint)
-	}
-
-	// Get healthy endpoints (this should trigger logging for fastest strategy)
-	healthy := manager.GetHealthyEndpoints()
-
-	// Handle case where endpoints might not be healthy due to path mismatch
-	if len(healthy) == 0 {
-		t.Skip("No healthy endpoints available - this may be due to health check path requirements")
-	}
-
-	if len(healthy) < 2 {
-		t.Logf("Expected 2 healthy endpoints, got %d", len(healthy))
-		return // Skip the rest of the test if we don't have enough endpoints
-	}
-
-	// Verify the fast endpoint comes first
-	if healthy[0].Config.Name != "fast-endpoint" {
-		t.Errorf("Expected fast-endpoint to be first in fastest strategy, got %s", healthy[0].Config.Name)
-	}
-
-	// Verify response times are different
-	fastTime := healthy[0].GetResponseTime()
-	slowTime := healthy[1].GetResponseTime()
-
-	if fastTime >= slowTime {
-		t.Errorf("Expected fast endpoint to have lower response time. Fast: %v, Slow: %v", fastTime, slowTime)
 	}
 }

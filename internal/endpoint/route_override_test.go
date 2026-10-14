@@ -50,7 +50,6 @@ func TestManualFixedFailoverBlockReasonPreservesPercentLiterals(t *testing.T) {
 
 func TestManualPreferredAllowsFallbackWithoutClearingPreference(t *testing.T) {
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
 		Failover: config.FailoverConfig{
 			Enabled: true,
 		},
@@ -82,7 +81,6 @@ func TestManualPreferredAllowsFallbackWithoutClearingPreference(t *testing.T) {
 
 func TestManualFixedSelectionDoesNotFailoverPastPinnedEndpoint(t *testing.T) {
 	cfg := &config.Config{
-		Strategy: config.StrategyConfig{Type: "priority"},
 		Failover: config.FailoverConfig{
 			Enabled: true,
 		},
@@ -90,7 +88,6 @@ func TestManualFixedSelectionDoesNotFailoverPastPinnedEndpoint(t *testing.T) {
 			Enabled:    true,
 			TimeWindow: time.Hour,
 			Threshold:  1,
-			Action:     "failover",
 		},
 		Endpoints: []config.EndpointConfig{
 			{Name: "primary", URL: "http://primary.example", Priority: 1},

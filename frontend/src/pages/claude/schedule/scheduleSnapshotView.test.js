@@ -50,7 +50,6 @@ test('其余结论保留原抽屉文案、颜色和异常语义', () => {
     ['no_candidates', '无可用候选', 'tone-amber', true],
     ['manual_fixed_blocked', '固定目标不可用', 'tone-amber', true],
     ['model_routing_unassigned', '模型未配置上游端点', 'tone-amber', true],
-    ['rejected_by_failure_tracker', '失败阈值拦截', 'tone-amber', true],
     ['rate_limited', '限流', 'tone-amber', true]
   ];
   for (const [finalOutcome, label, className, isAbnormal] of outcomes) {

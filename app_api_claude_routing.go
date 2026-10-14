@@ -271,10 +271,6 @@ func (a *App) persistClaudeRoutingState(ctx context.Context, state endpoint.Rout
 		if defaultRecord.Category != service.CategoryClaudeRouting {
 			continue
 		}
-		// state_model_version 由迁移逻辑独立维护，路由写入不得重置（§7.3）
-		if defaultRecord.Key == "state_model_version" {
-			continue
-		}
 		record := *defaultRecord
 		if value, ok := values[record.Key]; ok {
 			record.Value = value

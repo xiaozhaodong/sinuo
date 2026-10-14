@@ -1311,11 +1311,12 @@ func (ut *UsageTracker) periodicCleanup() {
 
 // cleanupOldRecords 清理过期记录（使用写队列）
 func (ut *UsageTracker) cleanupOldRecords() error {
-	if ut.config.RetentionDays <= 0 {
+	retentionDays := ut.getRetentionDays()
+	if retentionDays <= 0 {
 		return nil // 永久保留
 	}
 
-	cutoffTime := time.Now().AddDate(0, 0, -ut.config.RetentionDays)
+	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
 
 	// 删除过期的请求记录（通过写队列）
 	requestQuery := "DELETE FROM request_logs WHERE start_time < ?"
@@ -1396,7 +1397,7 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 	// 记录清理结果
 	slog.Info("Cleaned up old records",
 		"cutoff_date", ut.timezonePolicy.BusinessDate(cutoffTime),
-		"retention_days", ut.config.RetentionDays)
+		"retention_days", retentionDays)
 
 	// 更新汇总统计（异步）
 	go ut.updateUsageSummary()

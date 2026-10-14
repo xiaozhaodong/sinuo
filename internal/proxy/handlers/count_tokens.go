@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
@@ -386,52 +385,4 @@ func (h *CountTokensHandler) respondWithEstimation(w http.ResponseWriter, bodyBy
 	_, _ = w.Write(responseBytes)
 
 	slog.Info(fmt.Sprintf("📊 [Token估算] [%s] 估算结果: %d tokens (reason=%s)", connID, tokens, reason))
-}
-
-// estimateTokens 本地估算token数量
-func (h *CountTokensHandler) estimateTokens(bodyBytes []byte) (int, error) {
-	var req CountTokensRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		return 0, fmt.Errorf("invalid request body: %w", err)
-	}
-
-	totalChars := 0
-
-	// 统计消息内容
-	for _, msg := range req.Messages {
-		if content, ok := msg["content"].(string); ok {
-			totalChars += utf8.RuneCountInString(content)
-		}
-	}
-
-	// 统计系统提示
-	if req.System != nil {
-		switch sys := req.System.(type) {
-		case string:
-			totalChars += utf8.RuneCountInString(sys)
-		case []interface{}:
-			for _, item := range sys {
-				if str, ok := item.(string); ok {
-					totalChars += utf8.RuneCountInString(str)
-				}
-			}
-		}
-	}
-
-	// 工具定义开销 (每个工具约100 tokens)
-	if len(req.Tools) > 0 {
-		totalChars += len(req.Tools) * 400
-	}
-
-	// 应用估算比例
-	ratio := h.config.TokenCounting.EstimationRatio
-	if ratio <= 0 {
-		ratio = 4.0
-	}
-	estimatedTokens := int(float64(totalChars) / ratio)
-
-	// 基础开销
-	estimatedTokens += 50
-
-	return estimatedTokens, nil
 }
