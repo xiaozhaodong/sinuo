@@ -1,16 +1,16 @@
-# AI Switchboard
+# Sinuo
 
 <p align="center">
-  <img src="build/appicon.png" width="128" height="128" alt="AI Switchboard">
+  <img src="build/appicon.png" width="128" height="128" alt="Sinuo">
 </p>
 
 <p align="center">
-  <strong>Claude API 智能转发代理</strong><br>
+  <strong>AI 编程工具的本地网关</strong><br>
   多端点负载均衡 · 自动故障转移 · 实时使用统计
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.3.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-6.0.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg" alt="Go">
@@ -21,7 +21,7 @@
 
 ## 概述
 
-AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用。它作为本地代理运行，统一转发 Claude 与 OpenAI / Codex 请求，提供多端点智能路由、账号池调度、自动故障恢复等能力，同时记录完整的使用统计和成本数据。
+Sinuo 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用，是 AI 编程工具的本地网关。它作为本地代理运行，统一转发 Claude 与 OpenAI / Codex 请求，提供多端点智能路由、账号池调度、自动故障恢复等能力，同时记录完整的使用统计和成本数据。
 
 ### 为什么需要它？
 
@@ -99,10 +99,10 @@ AI Switchboard 是一款基于 [Wails](https://wails.io) 构建的跨平台桌�
 
 | 平台 | 文件 |
 |------|------|
-| macOS (Intel) | `AI-Switchboard-darwin-amd64.zip` |
-| macOS (Apple Silicon) | `AI-Switchboard-darwin-arm64.zip` |
-| Windows | `AI-Switchboard-windows-amd64.zip` |
-| Linux | `AI-Switchboard-linux-amd64.tar.gz` |
+| macOS (Intel) | `Sinuo-darwin-amd64.zip` |
+| macOS (Apple Silicon) | `Sinuo-darwin-arm64.zip` |
+| Windows | `Sinuo-windows-amd64.zip` |
+| Linux | `Sinuo-linux-amd64.tar.gz` |
 
 ### 方式二：从源码构建
 
@@ -151,7 +151,7 @@ claude config set --global apiBaseUrl http://127.0.0.1:8080
 
 ### 从旧版升级
 
-首次启动新版时，应用会在启动代理前顺序执行端点扁平化与 UTC 时间规范化迁移。每项迁移都会创建独立的数据库/活动配置一致性备份和校验清单；迁移失败时应用仅显示只读恢复页，不启动代理或后台写入。详见 [UPGRADING.md](UPGRADING.md)。
+首次启动 Sinuo 前请完全退出旧 App；数据目录迁移失败时会弹框并退出。数据目录就绪后，应用会在启动代理前顺序执行端点扁平化与 UTC 时间规范化迁移。每项数据库结构迁移都会创建独立的数据库/活动配置一致性备份和校验清单；数据库结构迁移失败时应用仅显示只读恢复页，不启动代理或后台写入。详见 [UPGRADING.md](UPGRADING.md)。
 
 ### 全局配置
 
@@ -197,7 +197,7 @@ endpoints_storage:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                         AI Switchboard                        │
+│                             Sinuo                             │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌─────────────────────┐      ┌─────────────────────────┐   │
@@ -306,13 +306,15 @@ endpoints_storage:
 
 | 平台 | 应用数据目录 |
 |------|-------------|
-| macOS | `~/Library/Application Support/AI-Switchboard/` |
-| Windows | `%APPDATA%\AI-Switchboard\` |
-| Linux | `~/.local/share/ai-switchboard/` |
+| macOS | `~/Library/Application Support/Sinuo/` |
+| Windows | `%APPDATA%\Sinuo\` |
+| Linux | `$XDG_DATA_HOME/sinuo/`，未设置时为 `~/.local/share/sinuo/` |
+
+从 AI Switchboard / CC-Forwarder 升级时自动迁移，详见 [UPGRADING.md](UPGRADING.md)。
 
 **目录结构：**
 ```
-AI-Switchboard/
+Sinuo/
 ├── data/
 │   └── usage.db        # SQLite 数据库（端点配置、请求记录、使用统计）
 ├── logs/

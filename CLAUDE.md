@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**AI Switchboard**（工程代号 cc-forwarder-desktop） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
+**Sinuo**（工程代号 cc-forwarder-desktop，仓库名未改） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
 
 - 技术栈：Go + Wails v3 + React + Vite + SQLite
 - 平台：macOS / Windows / Linux
@@ -97,7 +97,8 @@
 
 ### 后端
 
-- `main.go`：程序入口与版本号；`ErrorFormatter` 让后端 error 统一以 `{message}` 回传前端（Wails 默认只回传字符串，前端 `err.message` 会是 undefined）
+- `main.go`：程序入口与版本号；`ErrorFormatter` 让后端 error 统一以 `{message}` 回传前端（Wails 默认只回传字符串，前端 `err.message` 会是 undefined）；数据目录迁移失败时只启动弹框用的最小 Wails 流程
+- `internal/appdir/`：数据目录解析的唯一实现与旧品牌目录迁移（优先 `AI-Switchboard` → `Sinuo`，旧目录不存在时再从 `CC-Forwarder` → `Sinuo`；目标目录已存在则跳过迁移）；迁移保护只认 `data/usage.db-wal` / `data/usage.db-shm` 两个确切文件名，阻断时不建目录、不开库、不监听端口
 - `app.go`：Wails App 初始化与服务装配
 - `app_startup_connectivity.go`：启动完成后的端点/账号池异步批量连通性检查
 - `app_api_account_pool.go`：账号池 Wails API

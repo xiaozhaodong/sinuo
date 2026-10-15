@@ -1,8 +1,11 @@
-# Repository Guidelines
+# Sinuo Repository Guidelines
+
+项目名为 **Sinuo**，Go module 为 `sinuo`；GitHub 仓库与本地目录名仍为 `cc-forwarder-desktop`。
 
 ## 项目结构与模块组织
 - **main.go**：初始化 CLI、加载配置并启动转发器。
 - **internal/**：核心业务模块，当前主要包含 endpoint（端点调度）、proxy（请求处理）、transport（HTTP 客户端）、logging、monitor、tracking、service、store、accountauth 等子包，新增功能请按现有分层扩展。
+- **internal/appdir/**：数据目录解析的唯一实现，负责旧品牌目录向 Sinuo 的优先级迁移与迁移保护；目标目录已存在则跳过迁移。
 - **internal/accountauth/**：ChatGPT OAuth / refresh token / id_token 解析与账号画像提取。
 - **internal/modelrewrite/**：Codex 账号池与 Claude 端点共用的模型改写规则解析、校验与匹配引擎。
 - **internal/service/account_pool*.go**：账号池业务逻辑，包含单账号测试、启动批量连通性检查、分组编排、最近一次调度快照、画像刷新、quota 拉取与状态回写。
@@ -17,7 +20,7 @@
 - **tests/**：单元与集成测试分层，`tests/unit/{module}` 与 `tests/integration/request_suspend` 对应主要质量保障。
 
 ## 构建、测试与开发命令
-- `go build -o ai-switchboard`：构建本地二进制，默认启用当前平台。
+- `go build -o Sinuo`：构建本地二进制，默认启用当前平台。
 - `go run . -config config/config.yaml`：快速本地验证，支持 `--no-tui`。
 - `wails3 dev -config ./build/config.yml -port 9245`：桌面端联调主入口。
 - `cd frontend && npm run build`：验证前端与 Wails 绑定改动是否可打包。
@@ -54,7 +57,7 @@
 
 ## 配置与安全提示
 - 生产环境建议基于 `config/example.yaml` 创建独立配置，敏感 Token 通过环境变量或外部密钥管理注入，避免直接提交。
-- 确保运行时 `usage.db` 所在目录具备备份策略，重要操作前执行离线快照；桌面默认路径遵循 `utils.GetDataDir()`（macOS 通常为 `~/Library/Application Support/AI-Switchboard/data/usage.db`）。
+- 确保运行时 `usage.db` 所在目录具备备份策略，重要操作前执行离线快照；桌面默认路径遵循 `utils.GetDataDir()`（macOS 通常为 `~/Library/Application Support/Sinuo/data/usage.db`）。
 - Web 管理界面默认监听 `0.0.0.0:8010`，对外暴露时请置于受控网络或启用反向代理身份验证。
 - `credential_raw` 当前仍可能包含 `refresh_token / access_token / id_token`，排查问题时避免直接输出到日志、截图或文档。
 
