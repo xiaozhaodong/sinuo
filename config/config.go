@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 
+	"cc-forwarder/internal/appdir"
 	"cc-forwarder/internal/modelrewrite"
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
@@ -476,7 +476,7 @@ func (c *Config) setDefaults() {
 		// Windows: %APPDATA%\AI-Switchboard\data\usage.db
 		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
 		// Linux: ~/.local/share/ai-switchboard/data/usage.db
-		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "usage.db")
+		c.UsageTracking.DatabasePath = filepath.Join(appdir.GetAppDataDir(), "data", "usage.db")
 	}
 	if c.UsageTracking.BufferSize == 0 {
 		c.UsageTracking.BufferSize = 1000 // Default buffer size
@@ -829,40 +829,6 @@ func SaveConfig(config *Config, path string) error {
 	}
 
 	return nil
-}
-
-// getConfigAppDataDir 获取应用数据目录（跨平台）
-// 复制自 internal/utils/appdir.go，避免循环依赖
-// Windows: %APPDATA%\AI-Switchboard
-// macOS: ~/Library/Application Support/AI-Switchboard
-// Linux: ~/.local/share/ai-switchboard
-func getConfigAppDataDir() string {
-	var baseDir string
-
-	switch runtime.GOOS {
-	case "windows":
-		baseDir = os.Getenv("APPDATA")
-		if baseDir == "" {
-			baseDir = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
-		}
-		return filepath.Join(baseDir, "AI-Switchboard")
-
-	case "darwin":
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, "Library", "Application Support", "AI-Switchboard")
-
-	case "linux":
-		homeDir, _ := os.UserHomeDir()
-		xdgDataHome := os.Getenv("XDG_DATA_HOME")
-		if xdgDataHome != "" {
-			return filepath.Join(xdgDataHome, "ai-switchboard")
-		}
-		return filepath.Join(homeDir, ".local", "share", "ai-switchboard")
-
-	default:
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, ".ai-switchboard")
-	}
 }
 
 // resolveEOFRetryHint 计算 EOFRetryHint 生效值（v7 D2 迁移）：

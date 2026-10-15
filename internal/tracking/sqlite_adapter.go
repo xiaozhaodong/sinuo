@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
+	"cc-forwarder/internal/appdir"
 	timezonepolicy "cc-forwarder/internal/timezone"
 )
 
@@ -44,10 +44,7 @@ func (s *SQLiteAdapter) Open() error {
 	dbPath := s.config.DatabasePath
 	if dbPath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\AI-Switchboard\data\usage.db
-		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
-		// Linux: ~/.local/share/ai-switchboard/data/usage.db
-		dbPath = filepath.Join(getSQLiteAppDataDir(), "data", "usage.db")
+		dbPath = filepath.Join(appdir.GetAppDataDir(), "data", "usage.db")
 		s.logger.Info("使用默认数据库路径", "path", dbPath)
 	}
 
@@ -1318,38 +1315,4 @@ func (s *SQLiteAdapter) GetConnectionStats() ConnectionStats {
 // GetDatabaseType 返回数据库类型标识
 func (s *SQLiteAdapter) GetDatabaseType() string {
 	return "sqlite"
-}
-
-// getSQLiteAppDataDir 获取应用数据目录（跨平台）
-// 复制自 internal/utils/appdir.go，避免循环依赖
-// Windows: %APPDATA%\AI-Switchboard
-// macOS: ~/Library/Application Support/AI-Switchboard
-// Linux: ~/.local/share/ai-switchboard
-func getSQLiteAppDataDir() string {
-	var baseDir string
-
-	switch runtime.GOOS {
-	case "windows":
-		baseDir = os.Getenv("APPDATA")
-		if baseDir == "" {
-			baseDir = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
-		}
-		return filepath.Join(baseDir, "AI-Switchboard")
-
-	case "darwin":
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, "Library", "Application Support", "AI-Switchboard")
-
-	case "linux":
-		homeDir, _ := os.UserHomeDir()
-		xdgDataHome := os.Getenv("XDG_DATA_HOME")
-		if xdgDataHome != "" {
-			return filepath.Join(xdgDataHome, "ai-switchboard")
-		}
-		return filepath.Join(homeDir, ".local", "share", "ai-switchboard")
-
-	default:
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, ".ai-switchboard")
-	}
 }

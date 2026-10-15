@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/appdir"
 	"cc-forwarder/internal/logging"
-	"cc-forwarder/internal/utils"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -70,14 +70,49 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 品牌更名（CC-Forwarder -> AI-Switchboard）后的一次性数据目录迁移，
-	// 必须在任何组件打开数据目录之前执行
-	if migrated, err := utils.MigrateLegacyAppDataDir(); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️ 应用数据目录迁移失败: %v（旧数据仍保留在原目录）\n", err)
-	} else if migrated {
-		fmt.Println("✅ 应用数据目录已迁移: CC-Forwarder -> AI-Switchboard")
+	if err := runWithAppDataMigration(runDesktop, showAppDataMigrationError); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+}
 
+// runWithAppDataMigration 是业务初始化的唯一前置门槛；失败不能进入正常桌面启动。
+func runWithAppDataMigration(start func() error, showError func(error)) error {
+	migrated, err := appdir.MigrateLegacyAppDataDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "应用数据目录迁移失败（旧数据仍保留在原目录）: %v\n", err)
+		showError(err)
+		return err
+	}
+	if migrated {
+		fmt.Printf("✅ 应用数据目录已迁移: %s -> %s\n", appdir.LegacyDesktopName, appdir.DesktopName)
+	}
+	return start()
+}
+
+// showAppDataMigrationError 只运行原生事件循环，不注册业务服务、窗口或托盘。
+// v3 Dialog.Show 需要已就绪的原生主线程，因此等 ApplicationStarted 后再弹框。
+func showAppDataMigrationError(migrationErr error) {
+	dialogApp := application.New(application.Options{Name: "AI Switchboard", Icon: icon})
+	dialogApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		dialog := dialogApp.Dialog.Error().SetTitle("AI Switchboard 数据目录迁移失败")
+		dialog.SetMessage(fmt.Sprintf("请先完全退出 AI Switchboard（菜单栏图标 → 退出）后再启动 %s；若旧 App 已退出仍提示，请打开一次旧 App 再正常退出。\n\n旧数据仍保留在原目录。\n%v", appdir.DesktopName, migrationErr))
+		buttonLabel := "退出"
+		if runtime.GOOS == "windows" {
+			// v3 Windows MessageBox 只按固定英文响应名匹配回调。
+			buttonLabel = "Ok"
+		}
+		dialog.AddButton(buttonLabel).SetAsDefault().SetAsCancel().OnClick(func() {
+			go dialogApp.Quit()
+		})
+		dialog.Show()
+	})
+	if err := dialogApp.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "无法显示迁移错误对话框: %v\n", err)
+	}
+}
+
+func runDesktop() error {
 	// 创建应用实例
 	app := NewApp()
 	app.configPath = *configPath
@@ -147,10 +182,7 @@ func main() {
 	app.setupTray(window)
 	wailsApp.RegisterService(application.NewService(app))
 
-	if err := wailsApp.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return wailsApp.Run()
 }
 
 // formatWailsError 提供给 MarshalError 的错误字段结构。

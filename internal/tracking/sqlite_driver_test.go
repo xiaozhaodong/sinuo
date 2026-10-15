@@ -5,10 +5,101 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"cc-forwarder/internal/appdir"
 )
+
+// 隔离整个 tracking 测试包，包含未显式指定数据库路径的测试。
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "tracking-test-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, key := range []string{"HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME"} {
+		if err := os.Setenv(key, dir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
+}
+
+func TestSQLiteAdapter_CloseRemovesWALSidecars(t *testing.T) {
+	for _, pools := range []int{1, 2} {
+		t.Run(fmt.Sprintf("pools=%d", pools), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "usage.db")
+			first := openTestSQLiteAdapter(t, path)
+			execOrFatal(t, first.db, "CREATE TABLE marker(v TEXT); INSERT INTO marker VALUES ('kept')")
+			last := first
+			if pools == 2 {
+				last = openTestSQLiteAdapter(t, path)
+				execOrFatal(t, last.db, "INSERT INTO marker VALUES ('second pool')")
+				if err := first.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if _, err := os.Stat(path + suffix); err != nil {
+					t.Fatalf("最后一个池关闭前侧车必须存在 %s: %v", suffix, err)
+				}
+			}
+			if err := last.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if _, err := os.Stat(path + suffix); !os.IsNotExist(err) {
+					t.Fatalf("最后一个池关闭后侧车必须消失 %s: %v", suffix, err)
+				}
+			}
+			// 重新开库核对已提交数据，不用删除侧车来伪造正常关闭。
+			reopened := openTestSQLiteAdapter(t, path)
+			var count int
+			if err := reopened.db.QueryRow("SELECT count(*) FROM marker").Scan(&count); err != nil || count != pools {
+				t.Fatalf("数据未完整保留: count=%d err=%v", count, err)
+			}
+		})
+	}
+}
+
+func TestTrackingDefaultPathsShareResolver(t *testing.T) {
+	want := filepath.Join(appdir.GetAppDataDir(), "data", "usage.db")
+	cfg, err := buildDatabaseConfig(&Config{})
+	if err != nil || cfg.DatabasePath != want {
+		t.Fatalf("tracker 默认路径=%q err=%v, want=%q", cfg.DatabasePath, err, want)
+	}
+	// 直接使用空路径覆盖 Open 的默认路径分支，不受构造器兼容默认值影响。
+	adapter := &SQLiteAdapter{logger: slog.Default()}
+	if err := adapter.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	var seq int
+	var name, path string
+	if err := adapter.db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+		t.Fatal(err)
+	}
+	// SQLite 会展开 macOS 的 /var -> /private/var 链接，比较实际文件身份。
+	gotInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil || !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("adapter 默认路径=%q err=%v, want=%q", path, err, want)
+	}
+}
 
 func openTestSQLiteAdapter(t *testing.T, path string) *SQLiteAdapter {
 	t.Helper()

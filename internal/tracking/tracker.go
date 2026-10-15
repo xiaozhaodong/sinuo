@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"cc-forwarder/config"
+	"cc-forwarder/internal/appdir"
 	timezonepolicy "cc-forwarder/internal/timezone"
 	"cc-forwarder/internal/tokenusage"
 
@@ -787,48 +786,10 @@ func buildDatabaseConfig(config *Config) (DatabaseConfig, error) {
 
 	// 设置默认数据库路径 - 使用跨平台用户目录
 	if dbConfig.DatabasePath == "" {
-		// 使用 internal/utils 提供的跨平台目录
-		// Windows: %APPDATA%\AI-Switchboard\data\usage.db
-		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
-		// Linux: ~/.local/share/ai-switchboard/data/usage.db
-		dbConfig.DatabasePath = filepath.Join(getAppDataDir(), "data", "usage.db")
+		dbConfig.DatabasePath = filepath.Join(appdir.GetAppDataDir(), "data", "usage.db")
 	}
 
 	return dbConfig, nil
-}
-
-// getAppDataDir 获取应用数据目录（跨平台）
-// 复制自 internal/utils/appdir.go，避免循环依赖
-// Windows: %APPDATA%\AI-Switchboard
-// macOS: ~/Library/Application Support/AI-Switchboard
-// Linux: ~/.local/share/ai-switchboard
-func getAppDataDir() string {
-	var baseDir string
-
-	switch runtime.GOOS {
-	case "windows":
-		baseDir = os.Getenv("APPDATA")
-		if baseDir == "" {
-			baseDir = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
-		}
-		return filepath.Join(baseDir, "AI-Switchboard")
-
-	case "darwin":
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, "Library", "Application Support", "AI-Switchboard")
-
-	case "linux":
-		homeDir, _ := os.UserHomeDir()
-		xdgDataHome := os.Getenv("XDG_DATA_HOME")
-		if xdgDataHome != "" {
-			return filepath.Join(xdgDataHome, "ai-switchboard")
-		}
-		return filepath.Join(homeDir, ".local", "share", "ai-switchboard")
-
-	default:
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, ".ai-switchboard")
-	}
 }
 
 // initDatabaseWithAdapter 使用适配器初始化数据库
