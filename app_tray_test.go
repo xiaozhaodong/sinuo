@@ -282,7 +282,7 @@ func TestTray_IconStatusChangeWakesIconLoop(t *testing.T) {
 		t.Fatal("状态不变不应重复唤醒")
 	default:
 	}
-	if got := trayTooltip("代理运行中 · 127.0.0.1:8088", status); got != "AI Switchboard · 代理运行中 · 127.0.0.1:8088 · Claude 没有可用端点" {
+	if got := trayTooltip("代理运行中 · 127.0.0.1:8088", status); got != "Sinuo · 代理运行中 · 127.0.0.1:8088 · Claude 没有可用端点" {
 		t.Fatalf("悬停提示应带降级原因: %s", got)
 	}
 }

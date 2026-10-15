@@ -22,7 +22,7 @@ func TestLoadLegacyConfigFixture(t *testing.T) {
 	if got := config.Endpoints[0].Timeout.Duration; got != 45*time.Second {
 		t.Fatalf("first endpoint timeout = %v, want 45s", got)
 	}
-	if got := config.ResolveDatabasePath("fallback.db"); got != "/tmp/ai-switchboard-migration-fixture/usage.db" {
+	if got := config.ResolveDatabasePath("fallback.db"); got != "/tmp/sinuo-migration-fixture/usage.db" {
 		t.Fatalf("ResolveDatabasePath() = %q", got)
 	}
 }

@@ -193,7 +193,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 
 	// 3. 显示启动信息
-	a.logger.Info("🚀 AI Switchboard 桌面版启动中...",
+	a.logger.Info("🚀 Sinuo 桌面版启动中...",
 		"version", Version,
 		"config_file", a.configPath)
 
@@ -281,7 +281,7 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	a.startHistoryCollector()
 
 	a.isRunning = true
-	a.logger.Info("✅ AI Switchboard 启动完成",
+	a.logger.Info("✅ Sinuo 启动完成",
 		"proxy_port", a.config.Server.Port)
 	a.scheduleStartupConnectivityChecks()
 	a.completeStartup()
@@ -351,7 +351,7 @@ func (a *App) shutdown(ctx context.Context) {
 	a.mu.Unlock()
 	defer close(done)
 
-	a.logger.Info("🛑 正在关闭 AI Switchboard...")
+	a.logger.Info("🛑 正在关闭 Sinuo...")
 
 	// 0. 先停 Codex 订阅代理新入口：它持有独立 listener 与 WS 连接，
 	//    停用只关闭自己的资源，不影响仍被旧入口使用的账号池与追踪服务。
@@ -434,7 +434,7 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 
 	a.isRunning = false
-	a.logger.Info("✅ AI Switchboard 已关闭")
+	a.logger.Info("✅ Sinuo 已关闭")
 }
 
 // domReady 在 v3 WindowRuntimeReady 事件触发时调用。

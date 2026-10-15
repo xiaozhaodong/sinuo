@@ -1,4 +1,4 @@
-// main.go - AI Switchboard Wails 应用入口
+// main.go - Sinuo Wails 应用入口
 // 保留原有的核心功能，添加 Wails 桌面应用支持
 
 package main
@@ -26,7 +26,7 @@ import (
 
 // 版本信息
 var (
-	Version   = "5.3.0"
+	Version   = "6.0.0"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
@@ -63,7 +63,7 @@ func main() {
 
 	// 处理版本标志
 	if *showVersion {
-		fmt.Printf("AI Switchboard Desktop\n")
+		fmt.Printf("Sinuo Desktop\n")
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Commit: %s\n", Commit)
 		fmt.Printf("Built: %s\n", BuildTime)
@@ -93,9 +93,9 @@ func runWithAppDataMigration(start func() error, showError func(error)) error {
 // showAppDataMigrationError 只运行原生事件循环，不注册业务服务、窗口或托盘。
 // v3 Dialog.Show 需要已就绪的原生主线程，因此等 ApplicationStarted 后再弹框。
 func showAppDataMigrationError(migrationErr error) {
-	dialogApp := application.New(application.Options{Name: "AI Switchboard", Icon: icon})
+	dialogApp := application.New(application.Options{Name: "Sinuo", Icon: icon})
 	dialogApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		dialog := dialogApp.Dialog.Error().SetTitle("AI Switchboard 数据目录迁移失败")
+		dialog := dialogApp.Dialog.Error().SetTitle("Sinuo 数据目录迁移失败")
 		dialog.SetMessage(fmt.Sprintf("请先完全退出 AI Switchboard（菜单栏图标 → 退出）后再启动 %s；若旧 App 已退出仍提示，请打开一次旧 App 再正常退出。\n\n旧数据仍保留在原目录。\n%v", appdir.DesktopName, migrationErr))
 		buttonLabel := "退出"
 		if runtime.GOOS == "windows" {
@@ -125,8 +125,8 @@ func runDesktop() error {
 	// 创建 v3 应用实例。ServiceStartup 只登记上下文并异步初始化业务组件，
 	// 这样迁移恢复页可以在后台启动期间正常显示。
 	wailsApp := application.New(application.Options{
-		Name:         "AI Switchboard",
-		Description:  fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
+		Name:         "Sinuo",
+		Description:  fmt.Sprintf("AI 编程工具的本地网关\n版本 %s", Version),
 		Icon:         icon,
 		MarshalError: marshalWailsError,
 		ShouldQuit:   app.shouldQuit,

@@ -186,7 +186,7 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(out, "导入完成。")
-	fmt.Fprintln(out, "提示: 如果 AI-Switchboard 桌面端正在运行，请重启应用，或在隐私保护页面保存一次设置以重建运行时快照。")
+	fmt.Fprintln(out, "提示: 如果 Sinuo 桌面端正在运行，请重启应用，或在隐私保护页面保存一次设置以重建运行时快照。")
 	return nil
 }
 

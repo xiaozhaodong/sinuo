@@ -77,7 +77,7 @@ endpoints:
 
 usage_tracking:
   enabled: true
-  database_path: /tmp/ai-switchboard-migration-fixture/usage.db
+  database_path: /tmp/sinuo-migration-fixture/usage.db
 
 # 配置改写必须保留未知字段与注释。
 custom_plugin:

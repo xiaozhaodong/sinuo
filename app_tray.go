@@ -59,7 +59,7 @@ func (a *App) setupTray(window *application.WebviewWindow) {
 	t.notify = newTrayNotify(t)
 	a.tray = t
 	t.applyIcon(tray.IconStopped, -1)
-	t.native.SetTooltip("AI Switchboard · 正在启动")
+	t.native.SetTooltip("Sinuo · 正在启动")
 	t.appendMenu(t.menu, tray.Build(tray.Snapshot{StartupState: "正在启动"}))
 	t.native.SetMenu(t.menu)
 	if runtime.GOOS != "linux" {
@@ -317,10 +317,10 @@ func (t *appTray) showError(err error) {
 	t.activateForDialog()
 	var warning trayWarning
 	if errors.As(err, &warning) {
-		t.app.wailsApp.Dialog.Warning().SetTitle("AI Switchboard").SetMessage(warning.message).Show()
+		t.app.wailsApp.Dialog.Warning().SetTitle("Sinuo").SetMessage(warning.message).Show()
 		return
 	}
-	t.app.wailsApp.Dialog.Error().SetTitle("AI Switchboard").SetMessage(err.Error()).Show()
+	t.app.wailsApp.Dialog.Error().SetTitle("Sinuo").SetMessage(err.Error()).Show()
 }
 
 func (a *App) attachTrayMetrics(metrics *monitor.Metrics) {

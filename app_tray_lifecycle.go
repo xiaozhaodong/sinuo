@@ -73,7 +73,7 @@ func (a *App) shouldQuit() bool {
 
 func (t *appTray) confirmQuit(active int) {
 	t.activateForDialog()
-	dialog := t.app.wailsApp.Dialog.Question().SetTitle("退出 AI Switchboard")
+	dialog := t.app.wailsApp.Dialog.Question().SetTitle("退出 Sinuo")
 	dialog.SetMessage(fmt.Sprintf("仍有 %d 个请求进行中，请选择退出方式。", active))
 	choose := func(choice tray.QuitChoice) func() {
 		return func() {
@@ -119,7 +119,7 @@ func (t *appTray) closeWindow() {
 	}
 	if !hintShown {
 		t.activateForDialog()
-		dialog := t.app.wailsApp.Dialog.Info().SetTitle("AI Switchboard 仍在菜单栏运行")
+		dialog := t.app.wailsApp.Dialog.Info().SetTitle("Sinuo 仍在菜单栏运行")
 		dialog.SetMessage("关闭窗口后代理会继续运行。点击系统托盘图标可重新打开窗口，或选择退出。")
 		dialog.AddButton("知道了").SetAsDefault().OnClick(func() {
 			go func() {

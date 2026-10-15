@@ -1,8 +1,8 @@
 #!/bin/bash
 # 打包 Windows 发布版本（包含所有必需文件）
 
-VERSION="5.0.1"
-DIST_DIR="build/dist/AI-Switchboard-Windows-v${VERSION}"
+VERSION="6.0.0"
+DIST_DIR="build/dist/Sinuo-Windows-v${VERSION}"
 
 echo "📦 打包 Windows 发布版本..."
 
@@ -11,7 +11,7 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 # 2. 复制可执行文件
-cp bin/AI-Switchboard.exe "$DIST_DIR/"
+cp bin/Sinuo.exe "$DIST_DIR/"
 echo "  ✅ 复制可执行文件"
 
 # 3. 创建配置目录和示例配置
@@ -28,13 +28,13 @@ mkdir -p "$DIST_DIR/logs"
 echo "  ✅ 创建日志目录"
 
 # 6. 创建 README
-cat > "$DIST_DIR/README.txt" << 'EOT'
-AI-Switchboard v5.0.1 - Windows 版本
+cat > "$DIST_DIR/README.txt" << EOT
+Sinuo v${VERSION} - Windows 版本
 ====================================
 
 ## 快速开始
 
-1. 双击 AI-Switchboard.exe 启动应用
+1. 双击 Sinuo.exe 启动应用
 2. 首次启动会自动创建数据库和日志文件
 3. 打开设置页面配置端点信息
 
@@ -58,26 +58,26 @@ AI-Switchboard v5.0.1 - Windows 版本
 ## 故障排查
 
 如果双击没反应:
-1. 右键 AI-Switchboard.exe → 属性 → 解除锁定
+1. 右键 Sinuo.exe → 属性 → 解除锁定
 2. 在 cmd 中运行查看错误信息:
-   .\AI-Switchboard.exe
+   .\Sinuo.exe
 
 ## 支持
 
-GitHub: https://github.com/your-repo/ai-switchboard
+GitHub: https://github.com/xiaozhaodong/cc-forwarder-desktop
 EOT
 echo "  ✅ 创建 README"
 
 # 7. 压缩为 ZIP
 cd build/dist
-zip -r "AI-Switchboard-Windows-v${VERSION}.zip" "AI-Switchboard-Windows-v${VERSION}"
+zip -r "Sinuo-Windows-v${VERSION}.zip" "Sinuo-Windows-v${VERSION}"
 cd ../..
 
 echo ""
 echo "✅ Windows 发布包创建完成！"
 echo "📍 位置: $DIST_DIR"
-echo "📦 压缩包: build/dist/AI-Switchboard-Windows-v${VERSION}.zip"
+echo "📦 压缩包: build/dist/Sinuo-Windows-v${VERSION}.zip"
 echo ""
 ls -lh "$DIST_DIR"
 echo ""
-ls -lh "build/dist/AI-Switchboard-Windows-v${VERSION}.zip"
+ls -lh "build/dist/Sinuo-Windows-v${VERSION}.zip"

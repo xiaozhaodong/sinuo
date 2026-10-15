@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
-const STORAGE_KEY = 'ai-switchboard-theme';
+const STORAGE_KEY = 'sinuo-theme';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 const PREFERENCES = ['system', 'light', 'dark'];
 

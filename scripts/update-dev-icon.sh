@@ -2,7 +2,7 @@
 # 更新 wails3 dev 开发模式下的应用图标
 
 PNG_ICON="build/appicon.png"
-APP_ICON="bin/AI-Switchboard.app/Contents/Resources/icons.icns"
+APP_ICON="bin/Sinuo.app/Contents/Resources/icons.icns"
 ICONSET_DIR="build/tmp.iconset"
 
 echo "🎨 更新开发模式应用图标..."

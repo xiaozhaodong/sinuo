@@ -57,7 +57,7 @@ func getDebugLogDir() string {
 			return debugConfig.SavePath
 		}
 		// 相对路径：使用应用数据目录下的日志目录
-		// macOS: ~/Library/Application Support/AI-Switchboard/logs
+		// macOS: ~/Library/Application Support/Sinuo/logs
 		return GetLogDir()
 	}
 	// 默认：使用应用数据目录下的日志目录

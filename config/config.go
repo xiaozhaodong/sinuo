@@ -473,9 +473,9 @@ func (c *Config) setDefaults() {
 	// Set usage tracking defaults
 	if c.UsageTracking.DatabasePath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\AI-Switchboard\data\usage.db
-		// macOS: ~/Library/Application Support/AI-Switchboard/data/usage.db
-		// Linux: ~/.local/share/ai-switchboard/data/usage.db
+		// Windows: %APPDATA%\Sinuo\data\usage.db
+		// macOS: ~/Library/Application Support/Sinuo/data/usage.db
+		// Linux: ~/.local/share/sinuo/data/usage.db
 		c.UsageTracking.DatabasePath = filepath.Join(appdir.GetAppDataDir(), "data", "usage.db")
 	}
 	if c.UsageTracking.BufferSize == 0 {

@@ -32,7 +32,7 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 
 	// 不代填任何本地凭据：没有登录凭据时直接说明原因，而不是让官方回一个难懂的 401
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-		const message = "订阅直通需要 Claude Code 使用 claude.ai 登录，请求未携带登录凭据；Switchboard 不会代填本地凭据"
+		const message = "订阅直通需要 Claude Code 使用 claude.ai 登录，请求未携带登录凭据；Sinuo 不会代填本地凭据"
 		lifecycleManager.FailRequest("subscription_unauthorized", message, http.StatusUnauthorized)
 		writeClaudeCodeEntryError(w, http.StatusUnauthorized, "authentication_error", message)
 		return

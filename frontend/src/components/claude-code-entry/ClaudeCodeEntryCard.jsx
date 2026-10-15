@@ -47,7 +47,7 @@ const ClaudeCodeEntryCard = () => {
   const toggleEnabled = async () => {
     if (info.enabled && !(await confirm({
       title: '停用 Claude Code 入口',
-      message: '停用后入口不再监听，仍指向它的 Claude Code 会连接失败；Switchboard 不会修改 Claude Code 的配置。确定停用吗？',
+      message: '停用后入口不再监听，仍指向它的 Claude Code 会连接失败；Sinuo 不会修改 Claude Code 的配置。确定停用吗？',
       confirmText: '停用',
       danger: true
     }))) {
@@ -117,7 +117,7 @@ const ClaudeCodeEntryCard = () => {
                   <CopyBlock label="首次试用（另开终端运行，不影响正在用的 Claude Code）" text={buildClaudeCodeTrialCommand(info.baseUrl)} onCopied={onCopied} />
                   <CopyBlock label="确认无误后写入 ~/.claude/settings.json" text={buildClaudeCodeSettingsSnippet(info.baseUrl)} onCopied={onCopied} />
                   <p className="text-[11.5px] leading-relaxed text-fg-muted">
-                    不要同时设置 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_API_KEY 或 apiKeyHelper，否则会顶替订阅登录、改按 token 计费。Switchboard 未运行时 Claude Code 无法请求，删掉 ANTHROPIC_BASE_URL 即可恢复直连。
+                    不要同时设置 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_API_KEY 或 apiKeyHelper，否则会顶替订阅登录、改按 token 计费。Sinuo 未运行时 Claude Code 无法请求，删掉 ANTHROPIC_BASE_URL 即可恢复直连。
                   </p>
                   {notice && <p className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={12} />{notice}</p>}
                 </div>

@@ -59,7 +59,7 @@ const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxy
         {!mac && (
           <div className="flex items-center gap-2 text-xs font-medium text-fg-body">
             <BrandMark className="h-3.5 w-3.5" />
-            AI Switchboard
+            Sinuo
           </div>
         )}
       </div>

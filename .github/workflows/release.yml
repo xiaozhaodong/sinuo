@@ -70,14 +70,14 @@ jobs:
           cd bin
 
           # 创建 ZIP
-          if [ -d "AI-Switchboard.app" ]; then
-            zip -r "AI-Switchboard-darwin-${ARCH}.zip" "AI-Switchboard.app"
+          if [ -d "Sinuo.app" ]; then
+            zip -r "Sinuo-darwin-${ARCH}.zip" "Sinuo.app"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-switchboard-darwin-${{ matrix.platform == 'darwin/amd64' && 'amd64' || 'arm64' }}
+          name: sinuo-darwin-${{ matrix.platform == 'darwin/amd64' && 'amd64' || 'arm64' }}
           path: bin/*.zip
 
   build-windows:
@@ -125,12 +125,12 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path "bin/AI-Switchboard.exe" -DestinationPath "bin/AI-Switchboard-windows-amd64.zip"
+          Compress-Archive -Path "bin/Sinuo.exe" -DestinationPath "bin/Sinuo-windows-amd64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-switchboard-windows-amd64
+          name: sinuo-windows-amd64
           path: bin/*.zip
 
   build-linux:
@@ -182,12 +182,12 @@ jobs:
       - name: Package
         run: |
           cd bin
-          tar -czf "AI-Switchboard-linux-amd64.tar.gz" "AI-Switchboard"
+          tar -czf "Sinuo-linux-amd64.tar.gz" "Sinuo"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-switchboard-linux-amd64
+          name: sinuo-linux-amd64
           path: bin/*.tar.gz
 
   release:
@@ -220,24 +220,24 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: AI-Switchboard ${{ env.VERSION }}
+          name: Sinuo ${{ env.VERSION }}
           body: |
-            ## AI-Switchboard ${{ env.VERSION }}
+            ## Sinuo ${{ env.VERSION }}
 
             ### 下载
 
             | 平台 | 文件 |
             |------|------|
-            | macOS (Intel) | `AI-Switchboard-darwin-amd64.zip` |
-            | macOS (Apple Silicon) | `AI-Switchboard-darwin-arm64.zip` |
-            | Windows | `AI-Switchboard-windows-amd64.zip` |
-            | Linux | `AI-Switchboard-linux-amd64.tar.gz` |
+            | macOS (Intel) | `Sinuo-darwin-amd64.zip` |
+            | macOS (Apple Silicon) | `Sinuo-darwin-arm64.zip` |
+            | Windows | `Sinuo-windows-amd64.zip` |
+            | Linux | `Sinuo-linux-amd64.tar.gz` |
 
             ### 安装说明
 
-            **macOS**: 解压后将 `AI-Switchboard.app` 拖入应用程序文件夹
-            **Windows**: 解压后运行 `AI-Switchboard.exe`
-            **Linux**: 解压后运行 `AI-Switchboard`
+            **macOS**: 解压后将 `Sinuo.app` 拖入应用程序文件夹
+            **Windows**: 解压后运行 `Sinuo.exe`
+            **Linux**: 解压后运行 `Sinuo`
 
             ### 校验
 

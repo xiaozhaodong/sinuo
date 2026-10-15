@@ -5,13 +5,13 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "AI Switchboard" # The name of the company
-  productName: "AI Switchboard" # The name of the application
-  productIdentifier: "com.wails.AI-Switchboard" # The unique product identifier
-  description: "Claude/OpenAI API 本地代理转发服务" # The application description
-  copyright: "Copyright © 2025 AI Switchboard" # Copyright text
-  comments: "Claude Code 本地代理转发服务" # Comments
-  version: "5.3.0" # The application version
+  companyName: "Sinuo" # The name of the company
+  productName: "Sinuo" # The name of the application
+  productIdentifier: "app.sinuo.desktop" # The unique product identifier
+  description: "AI 编程工具的本地网关" # The application description
+  copyright: "Copyright © 2025 Sinuo" # Copyright text
+  comments: "AI 编程工具的本地网关" # Comments
+  version: "6.0.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

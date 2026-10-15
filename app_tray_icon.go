@@ -152,7 +152,7 @@ func (a *App) notifyTrayRunning(running bool) {
 }
 
 func trayTooltip(statusLabel string, status tray.IconStatus) string {
-	tooltip := "AI Switchboard · " + statusLabel
+	tooltip := "Sinuo · " + statusLabel
 	if status.Reason != "" {
 		tooltip += " · " + status.Reason
 	}

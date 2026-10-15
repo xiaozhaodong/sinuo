@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Switchboard</title>
-    <meta name="description" content="Claude/OpenAI API 本地代理转发服务" />
+    <title>Sinuo</title>
+    <meta name="description" content="AI 编程工具的本地网关" />
     <style>
       /* 防止加载时的闪烁；两个值须与 index.css 的 --app-canvas 保持一致，暗色值还用于 main.go 的 BackgroundColour */
       html, body {
@@ -22,7 +22,7 @@
       // 判定口径与 src/contexts/ThemeContext.jsx 一致。
       (function () {
         try {
-          var stored = localStorage.getItem('ai-switchboard-theme') || 'system';
+          var stored = localStorage.getItem('sinuo-theme') || 'system';
           var dark = stored === 'dark' || (stored === 'system' &&
             window.matchMedia('(prefers-color-scheme: dark)').matches);
           if (dark) document.documentElement.classList.add('dark');

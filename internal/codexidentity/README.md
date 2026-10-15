@@ -110,7 +110,7 @@ turn-state 索引只保存 SHA-256 摘要、owner 和到期时间，最多 4096 
 ```sh
 go test ./...
 go test -race ./internal/codexidentity ./internal/service ./internal/proxy ./internal/accountauth
-go build -o /tmp/codex-identity-auto-ai-switchboard .
+go build -o /tmp/codex-identity-auto-sinuo .
 cd frontend && npm run build
 ```
 

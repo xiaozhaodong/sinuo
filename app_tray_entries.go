@@ -44,7 +44,7 @@ func setTrayClaudeEntryEnabled(api trayClaudeEntryAPI, enabled bool, confirm tra
 		return err
 	}
 	if !enabled && !confirm(trayConfirm{Title: "停用 Claude Code 入口", Confirm: "停用", Destructive: true,
-		Message: "停用后入口不再监听，仍指向它的 Claude Code 会连接失败；Switchboard 不会修改 Claude Code 的配置。确定停用吗？"}) {
+		Message: "停用后入口不再监听，仍指向它的 Claude Code 会连接失败；Sinuo 不会修改 Claude Code 的配置。确定停用吗？"}) {
 		return nil
 	}
 	info, err := api.setClaudeCodeEntryEnabled(enabled)
@@ -176,7 +176,7 @@ func setTrayCodexEntryEnabled(api trayCodexEntryAPI, action tray.Action, enabled
 		return err
 	}
 	if !enabled && !confirm(trayConfirm{Title: "停用 Codex 独立入口", Confirm: "停用", Destructive: true,
-		Message: fmt.Sprintf("停用后独立入口（:%d）不再监听，仍指向它的 Codex 客户端将无法连接；Switchboard 不会修改客户端配置。"+
+		Message: fmt.Sprintf("停用后独立入口（:%d）不再监听，仍指向它的 Codex 客户端将无法连接；Sinuo 不会修改客户端配置。"+
 			"如需改用主端口，请先修改客户端接入配置。确定停用吗？", config.ListenPort)}) {
 		return nil
 	}

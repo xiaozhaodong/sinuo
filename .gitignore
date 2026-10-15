@@ -7,6 +7,11 @@
 
 # Project binary
 endpoint_forwarder
+/Sinuo
+/sinuo
+# 保留旧品牌产物的忽略项
+/AI-Switchboard
+/ai-switchboard
 
 # Test binary, built with `go test -c`
 *.test

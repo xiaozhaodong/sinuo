@@ -45,7 +45,7 @@ MENU_LUCIDE = ("activity", "chart-no-axes-column", "sparkle", "plug", "key-round
                "waypoints", "scroll-text", "panel-top", "power", "wand-sparkles", "star", "pin", "box", "globe",
                "settings-2", "circle-alert", "info", "circle-play", "circle-stop", "user-round", "timer-reset",
                "copy", "history", "type")
-# 「打开 AI Switchboard」用 BrandMark：字形高 12pt；描边 2.4 单位约 2.6px，
+# 「打开 Sinuo」用 BrandMark：字形高 12pt；描边 2.4 单位约 2.6px，
 # 比相邻 lucide 图标（约 2.3px）略重一档，保留品牌字形的分量
 MENU_BRAND_GLYPH_HEIGHT = 24
 MENU_BRAND_STROKE_WIDTH = 2.4

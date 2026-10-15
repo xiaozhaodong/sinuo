@@ -18,11 +18,11 @@ func Build(s Snapshot) []Item {
 		status = fmt.Sprintf("退出中，等待 %d 个请求", s.Active)
 	}
 	items := []Item{info(status).withIcon(iconStatus)}
-	open := navigate("打开 AI Switchboard", "").withIcon(iconApp)
+	open := navigate("打开 Sinuo", "").withIcon(iconApp)
 	open.Shortcut = "CmdOrCtrl+O"
-	quit := Item{Label: "退出 AI Switchboard", Shortcut: "CmdOrCtrl+Q", Icon: iconQuit, Action: Action{Kind: "quit"}}
+	quit := Item{Label: "退出 Sinuo", Shortcut: "CmdOrCtrl+Q", Icon: iconQuit, Action: Action{Kind: "quit"}}
 	if s.Waiting {
-		quit.Label = "退出 AI Switchboard…"
+		quit.Label = "退出 Sinuo…"
 	}
 	if !s.Running || s.Recovery {
 		return append(items, separator(), open, quit)
