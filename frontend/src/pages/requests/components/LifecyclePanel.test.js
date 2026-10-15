@@ -37,7 +37,7 @@ test('详情明细：按条上的顺序显示段名、耗时、说明与总耗�
   });
   const details = html.slice(html.indexOf('mt-1.5 flex flex-wrap'));
   let previous = -1;
-  for (const [label, value] of [['排队', '100ms'], ['建连', '200ms'], ['发送', '300ms'], ['首字', '400ms'], ['流式输出', '4.00s']]) {
+  for (const [label, value] of [['本地处理', '100ms'], ['建连', '200ms'], ['发送', '300ms'], ['首字', '400ms'], ['流式输出', '4.00s']]) {
     const at = details.indexOf(`>${label}</span><span class="font-mono">${value}</span>`);
     assert.ok(at > previous, `${label} 应依次显示准确耗时`);
     previous = at;

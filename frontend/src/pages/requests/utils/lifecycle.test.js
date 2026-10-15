@@ -10,6 +10,7 @@ import {
   summarizeTerminalReason,
   TAIL_THRESHOLD_MS
 } from './lifecycle.js';
+import { normalizeRequest } from './normalizeRequest.js';
 
 const base = {
   duration: 10000,
@@ -21,10 +22,10 @@ const base = {
   status: 'completed'
 };
 
-test('全量：UTC 微秒 ISO 绝对时刻差 + 排队/连接拆分', () => {
+test('全量：UTC 微秒 ISO 绝对时刻差 + 本地处理/连接拆分', () => {
   const request = {
     ...base,
-    upstreamWriteMs: 2500 // 排队 2000 + 连接 500
+    upstreamWriteMs: 2500 // 本地处理 2000 + 连接 500
   };
   const segments = buildLifecycleSegments(request);
   assert.deepEqual(
@@ -33,7 +34,7 @@ test('全量：UTC 微秒 ISO 绝对时刻差 + 排队/连接拆分', () => {
   );
 });
 
-test('routeDecisionAt 晚于 upstreamWriteMs：排队钳制、连接为 0', () => {
+test('routeDecisionAt 晚于 upstreamWriteMs：本地处理钳制、连接为 0', () => {
   const request = {
     ...base,
     routeDecisionAt: '2026-08-13T00:00:05.000000Z',
@@ -43,7 +44,7 @@ test('routeDecisionAt 晚于 upstreamWriteMs：排队钳制、连接为 0', () =
   assert.equal(resolveConnectMs(request), 0);
 });
 
-test('空串 / 无时区 / 无效 ISO：排队与连接降级为 null', () => {
+test('空串 / 无时区 / 无效 ISO：本地处理与连接降级为 null', () => {
   assert.equal(resolveRawQueueMs({ ...base, routeDecisionAt: '' }), null);
   assert.equal(resolveRawQueueMs({ ...base, routeDecisionAt: '2026-08-13 00:00:01' }), null);
   assert.equal(resolveRawQueueMs({ ...base, routeDecisionAt: 'not-a-date' }), null);
@@ -64,7 +65,7 @@ test('降级 2：只有 first/completion（旧数据）→ 前置/首字/流式�
   );
 });
 
-test('降级 3：有 upstreamWriteMs 无 routeDecisionAt → 准备（排队+连接）', () => {
+test('降级 3：有 upstreamWriteMs 无 routeDecisionAt → 准备（本地处理+连接）', () => {
   const segments = buildLifecycleSegments({
     duration: 10000,
     upstreamWriteMs: 1500,
@@ -73,7 +74,7 @@ test('降级 3：有 upstreamWriteMs 无 routeDecisionAt → 准备（排队+连
     isStreaming: true,
     status: 'completed'
   });
-  assert.deepEqual(segments[0], { key: 'connect', label: '准备（排队+连接）', ms: 1500 });
+  assert.deepEqual(segments[0], { key: 'connect', label: '准备（本地处理+连接）', ms: 1500 });
 });
 
 test('降级 1：全无 timing → 单段总耗时', () => {
@@ -405,24 +406,66 @@ const timedRequest = {
   status: 'completed'
 };
 
-test('新数据：排队、建连、发送、首字、流式输出首尾相接', () => {
+test('新数据：本地处理、建连、发送、首字、流式输出首尾相接', () => {
   const segments = buildLifecycleSegments(timedRequest);
   assert.deepEqual(segments.map(({ key, label, ms }) => [key, label, ms]), [
-    ['queue', '排队', 1000], ['connect', '建连', 500], ['send', '发送', 1000],
+    ['queue', '本地处理', 1000], ['connect', '建连', 500], ['send', '发送', 1000],
     ['first', '首字', 3000], ['stream', '流式输出', 4500]
   ]);
-  assert.match(segments[0].detail, /此前失败/);
+  assert.match(segments[0].detail, /选路.*出站限速.*此前失败/);
+  assert.doesNotMatch(segments[0].detail, /压缩|鉴权/);
   assert.match(segments[1].detail, /DNS、TCP、TLS/);
+  assert.doesNotMatch(segments[1].detail, /本地处理/);
   assert.match(segments[2].detail, /请求体越大/);
 });
 
-test('新数据直通：无 dispatch 时忽略 routeDecisionAt，不制造排队', () => {
+test('账号池本地处理：说明含鉴权与按账号压缩，不含端点出站限速', () => {
+  const [local] = buildLifecycleSegments({ ...timedRequest, upstreamType: 'account', requestFamily: 'codex' });
+  assert.match(local.detail, /选路.*鉴权准备.*压缩.*此前失败/);
+  assert.doesNotMatch(local.detail, /出站限速/);
+});
+
+test('新数据直通：订阅直通与图像接口同样显示本地处理，说明不含选路与重试', () => {
+  for (const request of [
+    { ...timedRequest, upstreamType: 'subscription', requestFamily: 'claude' },
+    { ...timedRequest, upstreamType: 'subscription', requestFamily: 'codex' },
+    { ...timedRequest, requestFamily: 'image' }
+  ]) {
+    const [local] = buildLifecycleSegments(request);
+    assert.deepEqual([local.key, local.label, local.ms], ['queue', '本地处理', 1000]);
+    assert.match(local.detail, /隐私扫描/);
+    assert.doesNotMatch(local.detail, /选路|失败/);
+    assert.equal(/重新压缩.*脱敏改写/.test(local.detail), request.requestFamily === 'codex', 'Codex 订阅只在正文被改写时重新压缩请求体');
+  }
+});
+
+test('图像详情：snake_case 权威行经规范化并合并计时后选用直通说明', () => {
+  // 与 RequestDetailPane 的合并方式一致：规范化后的权威行 + 详情接口单独返回的计时偏移。
+  const request = {
+    ...normalizeRequest({ request_id: 'req-image', request_family: 'image', upstream_type: 'endpoint', status: 'completed', is_streaming: false }),
+    upstreamDispatchMs: 100, upstreamConnMs: 300, upstreamWriteMs: 600
+  };
+  const [local] = buildLifecycleSegments(request);
+  assert.deepEqual([local.key, local.label, local.ms], ['queue', '本地处理', 100]);
+  assert.equal(local.detail, buildLifecycleSegments({ ...timedRequest, upstreamType: 'subscription' })[0].detail);
+});
+
+test('早期直通记录：无 dispatch 时忽略 routeDecisionAt，本地处理并入建连', () => {
   const segments = buildLifecycleSegments({ ...timedRequest, ...base, upstreamDispatchMs: null, upstreamConnMs: 1500, upstreamWriteMs: 2500, duration: 11500 });
   assert.equal(segments.some(({ key }) => key === 'queue'), false);
   assert.deepEqual(segments.slice(0, 2).map(({ key, ms }) => [key, ms]), [['connect', 1500], ['send', 1000]]);
+  assert.match(segments[0].detail, /未单独计本地处理/);
 });
 
-test('复用连接：conn 等于 dispatch 时不显示建连，0ms 排队与发送同样不显示', () => {
+test('本地处理真实 0ms：不显示该段，建连不误标为并入本地处理', () => {
+  const segments = buildLifecycleSegments({ ...timedRequest, upstreamDispatchMs: 0, upstreamConnMs: 500, upstreamWriteMs: 1500, duration: 9000 });
+  assert.equal(segments.some(({ key }) => key === 'queue'), false);
+  const connect = segments.find(({ key }) => key === 'connect');
+  assert.equal(connect.ms, 500);
+  assert.doesNotMatch(connect.detail, /未单独计本地处理/);
+});
+
+test('复用连接：conn 等于 dispatch 时不显示建连，0ms 本地处理与发送同样不显示', () => {
   const segments = buildLifecycleSegments({ ...timedRequest, upstreamConnMs: 1000 });
   assert.equal(segments.some(({ key }) => key === 'connect'), false);
   assert.equal(segments.find(({ key }) => key === 'send').ms, 1500);
@@ -458,10 +501,10 @@ test('缺 conn 或 write：完整保留旧数据降级规则，不使用新 disp
   }
 });
 
-test('旧订阅直通：无 conn 与选路时刻时显示连接与发送，其他旧标签保持', () => {
+test('订阅无 conn（旧直通记录与 WS 提交）：显示准备与发送，其他旧标签保持', () => {
   const request = { ...timedRequest, upstreamConnMs: null, upstreamDispatchMs: null, upstreamType: 'subscription' };
-  assert.deepEqual(buildLifecycleSegments(request)[0], { key: 'connect', label: '连接与发送', ms: 2500 });
-  assert.equal(buildLifecycleSegments({ ...request, upstreamType: 'endpoint' })[0].label, '准备（排队+连接）');
+  assert.deepEqual(buildLifecycleSegments(request)[0], { key: 'connect', label: '准备与发送', ms: 2500 });
+  assert.equal(buildLifecycleSegments({ ...request, upstreamType: 'endpoint' })[0].label, '准备（本地处理+连接）');
   assert.equal(buildLifecycleSegments({ ...request, ...base, upstreamWriteMs: 2500 })[1].label, '连接');
 });
 

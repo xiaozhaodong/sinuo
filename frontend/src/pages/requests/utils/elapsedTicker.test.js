@@ -144,7 +144,7 @@ test('生成位优先从首字到达时刻起算，与定稿的 completion_ms �
   };
   assert.deepEqual(resolveGenerationTickAnchor(request, 3000),
     { timestamp: '2026-10-11T02:00:03.500000Z', baseMs: 0 },
-    '有首字时刻时不再用「开始 + 首响」，否则会把排队与连接多算进生成位');
+    '有首字时刻时不再用「开始 + 首响」，否则会把本地处理与连接多算进生成位');
 
   // 3.5s 时首字到达、再过 2s：生成位应显示 2s，而不是旧算法的 2.5s
   const anchor = resolveGenerationTickAnchor(request, 3000);

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     first_token_ms INTEGER,                 -- 上游请求写完到首个有效流式响应耗时(毫秒，仅流式请求)
     completion_ms INTEGER,                  -- 首个有效流式响应到流式完成耗时(毫秒，仅流式请求)
     upstream_write_ms INTEGER,              -- 最终尝试完整写出相对 start_time 偏移；首响前覆盖，首响后冻结
-    upstream_dispatch_ms INTEGER,           -- 最终尝试开始取连接的偏移；仅调度型链路记录
+    upstream_dispatch_ms INTEGER,           -- 最终尝试开始取连接的偏移（本地处理段终点）；HTTP 链路记录
     upstream_conn_ms INTEGER,               -- 最终尝试取得可用连接的偏移；HTTP 链路记录
     schedule_snapshot_json TEXT,            -- v6.2+: 账号池/端点调度快照（白名单 DTO JSON，终态覆盖写）
     privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）

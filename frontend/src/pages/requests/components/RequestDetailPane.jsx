@@ -313,7 +313,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     return <InspectorEmpty icon={MousePointerClick}>选择一条请求查看详情</InspectorEmpty>;
   }
 
-  // 详情接口为唯一权威数据源；分段计时偏移仅详情携带，合并后才能拆出排队、建连与发送。
+  // 详情接口为唯一权威数据源；分段计时偏移仅详情携带，合并后才能拆出本地处理、建连与发送。
   const request = lifecycle?.request
     ? {
       ...lifecycle.request,

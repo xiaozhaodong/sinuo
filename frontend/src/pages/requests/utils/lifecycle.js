@@ -27,7 +27,7 @@ export const parseTimestampOrNull = (value) => {
   }
 };
 
-// resolveRawQueueMs 排队段原始值：routeDecisionAt - startTime（毫秒）。
+// resolveRawQueueMs 旧数据本地处理段原始值：routeDecisionAt - startTime（毫秒）。
 export const resolveRawQueueMs = (request = {}) => {
   const routeAt = parseTimestampOrNull(request.routeDecisionAt);
   const startAt = parseTimestampOrNull(request.timestamp);
@@ -35,7 +35,7 @@ export const resolveRawQueueMs = (request = {}) => {
   return Math.max(0, routeAt.getTime() - startAt.getTime());
 };
 
-// resolveQueueMs 排队段：与 upstreamWriteMs 同时存在时钳制到上游写偏移，禁止重叠。
+// resolveQueueMs 旧数据本地处理段：与 upstreamWriteMs 同时存在时钳制到上游写偏移，禁止重叠。
 export const resolveQueueMs = (request = {}) => {
   const rawQueueMs = resolveRawQueueMs(request);
   const upstreamWriteMs = toNullableMs(request.upstreamWriteMs);
@@ -44,7 +44,7 @@ export const resolveQueueMs = (request = {}) => {
   return rawQueueMs;
 };
 
-// resolveConnectMs 连接段：upstreamWriteMs - 排队段。
+// resolveConnectMs 旧数据连接段：upstreamWriteMs - 本地处理段。
 export const resolveConnectMs = (request = {}) => {
   const upstreamWriteMs = toNullableMs(request.upstreamWriteMs);
   if (upstreamWriteMs === null) return null;
@@ -150,13 +150,31 @@ const terminalSegment = (request = {}, ms = 0) => {
   return null;
 };
 
+// 本地处理段的悬停说明按链路区分：出站限速与 429 重试等待只在端点管线，鉴权刷新与按账号压缩只在账号池；
+// 直通链路（订阅直通、图像接口）不经调度，没有选路与失败重试。
+const LOCAL_SEGMENT_DETAIL = {
+  endpoint: '读取与解析请求、选路、模型改写、隐私扫描与构造请求；另含出站限速等待、此前失败的尝试及其重试等待（如有）',
+  account: '读取与解析请求、选路、模型改写、隐私扫描、鉴权准备（可能刷新 OAuth token）与请求体压缩（按账号配置）；另含此前失败的尝试（如有）',
+  codexSubscription: '读取与解析请求、隐私扫描、请求体重新压缩（客户端发 zstd 且正文被脱敏改写时）与构造上游请求',
+  direct: '读取与解析请求、隐私扫描与构造上游请求'
+};
+
+const resolveLocalSegmentDetail = (request) => {
+  if (request.upstreamType === 'subscription') {
+    return request.requestFamily === 'codex' ? LOCAL_SEGMENT_DETAIL.codexSubscription : LOCAL_SEGMENT_DETAIL.direct;
+  }
+  if (request.requestFamily === 'image') return LOCAL_SEGMENT_DETAIL.direct;
+  return request.upstreamType === 'account' ? LOCAL_SEGMENT_DETAIL.account : LOCAL_SEGMENT_DETAIL.endpoint;
+};
+
 // buildLifecycleSegments 分段推导（毫秒，全部防御 NULL 与非单调输入）。
-// 有 conn 与 write 时：排队 · 建连 · 发送 · 首字 · 流式输出（· 收尾）。
+// 有 conn 与 write 时：本地处理 · 建连 · 发送 · 首字 · 流式输出（· 收尾）；
+// 本地处理段键沿用 queue；早期直通记录（2026-10）没有 dispatch，本地处理并入建连。
 // 缺任一项时保持旧数据降级规则：
 //   1. 全无 timing → 单段「总耗时」
 //   2. 只有 first/completion（旧数据）→ 前置 / 首字 / 流式输出
-//   3. 有 upstreamWriteMs 无 routeDecisionAt → 准备（排队+连接）/ 首字 / 流式输出；订阅直通改为「连接与发送」
-//   4. 全量 → 排队 · 连接 · 首字 · 流式输出（· 收尾）
+//   3. 有 upstreamWriteMs 无 routeDecisionAt → 准备（本地处理+连接）/ 首字 / 流式输出；订阅（含 WS 提交）改为「准备与发送」
+//   4. 全量 → 本地处理 · 连接 · 首字 · 流式输出（· 收尾）
 //   5. failed/cancelled → 已知段照画，末尾补红/灰标注段
 export const buildLifecycleSegments = (request = {}) => {
   const duration = toNullableMs(request.duration) ?? 0;
@@ -188,21 +206,21 @@ export const buildLifecycleSegments = (request = {}) => {
 
   if (queueMs !== null && queueMs > 0) {
     segments.push(hasConnectionTiming
-      ? { key: 'queue', label: '排队', ms: queueMs, detail: '调度选路、本地处理（隐私扫描、请求体压缩），以及此前失败的尝试（如有）' }
-      : { key: 'queue', label: '排队', ms: queueMs });
+      ? { key: 'queue', label: '本地处理', ms: queueMs, detail: resolveLocalSegmentDetail(request) }
+      : { key: 'queue', label: '本地处理', ms: queueMs });
   }
   if (connectMs !== null && connectMs > 0) {
-    // 降级规则 3：无 routeDecisionAt 时排队与连接不可分，合并为「准备」段。
+    // 降级规则 3：无 routeDecisionAt 时本地处理与连接不可分，合并为「准备」段。
     segments.push(hasConnectionTiming
-      ? { key: 'connect', label: '建连', ms: connectMs, detail: '取得上游连接：新建连接含 DNS、TCP、TLS 与代理握手，复用连接接近 0；直通请求另含几毫秒本地处理' }
+      ? { key: 'connect', label: '建连', ms: connectMs, detail: `取得上游连接：新建连接含 DNS、TCP、TLS 与代理握手，复用连接接近 0${queueMs === null ? '；本条记录未单独计本地处理，已并入此段' : ''}` }
       : (queueMs === null
-        ? { key: 'connect', label: request.upstreamType === 'subscription' ? '连接与发送' : '准备（排队+连接）', ms: connectMs }
+        ? { key: 'connect', label: request.upstreamType === 'subscription' ? '准备与发送' : '准备（本地处理+连接）', ms: connectMs }
         : { key: 'connect', label: '连接', ms: connectMs }));
   }
   if (hasConnectionTiming && writeMs > readyMs) {
     segments.push({ key: 'send', label: '发送', ms: writeMs - readyMs, detail: '写出请求头与请求体；请求体越大、上行越慢，这段越长' });
   }
-  // 降级规则 2：无排队/连接信息时，用总耗时扣除首字与流式推算「前置」。
+  // 降级规则 2：无本地处理/连接信息时，用总耗时扣除首字与流式推算「前置」。
   if (queueMs === null && connectMs === null && firstMs !== null) {
     const preMs = Math.max(0, duration - ((firstMs ?? 0) + (completionMs ?? 0)));
     if (preMs > 0) {

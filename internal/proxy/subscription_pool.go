@@ -14,6 +14,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"cc-forwarder/config"
 )
@@ -28,6 +29,9 @@ type subscriptionPoolMetadata struct {
 	RequestKind   string
 	BodyMetadata  *normalizedRequestBodyMetadata
 	BodyError     *requestBodyError
+	// ReceivedAt 适配器收到请求的时刻；正文在进入 Handler 前已读取，生命周期起点需前移到这里，
+	// 与直通模式一致地把读取、解压与 JSON 校验计入本地处理。
+	ReceivedAt time.Time
 }
 
 type subscriptionPoolMetadataKey struct{}
@@ -62,6 +66,7 @@ func newSubscriptionPoolAdapter(proxy *Handler, logger *slog.Logger) *subscripti
 
 // serve 隔离客户端头后转入现有账号池链路。
 func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, route *subscriptionRoute, requestID string) {
+	receivedAt := time.Now()
 	if route == nil || route.Kind != subscriptionRouteResponses || r.Method != http.MethodPost {
 		writeAccountPipelineError(w, http.StatusNotFound, "codex_subscription_operation_not_supported",
 			"the Codex subscription proxy only routes POST /v1/responses to the account pool")
@@ -93,7 +98,7 @@ func (a *subscriptionPoolAdapter) serve(w http.ResponseWriter, r *http.Request, 
 	r.Header = buildSubscriptionPoolHeaders(r.Header)
 	*r = *r.WithContext(withSubscriptionPoolMetadata(r.Context()))
 	metadata, _ := subscriptionPoolMetadataFromContext(r.Context())
-	metadata.BodyMetadata, metadata.BodyError = body, bodyErr
+	metadata.BodyMetadata, metadata.BodyError, metadata.ReceivedAt = body, bodyErr, receivedAt
 	*r = *r.WithContext(context.WithValue(r.Context(), subscriptionPoolMetadataKey{}, metadata))
 	a.proxy.ServeCodexPoolRequest(w, r)
 }

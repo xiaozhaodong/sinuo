@@ -156,6 +156,16 @@ func NewRequestLifecycleManager(usageTracker *tracking.UsageTracker, monitoringM
 	return manager
 }
 
+// SetStartTime 把请求开始时刻前移到入口真正收到请求的时刻（如订阅池模式在进入 Handler 前已读取正文）。
+// startTime 不加锁，只能在创建后、StartRequest 及任何并发使用之前调用；零值或晚于当前起点时忽略。
+func (rlm *RequestLifecycleManager) SetStartTime(at time.Time) {
+	if at.IsZero() || !at.Before(rlm.startTime) {
+		return
+	}
+	rlm.startTime = at
+	rlm.firstTokenStartTime = at
+}
+
 // StartRequest 开始请求跟踪
 // 调用 RecordRequestStart 记录请求开始，并发布请求开始事件
 func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, path string, isStreaming bool) {
@@ -756,17 +766,9 @@ func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 	rlm.RecordUpstreamWrite(handlers.UpstreamWriteTiming{WroteAt: start})
 }
 
-// RecordUpstreamWrite 调度型链路记录最终尝试的取连接、连接就绪与写完偏移。
+// RecordUpstreamWrite 记录最终尝试的取连接、连接就绪与写完偏移；
+// 取连接偏移即本地处理段终点，调度型与直通链路一致记录。
 func (rlm *RequestLifecycleManager) RecordUpstreamWrite(timing handlers.UpstreamWriteTiming) {
-	rlm.recordUpstreamWrite(timing, false)
-}
-
-// RecordDirectUpstreamWrite 直通链路只记录连接就绪与写完，不制造排队段。
-func (rlm *RequestLifecycleManager) RecordDirectUpstreamWrite(timing handlers.UpstreamWriteTiming) {
-	rlm.recordUpstreamWrite(timing, true)
-}
-
-func (rlm *RequestLifecycleManager) recordUpstreamWrite(timing handlers.UpstreamWriteTiming, direct bool) {
 	if timing.WroteAt.IsZero() {
 		return
 	}
@@ -788,12 +790,10 @@ func (rlm *RequestLifecycleManager) recordUpstreamWrite(timing handlers.Upstream
 		return &ms
 	}
 	opts := tracking.UpdateOptions{
-		FirstTokenStartAt: &timing.WroteAt,
-		UpstreamWriteMs:   offset(timing.WroteAt),
-		UpstreamConnMs:    offset(timing.ConnReadyAt),
-	}
-	if !direct {
-		opts.UpstreamDispatchMs = offset(timing.ConnStartAt)
+		FirstTokenStartAt:  &timing.WroteAt,
+		UpstreamWriteMs:    offset(timing.WroteAt),
+		UpstreamConnMs:     offset(timing.ConnReadyAt),
+		UpstreamDispatchMs: offset(timing.ConnStartAt),
 	}
 	// 与首响和其他写完回调串行，三列及首字起点始终属于同一次尝试。
 	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)

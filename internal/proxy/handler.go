@@ -245,6 +245,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
 		lifecycleManager.SetClientSession(clientSessionID(r))
 		if hasPoolMetadata {
+			lifecycleManager.SetStartTime(poolMetadata.ReceivedAt)
 			lifecycleManager.SetRequestSource(poolMetadata.RequestSource)
 			lifecycleManager.SetRequestKind(poolMetadata.RequestKind)
 		}

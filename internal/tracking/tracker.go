@@ -450,7 +450,7 @@ type UpdateOptions struct {
 
 	// v6.2 生命周期面板新增字段
 	UpstreamWriteMs      *int64  // 最终尝试写完偏移（毫秒），首响前覆盖、首响后冻结
-	UpstreamDispatchMs   *int64  // 最终尝试开始取连接偏移（毫秒），仅调度型链路
+	UpstreamDispatchMs   *int64  // 最终尝试开始取连接偏移（毫秒），即本地处理段终点；HTTP 链路记录
 	UpstreamConnMs       *int64  // 最终尝试连接就绪偏移（毫秒），HTTP 链路
 	ScheduleSnapshotJSON *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
 	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写

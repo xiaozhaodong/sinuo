@@ -198,7 +198,8 @@ func (t *subscriptionRequestTracking) SetHTTPStatus(status int) {
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{HttpStatus: &status})
 }
 
-func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, connReadyAt, at time.Time) {
+// MarkOutbound 记录同一次尝试的取连接、连接就绪与写完；WS 提交没有建连阶段，只传写完时刻。
+func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, timing handlers.UpstreamWriteTiming) {
 	if requestBytes < 0 {
 		requestBytes = 0
 	}
@@ -207,19 +208,24 @@ func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, connReady
 		t.mu.Unlock()
 		return
 	}
+	at := timing.WroteAt
 	if at.IsZero() {
 		at = time.Now()
 	}
 	t.outboundAt = at
 	t.requestBytes = requestBytes
-	ms := at.Sub(t.startedAt).Milliseconds()
-	if ms < 0 {
-		ms = 0
+	offset := func(moment time.Time) *int64 {
+		if moment.IsZero() {
+			return nil
+		}
+		ms := max(moment.Sub(t.startedAt).Milliseconds(), 0)
+		return &ms
 	}
-	opts := tracking.UpdateOptions{UpstreamWriteMs: &ms, FirstTokenStartAt: &at}
-	if !connReadyAt.IsZero() {
-		connMs := max(connReadyAt.Sub(t.startedAt).Milliseconds(), 0)
-		opts.UpstreamConnMs = &connMs
+	opts := tracking.UpdateOptions{
+		UpstreamWriteMs:    offset(at),
+		UpstreamConnMs:     offset(timing.ConnReadyAt),
+		UpstreamDispatchMs: offset(timing.ConnStartAt),
+		FirstTokenStartAt:  &at,
 	}
 	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 	t.mu.Unlock()
@@ -504,7 +510,7 @@ func (o *subscriptionTrackingObserver) SubmissionWarning(connectionID, code stri
 
 func (o *subscriptionTrackingObserver) SubmissionOutbound(submission *subscriptionSubmission, size int64, at time.Time) {
 	if handle := o.submissionHandle(submission, false); handle != nil {
-		handle.MarkOutbound(size, time.Time{}, at)
+		handle.MarkOutbound(size, handlers.UpstreamWriteTiming{WroteAt: at})
 	}
 }
 

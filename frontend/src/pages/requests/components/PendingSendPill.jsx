@@ -1,7 +1,7 @@
 // ============================================
 // PendingSendPill - 首响位「尚未发到上游」的等待点
 // 2026-10-11
-// 还没发到上游（排队、隐私扫描、建连）时首响还没开始计，只放等待点、不给数字。
+// 还没发到上游（本地处理、建连）时首响还没开始计，只放等待点、不给数字。
 // 大多只停零点几秒，所以 1 秒内静止；超过 1 秒三个点从左到右依次变暗再亮回，
 // 再久变黄 / 变红（阈值见 PENDING_SEND_THRESHOLDS_MS）。
 // 这时状态列的轨道也在流动，同一行两处在动是有意的：只在真卡在发出前时才出现。
@@ -12,7 +12,7 @@ import { parseTimestampOrNull } from '../utils/lifecycle.js';
 import { subscribeElapsedTick } from '../utils/elapsedTicker.js';
 import { getPendingSendPillState, TIMING_PILL_BASE } from '../utils/timing.js';
 
-const PENDING_SEND_HINT = '尚未发到上游（排队 / 建连中）';
+const PENDING_SEND_HINT = '尚未发到上游（本地处理 / 建连中）';
 
 // 宽度钉成数字胶囊的 5 个等宽字符（border-box：内容 5ch + 左右 px-2 + 边框），换成数字时不抖。
 // 居中点比句点在胶囊里不下沉。

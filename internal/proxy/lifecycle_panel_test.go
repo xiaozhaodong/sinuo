@@ -17,6 +17,12 @@ import (
 // newLifecyclePanelTestTracker 构造启用热池的内存 tracker。
 func newLifecyclePanelTestTracker(t *testing.T) *tracking.UsageTracker {
 	t.Helper()
+	return newTimingTestTracker(t, true)
+}
+
+// newTimingTestTracker 热池关闭时更新经事件队列异步落 SQLite，用于验证直写路径。
+func newTimingTestTracker(t *testing.T, hotPoolEnabled bool) *tracking.UsageTracker {
+	t.Helper()
 	tracker, err := tracking.NewUsageTracker(&tracking.Config{
 		Enabled:         true,
 		DatabasePath:    ":memory:",
@@ -27,7 +33,7 @@ func newLifecyclePanelTestTracker(t *testing.T) *tracking.UsageTracker {
 		CleanupInterval: 24 * time.Hour,
 		RetentionDays:   30,
 		HotPool: &tracking.HotPoolSettings{
-			Enabled:          true,
+			Enabled:          hotPoolEnabled,
 			MaxAge:           30 * time.Minute,
 			MaxSize:          1000,
 			CleanupInterval:  time.Minute,

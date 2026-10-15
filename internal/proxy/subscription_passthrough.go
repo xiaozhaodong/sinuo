@@ -133,7 +133,7 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		"conn_id", requestID, "kind", string(route.Kind), "mode", bodyMode,
 		"plaintext_bytes", len(body.normalizedBody), "wire_bytes", len(wireBody))
 	traceCtx, _ := handlers.WithUpstreamTrace(r.Context(), func(timing handlers.UpstreamWriteTiming) {
-		track.MarkOutbound(int64(len(wireBody)), timing.ConnReadyAt, timing.WroteAt)
+		track.MarkOutbound(int64(len(wireBody)), timing)
 	})
 	r = r.WithContext(traceCtx)
 

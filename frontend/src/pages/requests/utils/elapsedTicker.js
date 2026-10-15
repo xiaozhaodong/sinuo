@@ -29,7 +29,7 @@ export const resolveElapsedMs = (startedAt, baseMs, now) => (
 /**
  * 生成位跑秒的起算锚点。
  * 优先用后端给的首字到达时刻：与 completion_ms（完成时刻 - 首字时刻）同一起点，定稿时不跳。
- * 拿不到时退回「请求开始 + 首响」：首响不含排队、连接和首字前的重试，
+ * 拿不到时退回「请求开始 + 首响」：首响不含本地处理、连接和首字前的重试，
  * 这个近似会把这几段多算进生成位，定稿时往回跳。
  *
  * @param {{ timestamp: string, firstTokenAt?: string }} request

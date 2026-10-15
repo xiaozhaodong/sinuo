@@ -24,7 +24,7 @@ func TestSubscriptionHTTPTrackingKnownAndUnknownSettlement(t *testing.T) {
 	known.SetModel("synthetic-model")
 	known.SetStreaming(true)
 	known.SetHTTPStatus(201)
-	known.MarkOutbound(41, time.Time{}, started.Add(2*time.Millisecond))
+	known.MarkOutbound(41, handlers.UpstreamWriteTiming{WroteAt: started.Add(2 * time.Millisecond)})
 	known.MarkFirstOutput(17, started.Add(7*time.Millisecond))
 	known.MarkResponseBytes(123)
 	known.ApplyParseResult(&ParseResult{
@@ -269,7 +269,7 @@ func TestSubscriptionTrackingPublishesTimingEvents(t *testing.T) {
 		RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
 	})
 	outboundAt := started.Add(2 * time.Millisecond)
-	handle.MarkOutbound(41, time.Time{}, outboundAt)
+	handle.MarkOutbound(41, handlers.UpstreamWriteTiming{WroteAt: outboundAt})
 	firstOutputAt := started.Add(7 * time.Millisecond)
 	handle.MarkFirstOutput(17, firstOutputAt)
 	handle.MarkFirstOutput(30, started.Add(9*time.Millisecond))
