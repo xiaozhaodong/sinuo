@@ -76,6 +76,7 @@ type Snapshot struct {
 	EntryQuotaShort                                     string // 菜单栏文字用：剩余更少的窗口，如「5h 62%」
 	EntryPort                                           int
 	CodexModels                                         bool
+	CodexRoutingAvailable                               bool
 	CodexBindings                                       []Binding
 	Accounts                                            []Account
 	RecentAccountID                                     int64
@@ -119,12 +120,32 @@ func choice(label string, checked, disabled bool, action Action) Item {
 	return Item{Label: label, Checked: checked, Checkable: true, Disabled: disabled, Action: action}
 }
 
-// operationMenu 是「优选到 / 固定到」的目标子菜单；目标项本身不带图标，状态由勾选表达。
-func operationMenu(mode string, targets []Item) Item {
+func operationSection(mode string) Item {
 	if mode == "manual_fixed" {
-		return Item{Label: "固定到", Icon: iconPin, Children: targets}
+		return info("── 固定 · 不可用时直接失败 ──")
 	}
-	return Item{Label: "优选到", Icon: iconPrefer, Children: targets}
+	return info("── 优选 · 不可用时回落 ──")
+}
+
+func routingToggle(target string, enabled, available bool) Item {
+	mode := "on"
+	if enabled {
+		mode = "off"
+	}
+	return choice("按模型路由", enabled, !available, Action{Kind: "model_routing", Target: target, Mode: mode})
+}
+
+func routingHeader(target string, bindings []Binding, available bool) []Item {
+	items, disabled := []Item{routingToggle(target, true, available)}, 0
+	for _, b := range bindings {
+		if !b.Enabled {
+			disabled++
+		}
+	}
+	if disabled > 0 {
+		items = append(items, info(fmt.Sprintf("另有 %d 条映射已停用", disabled)))
+	}
+	return append(items, separator(), navigate("管理模型映射…", target+"-model-routing"))
 }
 
 func routeLabel(mode, target, last string) string {

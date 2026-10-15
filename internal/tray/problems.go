@@ -11,7 +11,7 @@ var problemPageLabels = map[string]string{
 }
 
 // problemItem：有就地修复时展开子菜单（先修复、后跳主窗口）；没有可执行的修复时点击直接跳到管理页。
-// 只有一个冷却目标时直接给出「解除 X 的冷却」，多个时先选操作再选目标，与路由子菜单的组织方式一致。
+// 只有一个冷却目标时直接给出「解除 X 的冷却」，多个时先展开「解除冷却」再选目标。
 func problemItem(p Problem, now time.Time) Item {
 	var fixes []Item
 	switch len(p.Cooling) {

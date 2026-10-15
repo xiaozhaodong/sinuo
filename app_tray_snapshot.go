@@ -43,13 +43,7 @@ func (t *appTray) snapshot() tray.Snapshot {
 	t.failoverMu.Lock()
 	s.Failovers = append([]tray.FailoverEntry(nil), t.failovers...)
 	t.failoverMu.Unlock()
-	routing, err := a.GetModelRoutingSettings()
-	if err != nil {
-		s.ClaudeError, s.CodexError = "模型路由状态读取失败: "+err.Error(), "模型路由状态读取失败: "+err.Error()
-	} else {
-		s.ClaudeModels, s.CodexModels = routing.ClaudeEnabled, routing.CodexEnabled
-		t.readClaudeRoute(&s)
-	}
+	t.readModelRouting(&s)
 	entry, err := a.GetClaudeCodeEntryStatus()
 	s.EntryError = trayError(err)
 	s.EntryEnabled, s.EntryRunning, s.EntryMode, s.EntryPort, s.EntryListenError = entry.Enabled, entry.Running, entry.Mode, entry.ListenPort, entry.Error
@@ -65,6 +59,17 @@ func (t *appTray) snapshot() tray.Snapshot {
 		t.readCodexRoute(&s)
 	}
 	return s
+}
+
+func (t *appTray) readModelRouting(s *tray.Snapshot) {
+	routing, err := t.app.GetModelRoutingSettings()
+	if err != nil {
+		s.ClaudeError, s.CodexError = "模型路由状态读取失败: "+err.Error(), "模型路由状态读取失败: "+err.Error()
+		return
+	}
+	s.ClaudeModels, s.CodexModels = routing.ClaudeEnabled, routing.CodexEnabled
+	s.CodexRoutingAvailable = routing.CodexStatus != "unavailable"
+	t.readClaudeRoute(s)
 }
 
 func trayError(err error) string {

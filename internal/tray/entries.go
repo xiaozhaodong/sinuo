@@ -105,7 +105,7 @@ func scopeNote(entry string, subscription bool, items []Item) []Item {
 	if !subscription {
 		return items
 	}
-	return append([]Item{info(entry + " 入口为订阅直通，以下策略只影响主端口").withIcon(iconInfo), separator()}, items...)
+	return append([]Item{info(entry + " 入口为订阅直通，以下策略只影响主端口"), separator()}, items...)
 }
 
 func (s Snapshot) claudeEntrySubscription() bool {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -34,6 +35,9 @@ type trayReceiptDelivery interface {
 // executeTrayActionWithReceipt 保留原写入结果；读名称与投递独立运行，不占 actionMu。
 func executeTrayActionWithReceipt(api trayActionAPI, action tray.Action, confirm trayConfirmFunc, send func(tray.Action)) error {
 	if err := api.executeTrayAction(action, confirm); err != nil {
+		if errors.Is(err, errTrayActionSkipped) {
+			return nil
+		}
 		return err
 	}
 	if tray.IsSwitchAction(action.Kind) {

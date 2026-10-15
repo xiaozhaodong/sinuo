@@ -48,13 +48,34 @@ func TestReceiptNotice_OnlySwitchActions(t *testing.T) {
 			t.Errorf("%q 意外生成回执: %+v", kind, notice)
 		}
 	}
-	for _, kind := range []string{"claude", "claude_binding", "codex", "codex_binding"} {
+	for _, kind := range []string{"claude", "claude_binding", "codex", "codex_binding", "model_routing"} {
 		if !IsSwitchAction(kind) {
 			t.Errorf("%q 应支持切换回执", kind)
 		}
 	}
 	if _, ok := ReceiptNotice(SwitchReceipt{Kind: "claude", Mode: "unknown"}); ok {
 		t.Fatal("未知策略不得显示成自动调度")
+	}
+}
+
+func TestReceiptNotice_ModelRouting(t *testing.T) {
+	for _, tc := range []struct{ target, mode, title, body, page string }{
+		{"claude", "on", "Claude 模型路由已开启", "按模型分配上游，未分配的模型返回 422", "claude-model-routing"},
+		{"claude", "off", "Claude 模型路由已关闭", "恢复按全局端点策略转发", "endpoints"},
+		{"codex", "on", "Codex 模型路由已开启", "按模型分配上游，未分配的模型返回 422", "codex-model-routing"},
+		{"codex", "off", "Codex 模型路由已关闭", "恢复按账号池编排调度", "account-pool"},
+	} {
+		assertReceiptNotice(t, SwitchReceipt{Kind: "model_routing", Target: tc.target, Mode: tc.mode},
+			Notice{ID: "switch:model_routing:" + tc.target, Title: tc.title, Body: tc.body, Target: tc.page})
+	}
+	for _, receipt := range []SwitchReceipt{
+		{Kind: "model_routing", Target: "claude", Mode: "auto"},
+		{Kind: "model_routing", Target: "codex", Mode: "unknown"},
+		{Kind: "model_routing", Target: "unknown", Mode: "on"},
+	} {
+		if notice, ok := ReceiptNotice(receipt); ok || notice != (Notice{}) {
+			t.Fatalf("非法开关不得生成回执: %+v", notice)
+		}
 	}
 }
 

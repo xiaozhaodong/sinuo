@@ -33,6 +33,13 @@ func iconSnapshots() map[string]Snapshot {
 	models.CodexBindings = []Binding{{ID: 4, Name: "gpt", Enabled: true, AccountIDs: []int64{1}}, {ID: 5, Name: "off"}}
 	models.EntryEnabled, models.EntryMode, models.EntryListenError = true, "endpoint", "端口被占用"
 	models.CodexEntryState, models.CodexEntryMode = CodexEntryStopped, "pool"
+	subscriptionModels := models
+	subscriptionModels.EntryEnabled, subscriptionModels.EntryRunning, subscriptionModels.EntryMode = true, true, "subscription"
+	subscriptionModels.CodexEntryState, subscriptionModels.CodexEntryMode = CodexEntryReady, "subscription"
+	emptyModels := models
+	emptyModels.ClaudeBindings, emptyModels.CodexBindings = nil, nil
+	unavailable := global
+	unavailable.CodexRoutingAvailable = false
 	empty := runningSnapshot()
 	empty.Endpoints, empty.Accounts = nil, nil
 	empty.EntryError = "读取失败"
@@ -41,7 +48,7 @@ func iconSnapshots() map[string]Snapshot {
 	readOnly := runningSnapshot()
 	readOnly.CodexEntryState, readOnly.CodexEntryLabel = CodexEntryUnavailable, "启动失败"
 	return map[string]Snapshot{"stopped": stopped, "global": global, "models": models, "empty": empty, "failed": failed, "readOnly": readOnly,
-		"degraded": degraded, "unfixable": unfixable}
+		"degraded": degraded, "unfixable": unfixable, "subscriptionModels": subscriptionModels, "emptyModels": emptyModels, "unavailable": unavailable}
 }
 
 func walkItems(items []Item, visit func(Item)) {
@@ -88,19 +95,19 @@ func TestMenuIcons_ReferencedIconsHaveAssets(t *testing.T) {
 
 func TestMenuIcons_TargetChoicesStayPlain(t *testing.T) {
 	for name, s := range iconSnapshots() {
-		walkItems(Build(s), func(item Item) {
-			if item.Label != "优选到" && item.Label != "固定到" {
-				return
+		for _, item := range Build(s) {
+			if item.Icon != iconClaude && item.Icon != iconCodex && item.Icon != iconModel && item.Icon != iconWebTools {
+				continue
 			}
-			if item.Icon == "" {
-				t.Fatalf("%s: %q 缺少图标", name, item.Label)
+			if s.ClaudeError != "" && item.Icon == iconClaude || s.CodexError != "" && item.Icon == iconCodex {
+				continue // 读取失败分支沿用原来的图标与结构。
 			}
-			for _, target := range item.Children {
+			walkItems(item.Children, func(target Item) {
 				if target.Icon != "" {
-					t.Fatalf("%s: 端点 / 账号目标项不带图标，状态由勾选表达: %+v", name, target)
+					t.Fatalf("%s: 选择型子菜单整级不带图标: %+v", name, target)
 				}
-			}
-		})
+			})
+		}
 	}
 }
 

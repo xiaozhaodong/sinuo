@@ -34,9 +34,11 @@ func Build(s Snapshot) []Item {
 	if len(s.Failovers) > 0 {
 		items = append(items, recentFailovers(s))
 	}
-	items = append(items, separator(), claudeMenu(s))
+	items = append(items, separator())
+	items = append(items, claudeItems(s)...)
 	items = append(items, claudeEntryItems(s)...)
-	items = append(items, separator(), codexMenu(s))
+	items = append(items, separator())
+	items = append(items, codexItems(s)...)
 	items = append(items, codexEntryItems(s)...)
 	items = append(items, separator(), open,
 		navigate("打开请求追踪", "requests").withIcon(iconRequests), navigate("打开日志", "logs").withIcon(iconLogs))

@@ -19,8 +19,6 @@ const (
 	iconMenuBar   = "panel-top"
 	iconQuit      = "power"
 	iconAuto      = "wand-sparkles"
-	iconPrefer    = "star"
-	iconPin       = "pin"
 	iconModel     = "box"
 	iconWebTools  = "globe"
 	iconManage    = "settings-2"

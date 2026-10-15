@@ -30,8 +30,18 @@ func hasItem(items []Item, prefix string) bool {
 	return false
 }
 
+func menuChoices(items []Item, kind, mode string) []Item {
+	var choices []Item
+	for _, item := range items {
+		if item.Action.Kind == kind && item.Action.Mode == mode {
+			choices = append(choices, item)
+		}
+	}
+	return choices
+}
+
 func runningSnapshot() Snapshot {
-	return Snapshot{Running: true, Address: "127.0.0.1:8088", CloseToTray: true, ClaudeMode: "auto",
+	return Snapshot{Running: true, Address: "127.0.0.1:8088", CloseToTray: true, ClaudeMode: "auto", CodexRoutingAvailable: true,
 		Endpoints: []Endpoint{{Name: "relay", Available: true}}, Accounts: []Account{{ID: 1, Name: "plus-01", Enabled: true, HasCredential: true}}}
 }
 
@@ -56,13 +66,13 @@ func TestMenu_ClaudeGlobalSelectionAndOrder(t *testing.T) {
 		if menuItem(t, claude.Children, "自动调度").Checked != (mode == "auto") {
 			t.Fatal("自动勾选错误")
 		}
-		for _, operation := range []struct{ label, mode string }{{"优选到", "manual_preferred"}, {"固定到", "manual_fixed"}} {
-			choices := menuItem(t, claude.Children, operation.label).Children
+		for _, operation := range []string{"manual_preferred", "manual_fixed"} {
+			choices := menuChoices(claude.Children, "claude", operation)
 			if len(choices) != 3 || choices[0].Action.Target != "alpha" || choices[1].Action.Target != "beta" {
 				t.Fatalf("过滤或排序错误: %+v", choices)
 			}
 			for _, choice := range choices {
-				if choice.Disabled || choice.Checked != (mode == operation.mode && choice.Action.Target == "beta") {
+				if choice.Disabled || choice.Checked != (mode == operation && choice.Action.Target == "beta") {
 					t.Fatalf("置灰或勾选错误: %+v", choice)
 				}
 			}
@@ -78,11 +88,12 @@ func TestMenu_ClaudeModelsPreserveMembersAndSortWebFirst(t *testing.T) {
 		{ID: 2, Name: "a-disabled", Mode: "manual_fixed"},
 		{ID: 3, Name: "联网工具", Kind: "web_tools", Enabled: true, Mode: "manual_fixed", Target: "web", Endpoints: []Endpoint{{Name: "web"}}},
 	}
-	items := menuItem(t, Build(s), "Claude  ").Children
-	if !strings.HasPrefix(items[0].Label, "联网工具") || !strings.HasPrefix(items[1].Label, "z-model") || !items[2].Disabled {
+	items := claudeItems(s)
+	if len(items) != 3 || !strings.HasPrefix(items[1].Label, "联网工具") || !strings.HasPrefix(items[2].Label, "z-model") ||
+		hasItem(items, "a-disabled") || !menuItem(t, items[0].Children, "另有 1 条映射已停用").Disabled {
 		t.Fatalf("映射排序/停用错误: %+v", items)
 	}
-	choices := menuItem(t, items[1].Children, "优选到").Children
+	choices := menuChoices(items[2].Children, "claude_binding", "manual_preferred")
 	if len(choices) != 1 || choices[0].Action.Target != "only-z" || choices[0].Disabled {
 		t.Fatalf("不应套用全局端点过滤规则: %+v", choices)
 	}
@@ -194,14 +205,17 @@ func TestMenu_CodexGroupsAndPinRules(t *testing.T) {
 	if codex.Label != "Codex  固定 → cooling · 5h 剩 70%" || hasItem(codex.Children, "优选到") {
 		t.Fatalf("全局只允许自动和固定: %+v", codex)
 	}
-	choices := menuItem(t, codex.Children, "固定到").Children
+	choices := menuChoices(codex.Children, "codex", "manual_fixed")
 	var groups []string
-	for _, choice := range choices {
-		if choice.Action.Kind == "" {
+	for _, choice := range codex.Children {
+		if strings.HasPrefix(choice.Label, "── 固定到 · ") {
 			if !choice.Disabled {
 				t.Fatal("分组标题必须置灰")
 			}
 			groups = append(groups, choice.Label)
+			continue
+		}
+		if choice.Action.Kind != "codex" || choice.Action.Mode != "manual_fixed" {
 			continue
 		}
 		wantDisabled := choice.Action.ID == 3 || choice.Action.ID == 4
@@ -209,10 +223,10 @@ func TestMenu_CodexGroupsAndPinRules(t *testing.T) {
 			t.Fatalf("固定规则错误: %+v", choice)
 		}
 	}
-	if !reflect.DeepEqual(groups, []string{"── 主组 ──", "── 备组 ──", "── 冷备 ──"}) {
+	if !reflect.DeepEqual(groups, []string{"── 固定到 · 主组 ──", "── 固定到 · 备组 ──", "── 固定到 · 冷备 ──"}) {
 		t.Fatalf("组顺序错误: %v", groups)
 	}
-	if choices[1].Action.ID != 10 {
+	if choices[0].Action.ID != 10 {
 		t.Fatal("同优先级按 ID 的字符串排序")
 	}
 	if !strings.Contains(menuItem(t, choices, "cooling").Label, "剩 70%") {
@@ -226,12 +240,12 @@ func TestMenu_CodexModelPausedAndInvalidAccounts(t *testing.T) {
 	s.Accounts = []Account{{ID: 1, Name: "paused", Enabled: true}, {ID: 2, Name: "auth", Enabled: false, State: "disabled_auth"}}
 	s.CodexBindings = []Binding{{ID: 8, Name: "model", Enabled: true, Mode: "manual_fixed", TargetID: 1,
 		AccountIDs: []int64{1, 2, 99}, MemberEnabled: map[int64]bool{1: false}}, {ID: 9, Name: "off", Enabled: false}}
-	bindings := menuItem(t, Build(s), "Codex  ").Children
-	if !menuItem(t, bindings, "off").Disabled {
-		t.Fatal("停用映射必须置灰")
+	bindings := Build(s)
+	if hasItem(bindings, "off") || !hasItem(menuItem(t, bindings, "Codex  ").Children, "另有 1 条映射已停用") {
+		t.Fatal("停用映射只在开关子菜单提示数量")
 	}
 	model := menuItem(t, bindings, "model")
-	preferred, fixed := menuItem(t, model.Children, "优选到").Children, menuItem(t, model.Children, "固定到").Children
+	preferred, fixed := menuChoices(model.Children, "codex_binding", "manual_preferred"), menuChoices(model.Children, "codex_binding", "manual_fixed")
 	for i := range preferred {
 		if preferred[i].Disabled != (i == 0) || fixed[i].Disabled {
 			t.Fatalf("不能把全局账号池禁用规则套到映射: preferred=%+v fixed=%+v", preferred[i], fixed[i])
@@ -246,7 +260,7 @@ func TestMenu_EmptyMappingsAndInputsUnchanged(t *testing.T) {
 	s := runningSnapshot()
 	s.ClaudeModels, s.CodexModels = true, true
 	items := Build(s)
-	if !hasItem(menuItem(t, items, "Claude  ").Children, "尚无模型映射") || !hasItem(menuItem(t, items, "Codex  ").Children, "尚无模型绑定") {
+	if !hasItem(items, "尚无启用的模型映射") || !hasItem(items, "尚无启用的模型绑定") {
 		t.Fatal("空映射应显示未分配提示")
 	}
 	before := append([]Account(nil), s.Accounts...)
@@ -318,18 +332,18 @@ func TestMenu_CooldownShowsTimeLeft(t *testing.T) {
 		{Name: "unknown", Available: true, Status: "冷却中"}}
 	s.Accounts = append(s.Accounts, Account{ID: 2, Name: "cooling", Enabled: true, HasCredential: true, Cooling: true, CooldownUntil: until})
 	items := Build(s)
-	endpoints := menuItem(t, menuItem(t, items, "Claude  ").Children, "固定到").Children
+	endpoints := menuChoices(menuItem(t, items, "Claude  ").Children, "claude", "manual_fixed")
 	if menuItem(t, endpoints, "cool").Label != "cool · 冷却中（剩 3 分钟）" || menuItem(t, endpoints, "unknown").Label != "unknown · 冷却中" {
 		t.Fatalf("端点冷却应带剩余时间，截止时间未知时只显示冷却中: %+v", endpoints)
 	}
-	accounts := menuItem(t, menuItem(t, items, "Codex  ").Children, "固定到").Children
+	accounts := menuChoices(menuItem(t, items, "Codex  ").Children, "codex", "manual_fixed")
 	if !strings.HasSuffix(menuItem(t, accounts, "cooling").Label, " · 冷却中（剩 3 分钟）") {
 		t.Fatalf("账号冷却应带剩余时间: %+v", accounts)
 	}
 
 	s.CodexModels = true
 	s.CodexBindings = []Binding{{ID: 8, Name: "gpt", Enabled: true, Mode: "auto", AccountIDs: []int64{1, 2}, MemberEnabled: map[int64]bool{1: true, 2: true}}}
-	members := menuItem(t, menuItem(t, menuItem(t, Build(s), "Codex  ").Children, "gpt").Children, "固定到").Children
+	members := menuChoices(menuItem(t, Build(s), "gpt").Children, "codex_binding", "manual_fixed")
 	if members[1].Label != "cooling #2 · 冷却中（剩 3 分钟）" {
 		t.Fatalf("映射成员冷却应带剩余时间: %+v", members)
 	}
