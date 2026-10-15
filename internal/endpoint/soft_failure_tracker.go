@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // SoftFailureScope 软失败 path scope（§9.3：messages | count_tokens）

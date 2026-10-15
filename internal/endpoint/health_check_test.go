@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"cc-forwarder/config"
+	"sinuo/config"
 	"testing"
 	"time"
 )

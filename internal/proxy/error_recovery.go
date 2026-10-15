@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // ErrorType 错误类型枚举

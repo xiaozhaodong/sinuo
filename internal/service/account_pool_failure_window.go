@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 const (

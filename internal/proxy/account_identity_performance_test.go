@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
 )
 
 type identityPrivacyMutator func([]byte) []byte

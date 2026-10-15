@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tokenusage"
-	"cc-forwarder/internal/tracking"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tokenusage"
+	"sinuo/internal/tracking"
 )
 
 // ============================================================

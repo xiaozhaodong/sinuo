@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/codexidentity"
-	svc "cc-forwarder/internal/service"
+	"sinuo/internal/codexidentity"
+	svc "sinuo/internal/service"
 )
 
 const (

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 type mockCodexModelListProvider struct {

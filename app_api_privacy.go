@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/privacy"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 // PrivacySettingsInfo 隐私保护全局设置

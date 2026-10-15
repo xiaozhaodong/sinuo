@@ -11,8 +11,8 @@ import (
 	"net/textproto"
 	"strings"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
 )
 
 type imageEditMultipartPart struct {

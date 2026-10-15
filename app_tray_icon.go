@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 const (

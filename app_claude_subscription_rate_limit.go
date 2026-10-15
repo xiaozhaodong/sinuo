@@ -10,7 +10,7 @@ package main
 import (
 	"errors"
 
-	"cc-forwarder/internal/proxy"
+	"sinuo/internal/proxy"
 )
 
 // EventClaudeSubscriptionRateLimit 订阅额度状态变化后推送给前端

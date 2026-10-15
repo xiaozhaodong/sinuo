@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/proxy/response"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/utils"
+	"sinuo/internal/proxy/response"
+	"sinuo/internal/tracking"
+	"sinuo/internal/utils"
 )
 
 // 缓冲区大小常量

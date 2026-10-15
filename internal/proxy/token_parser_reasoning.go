@@ -3,7 +3,7 @@ package proxy
 import (
 	"strings"
 
-	"cc-forwarder/internal/reasoning"
+	"sinuo/internal/reasoning"
 )
 
 // filterResponseModel 把解析器内部的占位模型名（空 / default / unknown / error:*）过滤为空串。

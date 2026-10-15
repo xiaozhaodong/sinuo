@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/modelrewrite"
-	"cc-forwarder/internal/transport"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/modelrewrite"
+	"sinuo/internal/transport"
 )
 
 const (

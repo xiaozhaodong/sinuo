@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"cc-forwarder/internal/service"
+	"sinuo/internal/service"
 )
 
 type claudeModelListProvider struct {

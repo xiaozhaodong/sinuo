@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 var errTrayActionSkipped = errors.New("托盘操作已跳过")

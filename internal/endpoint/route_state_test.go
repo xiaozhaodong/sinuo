@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 func TestNegativeHitCacheModelSchemaAndPayloadAreRouteScoped(t *testing.T) {

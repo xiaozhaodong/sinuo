@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 const (

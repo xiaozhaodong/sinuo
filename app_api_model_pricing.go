@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 // ============================================================

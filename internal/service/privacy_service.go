@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // 隐私服务状态

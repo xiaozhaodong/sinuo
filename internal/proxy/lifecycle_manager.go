@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/proxy/handlers"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/events"
+	"sinuo/internal/monitor"
+	"sinuo/internal/proxy/handlers"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 )
 
 // MonitoringMiddlewareInterface 定义监控中间件接口（扩展版）

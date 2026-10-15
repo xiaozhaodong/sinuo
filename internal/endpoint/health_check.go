@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/events"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/utils"
+	"sinuo/internal/events"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/utils"
 )
 
 // SetOnHealthCheckComplete 设置检测完成回调。

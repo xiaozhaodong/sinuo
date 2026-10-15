@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // NewCodexHTTPClient 构造发往 ChatGPT / Codex 后端及其 OAuth 接口的 HTTP client。

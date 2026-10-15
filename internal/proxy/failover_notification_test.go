@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/store"
+	"sinuo/config"
+	"sinuo/internal/store"
 )
 
 func TestNormalizeFailoverEvent_RedactsAndBoundsDisplayFields(t *testing.T) {

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/reasoning"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/reasoning"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 )
 
 func TestSubscriptionHTTPTrackingKnownAndUnknownSettlement(t *testing.T) {

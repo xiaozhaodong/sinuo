@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/privacy"
+	"sinuo/internal/tracking"
 )
 
 func TestImageEdit_ForwardsMultipartWithDefaultModelAndTracksRequest(t *testing.T) {

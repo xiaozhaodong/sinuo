@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
+	"sinuo/internal/endpoint"
 )
 
 // entryProbe 记录请求是否被转交，以及转交时是否带入口标记

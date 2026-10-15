@@ -9,17 +9,17 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/response"
-	"cc-forwarder/internal/reasoning"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/events"
+	"sinuo/internal/middleware"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/response"
+	"sinuo/internal/reasoning"
+	"sinuo/internal/tracking"
 )
 
 // Context key for endpoint information

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/store"
 )
 
 const (

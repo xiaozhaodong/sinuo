@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/store"
 )
 
 func TestCodexIdentitySettingsLifecycle(t *testing.T) {

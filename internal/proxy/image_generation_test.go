@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/tracking"
 )
 
 type staticImageGenerationConfigProvider struct {

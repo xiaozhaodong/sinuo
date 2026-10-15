@@ -67,10 +67,10 @@ docs/REFACTOR_PLAN.md
 cc-forwarder
 /bin/
 .task/
-# Wails v3 bindings use the Go module name as a generated directory.
+# Wails v3 绑定目录跟随 Go module sinuo；保留上方旧二进制的忽略规则。
 !frontend/src/bindings/
-!frontend/src/bindings/cc-forwarder/
-!frontend/src/bindings/cc-forwarder/**
+!frontend/src/bindings/sinuo/
+!frontend/src/bindings/sinuo/**
 /logs
 
 # OpenSpec directory

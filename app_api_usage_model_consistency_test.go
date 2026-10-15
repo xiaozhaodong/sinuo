@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // TestRequestDetailToRecord_ModelConsistencyColumns 5 个新列逐项映射，且空值 omitempty 不出现在 JSON 中。

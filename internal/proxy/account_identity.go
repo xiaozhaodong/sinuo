@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/store"
 )
 
 // CodexIdentityProvider 返回单一 settings 权威来源的请求策略快照。

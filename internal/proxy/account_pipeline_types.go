@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	svc "cc-forwarder/internal/service"
+	svc "sinuo/internal/service"
 )
 
 // AccountPoolService 账号池调度接口（由 service 层实现）

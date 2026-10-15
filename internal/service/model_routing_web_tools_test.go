@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 func TestModelRoutingService_WebToolsBinding(t *testing.T) {

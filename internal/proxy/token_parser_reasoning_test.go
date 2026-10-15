@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/proxy/response"
+	"sinuo/internal/proxy/response"
 )
 
 func feedSSEV2(t *testing.T, tp *TokenParser, body string) *ParseResult {

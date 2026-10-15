@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/privacy"
+	"sinuo/internal/privacy"
 )
 
 // TestBuildPrivacyScanJSON_Actions 四分支：redact/detect/blocked/disabled。

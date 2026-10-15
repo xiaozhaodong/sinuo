@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // readCloser 包装 strings.Reader 实现 io.ReadCloser

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 type countingAccountPoolStore struct {

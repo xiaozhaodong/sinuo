@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 const (

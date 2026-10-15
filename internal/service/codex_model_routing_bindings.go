@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 // parseCodexMembers 严格解析正整数 ID，不接受尾随文本、浮点数或超过上限的成员。

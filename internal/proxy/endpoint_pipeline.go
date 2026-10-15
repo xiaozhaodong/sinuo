@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/response"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/response"
 )
 
 // 端点侧扁平转发管线（方案 §4.4）：单层候选循环替代旧 streaming/regular 双循环壳。

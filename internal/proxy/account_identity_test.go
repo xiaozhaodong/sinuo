@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/codexidentity"
-	svc "cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/codexidentity"
+	svc "sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 type identityProviderFunc func(context.Context) (codexidentity.Policy, error)

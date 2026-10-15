@@ -3,8 +3,8 @@ package proxy
 import (
 	"time"
 
-	"cc-forwarder/internal/events"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/internal/events"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // 请求计时事件：首响计时起点、首响、生成耗时落定的那一刻，把后端的精确值随 request:update 推给请求页。

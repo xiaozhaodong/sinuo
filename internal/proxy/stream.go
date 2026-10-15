@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/transport"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/transport"
 )
 
 // handleSSERequest handles Server-Sent Events streaming requests

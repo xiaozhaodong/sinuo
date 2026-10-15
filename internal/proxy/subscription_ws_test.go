@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/subscriptionws"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/subscriptionws"
+	"sinuo/internal/tracking"
 
 	"github.com/coder/websocket"
 )

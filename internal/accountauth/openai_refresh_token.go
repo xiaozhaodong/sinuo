@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/transport"
+	"sinuo/config"
+	"sinuo/internal/transport"
 )
 
 const (

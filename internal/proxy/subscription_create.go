@@ -3,7 +3,7 @@ package proxy
 import (
 	"encoding/json"
 
-	"cc-forwarder/internal/reasoning"
+	"sinuo/internal/reasoning"
 )
 
 type subscriptionCreate struct {

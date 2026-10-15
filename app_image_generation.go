@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/transport"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
+	"sinuo/internal/transport"
 )
 
 type imageGenerationConfigProvider struct {

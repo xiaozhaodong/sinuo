@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 type sessionFailingReader struct{}

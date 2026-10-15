@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/tray"
+	"sinuo/config"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
+	"sinuo/internal/tray"
 )
 
 func TestTray_LocalURLUsesLoopbackForWildcardHosts(t *testing.T) {

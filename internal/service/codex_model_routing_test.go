@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 
 	_ "modernc.org/sqlite"
 )

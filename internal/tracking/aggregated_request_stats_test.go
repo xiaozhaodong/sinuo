@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 func TestClientInterruptionFiltersAndStatsAcrossDatabaseAndHotPool(t *testing.T) {

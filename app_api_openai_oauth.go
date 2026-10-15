@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/transport"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/transport"
 )
 
 const (

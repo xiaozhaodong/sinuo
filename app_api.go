@@ -11,9 +11,9 @@
 package main
 
 import (
-	timezonepolicy "cc-forwarder/internal/timezone"
 	"fmt"
 	"net"
+	timezonepolicy "sinuo/internal/timezone"
 	"sync"
 	"time"
 )

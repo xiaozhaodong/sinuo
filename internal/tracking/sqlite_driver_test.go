@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"cc-forwarder/internal/appdir"
+	"sinuo/internal/appdir"
 )
 
 // 隔离整个 tracking 测试包，包含未显式指定数据库路径的测试。

@@ -8,7 +8,8 @@ import (
 	"net/url"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
+
 	"golang.org/x/net/proxy"
 )
 

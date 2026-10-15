@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
 )
 
 // setupCodexSubscriptionProxy 装配新入口；必须在 setupProxyHandler 之后调用。

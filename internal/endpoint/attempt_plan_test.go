@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 func TestAcquireEndpointAttemptBuildsImmutableFlatTarget(t *testing.T) {

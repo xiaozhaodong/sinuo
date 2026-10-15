@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // TestRequestIDLogging 测试完整的requestId日志追踪链路

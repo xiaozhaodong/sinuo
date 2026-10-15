@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 // UpstreamAccountInfo 上游账号信息

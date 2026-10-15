@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/monitor"
+	"sinuo/internal/tracking"
 )
 
 // TestDetectResponseFormat 测试智能响应格式检测

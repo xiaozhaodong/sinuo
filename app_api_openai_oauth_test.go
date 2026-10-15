@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
+	"sinuo/internal/accountauth"
 )
 
 func TestBuildOpenAIOAuthURL(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 type codexEntryFake struct {

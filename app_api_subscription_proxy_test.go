@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
 )
 
 func newSubscriptionProxyTestApp(t *testing.T) *App {

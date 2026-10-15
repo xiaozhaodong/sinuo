@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/proxy/handlers"
-	svc "cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/proxy/handlers"
+	svc "sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 const (

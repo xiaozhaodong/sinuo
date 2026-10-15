@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"cc-forwarder/internal/modelrouting"
+	"sinuo/internal/modelrouting"
 )
 
 func TestCodexModelRouting_MemberInputsUseOneAccountSet(t *testing.T) {

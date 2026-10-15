@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/proxy"
+	"sinuo/internal/proxy"
 )
 
 func TestToClaudeSubscriptionRateLimitInfo_FormatsUTCAndKeepsMissingEmpty(t *testing.T) {

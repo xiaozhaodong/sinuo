@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/privacy"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/privacy"
 )
 
 // fakePrivacyFilter 可编程的 PrivacyFilter 测试替身

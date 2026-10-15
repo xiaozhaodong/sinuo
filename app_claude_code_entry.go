@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
 )
 
 // claudeCodeEntryStopTimeout 停用或改端口时等待在途请求的上限，超时后强制关闭

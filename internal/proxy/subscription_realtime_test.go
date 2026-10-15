@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	svc "cc-forwarder/internal/service"
+	svc "sinuo/internal/service"
 )
 
 // 语音建连在两种模式下都直通，协议版本头不能被白名单丢弃或改写。

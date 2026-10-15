@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"time"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"

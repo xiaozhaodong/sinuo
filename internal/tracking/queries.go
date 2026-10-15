@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tokenusage"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tokenusage"
 )
 
 type requestQuerySource string

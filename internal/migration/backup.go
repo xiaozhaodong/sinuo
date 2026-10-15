@@ -1,7 +1,6 @@
 package migration
 
 import (
-	timezonepolicy "cc-forwarder/internal/timezone"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -11,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	timezonepolicy "sinuo/internal/timezone"
 	"strings"
 	"time"
 

@@ -1,4 +1,4 @@
-module cc-forwarder
+module sinuo
 
 go 1.25.0
 

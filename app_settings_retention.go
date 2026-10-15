@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"cc-forwarder/internal/service"
+	"sinuo/internal/service"
 )
 
 func (a *App) applyRetentionSettings(ctx context.Context) {

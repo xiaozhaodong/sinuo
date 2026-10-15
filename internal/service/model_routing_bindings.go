@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 // ModelRouteBinding 是「一个模型 → 一组端点」的合一视图。

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/store"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/store"
 )
 
 type syncWriter struct {

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/privacy"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/privacy"
 )
 
 func newEndpointPipelineTestHandler(t *testing.T, endpoints ...config.EndpointConfig) (*Handler, *endpoint.Manager) {

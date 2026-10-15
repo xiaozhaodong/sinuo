@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 // 托盘对两个独立入口（Claude Code 入口、Codex 独立入口）的读取与写入。

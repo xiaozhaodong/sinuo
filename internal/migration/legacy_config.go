@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/config"
+	timezonepolicy "sinuo/internal/timezone"
 
 	"gopkg.in/yaml.v3"
 )

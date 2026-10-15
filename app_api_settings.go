@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/utils"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
+	"sinuo/internal/utils"
 )
 
 // ============================================================

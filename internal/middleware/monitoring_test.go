@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/monitor"
+	"sinuo/internal/events"
+	"sinuo/internal/monitor"
 )
 
 type tokenStatsEventRecorder struct {

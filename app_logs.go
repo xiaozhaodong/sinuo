@@ -1,7 +1,7 @@
 package main
 
 import (
-	"cc-forwarder/internal/logging"
+	"sinuo/internal/logging"
 )
 
 // ============================================

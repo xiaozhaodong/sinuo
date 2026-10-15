@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 
 	_ "modernc.org/sqlite"
 )

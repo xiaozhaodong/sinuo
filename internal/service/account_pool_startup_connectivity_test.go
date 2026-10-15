@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func TestRunStartupConnectivityChecks_FiltersDisabledOrCredentiallessAccounts(t *testing.T) {

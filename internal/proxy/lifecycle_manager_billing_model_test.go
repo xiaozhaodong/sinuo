@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // 六条记录路径统一选择计费模型，同时保留客户端原始模型与 GetModelName 的语义。

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 func TestNewCodexHTTPClientDisablesAutomaticGzip(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/privacy"
+	"sinuo/internal/privacy"
 )
 
 const (

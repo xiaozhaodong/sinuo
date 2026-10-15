@@ -1,10 +1,10 @@
 package main
 
 import (
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
 	"context"
 	"fmt"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 	"strings"
 	"time"
 )

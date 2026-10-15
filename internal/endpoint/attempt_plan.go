@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // EndpointAttemptPlan 单个候选的不可变计划快照

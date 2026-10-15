@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"cc-forwarder/internal/tokenusage"
+	"sinuo/internal/tokenusage"
 )
 
 // ============================================================

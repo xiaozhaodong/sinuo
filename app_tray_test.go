@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/monitor"
+	"sinuo/internal/tray"
 )
 
 type trayBindingFake struct {

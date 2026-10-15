@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/proxy/handlers"
 )
 
 // 端点侧统一故障决策表（收敛方案 §9.1）。

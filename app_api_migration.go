@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"cc-forwarder/internal/migration"
+	"sinuo/internal/migration"
 )
 
 // GetMigrationStatus 返回启动迁移与恢复状态。迁移失败时前端只依赖此只读 API。

@@ -18,13 +18,13 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/subscriptionws"
-	svc "cc-forwarder/internal/service"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/monitor"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/subscriptionws"
+	svc "sinuo/internal/service"
+	"sinuo/internal/tracking"
 
 	"github.com/coder/websocket"
 )

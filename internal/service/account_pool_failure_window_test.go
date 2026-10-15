@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func createSoftFailureAccount(t *testing.T, svc *AccountPoolService, name string, window, threshold int) *store.UpstreamAccountRecord {

@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"cc-forwarder/internal/appdir"
+	"sinuo/internal/appdir"
 )
 
 // GetAppDataDir 获取应用数据目录（跨平台）

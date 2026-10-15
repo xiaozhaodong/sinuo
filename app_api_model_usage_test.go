@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // 模型表两类口径：次数 / 成功率取生成口径，Token / 成本含独立压缩；

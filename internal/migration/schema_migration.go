@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/privacy"
+	"sinuo/config"
+	"sinuo/internal/privacy"
 )
 
 type databaseMigrationResult struct {

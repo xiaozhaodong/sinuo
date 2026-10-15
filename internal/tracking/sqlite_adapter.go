@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/appdir"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/internal/appdir"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 //go:embed schema.sql

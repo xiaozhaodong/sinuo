@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/reasoning"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/events"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/reasoning"
+	"sinuo/internal/tracking"
 )
 
 const (

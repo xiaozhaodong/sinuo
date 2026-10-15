@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"sync"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/store"
 )
 
 const (

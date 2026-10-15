@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"cc-forwarder/config"
 	"net/http"
+	"sinuo/config"
 	"strings"
 )
 

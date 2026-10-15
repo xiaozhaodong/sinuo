@@ -3,7 +3,7 @@ package proxy
 import (
 	"strings"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // v6.3 模型一致性监控：请求 / 上游 / 响应模型与思考等级诊断字段。

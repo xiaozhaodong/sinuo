@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/reasoning"
+	"sinuo/internal/reasoning"
 )
 
 func TestTokenParserCodexSpeedUsesTerminalOnly(t *testing.T) {

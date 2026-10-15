@@ -1,9 +1,9 @@
 package logging
 
 import (
-	timezonepolicy "cc-forwarder/internal/timezone"
 	"context"
 	"log/slog"
+	timezonepolicy "sinuo/internal/timezone"
 	"sync"
 )
 

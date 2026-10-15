@@ -1,8 +1,8 @@
 package events
 
 import (
-	timezonepolicy "cc-forwarder/internal/timezone"
 	"log/slog"
+	timezonepolicy "sinuo/internal/timezone"
 	"time"
 )
 

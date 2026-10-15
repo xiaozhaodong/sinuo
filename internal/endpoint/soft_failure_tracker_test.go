@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 func endpointPolicyInt(value int) *int { return &value }

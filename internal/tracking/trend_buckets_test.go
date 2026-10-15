@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 func mustPolicy(t *testing.T, name string) *timezonepolicy.Policy {

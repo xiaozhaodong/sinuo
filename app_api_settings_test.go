@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"cc-forwarder/internal/service"
+	"sinuo/internal/service"
 )
 
 func TestSettingsList_HidesDesktopSettingsNotSupportedHere(t *testing.T) {

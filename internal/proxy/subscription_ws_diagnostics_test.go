@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/proxy/subscriptionws"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/events"
+	"sinuo/internal/proxy/subscriptionws"
+	"sinuo/internal/tracking"
 
 	"github.com/coder/websocket"
 )

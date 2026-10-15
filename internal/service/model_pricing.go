@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 // ModelPricingService 模型定价管理业务服务

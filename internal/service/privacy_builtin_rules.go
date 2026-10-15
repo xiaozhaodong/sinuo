@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
 )
 
 const retiredBuiltinEmailDescription = "已停用：邮箱格式误报风险高，请按需创建自定义规则"

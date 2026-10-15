@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tracking"
 )
 
 // TestFailedRequestTokensIntegration 集成测试：验证失败请求Token记录的完整流程

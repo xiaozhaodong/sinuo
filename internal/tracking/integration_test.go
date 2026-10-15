@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // Helper functions for pointer creation

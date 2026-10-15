@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/reasoning"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/reasoning"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 
 	"github.com/coder/websocket"
 )

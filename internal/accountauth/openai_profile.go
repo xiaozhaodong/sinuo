@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // OpenAIAccountProfile 表示从 ChatGPT OAuth 凭据中提取的账号画像。

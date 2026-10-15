@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/monitor"
+	"sinuo/internal/monitor"
 )
 
 // TestMetrics_RecordRequestSuspended tests recording suspended requests

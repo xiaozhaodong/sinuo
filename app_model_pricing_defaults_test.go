@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 
 	_ "modernc.org/sqlite"
 )

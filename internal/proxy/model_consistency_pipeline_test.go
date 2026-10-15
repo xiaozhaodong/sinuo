@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 // waitRequestDetail 轮询直到请求行满足条件（热池或数据库）。

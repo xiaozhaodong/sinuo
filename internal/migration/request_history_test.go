@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 func TestRequestHistoryMigrationUsesPathBeforeUpstreamType(t *testing.T) {

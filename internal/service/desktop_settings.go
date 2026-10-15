@@ -1,6 +1,6 @@
 package service
 
-import "cc-forwarder/internal/store"
+import "sinuo/internal/store"
 
 const CategoryDesktop = "desktop"
 

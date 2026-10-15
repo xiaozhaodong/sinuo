@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"cc-forwarder/config"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sinuo/config"
 	"strings"
 	"sync"
 

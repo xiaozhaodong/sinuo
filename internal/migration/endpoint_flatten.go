@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 type EndpointSnapshot struct {

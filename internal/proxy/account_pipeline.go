@@ -18,15 +18,15 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/modelrewrite"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	svc "cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/transport"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/modelrewrite"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	svc "sinuo/internal/service"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
+	"sinuo/internal/transport"
 )
 
 const (

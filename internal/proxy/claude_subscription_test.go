@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/tracking"
 )
 
 const claudeSubscriptionTestToken = "Bearer sk-ant-oat01-client"

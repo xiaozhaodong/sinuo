@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/utils"
+	"sinuo/internal/service"
+	"sinuo/internal/utils"
 
 	_ "modernc.org/sqlite"
 )

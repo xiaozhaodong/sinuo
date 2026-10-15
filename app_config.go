@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/migration"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/utils"
+	"sinuo/config"
+	"sinuo/internal/migration"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
+	"sinuo/internal/utils"
 )
 
 const desktopDefaultConfigFileName = "config.yaml"

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tray"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tray"
 )
 
 // trayStatsCacheTTL：今日统计要查库，菜单频繁重建时复用 30 秒内的结果。

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tracking"
 )
 
 // TestStreamingTokenLossDetection 验证流式Token丢失问题检测

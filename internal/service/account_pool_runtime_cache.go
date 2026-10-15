@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/store"
+	"sinuo/config"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/store"
 )
 
 type accountRuntimeCache struct {

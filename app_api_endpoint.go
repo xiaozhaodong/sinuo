@@ -6,7 +6,7 @@ package main
 import (
 	"fmt"
 
-	"cc-forwarder/internal/endpoint"
+	"sinuo/internal/endpoint"
 )
 
 // ============================================================

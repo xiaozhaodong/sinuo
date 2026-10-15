@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/reasoning"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/monitor"
+	"sinuo/internal/reasoning"
+	"sinuo/internal/tracking"
 )
 
 var (

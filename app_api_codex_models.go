@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/internal/service"
+	"sinuo/internal/service"
 )
 
 type CodexModelEntryInfo struct {

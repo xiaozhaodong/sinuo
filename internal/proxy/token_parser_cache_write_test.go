@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/response"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/response"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 func responsesCacheWriteFixture(t *testing.T, written *int64) string {

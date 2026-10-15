@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tracking"
 )
 
 // StreamingTokenPreservationTestSuite 流式请求Token保存测试套件

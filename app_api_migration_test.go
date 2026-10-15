@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/migration"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/migration"
+	"sinuo/internal/tracking"
 )
 
 // 仅使用临时配置及内存数据库，不启动代理、日志或账号检查。

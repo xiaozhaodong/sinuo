@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
 
 	_ "modernc.org/sqlite"
 )

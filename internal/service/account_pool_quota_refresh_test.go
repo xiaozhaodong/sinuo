@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func TestAccountPoolQuotaRefreshDispatcher_DeduplicatesInFlightAccount(t *testing.T) {

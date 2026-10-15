@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // ArchiveEvent 归档事件（请求完成时发送）

@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/appdir"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tokenusage"
+	"sinuo/config"
+	"sinuo/internal/appdir"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tokenusage"
 
 	_ "modernc.org/sqlite"
 )

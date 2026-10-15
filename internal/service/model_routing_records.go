@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"cc-forwarder/internal/modelrouting"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 // validateGroupCandidate 校验组候选。自身排除由 ValidateGroup 按 ID 处理，

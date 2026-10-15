@@ -6,7 +6,7 @@ package main
 import (
 	"fmt"
 
-	"cc-forwarder/internal/proxy"
+	"sinuo/internal/proxy"
 )
 
 // 事件名称常量

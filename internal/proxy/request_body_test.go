@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/tracking"
 
 	"github.com/klauspost/compress/zstd"
 )

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/monitor"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/middleware"
+	"sinuo/internal/monitor"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 )
 
 func TestCacheWriteUsageAPI_DeduplicatesTokensWithoutRepricingHistory(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 )
 
 func TestCacheWriteEndpointCosts_UsesDeduplicatedTotalsAndStoredCosts(t *testing.T) {

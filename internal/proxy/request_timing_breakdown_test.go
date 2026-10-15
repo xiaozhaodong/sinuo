@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 func timingLifecycleData(t *testing.T, tracker *tracking.UsageTracker, id string) *tracking.RequestLifecycleData {

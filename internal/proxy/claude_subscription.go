@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"strings"
 
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/internal/proxy/handlers"
 )
 
 const (

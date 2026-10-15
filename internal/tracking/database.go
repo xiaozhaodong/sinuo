@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // initDatabase 初始化数据库

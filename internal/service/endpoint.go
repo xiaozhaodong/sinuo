@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/modelrewrite"
-	"cc-forwarder/internal/store"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/utils"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/modelrewrite"
+	"sinuo/internal/store"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/utils"
 )
 
 // endpointAdmissionDrainTimeout 停用/删除时等待 in-flight admission 排空的上限（§7.6 规则 8）

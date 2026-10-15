@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/transport"
+	"sinuo/config"
+	"sinuo/internal/events"
+	"sinuo/internal/transport"
 )
 
 var failureTrackerCleanupInterval = 30 * time.Second

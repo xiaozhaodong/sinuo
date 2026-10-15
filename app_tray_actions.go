@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 // executeTrayAction 只调用现有写入方法，不直接操作服务或数据库；confirm 用于入口操作与无启用映射时开启模型路由的确认。

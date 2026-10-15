@@ -1,6 +1,6 @@
 package monitor
 
-import "cc-forwarder/internal/tokenusage"
+import "sinuo/internal/tokenusage"
 
 // SetProtocol 标记本次用量中已经包含在输入总量里的缓存，供混合协议汇总去重。
 // 在用量交给 Metrics 之前调用；它不修改上游报告的四项原始计数。

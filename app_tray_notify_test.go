@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/monitor"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tray"
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )

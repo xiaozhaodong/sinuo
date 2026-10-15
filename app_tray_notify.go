@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tray"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"

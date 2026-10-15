@@ -9,10 +9,10 @@ import (
 	"runtime"
 	"testing"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/appdir"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/utils"
+	"sinuo/config"
+	"sinuo/internal/appdir"
+	"sinuo/internal/tracking"
+	"sinuo/internal/utils"
 )
 
 // 桌面包的全部测试均隔离用户目录，防止默认配置路径污染正在运行的 App。

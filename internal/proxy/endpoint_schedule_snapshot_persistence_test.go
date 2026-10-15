@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
+	"sinuo/internal/endpoint"
 )
 
 func TestMarshalEndpointScheduleSnapshot_WhitelistsRoutingFacts(t *testing.T) {

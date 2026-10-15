@@ -54,7 +54,7 @@ const loadWailsBindings = async () => {
   }
 
   try {
-    WailsApp = wrapWailsBindings(await import('@wailsjs/cc-forwarder/app.js'));
+    WailsApp = wrapWailsBindings(await import('@wailsjs/sinuo/app.js'));
     WailsRuntime = await import('@wailsio/runtime');
     return true;
   } catch (error) {

@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 const (

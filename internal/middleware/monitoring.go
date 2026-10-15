@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/monitor"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/events"
+	"sinuo/internal/monitor"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // MonitoringMiddleware provides health and metrics endpoints

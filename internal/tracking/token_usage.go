@@ -1,6 +1,6 @@
 package tracking
 
-import "cc-forwarder/internal/tokenusage"
+import "sinuo/internal/tokenusage"
 
 // IncludesCacheInInput 优先保留解析器确认的语义，缺少标志时按请求路径识别。
 func (u TokenUsage) IncludesCacheInInput(requestPath string) bool {

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // EndpointRecord 表示数据库中的端点记录

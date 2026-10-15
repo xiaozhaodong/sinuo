@@ -18,9 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/monitor"
-	svc "cc-forwarder/internal/service"
+	"sinuo/internal/middleware"
+	"sinuo/internal/monitor"
+	svc "sinuo/internal/service"
 )
 
 // SubscriptionProxySnapshot 运行态配置快照；请求入口读取一次并固定到该请求/握手结束。

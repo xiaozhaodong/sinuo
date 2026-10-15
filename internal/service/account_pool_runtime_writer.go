@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 const (

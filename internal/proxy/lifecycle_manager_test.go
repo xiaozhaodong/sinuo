@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 func TestRequestLifecycleManager_NewRequestLifecycleManager(t *testing.T) {

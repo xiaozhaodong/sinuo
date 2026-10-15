@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"cc-forwarder/internal/codexidentity"
+	"sinuo/internal/codexidentity"
 
 	"github.com/tidwall/gjson"
 )

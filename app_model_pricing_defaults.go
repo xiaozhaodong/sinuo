@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 // gpt56ModelPricingDefaults 返回 OpenAI GPT-5.6 标准层定价（USD / 1M tokens）。

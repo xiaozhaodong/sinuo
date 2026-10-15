@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/proxy/handlers"
 )
 
 func responseWithStatus(status int, headers map[string]string) *http.Response {

@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/tracking"
 )
 
 type persistedEndpointScheduleSnapshot struct {

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 // TestUpdateModelRoutingSettings_ConcurrentSwitchesBothPersist 锁定 P2 修复：

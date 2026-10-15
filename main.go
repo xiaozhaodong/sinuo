@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/appdir"
-	"cc-forwarder/internal/logging"
+	"sinuo/config"
+	"sinuo/internal/appdir"
+	"sinuo/internal/logging"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"

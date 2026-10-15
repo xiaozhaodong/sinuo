@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/service"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/service"
 )
 
 func apiPolicyInt(value int) *int { return &value }

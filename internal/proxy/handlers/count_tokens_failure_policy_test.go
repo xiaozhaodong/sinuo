@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
 )
 
 func TestCountTokens_SoftFailurePolicy_独立阈值仅冷却计数接口(t *testing.T) {

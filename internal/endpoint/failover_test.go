@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // testManagerWithFailureTracker 构造带启用失败追踪的 Manager 与单端点

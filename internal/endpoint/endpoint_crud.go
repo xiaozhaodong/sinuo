@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/events"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/config"
+	"sinuo/internal/events"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // SyncEndpoints 从数据库同步端点（v5.0 Desktop 专用）

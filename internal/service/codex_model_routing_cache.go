@@ -1,7 +1,7 @@
 package service
 
 import (
-	"cc-forwarder/internal/modelrouting"
+	"sinuo/internal/modelrouting"
 	"time"
 )
 

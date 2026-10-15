@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/store"
 )
 
 type firstWriteCallback struct {

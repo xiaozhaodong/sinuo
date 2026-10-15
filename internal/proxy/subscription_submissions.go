@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/internal/monitor"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
 )
 
 // subscriptionSubmissionObserver 是 P2b 的同步生命周期接缝。

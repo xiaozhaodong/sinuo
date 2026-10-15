@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // TestStreamProcessorTokenIntegration 测试流式处理器与Token解析的集成

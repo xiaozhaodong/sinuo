@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
+	"sinuo/internal/tray"
 )
 
 type trayModelRoutingFake struct {

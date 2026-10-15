@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
 )
 
 const (

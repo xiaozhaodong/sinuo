@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 
 	_ "modernc.org/sqlite"
 )

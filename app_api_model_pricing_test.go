@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 func TestModelPricingAPI_SyncsTrackerPricingOnWrite(t *testing.T) {

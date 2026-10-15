@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/proxy/response"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/proxy/response"
+	"sinuo/internal/tracking"
 )
 
 // ===== TokenParser 流完整性追踪测试 =====

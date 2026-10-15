@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/privacy"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 const accountMetadataFixture = ` {"model":"gpt-5.4","input":[{"type":"function_call_output","call_id":"fixture-call","output":"fixture output","internal_chat_message_metadata_passthrough":{"cell_id":"fixture-cell"}},{"type":"compaction","id":"fixture-compaction","encrypted_content":"ciphertext-unchanged"}],"number":9007199254740993} `

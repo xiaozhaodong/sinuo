@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/tracking"
+	"sinuo/config"
+	"sinuo/internal/tracking"
 )
 
 func TestSetupAccountPoolStore_WarnsCompactCoverageWhenUsageTrackingDisabled(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 // PrivacyExactSecretInfo 本地精确敏感值列表响应；不包含 secret_value 明文。

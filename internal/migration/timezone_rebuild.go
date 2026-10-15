@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 var (

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func TestProxyRequestLifecycle_GracefulDrainAndRejectNewRequests(t *testing.T) {

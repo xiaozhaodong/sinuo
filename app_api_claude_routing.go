@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 )
 
 const EventClaudeRoutingUpdate = "claude-routing:update"

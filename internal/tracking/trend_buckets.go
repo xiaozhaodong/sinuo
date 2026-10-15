@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	timezonepolicy "cc-forwarder/internal/timezone"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 // TrendGranularity 趋势桶粒度。

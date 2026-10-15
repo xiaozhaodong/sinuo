@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
 )
 
 // CodexSubscriptionProxyConfigInfo 配置读取结果。

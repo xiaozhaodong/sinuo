@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	svc "cc-forwarder/internal/service"
+	svc "sinuo/internal/service"
 )
 
 func newRuntimeSnapshot() *svc.LatestAccountScheduleSnapshot {

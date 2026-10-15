@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"cc-forwarder/internal/privacy"
+	"sinuo/internal/privacy"
 )
 
 type submissionEvent struct {

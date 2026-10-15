@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
 )
 
 const subscriptionInvalidJSONCode = "codex_subscription_invalid_json"

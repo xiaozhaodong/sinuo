@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
+	"sinuo/internal/endpoint"
 )
 
 // claudeCodeEntryPaths 入口只放行 Claude Messages 两条路径；其余（含 HEAD /api/hello 预热探测）一律 404

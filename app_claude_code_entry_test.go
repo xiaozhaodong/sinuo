@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/service"
-	"cc-forwarder/internal/store"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy"
+	"sinuo/internal/service"
+	"sinuo/internal/store"
 
 	_ "github.com/mattn/go-sqlite3"
 )

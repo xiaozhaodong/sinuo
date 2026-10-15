@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/events"
-	"cc-forwarder/internal/proxy/handlers"
-	timezonepolicy "cc-forwarder/internal/timezone"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/events"
+	"sinuo/internal/proxy/handlers"
+	timezonepolicy "sinuo/internal/timezone"
+	"sinuo/internal/tracking"
 )
 
 // newLifecyclePanelTestTracker 构造启用热池的内存 tracker。

@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"time"
 
-	svc "cc-forwarder/internal/service"
+	svc "sinuo/internal/service"
 )
 
 // persistedScheduleSnapshot 请求级调度快照持久化 DTO。

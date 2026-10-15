@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 var requestLogTargetColumns = []string{

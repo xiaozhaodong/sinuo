@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"cc-forwarder/internal/endpoint"
-	"cc-forwarder/internal/privacy"
+	"sinuo/internal/endpoint"
+	"sinuo/internal/privacy"
 )
 
 // 隐私策略短路时写入 lifecycle 的失败原因

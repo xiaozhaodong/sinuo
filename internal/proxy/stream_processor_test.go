@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/tracking"
 )
 
 // mockResponseWriter 实现 http.ResponseWriter 和 http.Flusher

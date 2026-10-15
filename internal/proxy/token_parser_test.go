@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"cc-forwarder/internal/monitor"
+	"sinuo/internal/monitor"
 	"testing"
 )
 

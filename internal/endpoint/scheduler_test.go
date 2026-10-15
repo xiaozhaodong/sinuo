@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 func newSchedulerTestManager(t *testing.T, cfg *config.Config) *Manager {

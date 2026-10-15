@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"cc-forwarder/internal/accountauth"
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/store"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/accountauth"
+	"sinuo/internal/middleware"
+	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 )
 
 func TestAccountPipelineUsageKnownForSubscriptionPoolRegularResponse(t *testing.T) {

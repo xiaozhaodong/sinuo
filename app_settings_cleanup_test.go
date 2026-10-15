@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/service"
+	"sinuo/config"
+	"sinuo/internal/service"
 )
 
 func TestSettingsList_OnlyReturnsRegisteredVisibleSettings(t *testing.T) {

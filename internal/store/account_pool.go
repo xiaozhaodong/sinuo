@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/accountauth"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/config"
+	"sinuo/internal/accountauth"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 const (

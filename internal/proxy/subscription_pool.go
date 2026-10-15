@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 const (

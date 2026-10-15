@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/config"
-	"cc-forwarder/internal/endpoint"
+	"sinuo/config"
+	"sinuo/internal/endpoint"
 )
 
 func TestForwarder_ForwardRequestToEndpoint(t *testing.T) {

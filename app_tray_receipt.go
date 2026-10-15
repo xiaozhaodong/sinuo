@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/tray"
 )
 
 type trayActionAPI interface {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // RecordAccountSoftFailure 在同一个临界区读取当前策略、计数并结算冷却。

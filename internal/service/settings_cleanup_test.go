@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func TestSettingsInitDefaults_RemovesRetiredRowsAndPreservesActiveValues(t *testing.T) {

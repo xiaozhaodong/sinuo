@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/monitor"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tracking"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

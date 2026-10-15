@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 type groupedManualFailoverTier struct {

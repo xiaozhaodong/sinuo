@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/internal/codexidentity"
-	"cc-forwarder/internal/store"
+	"sinuo/internal/codexidentity"
+	"sinuo/internal/store"
 )
 
 // SettingCategory 设置分类常量

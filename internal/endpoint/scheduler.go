@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"cc-forwarder/config"
+	"sinuo/config"
 )
 
 // 端点调度器（方案 §4.2）：纯读候选计算，无路由状态写副作用

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/store"
+	"sinuo/internal/store"
 )
 
 func TestAccountPoolService_MarkAccountUsageLimitExceeded_SetsExhaustedQuotaAndCooldownUntilReset(t *testing.T) {

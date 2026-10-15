@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/privacy"
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/transport"
+	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/transport"
 )
 
 const (

@@ -12,9 +12,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 
-	"cc-forwarder/internal/appdir"
-	"cc-forwarder/internal/modelrewrite"
-	timezonepolicy "cc-forwarder/internal/timezone"
+	"sinuo/internal/appdir"
+	"sinuo/internal/modelrewrite"
+	timezonepolicy "sinuo/internal/timezone"
 )
 
 type Config struct {

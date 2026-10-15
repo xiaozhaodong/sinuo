@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"cc-forwarder/internal/middleware"
-	"cc-forwarder/internal/proxy"
-	"cc-forwarder/internal/tracking"
+	"sinuo/internal/middleware"
+	"sinuo/internal/proxy"
+	"sinuo/internal/tracking"
 )
 
 // MissingNewlineReader 模拟在 message_delta 后直接 EOF，不发送终止空行的场景

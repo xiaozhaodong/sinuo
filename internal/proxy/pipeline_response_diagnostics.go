@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"cc-forwarder/internal/proxy/handlers"
-	"cc-forwarder/internal/proxy/response"
+	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/response"
 )
 
 // v6.3 模型一致性监控：端点管线与账号池管线共用的响应侧诊断接入点。

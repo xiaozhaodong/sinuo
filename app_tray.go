@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/tray"
+	"sinuo/internal/monitor"
+	"sinuo/internal/tray"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"

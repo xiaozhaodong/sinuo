@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"cc-forwarder/internal/monitor"
-	"cc-forwarder/internal/tracking"
-	"cc-forwarder/internal/utils"
+	"sinuo/internal/monitor"
+	"sinuo/internal/tracking"
+	"sinuo/internal/utils"
 )
 
 // ResponseFormat 定义响应格式类型
