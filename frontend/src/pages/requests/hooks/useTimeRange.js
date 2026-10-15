@@ -5,12 +5,8 @@
 
 import { useState, useCallback } from 'react';
 import { useTimezone } from '@/contexts/TimezoneContext.jsx';
+import { computePresetRange } from '../utils/dayRollover.js';
 
-/**
- * 获取指定天数前的时间范围
- * @param {number} days - 天数
- * @returns {{ startDate: string, endDate: string }}
- */
 /**
  * useTimeRange Hook - 管理时间范围快捷选择
  * @param {Function} onRangeChange - 时间范围变更回调
@@ -18,33 +14,18 @@ import { useTimezone } from '@/contexts/TimezoneContext.jsx';
  * @returns {Object}
  */
 export const useTimeRange = (onRangeChange, initialRange = 'today') => {
-  const { getTodayTimeRange, getRecentDaysRange } = useTimezone();
+  const { timezone } = useTimezone();
   const [activeRange, setActiveRange] = useState(initialRange);
 
   // 选择时间范围
   const selectRange = useCallback((range) => {
     setActiveRange(range);
 
-    let timeRange;
-    switch (range) {
-      case 'today':
-        timeRange = getTodayTimeRange();
-        break;
-      case '7days':
-        timeRange = getRecentDaysRange(7);
-        break;
-      case '30days':
-        timeRange = getRecentDaysRange(30);
-        break;
-      default:
-        timeRange = getTodayTimeRange();
-    }
-
-    timeRange = { startDate: timeRange.start_date, endDate: timeRange.end_date };
+    const timeRange = computePresetRange(range, timezone);
 
     // 通知父组件时间范围变更
     onRangeChange?.(timeRange);
-  }, [getRecentDaysRange, getTodayTimeRange, onRangeChange]);
+  }, [timezone, onRangeChange]);
 
   // 筛选条里应用了自定义区间：三个预设都不再高亮
   const markCustomRange = useCallback(() => setActiveRange('custom'), []);

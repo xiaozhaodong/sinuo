@@ -46,6 +46,7 @@ import { subscribeToEvent, isWailsEnvironment } from '@utils/wailsApi.js';
 import { buildQueryParamsFromFilters, useFilters } from './hooks/useFilters.js';
 import { useColumnConfig } from './hooks/useColumnConfig.js';
 import { useTimeRange } from './hooks/useTimeRange.js';
+import { useDayRollover } from './hooks/useDayRollover.js';
 import { useAutoRefresh } from './hooks/useAutoRefresh.js';
 import { StatsOverview, RequestsTable, Toolbar, RequestDetailPane } from './components';
 import FilterBar from './components/FilterBar.jsx';
@@ -179,6 +180,14 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     total: 0,
     totalPages: 1
   });
+
+  const handleDayRollover = useCallback((nextRange) => {
+    const nextState = buildTimeRangeSelectionState(filters, nextRange);
+    updateFilters(nextState.filters);
+    setAppliedQueryParams(nextState.appliedQueryParams);
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }, [filters, updateFilters]);
+  const checkDayRollover = useDayRollover({ activeRange, filters, onRollover: handleDayRollover });
 
   const sortedAccounts = useMemo(() => {
     return [...accounts].sort(compareAccountsByManualPriority);
@@ -361,7 +370,10 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
   // 包一层标记 live，使事件驱动的新行才播入场动画。
-  const refreshLiveRequestData = useCallback(() => refreshRequestData({ live: true }), [refreshRequestData]);
+  const refreshLiveRequestData = useCallback(() => {
+    if (checkDayRollover()) return;
+    return refreshRequestData({ live: true });
+  }, [checkDayRollover, refreshRequestData]);
   // 计时事件直接补到行上：跑秒在事件到达时定格，不等合并刷新与查询。
   // 同时暂存一份，行还没出现时由下一次查询结果补上。
   const applyRequestTimingEvent = useCallback((payload) => {

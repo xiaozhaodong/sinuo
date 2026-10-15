@@ -57,7 +57,8 @@ test('requests page uses Wails request events instead of permanent polling', asy
   // 实时事件只刷新请求明细与统计。refreshLiveRequestData 是 refreshRequestData 的
   // live 包装（live 仅用于决定新行是否播入场动画），不能换成整页 loadData —
   // 那会让每个 request:update 都连带重拉端点、账号池与调度快照。
-  assert.match(source, /const refreshLiveRequestData = useCallback\(\(\) => refreshRequestData\(\{ live: true \}\)/);
+  // 跨天顺延改变查询参数后由 loadData effect 整页重载，一天一次。
+  assert.match(source, /const refreshLiveRequestData = useCallback\(\(\) => \{\s*if \(checkDayRollover\(\)\) return;\s*return refreshRequestData\(\{ live: true \}\);/);
   assert.match(source, /useAutoRefresh\(refreshLiveRequestData\)/);
   assert.doesNotMatch(source, /useAutoRefresh\(loadData\)/);
   assert.match(source, /const loadDataIdRef = useRef\(0\)/);
@@ -74,6 +75,15 @@ test('requests page uses Wails request events instead of permanent polling', asy
   assert.match(controlSource, /每 \{fallbackInterval\} 秒刷新/);
   assert.doesNotMatch(toolbarSource, /AutoRefreshControl/);
   assert.match(controlSource, /连续刷新失败/);
+});
+
+test('预设区间跨天顺延保留选中请求与详情面板', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const definition = source.match(/const handleDayRollover = useCallback\(\(nextRange\) => \{([\s\S]*?)\n  \}, \[/);
+
+  assert.match(source, /useDayRollover\(/);
+  assert.ok(definition, '应找到 handleDayRollover 的定义体');
+  assert.doesNotMatch(definition[1], /setSelection\(null\)/);
 });
 
 test('显示列菜单保留固定列并复用原切换与恢复回调', () => {
