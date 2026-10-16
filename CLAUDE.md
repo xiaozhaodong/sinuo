@@ -202,6 +202,7 @@
 4. `429` 或普通 `5xx` 标记瞬时失败并冷却
 5. `503 no_available_providers` 直接短路透传，不做整池 failover
 6. `/v1/responses/compact` 与 `/v1/responses` 共用账号池链路与请求追踪；OAuth 账号会透传到 `/backend-api/codex/responses/compact`
+7. `/v1/responses` 与 `/v1/responses/compact` 只接受 POST：入口直接拒绝其他方法，WebSocket 握手返回 426（Codex 改用 HTTP 的降级信号），其他方法返回 405；被拒请求不写请求记录、不进调度、不覆盖调度快照
 
 ### 编排与手动固定
 

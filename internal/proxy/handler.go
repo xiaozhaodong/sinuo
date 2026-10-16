@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -234,6 +235,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.rejectNonPostCodexResponses(w, r) {
+		return
+	}
+
 	// Claude Code 订阅直通不进端点调度；count_tokens 也直接交给官方，不做本地估算
 	claudeSubscription := endpoint.IsClaudeCodeSubscription(r.Context())
 	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled && !claudeSubscription
@@ -381,6 +386,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 统一端点转发管线（v7：streaming/regular 合并，仅 P2 处理分叉）
 	h.handleEndpointPipeline(ctx, w, r, bodyBytes, lifecycleManager, isSSE)
+}
+
+// rejectNonPostCodexResponses 在请求追踪和正文规范化前拒绝无法转发的 Codex Responses 方法。
+func (h *Handler) rejectNonPostCodexResponses(w http.ResponseWriter, r *http.Request) bool {
+	if r == nil || r.URL == nil || !isCodexResponsesAPIPath(r.URL.Path) || r.Method == http.MethodPost {
+		return false
+	}
+
+	websocketUpgrade := isWebSocketUpgradeRequest(r)
+	upgradeHeader := r.Header.Get("Upgrade")
+	if len(upgradeHeader) > 32 {
+		upgradeHeader = upgradeHeader[:32]
+	}
+	connID := ""
+	if connIDValue, ok := r.Context().Value("conn_id").(string); ok {
+		connID = connIDValue
+	}
+	slog.Info("🚫 [Codex Responses 方法拦截]",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"websocket_upgrade", websocketUpgrade,
+		"upgrade", upgradeHeader,
+		"client_ip", r.RemoteAddr,
+		"conn_id", connID,
+	)
+
+	if websocketUpgrade {
+		writeAccountPipelineError(w, http.StatusUpgradeRequired, "responses_websocket_unsupported",
+			"Responses over WebSocket is not supported on this endpoint; use HTTP POST")
+		return true
+	}
+
+	w.Header().Set("Allow", http.MethodPost)
+	writeAccountPipelineError(w, http.StatusMethodNotAllowed, "method_not_allowed",
+		"only POST is allowed on this endpoint")
+	return true
 }
 
 // ServeCodexPoolRequest 供 Codex 订阅代理的池模式适配器调用。
