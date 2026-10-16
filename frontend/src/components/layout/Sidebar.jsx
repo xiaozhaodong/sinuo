@@ -7,9 +7,12 @@
 
 import { Activity, Boxes, LayoutDashboard, ScrollText, Server, Settings, ShieldCheck, Tag } from 'lucide-react';
 import { formatShortcut, isMacPlatform } from '@utils/platform.js';
+import useClaudeCodeEntry from '@components/claude-code-entry/useClaudeCodeEntry.js';
+import useCodexSubscriptionProxy from '@components/codex-access/useCodexSubscriptionProxy.js';
 import BrandMark from './BrandMark.jsx';
 import ThemeMenu from './ThemeMenu.jsx';
 import { NAV_SECTIONS, SETTINGS_NAV_ITEM } from './navigation.js';
+import { resolveClaudeCodeEntryStatus, resolveCodexEntryStatus, resolveMainPortStatus } from './sidebarStatus.js';
 
 const NAV_ICONS = {
   overview: LayoutDashboard,
@@ -20,15 +23,6 @@ const NAV_ICONS = {
   'privacy-protection': ShieldCheck,
   pricing: Tag,
   settings: Settings
-};
-
-// 代理状态：事件通道未连通时先报通道问题，连通后以代理网关真实状态为准
-const resolveProxyStatus = (connectionStatus, { running = false, port = 0 }) => {
-  if (connectionStatus !== 'connected') {
-    return { dot: 'bg-warn-solid', text: connectionStatus === 'connecting' ? '连接中…' : '事件通道断开', port: 0 };
-  }
-  if (running && port > 0) return { dot: 'bg-success-solid', text: '代理运行中', port };
-  return { dot: 'bg-danger-solid', text: '代理未运行', port: 0 };
 };
 
 const NavItem = ({ item, active, onSelect, className = '' }) => {
@@ -49,8 +43,35 @@ const NavItem = ({ item, active, onSelect, className = '' }) => {
   );
 };
 
+const StatusRow = ({ row }) => (
+  <div className="flex items-center gap-2 text-xs text-fg-body" title={row.title}>
+    <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${row.dot}`} />
+    <span className="truncate">
+      {row.name}
+      {row.detail && <span className="text-fg-muted"> · {row.detail}</span>}
+    </span>
+    {row.port > 0 && <span className="ml-auto shrink-0 font-mono text-[11.5px] text-fg-muted">:{row.port}</span>}
+  </div>
+);
+
+// 主端口固定显示；两个独立入口运行中才各占一行
+const ProxyStatusList = ({ connectionStatus, proxyStatus }) => {
+  const { info: claudeCodeEntry } = useClaudeCodeEntry();
+  const codexEntry = useCodexSubscriptionProxy();
+  const rows = [
+    resolveMainPortStatus(connectionStatus, proxyStatus),
+    resolveClaudeCodeEntryStatus(claudeCodeEntry),
+    resolveCodexEntryStatus(codexEntry)
+  ].filter(Boolean);
+
+  return (
+    <div className="flex flex-col gap-1 px-2 pb-1.5 pt-1">
+      {rows.map((row) => <StatusRow key={row.key} row={row} />)}
+    </div>
+  );
+};
+
 const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
-  const status = resolveProxyStatus(connectionStatus, proxyStatus);
   const mac = isMacPlatform();
 
   return (
@@ -76,11 +97,7 @@ const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxy
       </div>
 
       <div className="border-t border-line px-2.5 pb-2.5 pt-2">
-        <div className="flex items-center gap-2 px-2 pb-1.5 pt-1 text-xs text-fg-body" title="主端口的代理网关状态">
-          <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${status.dot}`} />
-          <span className="truncate">{status.text}</span>
-          {status.port > 0 && <span className="ml-auto font-mono text-[11.5px] text-fg-muted">:{status.port}</span>}
-        </div>
+        <ProxyStatusList connectionStatus={connectionStatus} proxyStatus={proxyStatus} />
         <div className="flex items-center gap-1">
           <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={onTabChange} className="flex-1" />
           <ThemeMenu placement="top" />
