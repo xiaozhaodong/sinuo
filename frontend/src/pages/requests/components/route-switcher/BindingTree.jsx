@@ -3,14 +3,14 @@
 import { ChevronRight, Globe } from 'lucide-react';
 import useChangeFlash from './useChangeFlash.js';
 
-const BindingTree = ({ bindings = [], expandedId = null, onToggle, isWebTools, summaryOf, strategyKeyOf, renderTargets }) => {
+const BindingTree = ({ bindings = [], expandedId = null, onToggle, isWebTools, webToolsLabel = '联网工具', summaryOf, strategyKeyOf, renderTargets }) => {
   const flashes = useChangeFlash(strategyKeyOf ? bindings.map((binding) => [binding.assignment_id, strategyKeyOf(binding)]) : []);
   return (
     <div>
       {bindings.map((binding) => {
         const expanded = binding.assignment_id === expandedId;
         const webTools = Boolean(isWebTools?.(binding));
-        const name = webTools ? '联网工具' : binding.model;
+        const name = webTools ? webToolsLabel : binding.model;
         return (
           <div key={binding.assignment_id}>
             <button

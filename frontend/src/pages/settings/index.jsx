@@ -16,7 +16,6 @@ import {
   Lock,
   Hash,
   Archive,
-  ImageIcon,
   TerminalSquare,
   Monitor,
   KeyRound
@@ -27,6 +26,7 @@ import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.j
 import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
 import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
+import { IMAGE_GENERATION_CATEGORY } from '@pages/codex/images/imageSettingsView.js';
 import {
   isWailsEnvironment,
   getSettingCategories,
@@ -65,7 +65,6 @@ const CATEGORY_ICONS = {
   auth: Lock,
   token_counting: Hash,
   retention: Archive,
-  image_generation: ImageIcon,
   codex_identity: TerminalSquare,
   desktop: Monitor
 };
@@ -131,10 +130,12 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
         ]);
       }
 
-      setCategories(categoriesData || []);
+      setCategories((categoriesData || []).filter((category) => category.name !== IMAGE_GENERATION_CATEGORY));
       // Codex 订阅代理是受保护分类（revision CAS + 一次性密钥），只走专用卡片，
       // 不能进入通用表单，否则会被当成普通设置项展示或随批量保存下发。
-      setSettings((settingsData || []).filter((item) => item.category !== SUBSCRIPTION_PROXY_CONFIG_CATEGORY));
+      // 图像生成在 Codex 管理 → 图像生成页签维护。
+      setSettings((settingsData || []).filter((item) => item.category !== SUBSCRIPTION_PROXY_CONFIG_CATEGORY)
+        .filter((item) => item.category !== IMAGE_GENERATION_CATEGORY));
       setPortInfo(portData);
       setChanges({});
     } catch (err) {

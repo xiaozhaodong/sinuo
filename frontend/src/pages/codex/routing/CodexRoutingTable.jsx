@@ -1,7 +1,8 @@
 import { CustomSelect } from '@components/ui';
+import { Globe } from 'lucide-react';
 import Switch from '@components/desktop/Switch.jsx';
 import { MODES, accountName } from '../../account-pool/components/CodexBindingEditor.jsx';
-import { codexMemberState, codexOutcomeLabel } from './codexRoutingView.js';
+import { codexBindingDisplayName, codexMemberState, codexOutcomeLabel, isCodexSearchBinding } from './codexRoutingView.js';
 import { routingOutcomeTone } from '@components/model-routing/routingView.js';
 import { MemberChipsCell, RecentHitCell } from '@components/model-routing/RoutingTableCells.jsx';
 
@@ -30,7 +31,13 @@ const RoutingRow = ({ binding, accountById, selectedId, busy, onSelect, onPatch,
     onContextMenu={(event) => onRowContextMenu(event, binding)}>
     <td className="max-w-[200px]">
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className={`min-w-0 truncate font-mono text-[12.5px] ${binding.note ? 'max-w-[70%] shrink-0' : 'flex-1'}`} title={binding.model}>{binding.model}</span>
+        {isCodexSearchBinding(binding) ? (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <Globe size={13} className="text-fg-muted" />
+            <span>联网搜索</span>
+            <span className="rounded border border-line px-1 text-[10.5px] text-fg-muted" title="不受模型路由开关影响">始终生效</span>
+          </span>
+        ) : <span className={`min-w-0 truncate font-mono text-[12.5px] ${binding.note ? 'max-w-[70%] shrink-0' : 'flex-1'}`} title={binding.model}>{binding.model}</span>}
         {binding.note && <span className="min-w-0 flex-1 truncate text-[11px] text-fg-muted" title={binding.note}>{binding.note}</span>}
       </div>
     </td>
@@ -52,7 +59,7 @@ const RoutingRow = ({ binding, accountById, selectedId, busy, onSelect, onPatch,
       outcomeTone={routingOutcomeTone(binding.last_outcome)}
     />
     <td onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-      <Switch checked={binding.enabled} disabled={busy} label={`启用映射 ${binding.model}`} onChange={(enabled) => onPatch(binding, { enabled })} />
+      <Switch checked={binding.enabled} disabled={busy} label={`启用映射 ${codexBindingDisplayName(binding)}`} onChange={(enabled) => onPatch(binding, { enabled })} />
     </td>
   </tr>
 );

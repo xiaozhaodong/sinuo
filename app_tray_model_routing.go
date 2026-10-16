@@ -61,7 +61,7 @@ func trayModelRoutingEnableConfirm(api trayModelRoutingAPI, target string) (tray
 			return trayConfirm{}, err
 		}
 		for _, b := range bindings {
-			if b.Enabled {
+			if b.Enabled && (b.Kind == "" || b.Kind == "model") {
 				return trayConfirm{}, nil
 			}
 		}

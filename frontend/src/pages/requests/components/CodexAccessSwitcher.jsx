@@ -1,6 +1,7 @@
 // 请求页 Codex 按钮：独立入口接入模式 + 账号池策略（或模型路由）
 // 2026-10-07 桌面化：浮层改为控制中心模块式的一列，不再分「接入模式 / 账号池策略」两个页签；
 //            切换接入模式仍先弹确认框；底部「模型路由…」打开绑定抽屉
+import { codexModelBindings } from '../../codex/routing/codexRoutingView.js';
 import { useId, useRef, useState } from 'react';
 import { KeyRound, UserRound } from 'lucide-react';
 import { PopoverAlert, PopoverMenuItem, PopoverNote, PopoverSection, PopoverSeparator } from '@components/desktop/PopoverParts.jsx';
@@ -38,8 +39,8 @@ const CodexAccessSwitcher = ({
   const panelRef = useRef(null);
   const menuId = useId();
   const runningPool = Boolean(config?.initialized && config?.mode === 'pool' && status?.state === 'running');
-  const fallbackRouteLabel = resolveFallbackRouteLabel({ modelRoutingEnabled: codexModelRoutingEnabled, activeAccount, modelRouteBindingCount: bindings.length });
-  const triggerRouteLabel = resolveFallbackRouteLabel({ modelRoutingEnabled: codexModelRoutingEnabled, activeAccount, modelRouteBindingCount: bindings.length, compact: runningPool });
+  const fallbackRouteLabel = resolveFallbackRouteLabel({ modelRoutingEnabled: codexModelRoutingEnabled, activeAccount, modelRouteBindingCount: codexModelBindings(bindings).length });
+  const triggerRouteLabel = resolveFallbackRouteLabel({ modelRoutingEnabled: codexModelRoutingEnabled, activeAccount, modelRouteBindingCount: codexModelBindings(bindings).length, compact: runningPool });
   const blockReason = modeSwitchBlockReason({ config, status, configError, statusError, fallbackRouteLabel });
   const ready = !blockReason;
   const modeLabel = SUBSCRIPTION_PROXY_MODE_OPTIONS.find((option) => option.value === config?.mode)?.label || '未知模式';

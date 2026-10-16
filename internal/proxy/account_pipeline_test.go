@@ -91,6 +91,10 @@ func (m *mockCodexModelRouter) Enabled() bool {
 	return m != nil && m.enabled
 }
 
+func (m *mockCodexModelRouter) PrepareSearch(context.Context, string) (servicepkg.CodexModelRouteResult, bool, error) {
+	return servicepkg.CodexModelRouteResult{}, false, nil
+}
+
 func (m *mockCodexModelRouter) Prepare(_ context.Context, model, path string) (servicepkg.CodexModelRouteResult, error) {
 	m.mu.Lock()
 	m.prepareCalls = append(m.prepareCalls, model+" "+path)

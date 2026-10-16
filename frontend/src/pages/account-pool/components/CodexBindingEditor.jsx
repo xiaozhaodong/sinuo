@@ -5,6 +5,12 @@ import { Button, CustomSelect } from '@components/ui';
 import Sheet from '@components/desktop/Sheet.jsx';
 import Switch from '@components/desktop/Switch.jsx';
 import { FormFieldRow, FormRow, FormSection } from '@components/desktop/FormSection.jsx';
+import { CODEX_SEARCH_KIND, isCodexOAuthAccount, isCodexSearchBinding } from '../../codex/routing/codexRoutingView.js';
+
+const BINDING_KINDS = [
+  { value: 'model', label: '模型名', hint: '按请求 model 精确匹配，大小写不敏感' },
+  { value: 'search', label: '联网搜索', hint: 'Codex 联网搜索请求，不看模型名，不受模型路由开关影响' }
+];
 
 const MODES = [
   { value: 'auto', label: '自动', hint: '按账号顺序尝试所有可用账号' },
@@ -14,8 +20,9 @@ const MODES = [
 const accountId = (account) => Number(account?.id ?? account?.ID ?? account?.account_id ?? account?.accountId);
 const accountName = (account) => account?.account_name || account?.accountName || account?.name || `账号 ${accountId(account)}`;
 const accountProvider = (account) => String(account?.provider_type || account?.providerType || 'unknown').replaceAll('_', ' ');
-const accountState = (account) => {
+const accountState = (account, isSearch = false) => {
   if (!account) return { label: '账号不存在', tone: 'tone-rose' };
+  if (isSearch && !isCodexOAuthAccount(account)) return { label: '不支持联网搜索', tone: 'tone-rose' };
   if (account.enabled === false || account.state === 'disabled_auth') return { label: '已停用', tone: 'tone-rose' };
   if (!account.has_credential && !account.credential_raw && !account.credentialRaw) return { label: '无凭据', tone: 'tone-amber' };
   const until = account.cooldown_until || account.cooldownUntil;
@@ -25,9 +32,11 @@ const accountState = (account) => {
 
 const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose }) => {
   const inputRef = useRef(null);
+  const noteInputRef = useRef(null);
 
   const [draft, setDraft] = useState(() => ({
     assignmentId: binding?.assignment_id || null,
+    kind: binding?.kind || 'model',
     model: binding?.model || '',
     accountIds: (binding?.account_ids || []).map(Number),
     memberEnabled: Object.fromEntries((binding?.account_ids || []).map(id => [Number(id), binding?.member_enabled?.[id] !== false])),
@@ -40,13 +49,20 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
   const [query, setQuery] = useState('');
 
   const [error, setError] = useState('');
+  const isSearch = draft.kind === CODEX_SEARCH_KIND;
+  const searchTaken = bindings.some((item) => isCodexSearchBinding(item) && item.assignment_id !== draft.assignmentId);
+  const kindOptions = BINDING_KINDS.filter((kind) => kind.value !== CODEX_SEARCH_KIND || isSearch || !searchTaken);
+  const title = isSearch
+    ? (draft.assignmentId ? '编辑联网搜索映射' : '新建联网搜索映射')
+    : (draft.assignmentId ? '编辑 Codex 模型路由' : '新建 Codex 模型路由');
 
   const byId = useMemo(() => new Map(accounts.map(account => [accountId(account), account])), [accounts]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return accounts.filter(account => !needle || `${accountName(account)} ${accountProvider(account)} ${accountId(account)}`.toLowerCase().includes(needle));
-  }, [accounts, query]);
+    return accounts.filter(account => (!isSearch || isCodexOAuthAccount(account) || draft.accountIds.includes(accountId(account)))
+      && (!needle || `${accountName(account)} ${accountProvider(account)} ${accountId(account)}`.toLowerCase().includes(needle)));
+  }, [accounts, query, isSearch, draft.accountIds]);
 
   const targetOptions = draft.accountIds.map(id => ({
     value: id,
@@ -96,13 +112,19 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
   };
 
   const submit = async () => {
-    const model = draft.model.trim();
-    if (!model) return setError('请输入模型名');
+    const model = isSearch ? '' : draft.model.trim();
+    if (!isSearch && !model) return setError('请输入模型名');
+    if (isSearch && searchTaken) return setError('联网搜索映射已经存在，只能配置一条');
     if (!draft.accountIds.length) return setError('至少选择一个账号');
+    if (isSearch && draft.accountIds.some((id) => {
+      const account = byId.get(id);
+      return !account || !isCodexOAuthAccount(account);
+    })) return setError('联网搜索只能使用 ChatGPT OAuth 账号，请取消勾选 api_key 账号');
     if (draft.routeMode !== 'auto' && !draft.targetId) return setError('优选 / 固定模式需要选择目标账号');
     if (draft.routeMode !== 'auto' && !draft.accountIds.includes(draft.targetId)) return setError('目标账号必须在成员列表中');
-    if (bindings.some(item => item.assignment_id !== draft.assignmentId && item.model.trim().toLowerCase() === model.toLowerCase())) return setError(`模型「${model}」已经配置过路由`);
+    if (!isSearch && bindings.some(item => item.assignment_id !== draft.assignmentId && !isCodexSearchBinding(item) && item.model.trim().toLowerCase() === model.toLowerCase())) return setError(`模型「${model}」已经配置过路由`);
     await onSave(draft.assignmentId, {
+      kind: draft.kind,
       model,
       account_ids: draft.accountIds,
       member_enabled: draft.memberEnabled,
@@ -115,13 +137,13 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
 
   return (
     <Sheet
-      title={draft.assignmentId ? '编辑 Codex 模型路由' : '新建 Codex 模型路由'}
-      label={draft.assignmentId ? '编辑 Codex 模型路由' : '新建 Codex 模型路由'}
+      title={title}
+      label={title}
       width={640}
       closeLabel="关闭 Codex 绑定编辑"
-      subtitle="模型只会在这里选中的账号之间调度。"
+      subtitle={isSearch ? '联网搜索只会在这里选中的 OAuth 账号之间调度，不受模型路由开关影响。' : '模型只会在这里选中的账号之间调度。'}
       onClose={onClose}
-      initialFocusRef={inputRef}
+      initialFocusRef={isSearch ? noteInputRef : inputRef}
       footerStart={error && (
         <span role="alert" className="flex items-start gap-2 text-danger">
           <AlertTriangle size={14} className="shrink-0" />
@@ -136,12 +158,17 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
       )}
     >
       <FormSection title="基本信息">
-        <FormFieldRow label="模型名" htmlFor="codex-model-name" hint="精确匹配，大小写不敏感">
+        <FormFieldRow label="匹配方式" hint={kindOptions.find((kind) => kind.value === draft.kind)?.hint}>
+          <CustomSelect options={kindOptions} value={draft.kind} disabled={busy || Boolean(draft.assignmentId)}
+            size="sm" className="w-full" onChange={(kind) => patch({ ...draft, kind })} />
+        </FormFieldRow>
+        <FormFieldRow label={isSearch ? '请求路径' : '模型名'} htmlFor="codex-model-name" hint={isSearch ? '不按模型名匹配' : '精确匹配，大小写不敏感'}>
           <input
             id="codex-model-name"
             ref={inputRef}
             className="desk-field w-full font-mono"
-            value={draft.model}
+            value={isSearch ? '/v1/alpha/search' : draft.model}
+            readOnly={isSearch}
             disabled={busy}
             onChange={(event) => patch({ ...draft, model: event.target.value })}
             placeholder="gpt-5.5"
@@ -163,6 +190,7 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
         </FormFieldRow>
       </FormSection>
       <FormSection title="账号成员与顺序" description="成员顺序就是自动模式的尝试顺序">
+        {isSearch && <p className="px-3.5 py-2 text-xs text-fg-muted">只列出 ChatGPT OAuth 账号，api_key 账号不支持联网搜索</p>}
         <div className="flex items-center gap-2 border-b border-line-soft px-3.5 py-2">
           <input
             className="desk-field min-w-0 flex-1"
@@ -177,7 +205,7 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
           {visible.map((account) => {
             const id = accountId(account);
             const selected = draft.accountIds.includes(id);
-            const state = accountState(account);
+            const state = accountState(account, isSearch);
             return (
               <button
                 key={id}
@@ -260,6 +288,7 @@ const CodexBindingEditor = ({ binding, accounts, bindings, busy, onSave, onClose
         <FormFieldRow label="备注（可选）" htmlFor="codex-route-note">
           <input
             id="codex-route-note"
+            ref={noteInputRef}
             className="desk-field w-full"
             value={draft.note}
             disabled={busy}

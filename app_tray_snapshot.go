@@ -225,7 +225,11 @@ func (t *appTray) readCodexRoute(s *tray.Snapshot) {
 		bindings, err := t.app.ListCodexModelRouteBindings()
 		s.CodexError = trayError(err)
 		for _, b := range bindings {
-			s.CodexBindings = append(s.CodexBindings, tray.Binding{ID: b.AssignmentID, Name: b.Model, Enabled: b.Enabled,
+			name := b.Model
+			if b.Kind == "search" {
+				name = "联网搜索"
+			}
+			s.CodexBindings = append(s.CodexBindings, tray.Binding{ID: b.AssignmentID, Kind: b.Kind, Name: name, Enabled: b.Enabled,
 				Mode: b.RouteMode, TargetID: b.RouteTargetID, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled})
 		}
 		return

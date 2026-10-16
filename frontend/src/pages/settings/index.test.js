@@ -22,3 +22,12 @@ test('专用配置不进入通用设置表单', async () => {
   assert.match(source, /SUBSCRIPTION_PROXY_CONFIG_CATEGORY/);
   assert.match(source, /filter\(\(item\) => item\.category !== SUBSCRIPTION_PROXY_CONFIG_CATEGORY\)/);
 });
+
+test('图像生成分类和设置项移出设置页，不再保留图像分类图标', async () => {
+  const source = await readFile(pageSourcePath, 'utf8');
+
+  assert.match(source, /import \{ IMAGE_GENERATION_CATEGORY \} from '@pages\/codex\/images\/imageSettingsView\.js'/);
+  assert.match(source, /setCategories\(\(categoriesData \|\| \[\]\)\.filter\(\(category\) => category\.name !== IMAGE_GENERATION_CATEGORY\)\)/);
+  assert.match(source, /filter\(\(item\) => item\.category !== SUBSCRIPTION_PROXY_CONFIG_CATEGORY\)\s*\.filter\(\(item\) => item\.category !== IMAGE_GENERATION_CATEGORY\)/);
+  assert.doesNotMatch(source, /image_generation: ImageIcon|\bImageIcon\b/);
+});

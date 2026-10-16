@@ -29,6 +29,7 @@ type ModelRoutingSettingsInfo struct {
 }
 
 type CodexModelRouteBindingInfo struct {
+	Kind           string         `json:"kind"`
 	AssignmentID   int64          `json:"assignment_id"`
 	Model          string         `json:"model"`
 	AccountIDs     []int64        `json:"account_ids"`
@@ -44,6 +45,7 @@ type CodexModelRouteBindingInfo struct {
 }
 
 type CodexModelRouteBindingInput struct {
+	Kind          string         `json:"kind"`
 	Model         string         `json:"model"`
 	AccountIDs    []int64        `json:"account_ids"`
 	MemberEnabled map[int64]bool `json:"member_enabled"`
@@ -190,7 +192,11 @@ func (a *App) GetModelRoutingSettings() (ModelRoutingSettingsInfo, error) {
 		info.CodexStatus = codexSvc.Status()
 		info.CodexEnabled = codexSvc.Enabled()
 		info.CodexVersion = codexSvc.SnapshotVersion()
-		info.CodexBindingCount = len(codexBindings)
+		for _, binding := range codexBindings {
+			if binding.Kind == "model" {
+				info.CodexBindingCount++
+			}
+		}
 	}
 	if record != nil {
 		// 开关展示实际运行态，读取失败回到全局后，用户可直接重新开启并保存。
@@ -325,7 +331,7 @@ func (a *App) ListCodexModelRouteBindings() ([]CodexModelRouteBindingInfo, error
 	}
 	result := make([]CodexModelRouteBindingInfo, 0, len(bindings))
 	for _, b := range bindings {
-		result = append(result, CodexModelRouteBindingInfo{AssignmentID: b.AssignmentID, Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, RouteMode: b.RouteMode, RouteTargetID: b.RouteTargetID, Enabled: b.Enabled, Note: b.Note, LastAccountID: b.LastAccountID, LastOutcome: b.LastOutcome, LastDecisionAt: formatTime(b.LastDecisionAt), UpdatedAt: formatTime(b.UpdatedAt)})
+		result = append(result, CodexModelRouteBindingInfo{Kind: b.Kind, AssignmentID: b.AssignmentID, Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, RouteMode: b.RouteMode, RouteTargetID: b.RouteTargetID, Enabled: b.Enabled, Note: b.Note, LastAccountID: b.LastAccountID, LastOutcome: b.LastOutcome, LastDecisionAt: formatTime(b.LastDecisionAt), UpdatedAt: formatTime(b.UpdatedAt)})
 	}
 	return result, nil
 }
@@ -337,7 +343,7 @@ func (a *App) CreateCodexModelRouteBinding(input CodexModelRouteBindingInput) (C
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	id, err := svc.CreateBinding(ctx, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note})
+	id, err := svc.CreateBinding(ctx, service.CodexModelRouteBindingInput{Kind: input.Kind, Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note})
 	if err != nil {
 		return CodexModelRouteBindingInfo{}, err
 	}
@@ -375,7 +381,7 @@ func (a *App) UpdateCodexModelRouteBinding(assignmentID int64, input CodexModelR
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := svc.UpdateBinding(ctx, assignmentID, service.CodexModelRouteBindingInput{Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note}); err != nil {
+	if err := svc.UpdateBinding(ctx, assignmentID, service.CodexModelRouteBindingInput{Kind: input.Kind, Model: input.Model, AccountIDs: input.AccountIDs, MemberEnabled: input.MemberEnabled, RouteMode: input.RouteMode, RouteTargetID: input.RouteTargetID, Enabled: input.Enabled, Note: input.Note}); err != nil {
 		return err
 	}
 	a.emitModelRoutingUpdate()

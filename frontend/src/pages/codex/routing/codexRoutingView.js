@@ -1,4 +1,12 @@
-import { isAccountSchedulable, toAccountStateLabel, toScheduleOutcomeLabel } from '../../account-pool/utils/accountPool.js';
+import { isAccountSchedulable, providerTypeToAuthMethod, toAccountStateLabel, toScheduleOutcomeLabel } from '../../account-pool/utils/accountPool.js';
+
+export const CODEX_SEARCH_KIND = 'search';
+export const CODEX_SEARCH_LABEL = '联网搜索';
+export const isCodexSearchBinding = (binding) => binding?.kind === CODEX_SEARCH_KIND;
+export const codexBindingDisplayName = (binding) => isCodexSearchBinding(binding) ? CODEX_SEARCH_LABEL : binding.model;
+export const codexModelBindings = (bindings) => bindings.filter((binding) => !isCodexSearchBinding(binding));
+export const sortCodexBindings = (bindings) => [...bindings].sort((a, b) => Number(isCodexSearchBinding(b)) - Number(isCodexSearchBinding(a)));
+export const isCodexOAuthAccount = (account) => providerTypeToAuthMethod(account.provider_type ?? account.providerType) === 'chatgpt_refresh_token';
 
 // 与账号池的状态和结果文案共用一套规则；暂停成员仍可被手动固定。
 export const codexMemberState = (binding, id, account) => {
@@ -28,6 +36,7 @@ export const codexOutcomeLabel = (outcome) => {
 export const codexBindingPayload = (binding, patch) => {
   const next = { ...binding, ...patch };
   return {
+    kind: next.kind || 'model',
     model: next.model,
     account_ids: next.account_ids,
     member_enabled: next.member_enabled,

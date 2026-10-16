@@ -163,70 +163,16 @@ func loadCodexSnapshotWithSettings(ctx context.Context, st store.ModelRoutingSto
 		snap.Groups[g.ID] = cg
 	}
 	for _, a := range compiled.Assignments() {
-		snap.ByModel[modelrouting.NormalizeModelName(a.ModelName)] = &codexModelRoutingAssignment{ID: a.ID, Model: a.ModelName, GroupID: a.GroupID, Enabled: a.Enabled}
+		assignment := &codexModelRoutingAssignment{ID: a.ID, Model: a.ModelName, GroupID: a.GroupID, Enabled: a.Enabled}
+		if modelrouting.IsSearchKey(a.ModelName) {
+			snap.Search = assignment
+		} else if !modelrouting.IsReservedKey(a.ModelName) {
+			snap.ByModel[modelrouting.NormalizeModelName(a.ModelName)] = assignment
+		}
 	}
 	return snap, nil
 }
 
-// normalizeCodexBindingInput 统一校验、账号存在性检查和存储使用的成员集合。
-// 显式账号列表保留顺序；仅提供状态映射时按 ID 排序；未填写的参与状态默认启用。
-func normalizeCodexBindingInput(in CodexModelRouteBindingInput) (CodexModelRouteBindingInput, error) {
-	ids := append([]int64(nil), in.AccountIDs...)
-	if len(ids) == 0 && len(in.MemberEnabled) > 0 {
-		ids = make([]int64, 0, len(in.MemberEnabled))
-		for id := range in.MemberEnabled {
-			ids = append(ids, id)
-		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	}
-	raw, err := json.Marshal(ids)
-	if err != nil {
-		return CodexModelRouteBindingInput{}, err
-	}
-	g, err := codexGroupFromRecord(&store.ModelUpstreamGroupRecord{ID: 1, Name: "binding", MembersJSON: string(raw), RouteMode: in.RouteMode, RouteTarget: formatAccountTarget(in.RouteTargetID)})
-	if err != nil {
-		return CodexModelRouteBindingInput{}, err
-	}
-	if err = modelrouting.ValidateGroup(g, nil, nil); err != nil {
-		return CodexModelRouteBindingInput{}, err
-	}
-	if err = modelrouting.ValidateAssignment(modelrouting.Assignment{ModelName: in.Model, GroupID: 1, Note: in.Note}, modelrouting.MatchExact, nil, []modelrouting.Group{g}); err != nil {
-		return CodexModelRouteBindingInput{}, err
-	}
-	members := make(map[int64]bool, len(ids))
-	for _, id := range ids {
-		members[id] = true
-	}
-	for id := range in.MemberEnabled {
-		if !members[id] {
-			return CodexModelRouteBindingInput{}, fmt.Errorf("账号 %d 的参与状态不属于本模型组成员", id)
-		}
-	}
-	in.AccountIDs = ids
-	in.MemberEnabled = cloneMemberEnabled(in.MemberEnabled, ids)
-	return in, nil
-}
-func (s *CodexModelRoutingService) validateAccountIDs(ctx context.Context, ids []int64) error {
-	if s.listAccounts == nil {
-		return fmt.Errorf("账号状态服务未初始化")
-	}
-	accounts, err := s.listAccounts(ctx, true)
-	if err != nil {
-		return err
-	}
-	known := map[int64]bool{}
-	for _, a := range accounts {
-		if a != nil {
-			known[a.ID] = true
-		}
-	}
-	for _, id := range ids {
-		if !known[id] {
-			return fmt.Errorf("Codex 账号 %d 不存在", id)
-		}
-	}
-	return nil
-}
 func (s *CodexModelRoutingService) ListBindings(ctx context.Context) ([]CodexModelRouteBinding, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,9 +219,12 @@ func (s *CodexModelRoutingService) ListBindings(ctx context.Context) ([]CodexMod
 		for _, member := range states {
 			memberEnabled[member.ID] = member.Enabled
 		}
-		out = append(out, CodexModelRouteBinding{AssignmentID: a.ID, GroupID: g.ID, Model: a.ModelName, AccountIDs: members, MemberEnabled: memberEnabled, RouteMode: g.RouteMode, RouteTargetID: target, Enabled: a.Enabled, Note: a.Note, LastAccountID: rt.LastAccountID, LastOutcome: rt.LastOutcome, LastDecisionAt: rt.LastDecisionAt, UpdatedAt: a.UpdatedAt})
+		out = append(out, CodexModelRouteBinding{Kind: codexBindingKind(a.ModelName), AssignmentID: a.ID, GroupID: g.ID, Model: a.ModelName, AccountIDs: members, MemberEnabled: memberEnabled, RouteMode: g.RouteMode, RouteTargetID: target, Enabled: a.Enabled, Note: a.Note, LastAccountID: rt.LastAccountID, LastOutcome: rt.LastOutcome, LastDecisionAt: rt.LastDecisionAt, UpdatedAt: a.UpdatedAt})
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Kind == modelrouting.BindingKindSearch) != (out[j].Kind == modelrouting.BindingKindSearch) {
+			return out[i].Kind == modelrouting.BindingKindSearch
+		}
 		return modelrouting.NormalizeModelName(out[i].Model) < modelrouting.NormalizeModelName(out[j].Model)
 	})
 	return out, nil
@@ -291,30 +240,17 @@ func (s *CodexModelRoutingService) UpdateBinding(ctx context.Context, id int64, 
 	return err
 }
 func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in CodexModelRouteBindingInput) (int64, error) {
-	var err error
-	in, err = normalizeCodexBindingInput(in)
-	if err != nil {
-		return 0, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// 必须在绑定写入/账号删除共享锁内校验存在性。
-	if err := s.validateAccountIDs(ctx, in.AccountIDs); err != nil {
+	in, a, err := s.prepareCodexBindingWrite(ctx, id, in)
+	if err != nil {
 		return 0, err
 	}
 	var snap *codexModelRoutingSnapshot
 	err = s.store.RunInTx(ctx, func(st store.ModelRoutingStore) error {
-		a := &store.ModelRoutingAssignmentRecord{Family: modelrouting.FamilyCodex, MatchType: modelrouting.MatchExact}
 		var g *store.ModelUpstreamGroupRecord
 		var err error
 		if id != 0 {
-			a, err = st.GetAssignment(ctx, id)
-			if err != nil {
-				return err
-			}
-			if a == nil || a.Family != modelrouting.FamilyCodex {
-				return fmt.Errorf("Codex 绑定不存在")
-			}
 			g, err = st.GetGroup(ctx, a.GroupID)
 			if err != nil {
 				return err
@@ -329,6 +265,9 @@ func (s *CodexModelRoutingService) saveBinding(ctx context.Context, id int64, in
 		}
 		assignments, err := st.ListAssignments(ctx)
 		if err != nil {
+			return err
+		}
+		if err := validateCodexBindingAssignment(in, id, assignments); err != nil {
 			return err
 		}
 		shared := 0

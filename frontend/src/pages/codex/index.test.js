@@ -175,3 +175,41 @@ test('调度页面轮询不改变刷新加载态，检查器无副标题，列�
   assert.match(page, /buildAccountActionState\(account, group, actions\.busyKey\)/);
   assert.match(table, /buildAccountActionState\(account, group, actions\.busyKey\)/);
 });
+
+test('图像生成页签首次访问挂载并保留草稿，复用设置控件和可见工具栏', async () => {
+  const [source, imagesSource] = await Promise.all([
+    readFile(pageSourcePath, 'utf8'),
+    readFile(join(here, 'images/CodexImagesPage.jsx'), 'utf8')
+  ]);
+
+  assert.match(source, /id: 'models'[\s\S]*\{ id: 'images', label: '图像生成' \}[\s\S]*id: 'client-access'/);
+  assert.match(source, /useState\(activeTab === 'images'\)/);
+  assert.match(source, /if \(nextTab === 'images'\) setImagesVisited\(true\)/);
+  assert.match(source, /ref=\{setImagesActionsTarget\}[^>]*hidden=\{activeTab !== 'images'\}/);
+  assert.match(source, /id="codex-panel-images"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="codex-tab-images"[\s\S]*?hidden=\{activeTab !== 'images'\}/);
+  assert.match(source, /imagesVisited && <CodexImagesPage active=\{activeTab === 'images'\} headerTarget=\{imagesActionsTarget\} \/>/);
+  assert.match(imagesSource, /import SettingItem from '@pages\/settings\/components\/SettingItem\.jsx'/);
+  assert.match(imagesSource, /<SettingItem key=\{setting\.key\} setting=\{setting\} value=\{currentValue\(setting\)\} onChange=\{handleChange\} disabled=\{saving\} \/>/);
+  assert.match(imagesSource, /headerTarget && active && createPortal\(toolbar, headerTarget\)/);
+  assert.match(imagesSource, /useNotice\(\{ enabled: active \}\)/);
+  assert.match(imagesSource, /resolveErrorMessage\(err, '保存失败'\)/);
+  assert.doesNotMatch(imagesSource, /err\.message\s*\|\|/);
+  assert.doesNotMatch(imagesSource, /subscribeToEvent|setInterval|setTimeout/);
+});
+
+test('图像配置保存和恢复默认后静默读回，首次加载与手动重载保留加载态', async () => {
+  const source = await readFile(join(here, 'images/CodexImagesPage.jsx'), 'utf8');
+  const loader = source.match(/const loadSettings = useCallback\(async \(\{ silent = false \} = \{\}\) => \{([\s\S]*?)\n  \}, \[isWails\]\);/);
+
+  assert.ok(loader);
+  assert.match(loader[1], /if \(!silent\) setLoading\(true\);/);
+  assert.equal([...loader[1].matchAll(/setLoading\(true\)/g)].length, 1);
+  for (const handler of ['handleSave', 'handleReset']) {
+    const body = source.match(new RegExp(`const ${handler} = async \\(\\) => \\{([\\s\\S]*?)\\n  \\};`));
+    assert.ok(body);
+    assert.match(body[1], /await loadSettings\(\{ silent: true \}\)/);
+  }
+  assert.match(source, /useEffect\(\(\) => \{\s*loadSettings\(\);/);
+  assert.match(source, /const handleReload = async \(\) => \{[\s\S]*?await loadSettings\(\);\n  \};/);
+  assert.match(source, /onRetry=\{loadSettings\}/);
+});

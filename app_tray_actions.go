@@ -130,7 +130,7 @@ func updateTrayCodexBinding(api trayBindingAPI, action tray.Action) error {
 			}
 		}
 		return api.UpdateCodexModelRouteBinding(b.AssignmentID, CodexModelRouteBindingInput{
-			Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, Enabled: b.Enabled, Note: b.Note,
+			Kind: b.Kind, Model: b.Model, AccountIDs: b.AccountIDs, MemberEnabled: b.MemberEnabled, Enabled: b.Enabled, Note: b.Note,
 			RouteMode: action.Mode, RouteTargetID: target,
 		})
 	}

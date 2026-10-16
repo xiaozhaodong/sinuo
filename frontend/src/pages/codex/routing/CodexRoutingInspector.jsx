@@ -5,7 +5,7 @@ import { Inspector, InspectorBody, InspectorFooter, InspectorHeader, InspectorSe
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { MODES, accountName } from '../../account-pool/components/CodexBindingEditor.jsx';
 import { toAccountAuthLabel, toQuotaStatusLabel } from '../../account-pool/utils/accountPool.js';
-import { codexMemberState, codexOutcomeLabel } from './codexRoutingView.js';
+import { codexBindingDisplayName, codexMemberState, codexOutcomeLabel, isCodexSearchBinding } from './codexRoutingView.js';
 
 const AccountDetails = ({ binding, accountById, formatTimestamp }) => (
   <InspectorSection title={`成员账号 · ${binding.account_ids.length}`}>
@@ -40,18 +40,19 @@ const CodexRoutingInspector = ({ binding, accountById, busy, onEdit, onDelete, o
   const target = accountById.get(Number(binding.route_target_account_id));
   return (
     <Inspector label="Codex 模型路由详情">
-      <InspectorHeader title={binding.model} subtitle="模型路由"
+      <InspectorHeader title={codexBindingDisplayName(binding)} subtitle="模型路由"
         badges={<button type="button" onClick={onClearSelection} aria-label="清除选择，查看路由试算" title="路由试算" className="ml-auto rounded p-1 text-fg-muted hover:bg-surface-mut"><X size={14} /></button>} />
       <InspectorBody>
         <InspectorSection title="映射">
           <PropertyList labelWidth={60} align="start">
-            <Property label="模型" truncate={false}><span className="selectable break-all">{binding.model}</span></Property>
+            <Property label={isCodexSearchBinding(binding) ? '匹配' : '模型'} truncate={false}><span className="selectable break-all">{codexBindingDisplayName(binding)}</span></Property>
             <Property label="状态">{binding.enabled ? '已启用' : '已停用'}</Property>
             <Property label="策略">{MODES.find((mode) => mode.value === binding.route_mode)?.label || binding.route_mode}</Property>
             {binding.route_mode !== 'auto' && <Property label="目标" truncate={false}>{target ? accountName(target) : `账号 ${binding.route_target_account_id}`}</Property>}
             {binding.note && <Property label="备注" truncate={false}><span className="selectable break-words">{binding.note}</span></Property>}
           </PropertyList>
         </InspectorSection>
+        {isCodexSearchBinding(binding) && <p className="px-4 py-2 text-xs text-fg-muted">处理 Codex 联网搜索（/v1/alpha/search），不受模型路由开关影响；只能选择 ChatGPT OAuth 账号。</p>}
         <AccountDetails binding={binding} accountById={accountById} formatTimestamp={formatTimestamp} />
         <InspectorSection title="最近命中">
           <PropertyList labelWidth={60}>

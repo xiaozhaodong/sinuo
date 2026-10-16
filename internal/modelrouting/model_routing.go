@@ -18,7 +18,10 @@ const MatchExact = "exact"
 // 请求 tools[] 里出现 web_search / web_fetch 类 server tool 时优先命中它，再回落到模型映射。
 // 用保留键而不是新列，是为了不重建带 CHECK 约束的表；用户手输的模型名禁止使用该前缀。
 const (
-	WebToolsKey         = "server_tool:web"
+	WebToolsKey = "server_tool:web"
+	// SearchKey 是 Codex「联网搜索」映射的保留键，只用于 Codex 族。
+	SearchKey           = "server_tool:search"
+	BindingKindSearch   = "search"
 	ReservedKeyPrefix   = "server_tool:"
 	BindingKindModel    = "model"
 	BindingKindWebTools = "web_tools"
@@ -29,14 +32,22 @@ func IsWebToolsKey(model string) bool {
 	return NormalizeModelName(model) == WebToolsKey
 }
 
-// IsReservedKey 判断模型名是否落在保留前缀内（含联网工具保留键本身）。
-// 用户手输的模型名一律不允许使用保留前缀，联网映射只能通过 kind=web_tools 建立。
+// IsSearchKey 判断分配键是否为 Codex 联网搜索保留键。
+func IsSearchKey(model string) bool {
+	return NormalizeModelName(model) == SearchKey
+}
+
+// IsReservedKey 判断模型名是否落在保留前缀内（含联网映射保留键本身）。
+// 用户手输的模型名一律不允许使用保留前缀，联网映射通过对应 kind 建立。
 func IsReservedKey(model string) bool {
 	return strings.HasPrefix(NormalizeModelName(model), ReservedKeyPrefix)
 }
 
 // BindingKind 把分配键映射为对外的映射种类。
 func BindingKind(model string) string {
+	if IsSearchKey(model) {
+		return BindingKindSearch
+	}
 	if IsWebToolsKey(model) {
 		return BindingKindWebTools
 	}
@@ -415,11 +426,14 @@ func ValidateAssignment(assignment Assignment, matchType string, siblings []Assi
 	}
 
 	normalized := NormalizeModelName(model)
-	if strings.HasPrefix(normalized, ReservedKeyPrefix) && normalized != WebToolsKey {
+	if strings.HasPrefix(normalized, ReservedKeyPrefix) && normalized != WebToolsKey && normalized != SearchKey {
 		return fmt.Errorf("模型名不能以保留前缀 %q 开头", ReservedKeyPrefix)
 	}
 	for _, sibling := range siblings {
 		if sibling.ID != assignment.ID && NormalizeModelName(sibling.ModelName) == normalized {
+			if normalized == SearchKey {
+				return fmt.Errorf("联网搜索映射已经存在，只能配置一条")
+			}
 			if normalized == WebToolsKey {
 				return fmt.Errorf("联网工具映射已经存在，只能配置一条")
 			}

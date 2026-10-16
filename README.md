@@ -293,7 +293,7 @@ endpoints_storage:
 除 Claude API 外，当前还支持：
 
 - **OpenAI / Codex** - `/v1/responses` 与 `/v1/responses/compact`，走独立的 Codex 账号池调度
-- **图像生成** - OpenAI 兼容的 `/v1/images/generations` 与 `/v1/images/edits`，单独配置 URL / Key / 固定单价，不参与端点与账号池调度
+- **图像生成** - OpenAI 兼容的 `/v1/images/generations` 与 `/v1/images/edits`，在 Codex 管理 →「图像生成」页签单独配置 URL / Key / 固定单价，不参与端点与账号池调度
 
 兼容 Claude API 格式的第三方服务也可以直接作为端点使用。
 

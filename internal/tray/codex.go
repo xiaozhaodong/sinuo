@@ -152,6 +152,9 @@ func codexBindings(s Snapshot) []Item {
 	bindings := append([]Binding(nil), s.CodexBindings...)
 	order := nameOrder()
 	sort.SliceStable(bindings, func(i, j int) bool {
+		if (bindings[i].Kind == "search") != (bindings[j].Kind == "search") {
+			return bindings[i].Kind == "search"
+		}
 		return order.CompareString(bindings[i].Name, bindings[j].Name) < 0
 	})
 	accounts := make(map[int64]Account, len(s.Accounts))
@@ -159,6 +162,7 @@ func codexBindings(s Snapshot) []Item {
 		accounts[a.ID] = a
 	}
 	items := []Item{}
+	modelCount := 0
 	for _, b := range bindings {
 		if !b.Enabled {
 			continue
@@ -168,10 +172,16 @@ func codexBindings(s Snapshot) []Item {
 			target = modelAccountName(accounts, b.TargetID)
 		}
 		choices := append(modelAccountChoices(b, accounts, s.Now), separator(), navigate("管理模型映射…", "codex-model-routing"))
-		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Icon: iconModel,
+		icon := iconModel
+		if b.Kind == "search" {
+			icon = iconWebTools
+		} else {
+			modelCount++
+		}
+		items = append(items, Item{Label: b.Name + "  " + routeLabel(b.Mode, target, ""), Icon: icon,
 			Children: scopeNote("Codex", s.codexEntrySubscription(), choices)})
 	}
-	if len(items) == 0 {
+	if modelCount == 0 {
 		items = append(items, info("尚无启用的模型绑定，未匹配的模型将返回未分配错误").withIcon(iconAlert))
 	}
 	return items

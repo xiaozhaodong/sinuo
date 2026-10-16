@@ -69,6 +69,8 @@ import {
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
 import { buildUpstreamFilterOptions, resolveUpstreamFilterOption } from './utils/requestSource.js';
 import { prefersReducedMotion } from '@utils/motion.js';
+import { resolveErrorMessage } from '@utils/errors.js';
+import { codexBindingDisplayName, isCodexSearchBinding } from '../codex/routing/codexRoutingView.js';
 import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
 
 // 每页条数与筛选条显隐记在本机
@@ -519,6 +521,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
       const accountIDs = (next.account_ids || []).map(Number);
       const targetID = routeMode === 'auto' ? 0 : (Number(next.route_target_account_id) || accountIDs[0] || 0);
       await updateCodexModelRouteBinding(binding.assignment_id, {
+        kind: next.kind || 'model',
         model: next.model,
         account_ids: accountIDs,
         member_enabled: next.member_enabled || {},
@@ -532,9 +535,10 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
       const targetAccount = accounts.find((account) => resolveAccountId(account) === targetID);
       const targetName = targetAccount?.account_name || targetAccount?.accountName || `#${targetID}`;
       const mode = routeMode === 'auto' ? '自动调度' : `${routeMode === 'manual_fixed' ? '固定' : '优选'}「${targetName}」`;
-      showNotice('success', `Codex 模型「${binding.model}」已切换为${mode}`);
+      const subject = isCodexSearchBinding(binding) ? `Codex「${codexBindingDisplayName(binding)}」` : `Codex 模型「${codexBindingDisplayName(binding)}」`;
+      showNotice('success', `${subject}已切换为${mode}`);
     } catch (err) {
-      showNotice('error', err?.message || '切换 Codex 模型路由策略失败');
+      showNotice('error', resolveErrorMessage(err, '切换 Codex 模型路由策略失败'));
     } finally {
       setCodexModelRoutePatching(false);
     }

@@ -9,6 +9,7 @@ import CodexSubscriptionProxyCard from '@components/codex-access/CodexSubscripti
 import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
 import AccountPoolPage from '@pages/account-pool/index.jsx';
+import CodexImagesPage from './images/CodexImagesPage.jsx';
 import CodexModelsPage from './models/CodexModelsPage.jsx';
 import CodexRoutingPage from './routing/CodexRoutingPage.jsx';
 import CodexSchedulePage from './schedule/CodexSchedulePage.jsx';
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'schedule', label: '调度编排' },
   { id: 'routing', label: '模型路由' },
   { id: 'models', label: '模型目录' },
+  { id: 'images', label: '图像生成' },
   { id: 'client-access', label: '客户端接入' }
 ];
 
@@ -35,6 +37,8 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
   const [routingVisited, setRoutingVisited] = useState(activeTab === 'routing');
   const [modelsActionsTarget, setModelsActionsTarget] = useState(null);
   const [modelsVisited, setModelsVisited] = useState(activeTab === 'models');
+  const [imagesActionsTarget, setImagesActionsTarget] = useState(null);
+  const [imagesVisited, setImagesVisited] = useState(activeTab === 'images');
   // 接住托盘和请求页直接切页签，访问后保持挂载。
   if (activeTab === 'routing' && !routingVisited) setRoutingVisited(true);
   if (activeTab === 'schedule' && !scheduleVisited) setScheduleVisited(true);
@@ -43,6 +47,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
     if (nextTab === 'schedule') setScheduleVisited(true);
     if (nextTab === 'routing') setRoutingVisited(true);
     if (nextTab === 'models') setModelsVisited(true);
+    if (nextTab === 'images') setImagesVisited(true);
     if (nextTab === 'client-access') {
       setClientAccessVisited(true);
     }
@@ -63,6 +68,7 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
         <div ref={setScheduleActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'schedule'} />
         <div ref={setRoutingActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'routing'} />
         <div ref={setModelsActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'models'} />
+        <div ref={setImagesActionsTarget} className="flex min-w-0 flex-1 items-center justify-end" hidden={activeTab !== 'images'} />
       </PageToolbar>
 
       <section
@@ -91,6 +97,18 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
         className="flex min-h-0 flex-1"
       >
         {modelsVisited && <CodexModelsPage active={activeTab === 'models'} headerTarget={modelsActionsTarget} />}
+      </section>
+
+      <section
+        id="codex-panel-images"
+        role="tabpanel"
+        aria-labelledby="codex-tab-images"
+        hidden={activeTab !== 'images'}
+        className="min-h-0 flex-1 overflow-y-auto bg-pane px-7 pb-12"
+      >
+        <div className="mx-auto max-w-[640px]">
+          {imagesVisited && <CodexImagesPage active={activeTab === 'images'} headerTarget={imagesActionsTarget} />}
+        </div>
       </section>
 
       <section

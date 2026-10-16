@@ -24,6 +24,7 @@ const (
 type AccountLister func(context.Context, bool) ([]*store.UpstreamAccountRecord, error)
 
 type CodexModelRouteScope struct {
+	BindingKind      string
 	Kind             string
 	GroupID          int64
 	GroupName        string
@@ -45,6 +46,7 @@ type CodexModelRouteResult struct {
 }
 
 type CodexModelRouteBinding struct {
+	Kind           string
 	AssignmentID   int64
 	GroupID        int64
 	Model          string
@@ -61,6 +63,7 @@ type CodexModelRouteBinding struct {
 }
 
 type CodexModelRouteBindingInput struct {
+	Kind          string
 	Model         string
 	AccountIDs    []int64
 	MemberEnabled map[int64]bool
@@ -71,6 +74,7 @@ type CodexModelRouteBindingInput struct {
 }
 
 type codexModelRoutingSnapshot struct {
+	Search     *codexModelRoutingAssignment
 	Version    int64
 	Enabled    bool
 	LoadFailed bool
@@ -194,16 +198,7 @@ func (s *CodexModelRoutingService) ResolveScope(model string) (CodexModelRouteSc
 	if g == nil {
 		return scope, true
 	}
-	scope.Kind = "upstream_group"
-	scope.GroupID = g.ID
-	scope.GroupName = g.Name
-	scope.Members = append([]int64(nil), g.Members...)
-	scope.MemberEnabled = cloneMemberEnabled(g.MemberEnabled, scope.Members)
-	scope.Mode = g.RouteMode
-	scope.TargetAccountID = g.RouteTarget
-	scope.Revision = g.Revision
-	scope.UnassignedReason = ""
-	return scope, true
+	return codexScopeForGroup(snap, g, model, modelrouting.BindingKindModel), true
 }
 
 func snapVersion(s *codexModelRoutingSnapshot) int64 {
@@ -221,94 +216,7 @@ func (s *CodexModelRoutingService) Prepare(ctx context.Context, model, path stri
 	if scope.Kind != "upstream_group" {
 		return CodexModelRouteResult{Scope: scope}, nil
 	}
-	if s.listAccounts == nil {
-		return CodexModelRouteResult{Scope: scope}, fmt.Errorf("account lister is not initialized")
-	}
-	accounts, err := s.listAccounts(ctx, true)
-	if err != nil {
-		return CodexModelRouteResult{Scope: scope}, err
-	}
-	byID := make(map[int64]*store.UpstreamAccountRecord, len(accounts))
-	for _, a := range accounts {
-		if a != nil {
-			byID[a.ID] = a
-		}
-	}
-	ids := append([]int64(nil), scope.Members...)
-	if scope.Mode != modelrouting.RouteModeAuto && scope.TargetAccountID != 0 {
-		ids = append([]int64{scope.TargetAccountID}, filterID(ids, scope.TargetAccountID)...)
-	}
-	result := make([]*store.UpstreamAccountRecord, 0, len(ids))
-	candidates := make([]AccountScheduleCandidateDecision, 0, len(ids))
-	generations := make(map[int64]uint64)
-	now := time.Now()
-	for _, id := range ids {
-		a := byID[id]
-		candidate := AccountScheduleCandidateDecision{AccountID: id, Decision: "skipped"}
-		if a != nil {
-			candidate.AccountName = displayAccountName(a)
-			candidate.ProviderType = a.ProviderType
-		}
-		if scope.Mode == modelrouting.RouteModeManualFixed && id != scope.TargetAccountID {
-			candidate.Reason = "manual_fixed_other_account"
-			candidate.ReasonDetail = "固定模式只允许目标账号"
-			candidates = append(candidates, candidate)
-			continue
-		}
-		// 组内暂停只排除自动/优选调度；固定模式是用户显式指定账号，
-		// 仍允许固定到已暂停成员。账号自身停用、缺少凭据、冷却等硬约束仍继续生效。
-		if !scope.MemberEnabled[id] && scope.Mode != modelrouting.RouteModeManualFixed {
-			candidate.Reason = "member_disabled"
-			candidate.ReasonDetail = "该账号已暂停参与此模型组调度"
-			candidates = append(candidates, candidate)
-			continue
-		}
-		if a == nil || !a.Enabled || strings.TrimSpace(a.CredentialRaw) == "" || a.State == "disabled_auth" {
-			candidate.Reason = "account_unavailable"
-			candidate.ReasonDetail = "账号不存在、停用、缺少凭据或授权失效"
-			candidates = append(candidates, candidate)
-			continue
-		}
-		if a.CooldownUntil != nil && now.Before(*a.CooldownUntil) {
-			candidate.Reason = "cooldown"
-			candidate.ReasonDetail = "账号处于冷却期"
-			candidates = append(candidates, candidate)
-			continue
-		}
-		// 复用账号池的额度资格规则，候选顺序仍由模型绑定决定。
-		if eligibility := classifySchedulableAccount(a, now); eligibility.skipReason != "" {
-			candidate.Reason = eligibility.skipReason
-			candidate.ReasonDetail = eligibility.skipReasonDetail
-			candidates = append(candidates, candidate)
-			continue
-		}
-		generation, hit := s.negativeState(a.ID, path, scope.Model)
-		generations[a.ID] = generation
-		if hit {
-			candidate.Reason = "negative_cache_model_unsupported"
-			candidate.ReasonDetail = "该账号暂不支持此模型"
-			candidates = append(candidates, candidate)
-			continue
-		}
-		candidate.Decision = "eligible"
-		candidate.Reason = "configured_order"
-		candidate.ReasonDetail = "按模型绑定中的账号顺序"
-		if len(result) == 0 {
-			candidate.Decision = "selected"
-		}
-		candidates = append(candidates, candidate)
-		result = append(result, cloneUpstreamAccountRecord(a))
-	}
-	if len(result) == 0 {
-		return CodexModelRouteResult{Accounts: result, Scope: scope, Candidates: candidates, CacheGenerations: generations}, nil
-	}
-	if scope.Mode == modelrouting.RouteModeManualFixed && result[0].ID != scope.TargetAccountID {
-		result = nil
-	}
-	if scope.Mode == modelrouting.RouteModeManualFixed && len(result) > 1 {
-		result = result[:1]
-	}
-	return CodexModelRouteResult{Accounts: result, Scope: scope, Candidates: candidates, CacheGenerations: generations}, nil
+	return s.prepareCodexScope(ctx, scope, path)
 }
 
 func cloneMemberEnabled(src map[int64]bool, members []int64) map[int64]bool {
@@ -335,7 +243,7 @@ func filterID(ids []int64, target int64) []int64 {
 
 func (s *CodexModelRoutingService) ScopeStillValid(scope CodexModelRouteScope) bool {
 	snap := s.snapshot.Load()
-	if snap == nil || !snap.Enabled || snap.Version != scope.SnapshotVersion {
+	if snap == nil || (!snap.Enabled && scope.BindingKind != modelrouting.BindingKindSearch) || snap.Version != scope.SnapshotVersion {
 		return false
 	}
 	g := snap.Groups[scope.GroupID]
@@ -346,7 +254,7 @@ func (s *CodexModelRoutingService) Settle(scope CodexModelRouteScope, accountID 
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	snap := s.snapshot.Load()
-	if snap == nil || !snap.Enabled || snap.Version != scope.SnapshotVersion {
+	if snap == nil || (!snap.Enabled && scope.BindingKind != modelrouting.BindingKindSearch) || snap.Version != scope.SnapshotVersion {
 		return
 	}
 	g := snap.Groups[scope.GroupID]
@@ -394,7 +302,11 @@ func (s *CodexModelRoutingService) ModelsUsingAccount(ctx context.Context, accou
 	models := make([]string, 0)
 	for _, assignment := range assignments {
 		if assignment != nil && assignment.Family == modelrouting.FamilyCodex && groupHasAccount[assignment.GroupID] {
-			models = append(models, assignment.ModelName)
+			name := assignment.ModelName
+			if modelrouting.IsSearchKey(name) {
+				name = "联网搜索"
+			}
+			models = append(models, name)
 		}
 	}
 	return models, nil

@@ -147,6 +147,9 @@ func trayReceiptClaudeSubject(api trayReceiptAPI, id int64) string {
 func trayReceiptCodexSubject(api trayReceiptAPI, id int64) string {
 	if bindings, err := api.ListCodexModelRouteBindings(); err == nil {
 		for _, b := range bindings {
+			if b.AssignmentID == id && b.Kind == "search" {
+				return "联网搜索"
+			}
 			if b.AssignmentID == id && b.Model != "" {
 				return b.Model
 			}

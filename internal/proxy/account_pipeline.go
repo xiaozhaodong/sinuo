@@ -121,50 +121,13 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	if strings.TrimSpace(requestID) == "" {
 		requestID = newFallbackAccountScheduleRequestID()
 	}
-	var schedule svc.AccountScheduleResult
-	var codexScope svc.CodexModelRouteScope
-	var cacheGenerations map[int64]uint64
-	var modelRoutingFailureReason string
-	var modelRoutingFailureMessage string
-	var err error
-	modelRouted := h.codexModelRouter != nil && h.codexModelRouter.Enabled() && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/responses/compact")
-	if modelRouted {
-		model := h.extractModelFromRequestBody(bodyBytes, r.URL.Path)
-		var routeResult svc.CodexModelRouteResult
-		routeResult, err = h.codexModelRouter.Prepare(ctx, model, r.URL.Path)
-		codexScope = routeResult.Scope
-		cacheGenerations = routeResult.CacheGenerations
-		schedule.Accounts = routeResult.Accounts
-		now := time.Now()
-		schedule.Snapshot = &svc.LatestAccountScheduleSnapshot{
-			RequestID: requestID, CapturedAt: now, UpdatedAt: now, RequestPath: r.URL.Path,
-			RequestModel: model, ModelRoutingFamily: "codex", ModelRoutingVersion: codexScope.SnapshotVersion,
-			RouteScopeKind: codexScope.Kind, RouteScopeGroupID: codexScope.GroupID, RouteScopeGroupName: codexScope.GroupName,
-			RouteMode: codexScope.Mode, RouteTargetAccountID: codexScope.TargetAccountID,
-			Candidates: routeResult.Candidates,
-		}
-		if len(routeResult.Accounts) > 0 {
-			schedule.Snapshot.SelectedAccountID = routeResult.Accounts[0].ID
-			schedule.Snapshot.SelectedAccountName = accountFailoverDisplayName(routeResult.Accounts[0])
-		}
-		if recorder, ok := h.accountPoolService.(interface {
-			SaveLatestScheduleSnapshot(*svc.LatestAccountScheduleSnapshot)
-		}); ok {
-			recorder.SaveLatestScheduleSnapshot(schedule.Snapshot)
-		}
-		if err == nil && routeResult.Scope.Kind == "unassigned" {
-			modelRoutingFailureReason = routeResult.Scope.UnassignedReason
-			if modelRoutingFailureReason == "" {
-				modelRoutingFailureReason = svc.CodexModelRoutingUnassigned
-			}
-			modelRoutingFailureMessage = "Codex 模型未配置账号组"
-			if modelRoutingFailureReason == svc.CodexModelRoutingMissingModel {
-				modelRoutingFailureMessage = "Codex 请求未携带 model"
-			} else if modelRoutingFailureReason == svc.CodexModelRoutingLoadFailed {
-				modelRoutingFailureMessage = "Codex 模型路由配置加载失败"
-			}
-		}
-	} else {
+	route, err := h.prepareCodexAccountRoute(ctx, requestID, r.URL.Path, h.extractModelFromRequestBody(bodyBytes, r.URL.Path))
+	modelRouted := route.Applies
+	codexScope := route.Result.Scope
+	cacheGenerations := route.Result.CacheGenerations
+	schedule := route.Schedule
+	modelRoutingFailureReason, modelRoutingFailureMessage := route.FailureReason, route.FailureMessage
+	if !modelRouted {
 		schedule, err = h.accountPoolService.PrepareSchedulableAccounts(ctx, requestID, r.URL.Path)
 	}
 	// B3：调度草稿持久化（白名单 DTO）。decisionAt 同笔补写 route_decision_at。
@@ -201,16 +164,9 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		errorType := "account_pool_unavailable"
 		message := "no schedulable account"
 		if modelRouted {
-			failureReason = svc.CodexModelRoutingNoAvailable
-			errorType = svc.CodexModelRoutingNoAvailable
-			message = "模型路由账号组中没有可用账号"
-			if codexScope.Mode == "manual_fixed" {
-				failureReason = svc.CodexModelRoutingFixedUnavailable
-				errorType = svc.CodexModelRoutingFixedUnavailable
-				message = "模型路由固定账号不可用"
-			}
-		}
-		if r.URL.Path == codexStandaloneSearchPath {
+			failureReason, message = codexUnavailableRoute(codexScope, r.URL.Path)
+			errorType = failureReason
+		} else if r.URL.Path == codexStandaloneSearchPath {
 			failureReason = "codex_search_oauth_unavailable"
 			errorType = "codex_search_oauth_unavailable"
 			message = "Codex /v1/alpha/search requires an enabled and available ChatGPT OAuth account"

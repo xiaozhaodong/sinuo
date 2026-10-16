@@ -460,6 +460,7 @@ export const listCodexModelRouteBindings = async () => {
   if (!WailsApp) return [];
   const rows = await getWailsMethod('ListCodexModelRouteBindings')();
   return (rows || []).map((binding = {}) => ({
+    kind: binding.kind || binding.Kind || 'model',
     assignment_id: parseEntityId(binding.assignment_id ?? binding.assignmentId),
     model: binding.model || binding.Model || '',
     account_ids: (binding.account_ids || binding.accountIds || []).map((id) => Number(id)).filter(Number.isFinite),

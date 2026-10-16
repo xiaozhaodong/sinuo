@@ -182,6 +182,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 
 /**
  * @typedef {Object} CodexModelRouteBindingInfo
+ * @property {string} kind
  * @property {number} assignment_id
  * @property {string} model
  * @property {number[] | null} account_ids
@@ -198,6 +199,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 
 /**
  * @typedef {Object} CodexModelRouteBindingInput
+ * @property {string} kind
  * @property {string} model
  * @property {number[] | null} account_ids
  * @property {{ [_ in `${number}`]?: boolean } | null} member_enabled

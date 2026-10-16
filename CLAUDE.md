@@ -26,15 +26,16 @@
   - `timezone` 留空或写 `local` 时自动跟随系统时区（`internal/timezone/system.go`，探测失败回退 `Asia/Shanghai`）；迁移解释无 offset 历史数据：留空或小写 `local` 钉死 `Asia/Shanghai`（旧版实际回退口径），精确 `Local` 按探测的系统时区解释、探测失败中止迁移要求显式配置；失败重试优先使用 manifest 已固定的时区口径
   - 启动时对比 `settings` 表中上次运行时区，变化仅打日志提示，不做数据处理
   - SQL 读取时间列必须 `CAST(col AS TEXT)`；`internal/timezone.DBTime` 拒收驱动解析出的 `time.Time`，违规查询首行即报错
-- 独立图像 API 代理：设置页维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 与 `POST /v1/images/edits` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
+- 独立图像 API 代理：Codex 管理「图像生成」页签维护单一 OpenAI 兼容生图 URL / API Key / 每次固定价格，`POST /v1/images/generations` 与 `POST /v1/images/edits` 不进入端点或账号池调度，但保留请求追踪、成本与 prompt 隐私扫描
 - Codex `/v1/responses/compact` 已接入账号池路由、请求追踪与 OAuth compact 上游透传
 - Claude `/v1/messages` 与 Codex `/v1/responses` 流式尾部断连保护：
   - 独立 upstream context
   - tail drain 补齐 terminal event / usage
   - 已完成后的 `context canceled` 按 `completed` 处理
-- Wails 前端页面：概览、Claude 管理（端点 / 模型路由 / 模型目录 / 客户端接入 / 调度快照）、Codex 管理（账号池 / 调度编排 / 模型路由 / 模型目录 / 客户端接入）、请求追踪、配置、日志
+- Wails 前端页面：概览、Claude 管理（端点 / 模型路由 / 模型目录 / 客户端接入 / 调度快照）、Codex 管理（账号池 / 调度编排 / 模型路由 / 模型目录 / 图像生成 / 客户端接入）、请求追踪、配置、日志
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
 - Codex 账号池：单账号测试、启动批量连通性检查、分组编排、冷却、鉴权失效处理
+- Codex 联网搜索映射：Codex 模型路由页签里的「联网搜索」专用映射，指定 /v1/alpha/search 只在哪些 ChatGPT OAuth 账号间调度（自动 / 优选 / 固定）；不受 Codex 模型路由开关影响；没配或停用时按账号池编排（仅 OAuth），映射账号全部不可用时直接报错不回落；开关打开且路由配置加载失败时返回 422；存为 model_routing_assignments.model_name = server_tool:search 保留键（Codex 族），前端以 kind = model / search 区分
 - 账号池编排：主组 / 备组 / 冷备、组内首选账号、全局固定账号、最近一次调度快照
 - 账号画像与额度刷新：
   - `plan_type`
@@ -152,6 +153,7 @@
 - `frontend/src/pages/account-pool/index.jsx`：账号池页面
 - `frontend/src/pages/privacy-protection/index.jsx`：隐私保护页面（规则表格 / 编辑抽屉 / 测试面板 / 预设导入）
 - `frontend/src/pages/codex/schedule/`：Codex「调度编排」页签（分组表 / 候选表 / 检查器；调度操作 `useSchedulerActions`；与账号池页签经 `pages/codex/useCodexPoolData.js` 共用账号与快照数据）
+- `frontend/src/pages/codex/images/`：Codex「图像生成」页签（复用设置页 `SettingItem`；分组与草稿纯函数在 `imageSettingsView.js`，「上游」单独成组以便以后换成多上游）
 - `frontend/src/pages/claude/schedule/`：Claude「调度快照」页签（决策表 / 检查器；快照文案与规则在 `scheduleSnapshotView.js`）
 - `frontend/src/pages/account-pool/utils/dashboardViewModel.js`：账号 inventory 与编排视图模型
 - `frontend/src/pages/requests/components/AccountPoolSwitcher.jsx`：请求页 Codex 账号切换器
@@ -163,7 +165,7 @@
 - `frontend/src/pages/codex/routing/`：Codex 专属工作区配置、表格、检查器与账号映射纯函数；加载账号，保留账号顺序、成员开关和目标策略
 - `frontend/src/pages/endpoints/components/model-routing/`：Claude 映射编辑 Sheet、端点多选器与试算面板；Codex 编辑 Sheet 与试算面板仍位于 `account-pool/components/`，两个试算面板通过 `presentation="inspector"` 复用检查器分组样式，默认保持表单样式
 - `frontend/src/pages/endpoints/utils/modelRouting.js`：映射草稿、策略自洽与前置校验纯函数
-- `frontend/src/pages/claude/index.jsx` / `frontend/src/pages/codex/index.jsx`：五个管理页签，页签条 `components/layout/PageTabs.jsx` 共用；模型路由、模型目录与调度页签首次访问挂载，操作投送到统一工具栏；请求页与托盘入口直接切到 `routing` 页签
+- `frontend/src/pages/claude/index.jsx` / `frontend/src/pages/codex/index.jsx`：Claude 五个、Codex 六个管理页签，页签条 `components/layout/PageTabs.jsx` 共用；模型路由、模型目录、图像生成与调度页签首次访问挂载，操作投送到统一工具栏；请求页与托盘入口直接切到 `routing` 页签
 - `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`；订阅额度面板 `SubscriptionRateLimitPanel`、hook `useClaudeSubscriptionRateLimit` 与纯函数 `subscriptionRateLimit.js` 也在这里，由请求页 Claude 按钮使用
 - `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）；订阅直通模式下带额度角标与额度区
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
@@ -202,6 +204,7 @@
 4. `429` 或普通 `5xx` 标记瞬时失败并冷却
 5. `503 no_available_providers` 直接短路透传，不做整池 failover
 6. `/v1/responses/compact` 与 `/v1/responses` 共用账号池链路与请求追踪；OAuth 账号会透传到 `/backend-api/codex/responses/compact`
+   `/v1/alpha/search` 配置了联网搜索映射时走映射账号（见上）。
 7. `/v1/responses` 与 `/v1/responses/compact` 只接受 POST：入口直接拒绝其他方法，WebSocket 握手返回 426（Codex 改用 HTTP 的降级信号），其他方法返回 405；被拒请求不写请求记录、不进调度、不覆盖调度快照
 
 ### 编排与手动固定

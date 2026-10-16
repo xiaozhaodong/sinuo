@@ -12,7 +12,7 @@ export const useRoutingWorkspace = ({ data, actions, confirm, config }) => {
   const selected = rows.find((binding) => binding.assignment_id === selectedId) || null;
   const disabled = actions.busy || data.loading || data.readFailed || !data.settings || !data.ready;
   const onToggle = async (enabled) => {
-    if (enabled && routingCounts(data.bindings).enabled === 0 && !(await confirm(config.enableConfirmation(data.bindings)))) return;
+    if (enabled && routingCounts(config.enableGateBindings ? config.enableGateBindings(data.bindings) : data.bindings).enabled === 0 && !(await confirm(config.enableConfirmation(data.bindings)))) return;
     return actions.run(() => config.api.updateSettings({ [config.settingsField]: enabled }));
   };
   const onDelete = async (binding) => {

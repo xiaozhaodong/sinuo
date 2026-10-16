@@ -5,6 +5,7 @@ import { PopoverNote, PopoverSection } from '@components/desktop/PopoverParts.js
 import AutoScheduleRow from './route-switcher/AutoScheduleRow.jsx';
 import BindingTree from './route-switcher/BindingTree.jsx';
 import RouteTargetRow from './route-switcher/RouteTargetRow.jsx';
+import { codexModelBindings, isCodexSearchBinding, sortCodexBindings } from '../../codex/routing/codexRoutingView.js';
 
 const MODE_NAMES = { manual_preferred: '优选', manual_fixed: '固定' };
 
@@ -73,7 +74,8 @@ const CodexBindingTargets = ({ binding, accountById, onPatch, loading }) => {
 const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, loading = false, scopeLabel = '' }) => {
   const [expandedId, setExpandedId] = useState(null);
   const accountById = useMemo(() => new Map(accounts.map((account) => [accountId(account), account])), [accounts]);
-  const sorted = useMemo(() => [...bindings].sort((a, b) => Number(b.enabled) - Number(a.enabled) || String(a.model).localeCompare(String(b.model))), [bindings]);
+  const sorted = useMemo(() => sortCodexBindings([...bindings].sort((a, b) => Number(b.enabled) - Number(a.enabled) || String(a.model).localeCompare(String(b.model)))), [bindings]);
+  const modelCount = codexModelBindings(bindings).length;
 
   const summarizeBinding = (binding) => {
     if (!binding.enabled) return '已停用';
@@ -83,10 +85,9 @@ const CodexModelRoutingSwitcher = ({ bindings = [], accounts = [], onPatch, load
 
   return (
     <>
-      <PopoverSection title={sorted.length ? `模型路由 · ${sorted.length} 个绑定` : '模型路由'} aside={scopeLabel} />
-      {sorted.length === 0
-        ? <PopoverNote>尚无模型绑定，开启后匹配不到模型的请求会返回未分配错误；在下方「模型路由…」里添加</PopoverNote>
-        : <BindingTree bindings={sorted} expandedId={expandedId} onToggle={setExpandedId} summaryOf={summarizeBinding} strategyKeyOf={(b) => `${b.enabled}|${b.route_mode}|${b.route_target_account_id || 0}`} renderTargets={(binding) => <CodexBindingTargets binding={binding} accountById={accountById} onPatch={onPatch} loading={loading} />} />}
+      <PopoverSection title={modelCount > 0 ? `模型路由 · ${modelCount} 个模型绑定` : '模型路由'} aside={scopeLabel} />
+      {modelCount === 0 && <PopoverNote>尚无模型绑定，开启后匹配不到模型的请求会返回未分配错误；在下方「模型路由…」里添加</PopoverNote>}
+      {sorted.length > 0 && <BindingTree bindings={sorted} expandedId={expandedId} onToggle={setExpandedId} isWebTools={isCodexSearchBinding} webToolsLabel="联网搜索" summaryOf={summarizeBinding} strategyKeyOf={(b) => `${b.enabled}|${b.route_mode}|${b.route_target_account_id || 0}`} renderTargets={(binding) => <CodexBindingTargets binding={binding} accountById={accountById} onPatch={onPatch} loading={loading} />} />}
     </>
   );
 };
