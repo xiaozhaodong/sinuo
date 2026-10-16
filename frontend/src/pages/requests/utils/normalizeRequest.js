@@ -8,7 +8,7 @@
 // 数值字段使用 ?? 保留合法 0；不再新增第二个 requestRecordToShape 事实来源。
 // ============================================
 
-import { normalizeRequestSource } from './requestSource.js';
+import { isCodexSearchRequest, normalizeRequestSource } from './requestSource.js';
 
 const pick = (request, keys, fallback) => {
   for (const key of keys) {
@@ -48,8 +48,9 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   requestSource: pick(request, ['request_source', 'requestSource'], ''),
   requestKind: pick(request, ['request_kind', 'requestKind'], 'legacy'),
   // 缺省 true 兼容旧来源：没有该标记时 0 视为真实零。
-  usageKnown: pick(request, ['usage_known', 'usageKnown'], true),
-  costKnown: pick(request, ['cost_known', 'costKnown'], true),
+  // 联网搜索响应本身不含用量，库里的 0 不是「用了 0 个」，一律按未知展示。
+  usageKnown: !isCodexSearchRequest(request) && pick(request, ['usage_known', 'usageKnown'], true),
+  costKnown: !isCodexSearchRequest(request) && pick(request, ['cost_known', 'costKnown'], true),
   httpStatusCode: pick(
     request,
     ['http_status_code', 'httpStatusCode', 'status_code', 'statusCode', 'http_status'],

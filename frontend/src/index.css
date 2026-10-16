@@ -432,6 +432,11 @@
     --gt-fg: #c026d3; --gt-text: linear-gradient(90deg, #c026d3, #f97316);
     --gt-bg: linear-gradient(120deg, #fdf4ff, #fff7ed); --gt-line: linear-gradient(120deg, #f5d0fe, #fed7aa);
   }
+  /* Codex 联网搜索：靛蓝 → 天空，取「往外搜」之意，与 Codex 的天空 → 青绿区分开 */
+  .family-tone-search {
+    --gt-fg: #4f46e5; --gt-text: linear-gradient(90deg, #4f46e5, #0ea5e9);
+    --gt-bg: linear-gradient(120deg, #eef2ff, #f0f9ff); --gt-line: linear-gradient(120deg, #c7d2fe, #bae6fd);
+  }
   .dark .family-tone-claude {
     --gt-fg: #c4b5fd; --gt-text: linear-gradient(90deg, #c4b5fd, #f0abfc);
     --gt-bg: linear-gradient(120deg, rgb(196 181 253 / .14), rgb(240 171 252 / .10)); --gt-line: linear-gradient(120deg, rgb(196 181 253 / .38), rgb(240 171 252 / .38));
@@ -443,6 +448,10 @@
   .dark .family-tone-image {
     --gt-fg: #f0abfc; --gt-text: linear-gradient(90deg, #f0abfc, #fdba74);
     --gt-bg: linear-gradient(120deg, rgb(240 171 252 / .14), rgb(253 186 116 / .10)); --gt-line: linear-gradient(120deg, rgb(240 171 252 / .38), rgb(253 186 116 / .38));
+  }
+  .dark .family-tone-search {
+    --gt-fg: #a5b4fc; --gt-text: linear-gradient(90deg, #a5b4fc, #7dd3fc);
+    --gt-bg: linear-gradient(120deg, rgb(165 180 252 / .14), rgb(125 211 252 / .10)); --gt-line: linear-gradient(120deg, rgb(165 180 252 / .38), rgb(125 211 252 / .38));
   }
 }
 

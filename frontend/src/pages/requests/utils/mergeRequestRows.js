@@ -30,7 +30,9 @@ const TABLE_FIELDS = [
   'cost',
   // 表格用它们决定 token / 成本列显示数字还是占位符
   'usageKnown',
-  'costKnown'
+  'costKnown',
+  // 类型列按路径识别联网搜索
+  'path'
 ];
 
 // 表格不渲染、但详情面板会读的字段。
@@ -55,7 +57,6 @@ const DETAIL_ONLY_FIELDS = [
   'retryCount',
   'retry_count',
   'method',
-  'path',
   'requestKind',
   'usageKnown',
   'costKnown',

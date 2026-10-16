@@ -5,7 +5,9 @@ import {
   buildUpstreamFilterOptions,
   filterUpstreamOptionsByFamily,
   getRequestFamilyMeta,
+  isCodexSearchRequest,
   normalizeRequestSource,
+  resolveRequestTypeBadge,
   resolveRequestUpstream,
   resolveUpstreamFilterOption
 } from './requestSource.js';
@@ -163,4 +165,20 @@ test('当前选中的上游不在候选里时补一项', () => {
     '已在候选里时不重复'
   );
   assert.deepEqual(buildUpstreamFilterOptions({ catalog: [], selected: 'all' }), [], '「全部上游」不补');
+});
+
+test('联网搜索按路径识别，大小写与首尾空白不影响', () => {
+  assert.equal(isCodexSearchRequest({ path: '/v1/alpha/search' }), true);
+  assert.equal(isCodexSearchRequest({ path: ' /V1/Alpha/Search ' }), true);
+  assert.equal(isCodexSearchRequest({ path: '/v1/responses' }), false);
+  assert.equal(isCodexSearchRequest({}), false);
+});
+
+test('类型徽章：联网搜索用 Search 徽章，其余按请求族', () => {
+  const search = resolveRequestTypeBadge({ requestFamily: 'codex', path: '/v1/alpha/search' });
+  assert.equal(search.label, 'Search');
+  assert.match(search.className, /family-tone-search/);
+  assert.match(search.title, /联网搜索/);
+  assert.equal(resolveRequestTypeBadge({ requestFamily: 'codex', path: '/v1/responses' }).label, 'Codex');
+  assert.equal(resolveRequestTypeBadge({ requestFamily: 'image', path: '/v1/images/generations' }).label, 'Image');
 });

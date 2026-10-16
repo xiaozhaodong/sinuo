@@ -15,6 +15,21 @@ export const normalizeRequestFamily = (value) => {
 
 export const getRequestFamilyMeta = (value) => REQUEST_FAMILY_META[normalizeRequestFamily(value)];
 
+// Codex 联网搜索走独立端点，库里没有单独的种类字段，按路径识别（历史记录同样适用）
+export const CODEX_SEARCH_PATH = '/v1/alpha/search';
+export const CODEX_SEARCH_USAGE_HINT = '联网搜索响应不含 token 用量';
+
+export const isCodexSearchRequest = (request = {}) => (
+  String(request.path || '').trim().toLowerCase() === CODEX_SEARCH_PATH
+);
+
+// 类型徽章：联网搜索单独用 Search 徽章（宽度与 Codex 相当，列不会被撑宽），其余按请求族
+const CODEX_SEARCH_BADGE = { label: 'Search', className: 'grad-tone family-tone-search', title: `Codex 联网搜索 · ${CODEX_SEARCH_PATH}` };
+
+export const resolveRequestTypeBadge = (request = {}) => (
+  isCodexSearchRequest(request) ? CODEX_SEARCH_BADGE : getRequestFamilyMeta(request.requestFamily)
+);
+
 export const UNKNOWN_UPSTREAM_LABEL = '未知上游';
 
 // 订阅直通固定标识：库里 upstream_name 按请求族固定（Codex 为 chatgpt-subscription、

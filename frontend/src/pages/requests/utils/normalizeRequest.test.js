@@ -182,3 +182,12 @@ test('模型一致性 5 字段：snake / camel 双来源，缺省空串，不影
   assert.equal(legacy.requestReasoning, '');
   assert.equal(legacy.responseReasoning, '');
 });
+
+test('联网搜索的 0 用量按未知展示，其他请求不受影响', () => {
+  const search = normalizeRequest({ path: '/v1/alpha/search', usage_known: true, cost_known: true, input_tokens: 0, total_cost_usd: 0 });
+  assert.equal(search.usageKnown, false);
+  assert.equal(search.costKnown, false);
+  const responses = normalizeRequest({ path: '/v1/responses', input_tokens: 0 });
+  assert.equal(responses.usageKnown, true);
+  assert.equal(responses.costKnown, true);
+});

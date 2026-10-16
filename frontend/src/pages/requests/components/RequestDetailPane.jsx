@@ -15,7 +15,7 @@ import RequestStatusBadge from './RequestStatusBadge.jsx';
 import LifecyclePanel from './LifecyclePanel.jsx';
 import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
-import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { formatRouteMode, getRequestPresentation } from '../utils/requestPresentation.js';
 import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
@@ -241,8 +241,9 @@ const SessionValue = ({ sessionId, onFilter }) => {
 };
 
 const SummarySection = ({ request, presentation, onFilterSession }) => {
-  const family = getRequestFamilyMeta(request.requestFamily);
-  const kindLabel = REQUEST_KIND_LABELS[request.requestKind];
+  const family = resolveRequestTypeBadge(request);
+  // 联网搜索没有单独的种类字段，按路径识别后与「生成 / 独立压缩」放在同一位置
+  const kindLabel = isCodexSearchRequest(request) ? 'Codex 联网搜索' : REQUEST_KIND_LABELS[request.requestKind];
   const httpStatus = request.http_status_code || request.httpStatusCode;
   const requestLine = `${request.method || '-'} ${request.path || '-'}`;
 

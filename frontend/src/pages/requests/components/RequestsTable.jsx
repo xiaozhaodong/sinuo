@@ -15,7 +15,7 @@ import { RequestTraceCell } from './TraceRail.jsx';
 import LiveElapsedPill from './LiveElapsedPill.jsx';
 import PendingSendPill from './PendingSendPill.jsx';
 import ModelTag from './ModelTag.jsx';
-import { getRequestFamilyMeta } from '../utils/requestSource.js';
+import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
@@ -170,8 +170,8 @@ const PENDING_VALUE = '—';
  * inline-block 不能省：入场位移挂在 `> td > *` 上，而 transform 对非替换的
  * 行内元素无效 —— 写成裸 <span> 这一列就只会淡入、不会跟着上浮。
  */
-const ValueCell = ({ pending, tone, children }) => (
-  <span className={`inline-block font-mono text-xs ${pending ? 'text-fg-subtle' : tone}`}>
+const ValueCell = ({ pending, tone, title, children }) => (
+  <span className={`inline-block font-mono text-xs ${pending ? 'text-fg-subtle' : tone}`} title={title}>
     {pending ? PENDING_VALUE : children}
   </span>
 );
@@ -187,6 +187,7 @@ const renderCell = (columnId, request, formatTime) => {
   // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
   const usagePending = pending || request.usageKnown === false;
   const costPending = pending || request.costKnown === false;
+  const usageHint = isCodexSearchRequest(request) ? CODEX_SEARCH_USAGE_HINT : undefined;
 
   switch (columnId) {
     case 'requestId':
@@ -205,24 +206,24 @@ const renderCell = (columnId, request, formatTime) => {
     case 'model':
       return <ModelTag model={request.model} alert={buildModelAlert(request)} compact />;
     case 'requestFamily': {
-      const family = getRequestFamilyMeta(request.requestFamily);
+      const badge = resolveRequestTypeBadge(request);
       // 文字包一层 span：grad-tone 的渐变字只作用于内层 span
-      return <span className={`inline-flex items-center rounded-md border px-1.5 py-[3px] text-xs leading-4 font-semibold ${family.className}`}><span>{family.label}</span></span>;
+      return <span className={`inline-flex items-center rounded-md border px-1.5 py-[3px] text-xs leading-4 font-semibold ${badge.className}`} title={badge.title}><span>{badge.label}</span></span>;
     }
     case 'upstreamName':
       return <span className="block max-w-[120px] truncate text-xs text-fg-body" title={request.upstreamName}>{request.upstreamName || '未知上游'}</span>;
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-body">{request.inputTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-body" title={usageHint}>{request.inputTokens}</ValueCell>;
     case 'outputTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-body">{request.outputTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-body" title={usageHint}>{request.outputTokens}</ValueCell>;
     case 'cacheCreationTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-muted">{request.cacheCreationTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-muted" title={usageHint}>{request.cacheCreationTokens}</ValueCell>;
     case 'cacheReadTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-muted">{request.cacheReadTokens}</ValueCell>;
+      return <ValueCell pending={usagePending} tone="text-fg-muted" title={usageHint}>{request.cacheReadTokens}</ValueCell>;
     case 'cost':
-      return <ValueCell pending={costPending} tone="text-warn font-medium">{formatCost(request.cost)}</ValueCell>;
+      return <ValueCell pending={costPending} tone="text-warn font-medium" title={usageHint}>{formatCost(request.cost)}</ValueCell>;
     default:
       return null;
   }
