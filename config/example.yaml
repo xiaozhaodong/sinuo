@@ -31,8 +31,8 @@ logging:
   token_debug:
     enabled: false                 # 是否启用Token调试功能，默认: false (生产环境建议关闭)
     save_path: "logs"             # 调试文件保存目录，默认: logs
-    max_files: 50                 # 最大保留调试文件数量，默认: 50 (0=不限制)
-    auto_cleanup_days: 7          # 自动清理N天前的调试文件，默认: 7 (0=不清理)
+    max_files: 50                 # 最大保留调试文件数量，默认: 50 (0 或不填按默认值，负数=不限制)
+    auto_cleanup_days: 7          # 自动清理N天前的调试文件，默认: 7 (0 或不填按默认值，负数=不清理)
 
 # 流式传输配置
 streaming:

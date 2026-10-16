@@ -61,10 +61,10 @@ type LoggingConfig struct {
 
 // TokenDebugConfig Token调试配置
 type TokenDebugConfig struct {
-	Enabled         bool   `yaml:"enabled"`           // 是否启用Token调试功能，默认: true
+	Enabled         bool   `yaml:"enabled"`           // 是否启用Token调试功能，默认: false
 	SavePath        string `yaml:"save_path"`         // 调试文件保存目录，默认: logs
-	MaxFiles        int    `yaml:"max_files"`         // 最大保留调试文件数量，默认: 50 (0=不限制)
-	AutoCleanupDays int    `yaml:"auto_cleanup_days"` // 自动清理N天前的调试文件，默认: 7 (0=不清理)
+	MaxFiles        int    `yaml:"max_files"`         // 最大保留调试文件数量，默认: 50 (0 或不填按默认值，负数=不限制)
+	AutoCleanupDays int    `yaml:"auto_cleanup_days"` // 自动清理N天前的调试文件，默认: 7 (0 或不填按默认值，负数=不清理)
 }
 
 type StreamingConfig struct {
