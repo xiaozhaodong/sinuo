@@ -79,7 +79,7 @@ test('全局 status/notification SSE 与请求页实时流保持不变', async (
   ]);
 
   assert.match(appSource, /useSSE\(handleRealtimeEvent, \{ events: 'status,notification' \}\)/);
-  assert.match(requestsSource, /useAutoRefresh\(refreshLiveRequestData\)/);
+  assert.match(requestsSource, /useAutoRefresh\(refreshLiveRequestData[,)]/);
 });
 
 test('详细性能区默认折叠，展开后才加载两张图', async () => {

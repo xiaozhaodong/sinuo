@@ -59,7 +59,7 @@ test('requests page uses Wails request events instead of permanent polling', asy
   // 那会让每个 request:update 都连带重拉端点、账号池与调度快照。
   // 跨天顺延改变查询参数后由 loadData effect 整页重载，一天一次。
   assert.match(source, /const refreshLiveRequestData = useCallback\(\(\) => \{\s*if \(checkDayRollover\(\)\) return;\s*return refreshRequestData\(\{ live: true \}\);/);
-  assert.match(source, /useAutoRefresh\(refreshLiveRequestData\)/);
+  assert.match(source, /useAutoRefresh\(refreshLiveRequestData[,)]/);
   assert.doesNotMatch(source, /useAutoRefresh\(loadData\)/);
   assert.match(source, /const loadDataIdRef = useRef\(0\)/);
   assert.match(source, /loadDataIdRef\.current !== loadId/);
