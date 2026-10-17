@@ -64,7 +64,7 @@ Sinuo v${VERSION} - Windows 版本
 
 ## 支持
 
-GitHub: https://github.com/xiaozhaodong/cc-forwarder-desktop
+GitHub: https://github.com/xiaozhaodong/sinuo
 EOT
 echo "  ✅ 创建 README"
 

@@ -1,5 +1,5 @@
 // Claude API Mock Server
-// 用于测试 cc-forwarder-desktop 的各种错误场景
+// 用于测试 Sinuo 的各种错误场景
 // 2025-12-25 创建
 //
 // 启动方式: go run tests/mock_claude_api/main.go

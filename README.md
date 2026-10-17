@@ -95,7 +95,7 @@ Sinuo 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用�
 
 ### 方式一：下载安装包
 
-从 [Releases](https://github.com/xiaozhaodong/cc-forwarder-desktop/releases) 页面下载：
+从 [Releases](https://github.com/xiaozhaodong/sinuo/releases) 页面下载：
 
 | 平台 | 文件 |
 |------|------|
@@ -111,8 +111,8 @@ Sinuo 是一款基于 [Wails](https://wails.io) 构建的跨平台桌面应用�
 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
 
 # 2. 克隆项目
-git clone https://github.com/xiaozhaodong/cc-forwarder-desktop.git
-cd cc-forwarder-desktop
+git clone https://github.com/xiaozhaodong/sinuo.git
+cd sinuo
 
 # 3. 安装前端依赖
 cd frontend && npm install && cd ..

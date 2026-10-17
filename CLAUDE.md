@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**Sinuo**（工程代号 cc-forwarder-desktop，仓库名未改） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
+**Sinuo**（原名 cc-forwarder-desktop / AI Switchboard） 是一款基于 Wails 的跨平台桌面应用，用于 Claude / OpenAI 请求转发、端点故障转移、请求追踪，以及 ChatGPT Codex 账号池管理。
 
 - 技术栈：Go + Wails v3 + React + Vite + SQLite
 - 平台：macOS / Windows / Linux

@@ -1,6 +1,6 @@
 # Sinuo Repository Guidelines
 
-项目名为 **Sinuo**，Go module 为 `sinuo`；GitHub 仓库与本地目录名仍为 `cc-forwarder-desktop`。
+项目名为 **Sinuo**，Go module 为 `sinuo`；GitHub 仓库为 `xiaozhaodong/sinuo`，本地目录为 `~/GoProjects/sinuo`（原名 cc-forwarder-desktop）。
 
 ## 项目结构与模块组织
 - **main.go**：初始化 CLI、加载配置并启动转发器。
