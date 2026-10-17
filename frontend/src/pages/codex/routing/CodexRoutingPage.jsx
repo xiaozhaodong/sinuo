@@ -26,7 +26,7 @@ const NoEnabledBindingNotice = ({ data }) => {
 
 const enableConfirmation = () => ({
   title: '开启 Codex 模型路由',
-  message: '当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？',
+  message: '当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 400。仍要开启吗？',
   confirmText: '仍要开启'
 });
 

@@ -35,7 +35,7 @@
 - Wails 前端页面：概览、Claude 管理（端点 / 模型路由 / 模型目录 / 客户端接入 / 调度快照）、Codex 管理（账号池 / 调度编排 / 模型路由 / 模型目录 / 图像生成 / 客户端接入）、请求追踪、配置、日志
 - ChatGPT OAuth 授权链接生成、回调兑换、RT / id_token 存储
 - Codex 账号池：单账号测试、启动批量连通性检查、分组编排、冷却、鉴权失效处理
-- Codex 联网搜索映射：Codex 模型路由页签里的「联网搜索」专用映射，指定 /v1/alpha/search 只在哪些 ChatGPT OAuth 账号间调度（自动 / 优选 / 固定）；不受 Codex 模型路由开关影响；没配或停用时按账号池编排（仅 OAuth），映射账号全部不可用时直接报错不回落；开关打开且路由配置加载失败时返回 422；存为 model_routing_assignments.model_name = server_tool:search 保留键（Codex 族），前端以 kind = model / search 区分
+- Codex 联网搜索映射：Codex 模型路由页签里的「联网搜索」专用映射，指定 /v1/alpha/search 只在哪些 ChatGPT OAuth 账号间调度（自动 / 优选 / 固定）；不受 Codex 模型路由开关影响；没配或停用时按账号池编排（仅 OAuth），映射账号全部不可用时直接报错不回落；开关打开且路由配置加载失败时返回 400；存为 model_routing_assignments.model_name = server_tool:search 保留键（Codex 族），前端以 kind = model / search 区分
 - 账号池编排：主组 / 备组 / 冷备、组内首选账号、全局固定账号、最近一次调度快照
 - 账号画像与额度刷新：
   - `plan_type`
@@ -206,6 +206,7 @@
 6. `/v1/responses/compact` 与 `/v1/responses` 共用账号池链路与请求追踪；OAuth 账号会透传到 `/backend-api/codex/responses/compact`
    `/v1/alpha/search` 配置了联网搜索映射时走映射账号（见上）。
 7. `/v1/responses` 与 `/v1/responses/compact` 只接受 POST：入口直接拒绝其他方法，WebSocket 握手返回 426（Codex 改用 HTTP 的降级信号），其他方法返回 405；被拒请求不写请求记录、不进调度、不覆盖调度快照
+8. 未触达任何上游的本地直接拒绝（`model_routing_unassigned`、`model_routing_missing_model`、`model_routing_load_failed`、`model_routing_fixed_unavailable`、`model_routing_no_available_accounts`、`account_pool_empty`、`codex_search_oauth_unavailable`）统一返回 400：codex-rs 将其归为不可重试的 `InvalidRequest` 并展示响应体，避免 5xx 传输层重试及其他 4xx 的回合层重试；真实尝试上游后失败的 `account_pool_exhausted` 仍返回可重试的 503
 
 ### 编排与手动固定
 

@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"time"
 
 	svc "sinuo/internal/service"
@@ -71,15 +73,39 @@ func codexRouteFailure(scope svc.CodexModelRouteScope) (string, string) {
 	}
 }
 
-func codexUnavailableRoute(scope svc.CodexModelRouteScope, path string) (string, string) {
-	if scope.Mode == "manual_fixed" {
+// codexUnavailableRoute 只拼装本地原因，显式传入 now 以便验证冷却秒数的取整边界。
+func codexUnavailableRoute(result svc.CodexModelRouteResult, path string, now time.Time) (string, string) {
+	seconds := int64(0)
+	if !result.EarliestCooldownUntil.IsZero() {
+		seconds = max(1, int64(math.Ceil(result.EarliestCooldownUntil.Sub(now).Seconds())))
+	}
+	if result.Scope.Mode == "manual_fixed" {
+		prefix := "模型路由固定账号"
 		if path == codexStandaloneSearchPath {
-			return svc.CodexModelRoutingFixedUnavailable, "联网搜索映射的固定账号不可用"
+			prefix = "联网搜索映射的固定账号"
 		}
-		return svc.CodexModelRoutingFixedUnavailable, "模型路由固定账号不可用"
+		for _, candidate := range result.Candidates {
+			if candidate.AccountID != result.Scope.TargetAccountID {
+				continue
+			}
+			name := candidate.AccountName
+			if name == "" {
+				name = fmt.Sprintf("account-%d", candidate.AccountID)
+			}
+			message := fmt.Sprintf("%s %s 不可用：%s", prefix, name, candidate.ReasonDetail)
+			if candidate.Reason == "cooldown" && seconds > 0 {
+				message += fmt.Sprintf("，约 %d 秒后恢复", seconds)
+			}
+			return svc.CodexModelRoutingFixedUnavailable, message
+		}
+		return svc.CodexModelRoutingFixedUnavailable, prefix + "不可用"
 	}
+	message := "模型路由账号组中没有可用账号"
 	if path == codexStandaloneSearchPath {
-		return svc.CodexModelRoutingNoAvailable, "联网搜索映射中没有可用账号"
+		message = "联网搜索映射中没有可用账号"
 	}
-	return svc.CodexModelRoutingNoAvailable, "模型路由账号组中没有可用账号"
+	if seconds > 0 {
+		message += fmt.Sprintf("，最早约 %d 秒后恢复", seconds)
+	}
+	return svc.CodexModelRoutingNoAvailable, message
 }

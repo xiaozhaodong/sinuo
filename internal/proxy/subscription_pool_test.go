@@ -367,8 +367,8 @@ func TestSubscriptionPoolKeepsAuthFailuresFromClientCredentials(t *testing.T) {
 	env := newSubscriptionPoolTestEnv(t, []*store.UpstreamAccountRecord{}, true)
 
 	rec := env.serve(t, http.MethodPost, "responses", applyClientIdentityHeaders)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("无可用账号应返回 503: %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("无可用账号应返回 400: %d", rec.Code)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {

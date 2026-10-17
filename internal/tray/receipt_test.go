@@ -62,7 +62,7 @@ func TestReceiptNotice_ModelRouting(t *testing.T) {
 	for _, tc := range []struct{ target, mode, title, body, page string }{
 		{"claude", "on", "Claude 模型路由已开启", "按模型分配上游，未分配的模型返回 422", "claude-model-routing"},
 		{"claude", "off", "Claude 模型路由已关闭", "恢复按全局端点策略转发", "endpoints"},
-		{"codex", "on", "Codex 模型路由已开启", "按模型分配上游，未分配的模型返回 422", "codex-model-routing"},
+		{"codex", "on", "Codex 模型路由已开启", "按模型分配上游，未分配的模型返回 400", "codex-model-routing"},
 		{"codex", "off", "Codex 模型路由已关闭", "恢复按账号池编排调度", "account-pool"},
 	} {
 		assertReceiptNotice(t, SwitchReceipt{Kind: "model_routing", Target: tc.target, Mode: tc.mode},

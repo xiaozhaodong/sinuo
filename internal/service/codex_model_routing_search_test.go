@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"sinuo/internal/accountauth"
 	"sinuo/internal/modelrouting"
+	"sinuo/internal/store"
 )
 
 func TestCodexSearchScope_BehaviorMatrix(t *testing.T) {
@@ -45,7 +47,7 @@ func TestCodexSearchScope_BehaviorMatrix(t *testing.T) {
 						t.Fatalf("PrepareSearch 矩阵不符: %+v %v %v", result, prepared, err)
 					}
 					if wantKind == "unassigned" && scope.UnassignedReason != CodexModelRoutingLoadFailed {
-						t.Fatalf("加载失败必须保留 422 原因: %+v", scope)
+						t.Fatalf("加载失败必须保留本地拒绝原因: %+v", scope)
 					}
 					if wantKind == "upstream_group" && (scope.BindingKind != "search" || len(result.Accounts) != 2) {
 						t.Fatalf("必须命中搜索成员: %+v", result)
@@ -162,5 +164,69 @@ func TestCodexSearchSettle_OffSwitchAndFencing(t *testing.T) {
 	current.Revision--
 	if s.ScopeStillValid(current) {
 		t.Fatal("组修订号不符必须失效")
+	}
+}
+
+func TestCodexPrepare_EarliestCooldownUntil(t *testing.T) {
+	late := time.Now().Add(90 * time.Second)
+	early := late.Add(-45 * time.Second)
+	for _, kind := range []string{modelrouting.BindingKindModel, modelrouting.BindingKindSearch} {
+		for _, tc := range []struct {
+			name   string
+			change func(*CodexModelRouteScope, []*store.UpstreamAccountRecord)
+			want   time.Time
+		}{
+			{name: "earliest_in_group", want: early},
+			{name: "fixed_target_only", change: func(scope *CodexModelRouteScope, _ []*store.UpstreamAccountRecord) {
+				scope.Mode, scope.TargetAccountID = modelrouting.RouteModeManualFixed, 1
+			}, want: late},
+			{name: "preferred_can_recover_via_other_member", change: func(scope *CodexModelRouteScope, _ []*store.UpstreamAccountRecord) {
+				scope.Mode, scope.TargetAccountID = modelrouting.RouteModeManualPreferred, 1
+			}, want: early},
+			{name: "paused_member_excluded", change: func(scope *CodexModelRouteScope, _ []*store.UpstreamAccountRecord) {
+				scope.MemberEnabled[2] = false
+			}, want: late},
+			{name: "disabled_account_excluded", change: func(_ *CodexModelRouteScope, accounts []*store.UpstreamAccountRecord) {
+				accounts[1].Enabled = false
+			}, want: late},
+			{name: "invalid_auth_excluded", change: func(_ *CodexModelRouteScope, accounts []*store.UpstreamAccountRecord) {
+				accounts[1].State = "disabled_auth"
+			}, want: late},
+			{name: "missing_credential_excluded", change: func(_ *CodexModelRouteScope, accounts []*store.UpstreamAccountRecord) {
+				accounts[1].CredentialRaw = ""
+			}, want: late},
+			{name: "all_disabled_has_no_recovery_time", change: func(_ *CodexModelRouteScope, accounts []*store.UpstreamAccountRecord) {
+				accounts[0].Enabled, accounts[1].Enabled = false, false
+			}},
+			{name: "fixed_disabled_does_not_use_other_cooldown", change: func(scope *CodexModelRouteScope, accounts []*store.UpstreamAccountRecord) {
+				scope.Mode, scope.TargetAccountID = modelrouting.RouteModeManualFixed, 1
+				accounts[0].Enabled = false
+			}},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				accounts := []*store.UpstreamAccountRecord{
+					{ID: 1, AccountName: "late", ProviderType: "oauth", Enabled: true, CredentialRaw: "test-one", CooldownUntil: &late},
+					{ID: 2, AccountName: "early", ProviderType: "oauth", Enabled: true, CredentialRaw: "test-two", CooldownUntil: &early},
+				}
+				scope := CodexModelRouteScope{
+					Kind: "upstream_group", BindingKind: kind, Mode: modelrouting.RouteModeAuto,
+					Members: []int64{1, 2}, MemberEnabled: map[int64]bool{1: true, 2: true},
+				}
+				if tc.change != nil {
+					tc.change(&scope, accounts)
+				}
+				s := NewCodexModelRoutingService(nil, func(context.Context, bool) ([]*store.UpstreamAccountRecord, error) {
+					return accounts, nil
+				})
+				path := "/v1/responses"
+				if kind == modelrouting.BindingKindSearch {
+					path = CodexStandaloneSearchPath
+				}
+				result, err := s.prepareCodexScope(context.Background(), scope, path)
+				if err != nil || !result.EarliestCooldownUntil.Equal(tc.want) || len(result.Accounts) != 0 {
+					t.Fatalf("错误的恢复时间或可用账号: result=%+v want=%v err=%v", result, tc.want, err)
+				}
+			})
+		}
 	}
 }

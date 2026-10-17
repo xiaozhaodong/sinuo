@@ -66,7 +66,7 @@ func trayModelRoutingEnableConfirm(api trayModelRoutingAPI, target string) (tray
 			}
 		}
 		question.Title = "开启 Codex 模型路由"
-		question.Message = "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？"
+		question.Message = "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 400。仍要开启吗？"
 		return question, nil
 	}
 	bindings, err := api.ListModelRouteBindings()

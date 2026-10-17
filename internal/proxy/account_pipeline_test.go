@@ -25,6 +25,7 @@ import (
 	"sinuo/internal/endpoint"
 	servicepkg "sinuo/internal/service"
 	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 
 	_ "modernc.org/sqlite"
 )
@@ -400,8 +401,8 @@ func TestAccountPipeline_NoEndpointFallbackWhenAccountPoolEmpty(t *testing.T) {
 	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
 
 	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status 503, got %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
 	}
 	if fallbackHits != 0 {
 		t.Fatalf("expected endpoint fallback not to be called, got %d calls", fallbackHits)
@@ -414,6 +415,9 @@ func TestAccountPipeline_NoEndpointFallbackWhenAccountPoolEmpty(t *testing.T) {
 	errObj, _ := payload["error"].(map[string]any)
 	if errObj["type"] != "account_pool_unavailable" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
+	}
+	if errObj["message"] != "no schedulable account" {
+		t.Fatalf("unexpected error message: %#v", errObj["message"])
 	}
 }
 
@@ -430,8 +434,8 @@ func TestAccountPipeline_StandaloneSearchReturnsExplicitOAuthUnavailableError(t 
 	handler := newAccountPipelineTestHandler(t, fallbackServer.URL, service)
 
 	rec := performStandaloneSearchRequest(t, handler)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if fallbackHits != 0 {
 		t.Fatalf("expected standalone search not to fall back to endpoint, got %d calls", fallbackHits)
@@ -445,7 +449,7 @@ func TestAccountPipeline_StandaloneSearchReturnsExplicitOAuthUnavailableError(t 
 	if errObj["type"] != "codex_search_oauth_unavailable" {
 		t.Fatalf("unexpected error type: %#v", errObj["type"])
 	}
-	if message, _ := errObj["message"].(string); !strings.Contains(message, "ChatGPT OAuth account") {
+	if errObj["message"] != "Codex /v1/alpha/search requires an enabled and available ChatGPT OAuth account" {
 		t.Fatalf("expected OAuth-specific error message, got %#v", errObj["message"])
 	}
 	if len(service.completeCalls) != 1 || service.completeCalls[0].finalError != errObj["message"] {
@@ -825,34 +829,86 @@ func TestAccountPipeline_PreparesAndCompletesLatestScheduleSnapshot(t *testing.T
 }
 
 func TestAccountPipeline_CodexUnassignedCompletesRoutingSnapshot(t *testing.T) {
-	service := &mockAccountPoolService{}
-	router := &mockCodexModelRouter{
-		enabled: true,
-		result: servicepkg.CodexModelRouteResult{
-			Scope: servicepkg.CodexModelRouteScope{
-				Kind:             "unassigned",
-				Model:            "gpt-5-codex",
-				SnapshotVersion:  7,
-				UnassignedReason: servicepkg.CodexModelRoutingUnassigned,
-			},
-		},
+	for _, reason := range []string{servicepkg.CodexModelRoutingUnassigned, servicepkg.CodexModelRoutingMissingModel, servicepkg.CodexModelRoutingLoadFailed} {
+		t.Run(reason, func(t *testing.T) {
+			service := &mockAccountPoolService{}
+			router := &mockCodexModelRouter{
+				enabled: true,
+				result: servicepkg.CodexModelRouteResult{
+					Scope: servicepkg.CodexModelRouteScope{
+						Kind: "unassigned", Model: "gpt-4.1", SnapshotVersion: 7, UnassignedReason: reason,
+					},
+				},
+			}
+			handler := newAccountPipelineTestHandler(t, "https://example.com", service)
+			handler.SetCodexModelRouter(router)
+			tracker := attachTracking(t, handler)
+			const requestID = "req-codex-local-unassigned"
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`))
+			req = req.WithContext(context.WithValue(req.Context(), "conn_id", requestID))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
+			}
+			if len(service.savedDrafts) != 1 {
+				t.Fatalf("expected one routing snapshot draft, got %d", len(service.savedDrafts))
+			}
+			draft := service.savedDrafts[0]
+			if draft.RequestModel != "gpt-4.1" || draft.ModelRoutingFamily != "codex" || draft.ModelRoutingVersion != 7 || draft.RouteScopeKind != "unassigned" {
+				t.Fatalf("unexpected routing snapshot draft: %#v", draft)
+			}
+			var payload struct {
+				Error struct{ Type, Message string }
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Error.Type != reason || len(service.completeCalls) != 1 || service.completeCalls[0].outcome != reason || service.completeCalls[0].finalError != payload.Error.Message {
+				t.Fatalf("response and snapshot must share reason and message: body=%s calls=%+v", rec.Body, service.completeCalls)
+			}
+			detail := waitRequestDetail(t, tracker, requestID, func(d tracking.RequestDetail) bool { return d.Status == "failed" })
+			if detail.HTTPStatusCode == nil || *detail.HTTPStatusCode != http.StatusBadRequest || detail.FailureReason != reason+": "+payload.Error.Message {
+				t.Fatalf("failure record must match response: %+v body=%s", detail, rec.Body)
+			}
+		})
 	}
-	handler := newAccountPipelineTestHandler(t, "https://example.com", service)
-	handler.SetCodexModelRouter(router)
+}
 
-	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected status 422, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(service.savedDrafts) != 1 {
-		t.Fatalf("expected one routing snapshot draft, got %d", len(service.savedDrafts))
-	}
-	draft := service.savedDrafts[0]
-	if draft.RequestModel != "gpt-4.1" || draft.ModelRoutingFamily != "codex" || draft.ModelRoutingVersion != 7 || draft.RouteScopeKind != "unassigned" {
-		t.Fatalf("unexpected routing snapshot draft: %#v", draft)
-	}
-	if len(service.completeCalls) != 1 || service.completeCalls[0].outcome != servicepkg.CodexModelRoutingUnassigned {
-		t.Fatalf("expected unassigned terminal snapshot, got %+v", service.completeCalls)
+func TestCodexUnavailableRoute_CooldownRounding(t *testing.T) {
+	now := time.Date(2026, time.October, 16, 16, 20, 0, 0, time.UTC)
+	for _, mode := range []string{"auto", "manual_fixed"} {
+		for _, tc := range []struct {
+			name      string
+			remaining time.Duration
+			seconds   int
+		}{
+			{"fraction_rounds_up", 44*time.Second + time.Nanosecond, 45},
+			{"exact_second", 45 * time.Second, 45},
+			{"subsecond", time.Nanosecond, 1},
+			{"just_expired", -time.Nanosecond, 1},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				result := servicepkg.CodexModelRouteResult{
+					Scope: servicepkg.CodexModelRouteScope{Mode: mode, TargetAccountID: 1},
+					Candidates: []servicepkg.AccountScheduleCandidateDecision{{
+						AccountID: 1, AccountName: "Suoxie1.0", Reason: "cooldown", ReasonDetail: "账号处于冷却期",
+					}},
+					EarliestCooldownUntil: now.Add(tc.remaining),
+				}
+				reason, message := codexUnavailableRoute(result, "/v1/responses", now)
+				wantReason := servicepkg.CodexModelRoutingNoAvailable
+				want := fmt.Sprintf("模型路由账号组中没有可用账号，最早约 %d 秒后恢复", tc.seconds)
+				if mode == "manual_fixed" {
+					wantReason = servicepkg.CodexModelRoutingFixedUnavailable
+					want = fmt.Sprintf("模型路由固定账号 Suoxie1.0 不可用：账号处于冷却期，约 %d 秒后恢复", tc.seconds)
+				}
+				if reason != wantReason || message != want {
+					t.Fatalf("got (%q, %q), want (%q, %q)", reason, message, wantReason, want)
+				}
+			})
+		}
 	}
 }
 
@@ -876,8 +932,8 @@ func TestAccountPipeline_CodexNoAvailableUsesRoutingOutcome(t *testing.T) {
 	handler.SetCodexModelRouter(router)
 
 	rec := performResponsesRequest(t, handler)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(service.completeCalls) != 1 || service.completeCalls[0].outcome != servicepkg.CodexModelRoutingNoAvailable {
 		t.Fatalf("expected model-routing no-available outcome, got %+v", service.completeCalls)
@@ -912,6 +968,81 @@ func TestAccountPipeline_CodexFailureSettlesLastOutcome(t *testing.T) {
 	}
 	if len(router.settleCalls) != 1 || router.settleCalls[0].outcome != servicepkg.AccountScheduleOutcomeTransientFailure || router.settleCalls[0].accountID != account.ID {
 		t.Fatalf("expected last Codex failure to settle runtime, got %+v", router.settleCalls)
+	}
+}
+
+func TestAccountPipeline_CodexExhaustedThenLocalReject(t *testing.T) {
+	ctx := context.Background()
+	pool := newRealAccountPipelineTestService(t, []*store.UpstreamAccountRecord{{
+		ProviderType: "api_key", AccountName: "Suoxie1.0", CredentialRaw: "sk-test",
+		BaseURL: "https://upstream.invalid", Enabled: true, State: "active",
+	}})
+	accounts, err := pool.ListAccounts(ctx, true)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("读取测试账号失败: accounts=%+v err=%v", accounts, err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "routing.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	router := servicepkg.NewCodexModelRoutingService(store.NewSQLiteModelRoutingStore(db), pool.ListAccounts)
+	if err := router.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.CreateBinding(ctx, servicepkg.CodexModelRouteBindingInput{
+		Kind: "model", Model: "gpt-4.1", AccountIDs: []int64{accounts[0].ID},
+		RouteMode: "manual_fixed", RouteTargetID: accounts[0].ID, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.UpdateEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	handler := newAccountPipelineTestHandler(t, "https://endpoint.invalid", pool)
+	handler.SetCodexModelRouter(router)
+	upstreamHits := 0
+	handler.accountHTTPInitOnce.Do(func() {})
+	handler.accountHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		upstreamHits++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Too many pending requests, please retry later"}}`)), Request: req,
+		}, nil
+	})}
+	handler.accountSSEHTTPClient = handler.accountHTTPClient
+	tracker := attachTracking(t, handler)
+	for attempt := 1; attempt <= 4; attempt++ {
+		requestID := fmt.Sprintf("req-codex-exhausted-%d", attempt)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`))
+		req = req.WithContext(context.WithValue(req.Context(), "conn_id", requestID))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		wantStatus, wantReason := http.StatusServiceUnavailable, "account_pool_exhausted"
+		if attempt == 4 {
+			wantStatus, wantReason = http.StatusBadRequest, servicepkg.CodexModelRoutingFixedUnavailable
+			if !strings.Contains(rec.Body.String(), "Suoxie1.0 不可用：账号处于冷却期，约 ") {
+				t.Fatalf("冷却后应返回操作提示: %s", rec.Body)
+			}
+		}
+		if rec.Code != wantStatus {
+			t.Fatalf("第 %d 次请求状态码错误: got=%d want=%d body=%s", attempt, rec.Code, wantStatus, rec.Body)
+		}
+		var payload struct {
+			Error struct{ Message string }
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		detail := waitRequestDetail(t, tracker, requestID, func(d tracking.RequestDetail) bool { return d.Status == "failed" })
+		if detail.HTTPStatusCode == nil || *detail.HTTPStatusCode != wantStatus || detail.FailureReason != wantReason+": "+payload.Error.Message {
+			t.Fatalf("第 %d 次请求终态错误: %+v", attempt, detail)
+		}
+	}
+	if upstreamHits != 3 {
+		t.Fatalf("冷却后的请求不能再触达上游: hits=%d", upstreamHits)
 	}
 }
 

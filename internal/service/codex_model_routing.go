@@ -43,6 +43,8 @@ type CodexModelRouteResult struct {
 	Accounts         []*store.UpstreamAccountRecord
 	Scope            CodexModelRouteScope
 	Candidates       []AccountScheduleCandidateDecision
+	// EarliestCooldownUntil 仅供内部本地拒绝提示使用，不进入调度快照 DTO 或 Wails 绑定。
+	EarliestCooldownUntil time.Time
 }
 
 type CodexModelRouteBinding struct {

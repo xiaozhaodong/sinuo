@@ -126,7 +126,7 @@ func TestHandler_CodexResponsesPostStillReachesAccountPipeline(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnprocessableEntity {
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected POST to reach model routing and return its route error, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	accountService.mu.Lock()

@@ -134,8 +134,8 @@ func TestTray_ModelRoutingEmptyEnableConfirms(t *testing.T) {
 	}{
 		{"claude", "开启模型路由", "还没有任何模型映射，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？", 0},
 		{"claude", "开启模型路由", "当前 2 条映射全部处于停用状态，开启后所有 Claude 请求都会返回未分配错误。仍要开启吗？", 2},
-		{"codex", "开启 Codex 模型路由", "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？", 0},
-		{"codex", "开启 Codex 模型路由", "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 422。仍要开启吗？", 2},
+		{"codex", "开启 Codex 模型路由", "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 400。仍要开启吗？", 0},
+		{"codex", "开启 Codex 模型路由", "当前没有启用中的 Codex 模型路由，开启后未绑定模型会返回 400。仍要开启吗？", 2},
 	} {
 		for _, answer := range []bool{false, true} {
 			fake, ask := &trayModelRoutingFake{}, &confirmRecorder{answer: answer}

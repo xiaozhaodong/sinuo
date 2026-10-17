@@ -86,8 +86,8 @@ const CodexRouteTestBox = ({ onTest, presentation = 'form' }) => {
                 : result.unassigned_reason === 'model_routing_missing_model'
                   ? '请求未携带模型名'
                   : result.unassigned_reason === 'model_routing_load_failed'
-                    ? '配置加载失败，启用状态下请求会返回 422'
-                    : '该模型没有配置账号组，启用状态下请求会返回 422'}
+                    ? '配置加载失败，启用状态下请求会返回 400'
+                    : '该模型没有配置账号组，启用状态下请求会返回 400'}
             </div>
           )}
         </div>

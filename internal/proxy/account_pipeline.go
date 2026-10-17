@@ -30,6 +30,12 @@ import (
 )
 
 const (
+	// codexLocalRejectStatus 只用于本地直接拒绝、未触达任何上游的分支。
+	// codex-rs core/src/api_bridge.rs 将 400 归为 InvalidRequest，core/src/error.rs
+	// 的 is_retryable() 对它返回 false；5xx 会被传输层重试，其他 4xx 可能归为
+	// UnexpectedStatus 并被回合层重试，因此这里必须使用 400，不能按通常语义改回 503/422。
+	codexLocalRejectStatus = http.StatusBadRequest
+
 	defaultAccountConnectionFailureCooldown = 90 * time.Second
 	defaultAccountProcessingFailureCooldown = 60 * time.Second
 	defaultAccountSuccessWriteTimeout       = 2 * time.Second
@@ -143,8 +149,8 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 	if modelRoutingFailureReason != "" {
 		_ = h.completeAccountScheduleSnapshot(ctx, requestID, 0, "", modelRoutingFailureReason, modelRoutingFailureMessage)
 		lifecycleManager.SetUpstream("account", "model-routing", "", 0)
-		lifecycleManager.FailRequest(modelRoutingFailureReason, modelRoutingFailureMessage, http.StatusUnprocessableEntity)
-		writeAccountPipelineError(w, http.StatusUnprocessableEntity, modelRoutingFailureReason, modelRoutingFailureMessage)
+		lifecycleManager.FailRequest(modelRoutingFailureReason, modelRoutingFailureMessage, codexLocalRejectStatus)
+		writeAccountPipelineError(w, codexLocalRejectStatus, modelRoutingFailureReason, modelRoutingFailureMessage)
 		return
 	}
 	if err != nil {
@@ -164,7 +170,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		errorType := "account_pool_unavailable"
 		message := "no schedulable account"
 		if modelRouted {
-			failureReason, message = codexUnavailableRoute(codexScope, r.URL.Path)
+			failureReason, message = codexUnavailableRoute(route.Result, r.URL.Path, time.Now())
 			errorType = failureReason
 		} else if r.URL.Path == codexStandaloneSearchPath {
 			failureReason = "codex_search_oauth_unavailable"
@@ -182,8 +188,8 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		} else {
 			lifecycleManager.SetUpstream("account", "account-pool", "account-pool", 0)
 		}
-		lifecycleManager.FailRequest(failureReason, message, http.StatusServiceUnavailable)
-		writeAccountPipelineError(w, http.StatusServiceUnavailable, errorType, message)
+		lifecycleManager.FailRequest(failureReason, message, codexLocalRejectStatus)
+		writeAccountPipelineError(w, codexLocalRejectStatus, errorType, message)
 		return
 	}
 

@@ -56,6 +56,9 @@ func modelRoutingReceipt(r SwitchReceipt) (Notice, bool) {
 	switch r.Mode {
 	case "on":
 		state, page, body = "开启", r.Target+"-model-routing", "按模型分配上游，未分配的模型返回 422"
+		if r.Target == "codex" {
+			body = "按模型分配上游，未分配的模型返回 400"
+		}
 	case "off":
 	default:
 		return Notice{}, false

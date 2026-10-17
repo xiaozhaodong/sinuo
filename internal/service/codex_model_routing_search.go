@@ -82,6 +82,10 @@ func (s *CodexModelRoutingService) prepareCodexScope(ctx context.Context, scope 
 	for _, id := range ids {
 		a := byID[id]
 		candidate := codexRouteCandidate(scope, id, a, now)
+		// 只统计确实因冷却被排除的候选，避免把停用、授权失效或固定模式的其他账号算作恢复目标。
+		if candidate.Reason == "cooldown" && (result.EarliestCooldownUntil.IsZero() || a.CooldownUntil.Before(result.EarliestCooldownUntil)) {
+			result.EarliestCooldownUntil = *a.CooldownUntil
+		}
 		if candidate.Reason == "" {
 			generation, hit := s.negativeState(id, path, scope.Model)
 			result.CacheGenerations[id] = generation
