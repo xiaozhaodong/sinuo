@@ -3,12 +3,14 @@ package response
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestDecompressStreamReader(t *testing.T) {
@@ -158,6 +160,63 @@ data: {"type":"message_stop"}
 
 		if string(result) != originalData {
 			t.Errorf("brotli解压缩内容不匹配.\n期望: %q\n实际: %q", originalData, string(result))
+		}
+	})
+
+	t.Run("zstd压缩内容", func(t *testing.T) {
+		originalData := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
+		var compressedBuffer bytes.Buffer
+		zstdWriter, err := zstd.NewWriter(&compressedBuffer)
+		if err != nil {
+			t.Fatalf("创建zstd writer失败: %v", err)
+		}
+		if _, err := zstdWriter.Write([]byte(originalData)); err != nil {
+			t.Fatalf("zstd压缩失败: %v", err)
+		}
+		if err := zstdWriter.Close(); err != nil {
+			t.Fatalf("关闭zstd writer失败: %v", err)
+		}
+
+		resp := &http.Response{
+			Body:   io.NopCloser(bytes.NewReader(compressedBuffer.Bytes())),
+			Header: make(http.Header),
+		}
+		resp.Header.Set("Content-Encoding", "zstd")
+
+		reader, err := processor.DecompressStreamReader(resp)
+		if err != nil {
+			t.Fatalf("DecompressStreamReader失败: %v", err)
+		}
+		decompressed, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			t.Fatalf("读取zstd解压缩内容失败: %v", err)
+		}
+		if string(decompressed) != originalData {
+			t.Errorf("zstd解压缩内容不匹配.\n期望: %q\n实际: %q", originalData, string(decompressed))
+		}
+	})
+
+	t.Run("zstd窗口超过上限被拒", func(t *testing.T) {
+		// 帧头声明 2^29 = 512MB 窗口（Window_Descriptor 指数 19），后接 1 字节 raw last block；
+		// 不设上限时这 10 字节会触发约 512MB 的历史缓冲预分配
+		oversizedWindowFrame := []byte{0x28, 0xB5, 0x2F, 0xFD, 0x00, 19 << 3, 0x09, 0x00, 0x00, 'x'}
+		resp := &http.Response{
+			Body:   io.NopCloser(bytes.NewReader(oversizedWindowFrame)),
+			Header: make(http.Header),
+		}
+		resp.Header.Set("Content-Encoding", "zstd")
+
+		reader, err := processor.DecompressStreamReader(resp)
+		if err != nil {
+			t.Fatalf("DecompressStreamReader失败: %v", err)
+		}
+		defer reader.Close()
+
+		_, err = io.ReadAll(reader)
+		if !errors.Is(err, zstd.ErrWindowSizeExceeded) {
+			t.Fatalf("期望 zstd.ErrWindowSizeExceeded，实际: %v", err)
 		}
 	})
 

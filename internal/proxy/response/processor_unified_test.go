@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestProcessResponseBody(t *testing.T) {
@@ -68,6 +70,35 @@ func TestProcessResponseBody(t *testing.T) {
 		}
 		if !strings.Contains(resultStr, `"output_tokens": 15`) {
 			t.Error("解压缩后应包含output_tokens信息")
+		}
+	})
+
+	t.Run("ProcessResponseBody_zstd压缩", func(t *testing.T) {
+		originalData := `{"type":"message","usage":{"input_tokens":12,"output_tokens":7}}`
+		var compressedBuffer bytes.Buffer
+		zstdWriter, err := zstd.NewWriter(&compressedBuffer)
+		if err != nil {
+			t.Fatalf("创建zstd writer失败: %v", err)
+		}
+		if _, err := zstdWriter.Write([]byte(originalData)); err != nil {
+			t.Fatalf("zstd压缩失败: %v", err)
+		}
+		if err := zstdWriter.Close(); err != nil {
+			t.Fatalf("关闭zstd writer失败: %v", err)
+		}
+
+		resp := &http.Response{
+			Body:   io.NopCloser(bytes.NewReader(compressedBuffer.Bytes())),
+			Header: make(http.Header),
+		}
+		resp.Header.Set("Content-Encoding", "zstd")
+
+		result, err := processor.ProcessResponseBody(resp)
+		if err != nil {
+			t.Fatalf("ProcessResponseBody zstd处理失败: %v", err)
+		}
+		if string(result) != originalData {
+			t.Errorf("zstd解压缩内容不匹配.\n期望: %q\n实际: %q", originalData, string(result))
 		}
 	})
 
