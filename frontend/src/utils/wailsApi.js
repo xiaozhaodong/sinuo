@@ -211,6 +211,27 @@ export const skipAppUpdateVersion = async (version) => {
   return getWailsMethod('SkipAppUpdateVersion')(version);
 };
 
+export const downloadAppUpdate = async () => {
+  if (!isWailsEnvironment()) return;
+  await initWails();
+  return getWailsMethod('DownloadAppUpdate')();
+};
+export const cancelAppUpdateDownload = async () => {
+  if (!isWailsEnvironment()) return;
+  await initWails();
+  return getWailsMethod('CancelAppUpdateDownload')();
+};
+export const restartToUpdate = async (mode) => {
+  if (!isWailsEnvironment()) return { needs_confirm: false, active_requests: 0 };
+  await initWails();
+  return getWailsMethod('RestartToUpdate')(mode);
+};
+export const cancelAppUpdateRestart = async () => {
+  if (!isWailsEnvironment()) return;
+  await initWails();
+  return getWailsMethod('CancelAppUpdateRestart')();
+};
+
 export const getRecentLogs = async (limit) => {
   await initWails();
   return getWailsMethod('GetRecentLogs')(limit);

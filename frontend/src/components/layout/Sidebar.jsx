@@ -102,7 +102,7 @@ const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxy
       <div className="border-t border-line px-2.5 pb-2.5 pt-2">
         <ProxyStatusList connectionStatus={connectionStatus} proxyStatus={proxyStatus} />
         <div className="flex items-center gap-1">
-          <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={updateBadge ? onOpenAppUpdate : onTabChange} className="flex-1" badge={updateBadge} title={updateBadge ? `有新版本 ${updateStatus.latest_version}，点击查看` : undefined} />
+          <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={updateBadge ? onOpenAppUpdate : onTabChange} className="flex-1" badge={updateBadge} title={updateBadge ? `${updateBadge}，点击${updateStatus.state === 'ready' ? '重启' : '查看'}` : undefined} />
           <ThemeMenu placement="top" />
         </div>
       </div>

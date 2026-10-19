@@ -27,7 +27,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
- * AppUpdateStatus 是前端展示的更新检查状态。P1 只检查版本，不下载或安装。
+ * AppUpdateStatus 区分检查结果、已知版本和安装流程，完整状态按 revision 推送。
  * @typedef {Object} AppUpdateStatus
  * @property {string} current_version
  * @property {string} commit
@@ -45,6 +45,13 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {boolean} skipped
  * @property {boolean} auto_check
  * @property {number} revision
+ * @property {boolean} install_supported
+ * @property {string} install_blocked_reason
+ * @property {number} progress_written
+ * @property {number} progress_total
+ * @property {string} ready_version
+ * @property {number} active_requests
+ * @property {string} error_stage
  */
 
 /**
@@ -1052,6 +1059,13 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} request_family
  * @property {string} upstream_type - endpoint/account/subscription
  * @property {string} upstream_name - 账号名/端点名；订阅直通为固定标识
+ */
+
+/**
+ * RestartToUpdateResult 在有活跃请求时把决定交还给用户。
+ * @typedef {Object} RestartToUpdateResult
+ * @property {boolean} needs_confirm
+ * @property {number} active_requests
  */
 
 /**

@@ -12,7 +12,7 @@
 
 ### 当前核心能力
 
-- 软件更新 P1：通过 Wails Updater 检查 GitHub 稳定版，默认启动约 1 分钟后及每 6 小时自动检查；侧边栏/托盘提示，设置页查看说明与跳过版本；只检查、不下载、不安装。
+- 软件更新：通过 Wails Updater 检查 GitHub 稳定版，默认启动约 1 分钟后及每 6 小时自动检查；macOS 支持用户主动下载、sha256 + ed25519 强制校验、请求确认与等待空闲后重启，更新关停总时限 20 秒；Windows/Linux 保持前往下载，不自动下载。
 
 - 多端点智能路由、健康检查、故障转移与自愈
 - Claude 模型路由：按原始请求模型为每个模型单独指定一组上游端点；支持自动、优选、固定和独立 retained，未分配模型明确返回 422
@@ -104,7 +104,10 @@
 - `main.go`：程序入口与版本号；`ErrorFormatter` 让后端 error 统一以 `{message}` 回传前端（Wails 默认只回传字符串，前端 `err.message` 会是 undefined）；数据目录迁移失败时只启动弹框用的最小 Wails 流程
 - `internal/appdir/`：数据目录解析的唯一实现与旧品牌目录迁移（优先 `AI-Switchboard` → `Sinuo`，旧目录不存在时再从 `CC-Forwarder` → `Sinuo`；目标目录已存在则跳过迁移）；迁移保护只认 `data/usage.db-wal` / `data/usage.db-shm` 两个确切文件名，阻断时不建目录、不开库、不监听端口
 - `app.go`：Wails App 初始化与服务装配
-- `app_update.go`：更新检查、定时/关停、持久化通知与跳过状态、Wails API（P1）
+- `app_update.go` / `app_update_setup.go`：更新检查、状态与定时、Wails Updater 初始化；内部状态持久化在未登记的 `app_update_state` 分类
+- `app_update_signing.go` / `scripts/release-sign/`：签名发布源与签名工具；下载前 fail-closed，公钥为正式发布公钥（私钥仅在 GitHub Secret `SINUO_UPDATE_SIGNING_KEY` 与维护者离线备份中）；仅公钥及 API BaseURL 可由 ldflags 覆盖，无校验绕过开关
+- `app_update_install*.go` / `app_update_restart.go`：安装资格、可取消下载、进度节流、请求确认与等待、重启和 pending 回执
+- `app_shutdown.go` / `app_update_cleanup.go`：更新关停总时限与过期 updater 临时文件精确白名单清理
 - `frontend/src/components/app-update/`：更新状态 hook、纯展示规则与软件更新面板
 - `scripts/release-notes.sh`：按版本截取 CHANGELOG，供发布流水线组装 Release 正文
 - `app_startup_connectivity.go`：启动完成后的端点/账号池异步批量连通性检查

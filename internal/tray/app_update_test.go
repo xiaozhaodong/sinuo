@@ -17,3 +17,17 @@ func TestBuild_AppUpdateNavigation(t *testing.T) {
 		t.Fatal("更新项未在退出前")
 	}
 }
+
+func TestBuild_AppUpdateStates(t *testing.T) {
+	for state, label := range map[string]string{"available": "有新版本 6.1.0…", "downloading": "正在下载 6.1.0…", "installing": "正在下载 6.1.0…", "ready": "重启以更新到 6.1.0…", "waiting_idle": "重启以更新到 6.1.0…", "restarting": "重启以更新到 6.1.0…"} {
+		t.Run(state, func(t *testing.T) {
+			snapshot := runningSnapshot()
+			snapshot.UpdateVersion = "6.1.0"
+			snapshot.UpdateState = state
+			item := menuItem(t, Build(snapshot), label)
+			if item.Action.Target != "settings-update" {
+				t.Fatalf("action=%+v", item.Action)
+			}
+		})
+	}
+}

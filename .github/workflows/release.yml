@@ -200,15 +200,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
 
       - name: Prepare release files
+        env:
+          SINUO_UPDATE_SIGNING_KEY: ${{ secrets.SINUO_UPDATE_SIGNING_KEY }}
         run: |
           mkdir -p release/
           find artifacts/ -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release/ \;
+
+          shopt -s nullglob
+          packages=(release/*.zip release/*.tar.gz)
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "No release packages found" >&2
+            exit 1
+          fi
+          go run ./scripts/release-sign sign "${packages[@]}"
 
           cd release/
           sha256sum * > checksums.txt
@@ -240,6 +255,8 @@ jobs:
           **Linux**: 解压后运行 `Sinuo`
 
           ### 校验
+
+          `.sig` 是供 App 内一键更新使用的 ed25519 签名。
 
           ```bash
           sha256sum -c checksums.txt

@@ -34,6 +34,10 @@ func (t *appTray) snapshot() tray.Snapshot {
 	updateStatus := a.GetAppUpdateStatus()
 	if updateStatus.UpdateAvailable && !updateStatus.Skipped {
 		s.UpdateVersion = updateStatus.LatestVersion
+		s.UpdateState = updateStatus.State
+		if updateStatus.ReadyVersion != "" {
+			s.UpdateVersion = updateStatus.ReadyVersion
+		}
 	}
 	if !s.Running {
 		return s

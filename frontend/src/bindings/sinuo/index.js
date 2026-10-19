@@ -15,7 +15,7 @@ import * as $models from "./models.js";
  */
 
 /**
- * AppUpdateStatus 是前端展示的更新检查状态。P1 只检查版本，不下载或安装。
+ * AppUpdateStatus 区分检查结果、已知版本和安装流程，完整状态按 revision 推送。
  * @typedef {$models.AppUpdateStatus} AppUpdateStatus
  */
 
@@ -393,6 +393,11 @@ import * as $models from "./models.js";
 /**
  * RequestUpstreamOption 请求页上游筛选候选：查询范围内实际出现过的上游
  * @typedef {$models.RequestUpstreamOption} RequestUpstreamOption
+ */
+
+/**
+ * RestartToUpdateResult 在有活跃请求时把决定交还给用户。
+ * @typedef {$models.RestartToUpdateResult} RestartToUpdateResult
  */
 
 /**

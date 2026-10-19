@@ -1103,6 +1103,10 @@ export const resetSettings = async (category) => {
 export const getAppUpdateStatus = () => WailsApi.getAppUpdateStatus();
 export const checkAppUpdate = () => WailsApi.checkAppUpdate();
 export const skipAppUpdateVersion = (version) => WailsApi.skipAppUpdateVersion(version);
+export const downloadAppUpdate = () => WailsApi.downloadAppUpdate();
+export const cancelAppUpdateDownload = () => WailsApi.cancelAppUpdateDownload();
+export const restartToUpdate = (mode) => WailsApi.restartToUpdate(mode);
+export const cancelAppUpdateRestart = () => WailsApi.cancelAppUpdateRestart();
 
 /**
  * 获取端口信息

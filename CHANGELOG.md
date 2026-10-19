@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### ✨ 新功能 (Features)
+
+- **macOS 一键更新**：可主动下载并安装签名更新，侧边栏与托盘展示下载和就绪状态；重启前确认活跃请求，可等待请求完成后重启或取消等待。安装包强制校验 sha256 和 ed25519 签名，更新后提示完成结果；Windows / Linux 保持前往下载，不自动下载。
+
 ## [6.1.0] - 2026-10-19
 
 ### ✨ 新功能 (Features)

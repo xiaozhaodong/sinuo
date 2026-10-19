@@ -41,6 +41,22 @@ export function BatchUpdateSettings(input) {
 }
 
 /**
+ * CancelAppUpdateDownload 取消下载；等待该任务结束再允许重试，防止旧回调覆盖新状态。
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelAppUpdateDownload() {
+    return $Call.ByID(3596122411);
+}
+
+/**
+ * CancelAppUpdateRestart 取消等待，已经开始的重启不能取消。
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelAppUpdateRestart() {
+    return $Call.ByID(1911572086);
+}
+
+/**
  * CheckAppUpdate 手动检查更新，返回完整状态。
  * @returns {$CancellablePromise<$models.AppUpdateStatus>}
  */
@@ -221,6 +237,14 @@ export function DeletePrivacyRule(id) {
  */
 export function DeleteUpstreamAccount(id) {
     return $Call.ByID(221120010, id);
+}
+
+/**
+ * DownloadAppUpdate 只接受已签名的已知版本，后台执行下载、校验和解压。
+ * @returns {$CancellablePromise<void>}
+ */
+export function DownloadAppUpdate() {
+    return $Call.ByID(43663745);
 }
 
 /**
@@ -793,6 +817,15 @@ export function ResetCategorySettings(category) {
  */
 export function ResetCodexModelCatalog() {
     return $Call.ByID(3585048259);
+}
+
+/**
+ * RestartToUpdate 空 mode 空闲时直接重启；前端必须先完成用户确认。
+ * @param {string} mode
+ * @returns {$CancellablePromise<$models.RestartToUpdateResult>}
+ */
+export function RestartToUpdate(mode) {
+    return $Call.ByID(3141913084, mode);
 }
 
 /**

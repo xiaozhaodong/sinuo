@@ -51,7 +51,14 @@ func Build(s Snapshot) []Item {
 		items = append(items, menuBarMenu(s))
 	}
 	if s.UpdateVersion != "" {
-		items = append(items, navigate("有新版本 "+s.UpdateVersion+"…", "settings-update"))
+		label := "有新版本 " + s.UpdateVersion + "…"
+		switch s.UpdateState {
+		case "downloading", "installing":
+			label = "正在下载 " + s.UpdateVersion + "…"
+		case "ready", "waiting_idle", "restarting":
+			label = "重启以更新到 " + s.UpdateVersion + "…"
+		}
+		items = append(items, navigate(label, "settings-update"))
 	}
 	return append(items, quit)
 }

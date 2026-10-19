@@ -276,8 +276,9 @@ const AppRoutes = () => {
               connectionStatus={connectionStatus}
               proxyStatus={proxyStatus}
               updateStatus={appUpdate.status}
-              onOpenAppUpdate={navigateToAppUpdate}
+              onOpenAppUpdate={appUpdate.status.state === 'ready' ? appUpdate.restart : navigateToAppUpdate}
             />
+            {appUpdate.dialogs}
 
             <div className="flex min-w-0 flex-1 flex-col">
               <AppToolbar title={pageTitleOf(activeTab)} />

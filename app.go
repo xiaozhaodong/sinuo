@@ -85,10 +85,11 @@ type App struct {
 	modelPricingService *service.ModelPricingService // 模型定价业务服务
 
 	// v5.1+ 系统设置存储 (SQLite)
-	settingsStore   store.SettingsStore      // 设置数据持久化
-	settingsService *service.SettingsService // 设置业务服务
-	portManager     *utils.PortManager       // 端口管理器
-	appUpdate       *appUpdateManager        // 检查更新与提示（P1，不负责下载）
+	settingsStore    store.SettingsStore      // 设置数据持久化
+	settingsService  *service.SettingsService // 设置业务服务
+	portManager      *utils.PortManager       // 端口管理器
+	appUpdate        *appUpdateManager        // 检查更新与 macOS 一键更新
+	updateRestarting atomic.Bool
 
 	// v6.0+ 账号池存储 (SQLite)
 	accountPoolStore   store.AccountPoolStore      // 账号池数据持久化
@@ -154,18 +155,6 @@ func NewApp() *App {
 func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
 	go a.startup(ctx)
-	return nil
-}
-
-// ServiceShutdown 在 v3 应用退出时调用。v3 会在调用前取消应用上下文，
-// 因此使用独立的关闭上下文保留原有超时与关闭顺序。
-func (a *App) ServiceShutdown() error {
-	a.closing.Store(true)
-	a.stopTray()
-	if a.startupDone != nil {
-		<-a.startupDone
-	}
-	a.shutdown(context.Background())
 	return nil
 }
 

@@ -13,10 +13,8 @@ import (
 	"time"
 
 	"sinuo/internal/service"
-	"sinuo/internal/transport"
 
 	"github.com/wailsapp/wails/v3/pkg/updater"
-	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
 
 const (
@@ -32,24 +30,31 @@ const (
 
 var appUpdateNoAssetVersionPattern = regexp.MustCompile(`release\s+(v?[0-9][^ ]*)\s+has no asset`)
 
-// AppUpdateStatus 是前端展示的更新检查状态。P1 只检查版本，不下载或安装。
+// AppUpdateStatus 区分检查结果、已知版本和安装流程，完整状态按 revision 推送。
 type AppUpdateStatus struct {
-	CurrentVersion  string `json:"current_version"`
-	Commit          string `json:"commit"`
-	BuildTime       string `json:"build_time"`
-	LocalBuild      bool   `json:"local_build"`
-	State           string `json:"state"`
-	UpdateAvailable bool   `json:"update_available"`
-	LatestVersion   string `json:"latest_version"`
-	ReleaseName     string `json:"release_name"`
-	Notes           string `json:"notes"`
-	PublishedAt     string `json:"published_at"`
-	CheckedAt       string `json:"checked_at"`
-	ReleaseURL      string `json:"release_url"`
-	Error           string `json:"error"`
-	Skipped         bool   `json:"skipped"`
-	AutoCheck       bool   `json:"auto_check"`
-	Revision        int64  `json:"revision"`
+	CurrentVersion       string `json:"current_version"`
+	Commit               string `json:"commit"`
+	BuildTime            string `json:"build_time"`
+	LocalBuild           bool   `json:"local_build"`
+	State                string `json:"state"`
+	UpdateAvailable      bool   `json:"update_available"`
+	LatestVersion        string `json:"latest_version"`
+	ReleaseName          string `json:"release_name"`
+	Notes                string `json:"notes"`
+	PublishedAt          string `json:"published_at"`
+	CheckedAt            string `json:"checked_at"`
+	ReleaseURL           string `json:"release_url"`
+	Error                string `json:"error"`
+	Skipped              bool   `json:"skipped"`
+	AutoCheck            bool   `json:"auto_check"`
+	Revision             int64  `json:"revision"`
+	InstallSupported     bool   `json:"install_supported"`
+	InstallBlockedReason string `json:"install_blocked_reason"`
+	ProgressWritten      int64  `json:"progress_written"`
+	ProgressTotal        int64  `json:"progress_total"`
+	ReadyVersion         string `json:"ready_version"`
+	ActiveRequests       int64  `json:"active_requests"`
+	ErrorStage           string `json:"error_stage"`
 }
 
 type appUpdateManager struct {
@@ -71,6 +76,17 @@ type appUpdateManager struct {
 
 	check  func(context.Context) (*updater.Release, error)
 	notify func(string, string, string)
+	// 操作字段由 checkMu 保护；下载任务不持锁执行外部 I/O。
+	release           *updater.Release
+	baseBlockedReason string
+	download          func(context.Context) error
+	restart           func(context.Context) error
+	activeRequests    func() int64
+	downloadCancel    context.CancelFunc
+	downloadDone      chan struct{}
+	waitCancel        context.CancelFunc
+	waitInterval      time.Duration
+	progressAt        time.Time
 }
 
 func newAppUpdateManager(app *App, parent context.Context, autoCheck bool) *appUpdateManager {
@@ -79,13 +95,15 @@ func newAppUpdateManager(app *App, parent context.Context, autoCheck bool) *appU
 	}
 	ctx, cancel := context.WithCancel(parent)
 	manager := &appUpdateManager{
-		app:        app,
-		rootCtx:    ctx,
-		cancel:     cancel,
-		state:      defaultAppUpdateStatus(autoCheck),
-		firstDelay: appUpdateCheckDelay,
-		interval:   appUpdateCheckInterval,
-		logger:     slog.Default(),
+		app:               app,
+		rootCtx:           ctx,
+		cancel:            cancel,
+		state:             defaultAppUpdateStatus(autoCheck),
+		firstDelay:        appUpdateCheckDelay,
+		interval:          appUpdateCheckInterval,
+		logger:            slog.Default(),
+		waitInterval:      time.Second,
+		baseBlockedReason: appUpdateInstallBlockedReason(runtimeAppUpdateEnvironment()),
 	}
 	if app != nil {
 		manager.notify = app.emitNotification
@@ -93,58 +111,8 @@ func newAppUpdateManager(app *App, parent context.Context, autoCheck bool) *appU
 			manager.logger = app.logger
 		}
 	}
+	manager.state.InstallBlockedReason = manager.baseBlockedReason
 	return manager
-}
-
-func defaultAppUpdateStatus(autoCheck bool) AppUpdateStatus {
-	return AppUpdateStatus{
-		CurrentVersion: Version,
-		Commit:         Commit,
-		BuildTime:      BuildTime,
-		LocalBuild:     Commit == "unknown",
-		State:          "idle",
-		AutoCheck:      autoCheck,
-	}
-}
-
-func (a *App) setupAppUpdate(ctx context.Context) {
-	if a == nil || a.wailsApp == nil || a.settingsService == nil {
-		return
-	}
-	autoCheck := a.settingsService.GetBool(ctx, service.CategoryAppUpdate, "auto_check", true)
-	manager := newAppUpdateManager(a, ctx, autoCheck)
-	a.appUpdate = manager
-
-	httpTransport, err := transport.CreateTransport(a.config)
-	if err != nil {
-		a.logger.Warn("软件更新代理配置无效，更新检查不可用", "error", err)
-		manager.setError("无法连接 GitHub，请检查网络或代理设置")
-		return
-	}
-	if a.config == nil || !a.config.Proxy.Enabled {
-		httpTransport.Proxy = http.ProxyFromEnvironment
-	}
-	provider, err := github.New(github.Config{
-		Repository:    "xiaozhaodong/sinuo",
-		ChecksumAsset: "checksums.txt",
-		HTTPClient:    &http.Client{Timeout: 30 * time.Second, Transport: appUpdateTransport{httpTransport}},
-	})
-	if err != nil {
-		a.logger.Warn("软件更新 GitHub provider 初始化失败", "error", err)
-		manager.setError("无法连接 GitHub，请检查网络或代理设置")
-		return
-	}
-	if err := a.wailsApp.Updater.Init(updater.Config{
-		CurrentVersion: Version,
-		Providers:      []updater.Provider{provider},
-		Window:         updater.WindowNone,
-	}); err != nil {
-		a.logger.Warn("软件更新器初始化失败", "error", err)
-		manager.setError("软件更新检查暂不可用")
-		return
-	}
-	manager.check = a.wailsApp.Updater.Check
-	manager.startSchedule()
 }
 
 func (m *appUpdateManager) startSchedule() {
@@ -219,7 +187,17 @@ func (m *appUpdateManager) Stop() {
 	}
 	// 取消后等待正在执行的检查结束，避免数据库关闭后仍读写通知标记。
 	m.checkMu.Lock()
+	if m.downloadCancel != nil {
+		m.downloadCancel()
+	}
+	if m.waitCancel != nil {
+		m.waitCancel()
+	}
+	downloadDone := m.downloadDone
 	m.checkMu.Unlock()
+	if downloadDone != nil {
+		<-downloadDone
+	}
 }
 
 func (m *appUpdateManager) status() AppUpdateStatus {
@@ -265,9 +243,16 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 		return m.status(), context.Canceled
 	}
 	previous := m.status()
+	if appUpdateBusy(previous.State) || m.downloadDone != nil {
+		if manual {
+			return previous, errors.New("更新正在下载、安装或等待重启，请先完成或取消当前操作")
+		}
+		return previous, nil
+	}
 	m.update(func(status *AppUpdateStatus) {
 		status.State = "checking"
 		status.Error = ""
+		status.ErrorStage = ""
 	})
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -291,6 +276,8 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 				status.PublishedAt = ""
 				status.Skipped = false
 				status.ReleaseURL = appUpdateLatestReleaseURL
+				m.release = nil
+				m.applyInstallSupport(status)
 			}
 		})
 		m.logger.Warn("检查软件更新失败", "manual", manual, "error", err)
@@ -298,8 +285,10 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 	}
 
 	if release == nil {
+		m.release = nil
 		status := m.update(func(status *AppUpdateStatus) {
 			status.State = "up_to_date"
+			status.ReadyVersion, status.ProgressWritten, status.ProgressTotal = "", 0, 0
 			status.UpdateAvailable = false
 			status.LatestVersion = ""
 			status.ReleaseName = ""
@@ -309,10 +298,14 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 			status.Skipped = false
 			status.Error = ""
 			status.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+			m.applyInstallSupport(status)
 		})
 		return status, nil
 	}
 
+	// Wails.Check 已更新内部 pending；即使之后读取设置失败，也要记住该目标，
+	// 下载入口再核对它与保留的展示版本，防止下载到另一个版本。
+	m.release = release
 	skippedVersion, err := m.readSetting(appUpdateSkippedVersionKey)
 	if err != nil {
 		m.setError(err.Error())
@@ -325,6 +318,7 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 	}
 	status := m.update(func(status *AppUpdateStatus) {
 		status.State = "available"
+		status.ReadyVersion, status.ProgressWritten, status.ProgressTotal = "", 0, 0
 		status.UpdateAvailable = true
 		status.LatestVersion = strings.TrimPrefix(release.Version, "v")
 		status.ReleaseName = release.Name
@@ -334,6 +328,7 @@ func (m *appUpdateManager) runCheck(parent context.Context, manual bool) (AppUpd
 		status.Skipped = skippedVersion == strings.TrimPrefix(release.Version, "v")
 		status.Error = ""
 		status.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+		m.applyInstallSupport(status)
 	})
 	if !status.Skipped && status.LatestVersion != "" && notifiedVersion != status.LatestVersion {
 		if m.notify != nil {
@@ -383,6 +378,9 @@ func (m *appUpdateManager) skipVersion(version string) error {
 		return context.Canceled
 	}
 	status := m.status()
+	if appUpdateBusy(status.State) {
+		return errors.New("更新进行中，不能更改跳过状态")
+	}
 	if version != "" && version != status.LatestVersion {
 		return fmt.Errorf("只能跳过当前可用版本 %s", status.LatestVersion)
 	}
@@ -443,7 +441,11 @@ func (a *App) GetAppUpdateStatus() AppUpdateStatus {
 	if manager == nil {
 		return defaultAppUpdateStatus(false)
 	}
-	return manager.status()
+	status := manager.status()
+	if status.State == "ready" {
+		status.ActiveRequests = manager.requestCount()
+	}
+	return status
 }
 
 // CheckAppUpdate 手动检查更新，返回完整状态。

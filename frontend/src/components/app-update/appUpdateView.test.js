@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptAppUpdateStatus, canShowNotes, cleanReleaseNotes, emptyAppUpdateStatus, resolveUpdateBadge, resolveUpdateStateLabel } from './appUpdateView.js';
+import { acceptAppUpdateStatus, canShowNotes, cleanReleaseNotes, emptyAppUpdateStatus, resolveUpdateActions, resolveUpdateBadge, resolveUpdateStateLabel, updateProgressPercent } from './appUpdateView.js';
 
 test('已知更新且未跳过时展示胶囊和说明，不依赖本次检查状态', () => {
   const available = { state: 'available', update_available: true, latest_version: '6.1.0', skipped: false };
@@ -60,4 +60,28 @@ test('较晚到达的旧事件和读取结果不能覆盖新 revision', () => {
   assert.equal(acceptAppUpdateStatus(current, undefined), current);
   assert.equal(acceptAppUpdateStatus(current, { state: 'idle' }), current);
   assert.equal(acceptAppUpdateStatus(current, { state: 'up_to_date', revision: 6 }).state, 'up_to_date');
+});
+
+test('P2 胶囊覆盖完整流程，已跳过时全部隐藏', () => {
+  for (const [state, label] of Object.entries({ available: '6.1.0 可更新', downloading: '下载中 45%', installing: '正在安装', ready: '重启更新', waiting_idle: '等待 3 个请求', restarting: '正在重启' })) {
+    const status = { state, update_available: true, latest_version: '6.1.0', progress_written: 45, progress_total: 100, active_requests: 3 };
+    assert.equal(resolveUpdateBadge(status), label);
+    assert.equal(resolveUpdateBadge({ ...status, skipped: true }), null);
+  }
+  assert.equal(resolveUpdateBadge({ state: 'downloading', update_available: true, latest_version: '6.1.0' }), '下载中');
+  assert.equal(updateProgressPercent({ progress_total: 10, progress_written: 20 }), 100);
+  assert.equal(updateProgressPercent({ progress_total: 0 }), null);
+});
+
+test('安装支持与所有状态的面板按钮矩阵', () => {
+  for (const supported of [true, false]) {
+    for (const state of ['idle', 'checking', 'available', 'up_to_date', 'error', 'downloading', 'installing', 'ready', 'waiting_idle', 'restarting']) {
+      const status = { ...emptyAppUpdateStatus(), state, install_supported: supported, update_available: true, release_url: 'https://github.com/xiaozhaodong/sinuo/releases/latest' };
+      const actions = resolveUpdateActions(status);
+      const expected = { downloading: 'cancelDownload', installing: 'cancelDownload', ready: 'restart', waiting_idle: 'cancelRestart', restarting: null, checking: null };
+      assert.equal(actions.primary, Object.hasOwn(expected, state) ? expected[state] : supported ? 'download' : 'external', `${state} supported=${supported}`);
+      assert.equal(actions.checkDisabled, ['checking', 'downloading', 'installing', 'ready', 'waiting_idle', 'restarting'].includes(state));
+    }
+  }
+  assert.equal(resolveUpdateActions(emptyAppUpdateStatus()).primary, null);
 });
