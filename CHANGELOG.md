@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [6.0.1] - 2026-10-19
+
+### 🐛 修复 (Bug Fixes)
+
+- 支持上游返回 zstd 压缩的响应，流式与非流式均可正常解压。出站请求会透传客户端的 `Accept-Encoding`，DeepSeek 等上游据此返回 zstd 正文；此前该编码未被识别，压缩体被原样转发却剥掉了 `Content-Encoding`，客户端收到乱码。解码窗口限制为 8MB，避免异常帧头触发大块内存预分配。
+
 ## [6.0.0] - 2026-10-17
 
 ### ✨ 新功能 (Features)
