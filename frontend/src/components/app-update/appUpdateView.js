@@ -39,6 +39,54 @@ export const resolveUpdateActions = (status) => {
   return { primary, checkDisabled: busy || status.state === 'checking', skipDisabled: busy || status.state === 'checking' };
 };
 
+// 动作名、文案和 hook 方法在两个入口共用，图标由各自组件负责。
+export const resolveUpdatePrimaryAction = (action) => ({
+  check: { label: '检查更新', handler: 'check' },
+  download: { label: '下载并安装', handler: 'download' },
+  cancelDownload: { label: '取消', handler: 'cancelDownload' },
+  restart: { label: '重启更新', handler: 'restart' },
+  cancelRestart: { label: '取消等待', handler: 'cancelRestart' },
+  external: { label: '前往下载', handler: 'openRelease' }
+}[action] || null);
+
+export const resolveUpdateTrigger = (status) => {
+  if (!status?.current_version) return null;
+  const badge = resolveUpdateBadge(status);
+  return {
+    badge: Boolean(badge),
+    label: badge || `v${status.current_version}`,
+    title: badge ? `有新版本 ${status.latest_version}，点击查看` : `当前版本 v${status.current_version}`
+  };
+};
+
+// 弹窗的显隐与操作全部在这里裁决，JSX 只负责排列已有的展示规则。
+export const resolveUpdateDialogSections = (status, notice = '') => {
+  const actions = resolveUpdateActions(status);
+  const knownUpdate = status.update_available && Boolean(status.latest_version);
+  const primary = actions.primary || (!knownUpdate && status.state !== 'restarting' ? 'check' : null);
+  return {
+    title: knownUpdate ? `Sinuo ${status.latest_version}` : `Sinuo v${status.current_version}`,
+    showPublishedAt: Boolean(knownUpdate && status.published_at),
+    showLocalBuild: Boolean(!knownUpdate && status.local_build),
+    stateLabel: resolveUpdateStateLabel(status),
+    stateError: status.state === 'error',
+    showCheckedAt: Boolean(status.checked_at),
+    showNotes: canShowNotes(status),
+    progress: status.state === 'downloading' ? 'download' : status.state === 'installing' ? 'install' : null,
+    blockedReason: status.update_available && !status.install_supported ? status.install_blocked_reason : '',
+    primary,
+    primaryAction: resolveUpdatePrimaryAction(primary),
+    primaryDisabled: primary === 'check' && actions.checkDisabled,
+    primaryLoading: primary === 'check' && status.state === 'checking',
+    showSkip: Boolean(knownUpdate),
+    skipLabel: status.skipped ? '取消跳过' : '跳过此版本',
+    skipVersion: status.skipped ? '' : status.latest_version,
+    skipDisabled: actions.skipDisabled,
+    showExternal: Boolean(primary !== 'external' && status.release_url),
+    notice: notice && notice !== status.error ? notice : ''
+  };
+};
+
 export const formatUpdateBytes = (value) => {
   const bytes = Math.max(0, Number(value) || 0);
   if (bytes < 1024) return `${bytes} B`;
@@ -48,10 +96,17 @@ export const formatUpdateBytes = (value) => {
 
 export const canShowNotes = (status) => Boolean(status?.update_available && !status.skipped && status.latest_version);
 
-export const cleanReleaseNotes = (notes = '') => String(notes)
-  .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-  .replace(/\*\*(.*?)\*\*/g, '$1')
-  .trim();
+export const cleanReleaseNotes = (notes = '', version = '') => {
+  const lines = String(notes)
+    .replace(/\r\n?/g, '\n')
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .split('\n');
+  const title = lines[0]?.trim().match(/^\[([^\]]+)\](?:[ \t]*-[ \t]*.+)?[ \t]*$/);
+  if (version && title?.[1] === version) lines.shift();
+  return lines.join('\n').replace(/^(?:[ \t]*\n)+/, '').replace(/^([ \t]*)[-*][ \t]+/gm, '$1• ').trimEnd();
+};
 
 export const resolveUpdateStateLabel = (status) => {
   switch (status?.state) {

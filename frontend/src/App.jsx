@@ -275,8 +275,8 @@ const AppRoutes = () => {
               onTabChange={switchTab}
               connectionStatus={connectionStatus}
               proxyStatus={proxyStatus}
-              updateStatus={appUpdate.status}
-              onOpenAppUpdate={appUpdate.status.state === 'ready' ? appUpdate.restart : navigateToAppUpdate}
+              appUpdate={appUpdate}
+              onOpenUpdateSettings={navigateToAppUpdate}
             />
             {appUpdate.dialogs}
 

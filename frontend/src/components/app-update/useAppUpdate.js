@@ -12,8 +12,14 @@ const useAppUpdate = () => {
   const [notice, setNotice] = useState('');
   const { confirm, confirmDialog } = useConfirm();
   const [requestPrompt, setRequestPrompt] = useState(null);
+  const [pendingOperations, setPendingOperations] = useState(0);
   const restartBusy = useRef(false);
   const accept = useCallback((incoming) => setStatus((current) => acceptAppUpdateStatus(current, incoming)), []);
+  const runOperation = useCallback(async (operation) => {
+    setPendingOperations((count) => count + 1);
+    try { return await operation(); }
+    finally { setPendingOperations((count) => count - 1); }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,7 +31,7 @@ const useAppUpdate = () => {
     return () => { cancelled = true; unsubscribe?.(); };
   }, [accept]);
 
-  const check = useCallback(async () => {
+  const check = useCallback(() => runOperation(async () => {
     setNotice('');
     try {
       accept(await checkAppUpdate());
@@ -34,26 +40,26 @@ const useAppUpdate = () => {
       // Wails 在返回 error 时不会携带另一个返回值，重新读取完整状态。
       try { accept(await getAppUpdateStatus()); } catch (readError) { setNotice(resolveErrorMessage(readError, '读取更新状态失败')); }
     }
-  }, [accept]);
+  }), [accept, runOperation]);
 
-  const skip = useCallback(async (version) => {
+  const skip = useCallback((version) => runOperation(async () => {
     setNotice('');
     try {
       await skipAppUpdateVersion(version);
       accept(await getAppUpdateStatus());
     } catch (error) { setNotice(resolveErrorMessage(error, '保存跳过版本失败')); }
-  }, [accept]);
+  }), [accept, runOperation]);
 
-  const openRelease = useCallback(async () => {
+  const openRelease = useCallback(() => runOperation(async () => {
     if (!status.release_url) return;
     try { await openExternalURL(status.release_url); } catch (error) { setNotice(resolveErrorMessage(error, '打开下载页面失败')); }
-  }, [status.release_url]);
+  }), [status.release_url, runOperation]);
 
-  const operate = useCallback(async (operation) => {
+  const operate = useCallback((operation) => runOperation(async () => {
     setNotice('');
     try { await operation(); accept(await getAppUpdateStatus()); }
     catch (error) { setNotice(resolveErrorMessage(error, '更新操作失败')); }
-  }, [accept]);
+  }), [accept, runOperation]);
   const download = useCallback(() => operate(downloadAppUpdate), [operate]);
   const cancelDownload = useCallback(() => operate(cancelAppUpdateDownload), [operate]);
   const cancelRestart = useCallback(() => operate(cancelAppUpdateRestart), [operate]);
@@ -77,7 +83,10 @@ const useAppUpdate = () => {
   const dialogs = createElement(Fragment, null, confirmDialog, requestPrompt
     ? createElement(AppUpdateRestartDialog, { activeRequests: requestPrompt.activeRequests, onChoose: settleRequests }) : null);
 
-  return { status, notice, check, skip, openRelease, download, cancelDownload, restart, cancelRestart, dialogs };
+  return {
+    status, notice, check, skip, openRelease, download, cancelDownload, restart, cancelRestart, dialogs,
+    operationPending: pendingOperations > 0
+  };
 };
 
 export default useAppUpdate;

@@ -2,24 +2,18 @@ import { ArrowUpRight, Download, RefreshCw } from 'lucide-react';
 import { FormBlock, FormRow } from '@components/desktop/FormSection.jsx';
 import { Button } from '@components/ui';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
-import { canShowNotes, cleanReleaseNotes, formatUpdateBytes, resolveUpdateActions, resolveUpdateStateLabel, updateProgressPercent } from './appUpdateView.js';
+import { canShowNotes, cleanReleaseNotes, formatUpdateBytes, resolveUpdateActions, resolveUpdatePrimaryAction, resolveUpdateStateLabel, updateProgressPercent } from './appUpdateView.js';
 
 const AppUpdatePanel = ({ update }) => {
-  const { status, notice, check, skip, openRelease, download, cancelDownload, restart, cancelRestart } = update;
+  const { status, notice, check, skip, openRelease } = update;
   const { formatTimestamp } = useTimezone();
   const checking = status.state === 'checking';
   const available = canShowNotes(status);
   const knownUpdate = status.update_available && Boolean(status.latest_version);
   const actions = resolveUpdateActions(status);
   const progress = updateProgressPercent(status);
-  const primaryActions = {
-    download: { label: '下载并安装', run: download, icon: Download },
-    restart: { label: '重启以完成更新', run: restart, icon: RefreshCw },
-    cancelDownload: { label: '取消', run: cancelDownload },
-    cancelRestart: { label: '取消等待', run: cancelRestart },
-    external: { label: '前往下载', run: openRelease, icon: ArrowUpRight }
-  };
-  const primary = primaryActions[actions.primary];
+  const primary = resolveUpdatePrimaryAction(actions.primary);
+  const primaryIcon = { download: Download, restart: RefreshCw, external: ArrowUpRight }[actions.primary];
 
   return (
     <>
@@ -43,7 +37,7 @@ const AppUpdatePanel = ({ update }) => {
           <div className="text-[13px] font-medium text-fg">{status.release_name || `Sinuo ${status.latest_version}`}</div>
           {status.published_at && <div className="mt-1 text-xs text-fg-muted">发布于 {formatTimestamp(status.published_at)}</div>}
           <div className="selectable mt-3 max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
-            {cleanReleaseNotes(status.notes) || '此版本未提供更新说明'}
+            {cleanReleaseNotes(status.notes, status.latest_version) || '此版本未提供更新说明'}
           </div>
         </FormBlock>
       )}
@@ -62,7 +56,7 @@ const AppUpdatePanel = ({ update }) => {
           )}
           {knownUpdate && !status.install_supported && status.install_blocked_reason && <p className="mb-3 text-xs leading-relaxed text-fg-muted">{status.install_blocked_reason}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            {primary && <Button type="button" size="sm" icon={primary.icon} onClick={primary.run}>{primary.label}</Button>}
+            {primary && <Button type="button" size="sm" icon={primaryIcon} onClick={update[primary.handler]}>{actions.primary === 'restart' ? '重启以完成更新' : primary.label}</Button>}
             {actions.primary !== 'external' && status.release_url && <Button type="button" variant="secondary" size="sm" icon={ArrowUpRight} onClick={openRelease}>前往下载</Button>}
             {knownUpdate && status.skipped && status.state !== 'available' && <span className="text-xs text-fg-muted">已跳过 {status.latest_version}</span>}
             {knownUpdate && <Button type="button" variant="secondary" size="sm" disabled={actions.skipDisabled} onClick={() => skip(status.skipped ? '' : status.latest_version)}>

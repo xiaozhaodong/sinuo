@@ -12,6 +12,7 @@ const Sheet = ({
   title,
   subtitle,
   width = 560,
+  centered = false,
   footer,
   footerStart,
   onSubmit,
@@ -29,7 +30,7 @@ const Sheet = ({
   const Panel = onSubmit ? 'form' : 'div';
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[12vh]">
+    <div className={`fixed inset-0 z-[60] flex justify-center px-4 ${centered ? 'items-center' : 'items-start pt-[12vh]'}`}>
       <div aria-hidden="true" aria-label={overlayLabel} className="motion-overlay absolute inset-0 bg-overlay" />
       <Panel
         ref={panelRef}

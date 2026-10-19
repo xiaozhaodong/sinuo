@@ -58,3 +58,15 @@ test('窗口拖拽区用 Wails v3 的 --wails-draggable，控件排除在外', a
   assert.match(css, /\.app-drag :is\(button, input[^)]*\) \{\s*--wails-draggable: no-drag;/);
   assert.match(sidebar, /className="app-drag /);
 });
+
+test('设置保持普通导航，版本弹窗独立触发并复用唯一更新状态', async () => {
+  const [app, sidebar] = await Promise.all([readFile(appSourcePath, 'utf8'), readFile(sidebarSourcePath, 'utf8')]);
+  assert.equal((app.match(/useAppUpdate\(\)/g) || []).length, 1);
+  assert.match(app, /appUpdate=\{appUpdate\}/);
+  assert.match(app, /onOpenUpdateSettings=\{navigateToAppUpdate\}/);
+  assert.match(app, /\{appUpdate\.dialogs\}/);
+  assert.doesNotMatch(app, /onOpenAppUpdate=|state === 'ready' \? appUpdate\.restart/);
+  assert.match(sidebar, /<NavItem item=\{SETTINGS_NAV_ITEM\}[^>]*onSelect=\{onTabChange\}[^>]*\/>\s*<AppUpdateTrigger[^>]*\/>(?:\s*)<ThemeMenu/);
+  assert.doesNotMatch(sidebar, /updateStatus|onOpenAppUpdate|badge=|resolveUpdateBadge/);
+  assert.deepEqual(resolveTrayNavigation('settings-update'), { tab: 'settings', settingsSection: 'app_update' });
+});
