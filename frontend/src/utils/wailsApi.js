@@ -2102,7 +2102,7 @@ export const resetCodexModelCatalog = async () => {
 
 /**
  * 获取端口信息
- * @returns {Promise<Object>} - {preferred_port, actual_port, is_default, was_occupied}
+ * @returns {Promise<Object>} - current port, listener scope, and LAN access details
  */
 export const getPortInfo = async () => {
   await initWails();
@@ -2113,7 +2113,11 @@ export const getPortInfo = async () => {
     preferred_port: info.preferred_port,
     actual_port: info.actual_port,
     is_default: info.is_default,
-    was_occupied: info.was_occupied
+    was_occupied: info.was_occupied,
+    lan_access: info.lan_access === true,
+    lan_access_active: info.lan_access_active === true,
+    lan_token_configured: info.lan_token_configured === true,
+    lan_addresses: Array.isArray(info.lan_addresses) ? info.lan_addresses : []
   };
 };
 

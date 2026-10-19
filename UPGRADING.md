@@ -1,5 +1,33 @@
 # Sinuo 升级说明
 
+## v6.1.0：主端口默认只监听本机
+
+升级后主端口默认只监听 `127.0.0.1` 与可用的 `[::1]`，之前从其他设备访问主端口的用户需要完成以下配置：
+
+1. 在设置页「服务端口」打开「允许局域网访问」。
+2. 在「访问鉴权」中设置访问 Token；保存时必须先配置 Token。
+3. 重启 App，让监听范围切换为局域网。
+4. 在其他设备的客户端配置同一个 Token。Claude Code 示例（两者选一）：
+
+   ```bash
+   ANTHROPIC_BASE_URL=http://<局域网地址>:<实际端口> ANTHROPIC_AUTH_TOKEN="$SINUO_LAN_TOKEN" claude
+   # 或使用 ANTHROPIC_API_KEY="$SINUO_LAN_TOKEN"
+   ```
+
+   Codex 需要在顶层设置 `model_provider = "sinuo"`，让客户端使用这个 provider；provider 中用 `env_key` 指向保存 Token 的环境变量名，并把 `base_url` 指向 `http://<局域网地址>:<实际端口>/v1`：
+
+   ```toml
+   model_provider = "sinuo"
+
+   [model_providers.sinuo]
+   name = "Sinuo"
+   base_url = "http://<局域网地址>:<实际端口>/v1"
+   env_key = "SINUO_LAN_TOKEN"
+   wire_api = "responses"
+   ```
+
+开关关闭后会立即拒绝其他设备的请求；重启前端口仍可能显示为局域网监听，但已保存的关闭状态会先由网关拒绝远端请求。本机请求继续按原有「启用鉴权」设置处理。Claude Code 与 Codex 独立入口始终只监听本机。
+
 ## 从 AI Switchboard 升级到 Sinuo（v6.0.0）
 
 ### 首次启动前

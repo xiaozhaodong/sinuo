@@ -93,6 +93,7 @@
     - 预设正则调整后需在隐私页重新导入预设才会同步到已导入的规则
   - 只记录规则名/命中数/耗时，不记录命中原文
   - Claude 请求跳过 `system[0].text` 上的 attribution block（`x-anthropic-billing-header:` 开头）：官方只在它原样位于首位时剥离；thinking / signature / redacted_thinking 不在扫描范围
+- 主端口「允许局域网访问」默认关闭；开启后其他设备须携带访问鉴权 Token，关闭保存后立即拒绝远端请求，重启后仅监听本机。Claude Code / Codex 独立入口始终只监听本机。
 
 ## 关键文件
 
@@ -132,6 +133,7 @@
 - `internal/service/model_routing_bindings.go`：「模型 → 端点集合」的事务聚合读写（专属组建/改/回收、历史共享组分裂）
 - `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
+- `internal/middleware/lan_access.go`：主端口局域网访问边界、Token 校验与远端拒绝
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
 - `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta 与来源类头
 - `internal/proxy/claude_subscription.go` / `internal/proxy/handlers/claude_subscription_forward.go`：Claude Code 订阅直通分支（透明透传、追踪、复用端点管线的响应处理）与出站请求头策略

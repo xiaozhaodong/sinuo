@@ -61,7 +61,7 @@ func TestSettingsCleanup_PageHasNineCategoriesAndActiveControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCount := 22
+	wantCount := 23
 	if runtime.GOOS != "darwin" {
 		wantCount -= 3
 	}

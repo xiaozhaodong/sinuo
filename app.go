@@ -61,6 +61,7 @@ type App struct {
 	loggingMiddleware    *middleware.LoggingMiddleware
 	monitoringMiddleware *middleware.MonitoringMiddleware
 	authMiddleware       *middleware.AuthMiddleware
+	lanAccessGate        *middleware.LANAccessGate
 
 	// v5.0+ 端点存储 (SQLite)
 	endpointStore   store.EndpointStore      // 端点数据持久化
@@ -952,6 +953,8 @@ func (a *App) setupProxyHandler() {
 	a.monitoringMiddleware = middleware.NewMonitoringMiddleware(a.endpointManager)
 	a.attachTrayMetrics(a.monitoringMiddleware.GetMetrics())
 	a.authMiddleware = middleware.NewAuthMiddleware(a.config.Auth)
+	a.lanAccessGate = middleware.NewLANAccessGate(a.logger)
+	a.syncLANAccessGate()
 
 	// 连接组件
 	a.monitoringMiddleware.SetEventBus(a.eventBus)
@@ -1014,23 +1017,24 @@ func (a *App) startProxyServer() {
 
 	// v5.1+ 端口探测：自动寻找可用端口
 	var actualPort int
-	var listener net.Listener
+	var listeners []net.Listener
 	var err error
+	lanAccess, _ := a.lanAccessState()
 
 	if a.portManager != nil {
 		// 使用 PortManager 进行端口探测
-		listener, actualPort, err = utils.FindAndBind(a.portManager.GetPreferredPort(), 10)
+		listeners, actualPort, err = utils.FindAndBind(a.portManager.GetPreferredPort(), 10, lanAccess)
 		if err != nil {
 			a.logger.Error("❌ 无法找到可用端口", "error", err)
 			a.emitError("代理服务器启动失败", "无法找到可用端口: "+err.Error())
 			return
 		}
 		a.portManager.SetActualPort(actualPort)
+		a.portManager.SetLANAccessActive(lanAccess)
 	} else {
 		// 回退到传统方式（首选端口）
 		actualPort = a.config.Server.Port
-		addr := fmt.Sprintf("%s:%d", a.config.Server.Host, actualPort)
-		listener, err = net.Listen("tcp", addr)
+		listeners, actualPort, err = utils.FindAndBind(actualPort, 1, lanAccess)
 		if err != nil {
 			a.logger.Error("❌ 端口绑定失败", "port", actualPort, "error", err)
 			a.emitError("代理服务器启动失败", fmt.Sprintf("端口 %d 被占用: %v", actualPort, err))
@@ -1041,7 +1045,11 @@ func (a *App) startProxyServer() {
 	// 更新配置中的实际端口
 	a.config.Server.Port = actualPort
 
-	a.proxyRequests = newProxyRequestLifecycle(mux)
+	proxyHandler := http.Handler(mux)
+	if a.lanAccessGate != nil {
+		proxyHandler = a.lanAccessGate.Wrap(proxyHandler)
+	}
+	a.proxyRequests = newProxyRequestLifecycle(proxyHandler)
 	a.proxyServer = &http.Server{
 		Handler:      a.proxyRequests,
 		ReadTimeout:  60 * time.Second,
@@ -1050,23 +1058,25 @@ func (a *App) startProxyServer() {
 	}
 
 	// 在 goroutine 中启动服务器
-	go func() {
-		a.logger.Info("🌐 HTTP 代理服务器启动中...",
-			"address", listener.Addr().String())
-
-		if err := a.proxyServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			a.logger.Error("代理服务器启动失败", "error", err)
-			// 通知前端
-			a.emitError("代理服务器启动失败", err.Error())
-		}
-	}()
+	addresses := make([]string, 0, len(listeners))
+	for _, listener := range listeners {
+		addresses = append(addresses, listener.Addr().String())
+		go func(listener net.Listener) {
+			a.logger.Info("🌐 HTTP 代理服务器启动中...", "address", listener.Addr().String())
+			if err := a.proxyServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+				a.logger.Error("代理服务器启动失败", "address", listener.Addr().String(), "error", err)
+				a.emitError("代理服务器启动失败", err.Error())
+			}
+		}(listener)
+	}
 
 	// 等待服务器启动
 	time.Sleep(100 * time.Millisecond)
 
 	baseURL := fmt.Sprintf("http://%s:%d", a.config.Server.Host, actualPort)
 	a.logger.Info("✅ 代理服务器启动成功",
-		"url", baseURL)
+		"url", baseURL,
+		"addresses", addresses)
 
 	// 端口冲突提示
 	if a.portManager != nil {
@@ -1077,10 +1087,11 @@ func (a *App) startProxyServer() {
 		}
 	}
 
-	// 安全警告
-	if a.config.Server.Host != "127.0.0.1" && a.config.Server.Host != "localhost" && a.config.Server.Host != "::1" {
-		if !a.config.Auth.Enabled {
-			a.logger.Warn("⚠️  安全警告：服务器绑定到非本地地址但未启用鉴权！")
+	// 局域网访问状态提示
+	if lanAccess {
+		a.logger.Info("局域网访问已开启，其他设备须携带 Token")
+		if _, configured := a.lanAccessState(); !configured {
+			a.logger.Warn("局域网访问已开启，但未设置访问 Token，其他设备的请求会全部被拒绝")
 		}
 	}
 }
@@ -1342,6 +1353,30 @@ func (a *App) applySettingsToConfig() {
 	if a.authMiddleware != nil {
 		a.authMiddleware.UpdateConfig(a.config.Auth)
 	}
+	a.syncLANAccessGate()
+}
+
+// syncLANAccessGate applies only settings-store state to the runtime LAN gate.
+// YAML reloads call UpdateConfig directly and intentionally do not reach here.
+func (a *App) syncLANAccessGate() {
+	if a == nil || a.lanAccessGate == nil || a.settingsService == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	enabled := a.settingsService.GetBool(ctx, service.CategoryServer, "lan_access", false)
+	token := ""
+	if a.config != nil {
+		token = a.config.Auth.Token
+	}
+	a.lanAccessGate.Update(enabled, token)
+}
+
+func (a *App) lanAccessState() (enabled, tokenConfigured bool) {
+	if a == nil || a.lanAccessGate == nil {
+		return false, false
+	}
+	return a.lanAccessGate.State()
 }
 
 // getSettingString 获取字符串设置值（带默认值）

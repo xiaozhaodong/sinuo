@@ -723,6 +723,10 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {number} actual_port
  * @property {boolean} is_default
  * @property {boolean} was_occupied
+ * @property {boolean} lan_access
+ * @property {boolean} lan_access_active
+ * @property {boolean} lan_token_configured
+ * @property {string[] | null} lan_addresses
  */
 
 /**

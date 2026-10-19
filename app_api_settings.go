@@ -7,7 +7,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,10 +71,14 @@ type BatchUpdateSettingsInput struct {
 
 // PortInfo 端口信息
 type PortInfo struct {
-	PreferredPort int  `json:"preferred_port"`
-	ActualPort    int  `json:"actual_port"`
-	IsDefault     bool `json:"is_default"`
-	WasOccupied   bool `json:"was_occupied"`
+	PreferredPort      int      `json:"preferred_port"`
+	ActualPort         int      `json:"actual_port"`
+	IsDefault          bool     `json:"is_default"`
+	WasOccupied        bool     `json:"was_occupied"`
+	LANAccess          bool     `json:"lan_access"`
+	LANAccessActive    bool     `json:"lan_access_active"`
+	LANTokenConfigured bool     `json:"lan_token_configured"`
+	LANAddresses       []string `json:"lan_addresses"`
 }
 
 // GetSettingsStorageStatus 获取设置存储状态
@@ -227,6 +235,9 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := a.validateLANAccessSettingUpdates(ctx, []UpdateSettingInput{input}); err != nil {
+		return err
+	}
 	if err := validateRetentionSettingUpdates([]UpdateSettingInput{input}); err != nil {
 		return err
 	}
@@ -248,6 +259,11 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 	if err := a.settingsService.Set(ctx, input.Category, input.Key, input.Value); err != nil {
 		return fmt.Errorf("更新设置失败: %w", err)
 	}
+	if input.Category == service.CategoryServer && input.Key == "lan_access" {
+		// RequiresRestart settings intentionally skip the generic on-change
+		// callback, but the gate must reject remote requests immediately.
+		a.syncLANAccessGate()
+	}
 
 	if a.logger != nil {
 		a.logger.Info("✅ 设置已更新", "category", input.Category, "key", input.Key)
@@ -267,6 +283,9 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := a.validateLANAccessSettingUpdates(ctx, input.Settings); err != nil {
+		return err
+	}
 	if err := validateRetentionSettingUpdates(input.Settings); err != nil {
 		return err
 	}
@@ -321,6 +340,12 @@ func (a *App) ResetCategorySettings(category string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if category == service.CategoryAuth {
+		lanAccess := a.settingsService.GetBool(ctx, service.CategoryServer, "lan_access", false)
+		if lanAccess {
+			return fmt.Errorf("开启局域网访问时不能重置「访问鉴权」，请先关闭局域网访问")
+		}
+	}
 
 	if err := a.settingsService.ResetCategory(ctx, category); err != nil {
 		return fmt.Errorf("重置设置失败: %w", err)
@@ -340,23 +365,68 @@ func (a *App) GetPortInfo() PortInfo {
 
 	// 默认值
 	info := PortInfo{
-		PreferredPort: a.config.Server.Port,
-		ActualPort:    a.config.Server.Port,
+		PreferredPort: 8087,
+		ActualPort:    8087,
 		IsDefault:     true,
 		WasOccupied:   false,
+		LANAddresses:  []string{},
+	}
+	if a.config != nil {
+		info.PreferredPort = a.config.Server.Port
+		info.ActualPort = a.config.Server.Port
 	}
 
 	if a.portManager != nil {
 		portInfo := a.portManager.GetPortInfo()
 		info = PortInfo{
-			PreferredPort: portInfo.PreferredPort,
-			ActualPort:    portInfo.ActualPort,
-			IsDefault:     portInfo.IsDefault,
-			WasOccupied:   portInfo.WasOccupied,
+			PreferredPort:   portInfo.PreferredPort,
+			ActualPort:      portInfo.ActualPort,
+			IsDefault:       portInfo.IsDefault,
+			WasOccupied:     portInfo.WasOccupied,
+			LANAccessActive: portInfo.LANAccessActive,
+			LANAddresses:    []string{},
 		}
+	}
+	info.LANAccess, info.LANTokenConfigured = a.lanAccessState()
+	if info.LANAccessActive {
+		info.LANAddresses = privateLANAddresses(info.ActualPort)
 	}
 
 	return info
+}
+
+func privateLANAddresses(port int) []string {
+	addresses := make(map[string]struct{})
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return []string{}
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		ifaceAddresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, ifaceAddress := range ifaceAddresses {
+			prefix, err := netip.ParsePrefix(ifaceAddress.String())
+			if err != nil {
+				continue
+			}
+			addr := prefix.Addr().Unmap()
+			if !addr.Is4() || !addr.IsPrivate() {
+				continue
+			}
+			addresses["http://"+net.JoinHostPort(addr.String(), strconv.Itoa(port))] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(addresses))
+	for address := range addresses {
+		result = append(result, address)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // UpdatePreferredPort 更新首选端口（需要重启生效）

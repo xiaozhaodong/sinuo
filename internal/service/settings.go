@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,7 +248,20 @@ func (s *SettingsService) GetBool(ctx context.Context, category, key string, def
 	if err != nil || val == "" {
 		return defaultVal
 	}
-	return val == "true" || val == "1" || val == "yes"
+	return ParseBool(val, defaultVal)
+}
+
+// ParseBool parses the boolean spelling used by persisted settings and API
+// updates. Invalid non-empty values retain the historical false result.
+func ParseBool(value string, defaultVal bool) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		return true
+	case "":
+		return defaultVal
+	default:
+		return false
+	}
 }
 
 // GetDuration 获取时间间隔值
@@ -448,6 +462,7 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	case CategoryServer:
 		return []*store.SettingRecord{
 			{Category: CategoryServer, Key: "preferred_port", Value: "8087", ValueType: ValueTypeInt, Label: "首选端口", Description: "API 服务首选端口，被占用时自动递增", DisplayOrder: 1, RequiresRestart: true},
+			{Category: CategoryServer, Key: "lan_access", Value: "false", ValueType: ValueTypeBool, Label: "允许局域网访问", Description: "开启后同一网络中的其他设备可访问主端口，须携带「访问鉴权」中的 Token，本机请求不受影响；关闭后立即拒绝其他设备，重启后只监听本机。Claude Code / Codex 独立入口始终只监听本机", DisplayOrder: 2, RequiresRestart: true},
 		}
 
 	case CategoryHealth:
