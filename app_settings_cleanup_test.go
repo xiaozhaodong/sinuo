@@ -52,16 +52,16 @@ func TestSettingsList_OnlyReturnsRegisteredVisibleSettings(t *testing.T) {
 	t.Fatal("按分类读取的行为不应改变")
 }
 
-func TestSettingsCleanup_PageHasNineCategoriesAndActiveControls(t *testing.T) {
+func TestSettingsCleanup_PageHasTenCategoriesAndActiveControls(t *testing.T) {
 	app := newImageGenerationSettingsTestApp(t)
-	if categories := app.GetSettingCategories(); len(categories) != 9 {
-		t.Fatalf("设置页应有 9 组，得到 %d", len(categories))
+	if categories := app.GetSettingCategories(); len(categories) != 10 {
+		t.Fatalf("设置页应有 10 组，得到 %d", len(categories))
 	}
 	settings, err := app.GetAllSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCount := 23
+	wantCount := 24
 	if runtime.GOOS != "darwin" {
 		wantCount -= 3
 	}

@@ -1099,6 +1099,11 @@ export const resetSettings = async (category) => {
   });
 };
 
+// 软件更新仅桌面端支持；非 Wails 环境由适配层返回空状态。
+export const getAppUpdateStatus = () => WailsApi.getAppUpdateStatus();
+export const checkAppUpdate = () => WailsApi.checkAppUpdate();
+export const skipAppUpdateVersion = (version) => WailsApi.skipAppUpdateVersion(version);
+
 /**
  * 获取端口信息
  * @returns {Promise<Object>} - {preferred_port, actual_port, was_occupied}

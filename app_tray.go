@@ -110,7 +110,7 @@ func trayRebuildEvent(name string) bool {
 	switch name {
 	case EventClaudeRoutingUpdate, EventModelRoutingUpdate, EventClaudeCodeEntryUpdate,
 		EventClaudeSubscriptionRateLimit, EventEndpointUpdate, EventCodexSubscriptionProxyStatus,
-		EventConfigReloaded:
+		EventConfigReloaded, EventAppUpdateStatus:
 		return true
 	default:
 		return false

@@ -6,6 +6,7 @@
 
 import { useState, Suspense, lazy, useCallback, useEffect, startTransition } from 'react';
 import Sidebar from '@components/layout/Sidebar.jsx';
+import useAppUpdate from '@components/app-update/useAppUpdate.js';
 import { AppToolbar, ToolbarProvider } from '@components/layout/AppToolbar.jsx';
 import { pageTitleOf } from '@components/layout/navigation.js';
 import StartupScreen from '@components/layout/StartupScreen.jsx';
@@ -85,6 +86,8 @@ const AppRoutes = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [activeCodexTab, setActiveCodexTab] = useState('accounts');
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
+  const [settingsFocusSection, setSettingsFocusSection] = useState(null);
+  const appUpdate = useAppUpdate();
   // 请求页只在挂载时消费一次筛选交接；托盘带条件跳转时若已停在请求页，换 key 让它重新挂载
   const [requestsPageKey, setRequestsPageKey] = useState(0);
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
@@ -143,6 +146,14 @@ const AppRoutes = () => {
     });
   }, []);
 
+  const navigateToAppUpdate = useCallback(() => {
+    startTransition(() => {
+      setSettingsFocusSection('app_update');
+      setActiveTab('settings');
+    });
+  }, []);
+  const clearSettingsFocus = useCallback(() => setSettingsFocusSection(null), []);
+
   const navigateToClaudeAccess = useCallback(() => {
     startTransition(() => {
       setActiveClaudeTab('client-access');
@@ -171,6 +182,7 @@ const AppRoutes = () => {
         setActiveTab(route.tab);
         if (route.claudeTab) setActiveClaudeTab(route.claudeTab);
         if (route.codexTab) setActiveCodexTab(route.codexTab);
+        if (route.settingsSection) setSettingsFocusSection(route.settingsSection);
         if (route.requestsFilters) {
           setPendingRequestsFilters(route.requestsFilters);
           setRequestsPageKey((key) => key + 1);
@@ -235,7 +247,7 @@ const AppRoutes = () => {
       pricing: <PricingPage />,
       'account-pool': <CodexPage activeTab={activeCodexTab} onTabChange={setActiveCodexTab} />,
       // v5.1: 设置页面（可编辑）
-      settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} onNavigateToClaudeAccess={navigateToClaudeAccess} />,
+      settings: <SettingsPage onNavigateToCodexAccess={navigateToCodexAccess} onNavigateToClaudeAccess={navigateToClaudeAccess} focusSection={settingsFocusSection} onFocusSectionHandled={clearSettingsFocus} appUpdate={appUpdate} />,
       // 保留只读配置页面
       config: <ConfigPage />,
       // v5.1: 系统日志页面
@@ -263,6 +275,8 @@ const AppRoutes = () => {
               onTabChange={switchTab}
               connectionStatus={connectionStatus}
               proxyStatus={proxyStatus}
+              updateStatus={appUpdate.status}
+              onOpenAppUpdate={navigateToAppUpdate}
             />
 
             <div className="flex min-w-0 flex-1 flex-col">

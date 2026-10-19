@@ -15,6 +15,11 @@ import * as $models from "./models.js";
  */
 
 /**
+ * AppUpdateStatus 是前端展示的更新检查状态。P1 只检查版本，不下载或安装。
+ * @typedef {$models.AppUpdateStatus} AppUpdateStatus
+ */
+
+/**
  * BatchHealthCheckResult 批量连通性测试结果
  * @typedef {$models.BatchHealthCheckResult} BatchHealthCheckResult
  */

@@ -50,6 +50,9 @@ func Build(s Snapshot) []Item {
 	if s.MenuBarLabel != "" {
 		items = append(items, menuBarMenu(s))
 	}
+	if s.UpdateVersion != "" {
+		items = append(items, navigate("有新版本 "+s.UpdateVersion+"…", "settings-update"))
+	}
 	return append(items, quit)
 }
 

@@ -41,6 +41,14 @@ export function BatchUpdateSettings(input) {
 }
 
 /**
+ * CheckAppUpdate 手动检查更新，返回完整状态。
+ * @returns {$CancellablePromise<$models.AppUpdateStatus>}
+ */
+export function CheckAppUpdate() {
+    return $Call.ByID(3342248195);
+}
+
+/**
  * CheckPortAvailable 检查端口是否可用
  * @param {number} port
  * @returns {$CancellablePromise<boolean>}
@@ -254,6 +262,14 @@ export function GenerateChatGPTOAuthLink() {
  */
 export function GetAllSettings() {
     return $Call.ByID(1224888095);
+}
+
+/**
+ * GetAppUpdateStatus 获取软件更新状态。
+ * @returns {$CancellablePromise<$models.AppUpdateStatus>}
+ */
+export function GetAppUpdateStatus() {
+    return $Call.ByID(909004133);
 }
 
 /**
@@ -900,6 +916,15 @@ export function SetEndpointPriority(name, priority) {
  */
 export function SetGroupActiveAccount(groupKey, id) {
     return $Call.ByID(3026684955, groupKey, id);
+}
+
+/**
+ * SkipAppUpdateVersion 跳过当前版本；传空字符串取消跳过。
+ * @param {string} version
+ * @returns {$CancellablePromise<void>}
+ */
+export function SkipAppUpdateVersion(version) {
+    return $Call.ByID(1326746212, version);
 }
 
 /**

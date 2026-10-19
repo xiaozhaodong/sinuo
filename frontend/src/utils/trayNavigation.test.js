@@ -9,6 +9,7 @@ test('托盘导航覆盖请求、今日失败、日志、管理页、模型路�
     endpoints: { tab: 'endpoints', claudeTab: 'endpoints' },
     'account-pool': { tab: 'account-pool', codexTab: 'accounts' },
     'codex-access': { tab: 'account-pool', codexTab: 'client-access' },
+    'settings-update': { tab: 'settings', settingsSection: 'app_update' },
     'claude-model-routing': { tab: 'endpoints', claudeTab: 'routing' },
     'codex-model-routing': { tab: 'account-pool', codexTab: 'routing' }
   };

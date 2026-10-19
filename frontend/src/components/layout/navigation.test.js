@@ -12,7 +12,7 @@ const sidebarSourcePath = join(here, 'Sidebar.jsx');
 const indexCssPath = resolve(here, '../../index.css');
 
 const allItems = [...NAV_SECTIONS.flatMap((section) => section.items), SETTINGS_NAV_ITEM];
-const TRAY_TARGETS = ['requests', 'logs', 'requests-failed', 'endpoints', 'account-pool', 'codex-access', 'claude-model-routing', 'codex-model-routing'];
+const TRAY_TARGETS = ['requests', 'logs', 'requests-failed', 'endpoints', 'account-pool', 'codex-access', 'claude-model-routing', 'codex-model-routing', 'settings-update'];
 
 test('侧边栏保留原页面键，托盘跳转的目标页都能在导航里找到', () => {
   const names = allItems.map((item) => item.name);

@@ -175,6 +175,7 @@ func TestTray_RebuildTriggersExcludeStatusAndRequestChanges(t *testing.T) {
 		{name: EventEndpointUpdate, want: true},
 		{name: EventCodexSubscriptionProxyStatus, want: true},
 		{name: EventConfigReloaded, want: true},
+		{name: EventAppUpdateStatus, want: true},
 		{name: EventSystemStatus, want: false},
 		{name: EventRequestUpdate, want: false},
 	} {

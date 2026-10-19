@@ -22,6 +22,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/updater"
 )
 
 // 版本信息
@@ -59,6 +60,8 @@ var (
 )
 
 func main() {
+	// 助手进程是 App 自身重新执行，必须在 flag、数据迁移和任何业务初始化前退出。
+	updater.HandleHelperMode()
 	flag.Parse()
 
 	// 处理版本标志

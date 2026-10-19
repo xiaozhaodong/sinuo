@@ -20,6 +20,7 @@ const (
 	EventNotification   = "notification"
 	// EventCodexSubscriptionProxyStatus 只推运行态摘要；请求列表仍用 request:update。
 	EventCodexSubscriptionProxyStatus = "codex-subscription-proxy:status"
+	EventAppUpdateStatus              = "app-update:status"
 )
 
 // wailsRequestBroadcaster 将内部请求生命周期事件桥接到 Wails WebView。

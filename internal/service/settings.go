@@ -28,6 +28,7 @@ const (
 	CategoryServer          = "server"
 	CategoryClaudeRouting   = "claude_routing"
 	CategoryImageGeneration = "image_generation"
+	CategoryAppUpdate       = "app_update"
 	// CategoryCodexSubscriptionProxy 由 CodexSubscriptionProxySettingsService 独占：
 	// 单行 JSON 配置 + revision CAS，不注册默认值/元数据，通用写入、重置、删除一律拒绝。
 	CategoryCodexSubscriptionProxy = "codex_subscription_proxy"
@@ -162,6 +163,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 				Icon:        "📡",
 				Order:       0, // 最前（特殊处理，单独显示）
 			},
+			CategoryAppUpdate: {Name: CategoryAppUpdate, Label: "软件更新", Description: "检查 Sinuo 的新版本", Icon: "⬆️", Order: 12},
 		},
 	}
 	svc.registeredSettings = make(map[[2]string]struct{})
@@ -449,6 +451,9 @@ func (s *SettingsService) GetAllDefaults() []*store.SettingRecord {
 	// Image Generation 设置
 	defaults = append(defaults, s.getDefaultsForCategory(CategoryImageGeneration)...)
 
+	// App update 设置
+	defaults = append(defaults, s.getDefaultsForCategory(CategoryAppUpdate)...)
+
 	return defaults
 }
 
@@ -520,6 +525,11 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 			{Category: CategoryImageGeneration, Key: "model", Value: "gpt-image-2", ValueType: ValueTypeString, Label: "默认模型", Description: "请求未提供 model 时使用；通常为 gpt-image-2", DisplayOrder: 6},
 			{Category: CategoryImageGeneration, Key: "fixed_price_usd", Value: "0", ValueType: ValueTypeFloat, Label: "每次图像请求价格（USD）", Description: "每个成功的生成或编辑请求固定记录这一笔成本；0 表示暂不计费", DisplayOrder: 7},
 			{Category: CategoryImageGeneration, Key: "timeout", Value: "300s", ValueType: ValueTypeDuration, Label: "请求超时", Description: "单次图像生成或编辑请求的最长等待时间", DisplayOrder: 8},
+		}
+
+	case CategoryAppUpdate:
+		return []*store.SettingRecord{
+			{Category: CategoryAppUpdate, Key: "auto_check", Value: "true", ValueType: ValueTypeBool, Label: "自动检查更新", Description: "启动约 1 分钟后检查一次，之后每 6 小时检查一次；只检查版本信息，不会自动下载", DisplayOrder: 1},
 		}
 
 	case CategoryHotPool:

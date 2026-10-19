@@ -27,6 +27,27 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
+ * AppUpdateStatus 是前端展示的更新检查状态。P1 只检查版本，不下载或安装。
+ * @typedef {Object} AppUpdateStatus
+ * @property {string} current_version
+ * @property {string} commit
+ * @property {string} build_time
+ * @property {boolean} local_build
+ * @property {string} state
+ * @property {boolean} update_available
+ * @property {string} latest_version
+ * @property {string} release_name
+ * @property {string} notes
+ * @property {string} published_at
+ * @property {string} checked_at
+ * @property {string} release_url
+ * @property {string} error
+ * @property {boolean} skipped
+ * @property {boolean} auto_check
+ * @property {number} revision
+ */
+
+/**
  * BatchHealthCheckResult 批量连通性测试结果
  * @typedef {Object} BatchHealthCheckResult
  * @property {boolean} success

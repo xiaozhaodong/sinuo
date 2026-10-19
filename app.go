@@ -88,6 +88,7 @@ type App struct {
 	settingsStore   store.SettingsStore      // 设置数据持久化
 	settingsService *service.SettingsService // 设置业务服务
 	portManager     *utils.PortManager       // 端口管理器
+	appUpdate       *appUpdateManager        // 检查更新与提示（P1，不负责下载）
 
 	// v6.0+ 账号池存储 (SQLite)
 	accountPoolStore   store.AccountPoolStore      // 账号池数据持久化
@@ -286,6 +287,7 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 		"proxy_port", a.config.Server.Port)
 	a.scheduleStartupConnectivityChecks()
 	a.completeStartup()
+	a.setupAppUpdate(ctx)
 }
 
 // setupModelRoutingService 初始化模型路由服务并把其接入端点调度器。
@@ -347,12 +349,16 @@ func (a *App) shutdown(ctx context.Context) {
 	done := make(chan struct{})
 	a.shutdownDone = done
 	server, requests := a.proxyServer, a.proxyRequests
+	appUpdate := a.appUpdate
 	subscriptionRuntime := a.subscriptionProxyRuntime
 	claudeCodeEntryRuntime := a.claudeCodeEntryRuntime
 	a.mu.Unlock()
 	defer close(done)
 
 	a.logger.Info("🛑 正在关闭 Sinuo...")
+	if appUpdate != nil {
+		appUpdate.Stop()
+	}
 
 	// 0. 先停 Codex 订阅代理新入口：它持有独立 listener 与 WS 连接，
 	//    停用只关闭自己的资源，不影响仍被旧入口使用的账号池与追踪服务。
@@ -1256,6 +1262,9 @@ func (a *App) setupSettingsStore() {
 	// 设置配置变更回调 - 热更新
 	a.settingsService.SetOnChangeCallback(func() {
 		a.applySettingsToConfig()
+		if a.appUpdate != nil {
+			a.appUpdate.OnSettingsChanged()
+		}
 		a.notifyTray(EventConfigReloaded)
 	})
 

@@ -86,6 +86,7 @@ type Snapshot struct {
 	CodexEntryState, CodexEntryLabel, CodexEntryMode string
 	CodexEntryPort                                   int
 	CodexEntryRevision                               int64
+	UpdateVersion                                    string
 }
 
 const (

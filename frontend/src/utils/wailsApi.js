@@ -1,5 +1,6 @@
 import { normalizeSoftFailurePolicyPayload } from './softFailurePolicy.js';
 import { toError } from './errors.js';
+import { emptyAppUpdateStatus } from '../components/app-update/appUpdateView.js';
 
 // ============================================
 // Wails API 适配层
@@ -190,6 +191,24 @@ export const openExternalURL = async (url) => {
   await initWails();
   if (!WailsRuntime?.Browser?.OpenURL) throw new Error('Wails not available');
   return WailsRuntime.Browser.OpenURL(url);
+};
+
+export const getAppUpdateStatus = async () => {
+  if (!isWailsEnvironment()) return emptyAppUpdateStatus();
+  await initWails();
+  return getWailsMethod('GetAppUpdateStatus')();
+};
+
+export const checkAppUpdate = async () => {
+  if (!isWailsEnvironment()) return emptyAppUpdateStatus();
+  await initWails();
+  return getWailsMethod('CheckAppUpdate')();
+};
+
+export const skipAppUpdateVersion = async (version) => {
+  if (!isWailsEnvironment()) return;
+  await initWails();
+  return getWailsMethod('SkipAppUpdateVersion')(version);
 };
 
 export const getRecentLogs = async (limit) => {

@@ -18,12 +18,14 @@ import {
   Archive,
   TerminalSquare,
   Monitor,
-  KeyRound
+  KeyRound,
+  Download
 } from 'lucide-react';
 import { LoadingSpinner, ErrorMessage } from '@components/ui';
 import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
 import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
+import AppUpdatePanel from '@components/app-update/AppUpdatePanel.jsx';
 import useConfirm from '@hooks/useConfirm.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
 import { IMAGE_GENERATION_CATEGORY } from '@pages/codex/images/imageSettingsView.js';
@@ -66,14 +68,15 @@ const CATEGORY_ICONS = {
   token_counting: Hash,
   retention: Archive,
   codex_identity: TerminalSquare,
-  desktop: Monitor
+  desktop: Monitor,
+  app_update: Download
 };
 
 // ============================================
 // Settings 页面主组件
 // ============================================
 
-const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => {
+const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess, focusSection, onFocusSectionHandled, appUpdate }) => {
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState([]);
   const { confirm, confirmDialog } = useConfirm();
@@ -148,6 +151,15 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    if (loading || !focusSection || !categories.some((category) => category.name === focusSection)) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      scrollToSection(sectionIdOf(focusSection));
+      onFocusSectionHandled?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, categories, focusSection, scrollToSection, onFocusSectionHandled]);
 
   useEffect(() => {
     if (!isWails) return undefined;
@@ -379,6 +391,7 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess }) => 
                       onReset={() => handleResetCategory(category.name, category.label)}
                       resetDisabled={saving}
                     >
+                      {category.name === 'app_update' && appUpdate && <AppUpdatePanel update={appUpdate} />}
                       {renderItems(category.name)}
                       {(!settingsByCategory[category.name] || settingsByCategory[category.name].length === 0) && (
                         <div className="px-3.5 py-3 text-center text-xs text-fg-subtle">暂无设置项</div>

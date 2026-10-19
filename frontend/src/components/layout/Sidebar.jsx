@@ -13,6 +13,7 @@ import BrandMark from './BrandMark.jsx';
 import ThemeMenu from './ThemeMenu.jsx';
 import { NAV_SECTIONS, SETTINGS_NAV_ITEM } from './navigation.js';
 import { resolveClaudeCodeEntryStatus, resolveCodexEntryStatus, resolveMainPortStatus } from './sidebarStatus.js';
+import { resolveUpdateBadge } from '@components/app-update/appUpdateView.js';
 
 const NAV_ICONS = {
   overview: LayoutDashboard,
@@ -25,20 +26,21 @@ const NAV_ICONS = {
   settings: Settings
 };
 
-const NavItem = ({ item, active, onSelect, className = '' }) => {
+const NavItem = ({ item, active, onSelect, className = '', badge = null, title }) => {
   const Icon = NAV_ICONS[item.name];
   return (
     <button
       type="button"
       onClick={() => onSelect(item.name)}
       aria-current={active ? 'page' : undefined}
-      title={`${item.label}  ${formatShortcut(item.shortcut)}`}
-      className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] ${
+      title={title || `${item.label}  ${formatShortcut(item.shortcut)}`}
+      className={`flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] ${
         active ? 'bg-sidebar-sel font-medium text-fg' : 'text-fg-body'
       } ${className}`}
     >
       <Icon size={16} strokeWidth={1.75} className="sidebar-icon shrink-0" />
       <span className="truncate">{item.label}</span>
+      {badge && <span className="ml-auto shrink-0 whitespace-nowrap rounded-full bg-accent-soft px-1.5 text-[11px] font-medium text-accent-fg">{badge}</span>}
     </button>
   );
 };
@@ -71,8 +73,9 @@ const ProxyStatusList = ({ connectionStatus, proxyStatus }) => {
   );
 };
 
-const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
+const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {}, updateStatus, onOpenAppUpdate }) => {
   const mac = isMacPlatform();
+  const updateBadge = resolveUpdateBadge(updateStatus);
 
   return (
     <nav aria-label="主导航" className="flex w-[220px] shrink-0 flex-col border-r border-line bg-sidebar">
@@ -99,7 +102,7 @@ const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxy
       <div className="border-t border-line px-2.5 pb-2.5 pt-2">
         <ProxyStatusList connectionStatus={connectionStatus} proxyStatus={proxyStatus} />
         <div className="flex items-center gap-1">
-          <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={onTabChange} className="flex-1" />
+          <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={updateBadge ? onOpenAppUpdate : onTabChange} className="flex-1" badge={updateBadge} title={updateBadge ? `有新版本 ${updateStatus.latest_version}，点击查看` : undefined} />
           <ThemeMenu placement="top" />
         </div>
       </div>

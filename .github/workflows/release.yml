@@ -217,35 +217,42 @@ jobs:
       - name: Get version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+      - name: Prepare release notes
+        run: |
+          bash scripts/release-notes.sh "${VERSION#v}" > release-body.md
+          cat >> release-body.md <<'RELEASE_BODY'
+
+          <!-- sinuo:release-notes-end -->
+
+          ### 下载
+
+          | 平台 | 文件 |
+          |------|------|
+          | macOS (Intel) | `Sinuo-darwin-amd64.zip` |
+          | macOS (Apple Silicon) | `Sinuo-darwin-arm64.zip` |
+          | Windows | `Sinuo-windows-amd64.zip` |
+          | Linux | `Sinuo-linux-amd64.tar.gz` |
+
+          ### 安装说明
+
+          **macOS**: 解压后将 `Sinuo.app` 拖入应用程序文件夹
+          **Windows**: 解压后运行 `Sinuo.exe`
+          **Linux**: 解压后运行 `Sinuo`
+
+          ### 校验
+
+          ```bash
+          sha256sum -c checksums.txt
+          ```
+
+          详细更新内容请查看 [CHANGELOG.md](./CHANGELOG.md)
+          RELEASE_BODY
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: Sinuo ${{ env.VERSION }}
-          body: |
-            ## Sinuo ${{ env.VERSION }}
-
-            ### 下载
-
-            | 平台 | 文件 |
-            |------|------|
-            | macOS (Intel) | `Sinuo-darwin-amd64.zip` |
-            | macOS (Apple Silicon) | `Sinuo-darwin-arm64.zip` |
-            | Windows | `Sinuo-windows-amd64.zip` |
-            | Linux | `Sinuo-linux-amd64.tar.gz` |
-
-            ### 安装说明
-
-            **macOS**: 解压后将 `Sinuo.app` 拖入应用程序文件夹
-            **Windows**: 解压后运行 `Sinuo.exe`
-            **Linux**: 解压后运行 `Sinuo`
-
-            ### 校验
-
-            ```bash
-            sha256sum -c checksums.txt
-            ```
-
-            详细更新内容请查看 [CHANGELOG.md](./CHANGELOG.md)
+          body_path: release-body.md
           files: release/*
           draft: false
           prerelease: false

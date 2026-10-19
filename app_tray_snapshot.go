@@ -31,6 +31,10 @@ func (t *appTray) snapshot() tray.Snapshot {
 	status := a.GetSystemStatus()
 	s.Running = status.ProxyRunning
 	s.Address = net.JoinHostPort(status.ProxyHost, strconv.Itoa(status.ProxyPort))
+	updateStatus := a.GetAppUpdateStatus()
+	if updateStatus.UpdateAvailable && !updateStatus.Skipped {
+		s.UpdateVersion = updateStatus.LatestVersion
+	}
 	if !s.Running {
 		return s
 	}
