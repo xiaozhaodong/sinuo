@@ -10,11 +10,11 @@
         <key>CFBundleIdentifier</key>
         <string>app.sinuo.desktop</string>
         <key>CFBundleVersion</key>
-        <string>6.0.1</string>
+        <string>6.1.0</string>
         <key>CFBundleGetInfoString</key>
         <string>AI 编程工具的本地网关</string>
         <key>CFBundleShortVersionString</key>
-        <string>6.0.1</string>
+        <string>6.1.0</string>
         <key>CFBundleIconFile</key>
         <string>icons</string>
         <key>LSMinimumSystemVersion</key>
