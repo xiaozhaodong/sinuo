@@ -3,10 +3,10 @@ package tracking
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -153,223 +153,91 @@ func (eh *ErrorHandler) attemptReconnection() bool {
 	return false
 }
 
-// CreateBackup creates a backup of the current database
-func (eh *ErrorHandler) CreateBackup() error {
-	if eh.tracker == nil || eh.tracker.db == nil {
-		return fmt.Errorf("tracker or database not initialized")
+// CreateBackup 创建当前数据库的完整快照。
+func (eh *ErrorHandler) CreateBackup() (err error) {
+	startedAt := time.Now()
+	if eh.tracker == nil || eh.tracker.db == nil || eh.tracker.config == nil {
+		return fmt.Errorf("tracker, database or config not initialized")
+	}
+	dbPath := eh.tracker.config.DatabasePath
+	if dbPath == "" || dbPath == ":memory:" {
+		return fmt.Errorf("backup requires a file database path")
 	}
 
-	dbPath := eh.tracker.config.DatabasePath
 	backupPath := dbPath + ".backup"
 	tempBackupPath := backupPath + ".tmp"
-
-	// 创建备份目录
-	if err := os.MkdirAll(filepath.Dir(tempBackupPath), 0755); err != nil {
-		return fmt.Errorf("failed to create backup directory: %w", err)
+	defer func() {
+		if err != nil {
+			if cleanupErr := os.Remove(tempBackupPath); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+				err = errors.Join(err, fmt.Errorf("failed to remove temporary backup: %w", cleanupErr))
+			}
+		}
+	}()
+	// VACUUM INTO 要求目标文件不存在。
+	if err := os.Remove(tempBackupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove stale temporary backup: %w", err)
 	}
-
-	// 使用SQLite的备份API
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// 创建临时备份
-	backupDB, err := sql.Open("sqlite", tempBackupPath)
+	if err := createSQLiteBackupSnapshot(ctx, dbPath, tempBackupPath); err != nil {
+		return err
+	}
+	if err := validateSQLiteBackup(ctx, tempBackupPath); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempBackupPath, 0o600); err != nil {
+		return fmt.Errorf("failed to secure backup permissions: %w", err)
+	}
+	info, err := os.Stat(tempBackupPath)
 	if err != nil {
-		return fmt.Errorf("failed to create backup database: %w", err)
+		return fmt.Errorf("failed to stat temporary backup: %w", err)
 	}
-	defer backupDB.Close()
-
-	// 简化的备份方案：导出和导入数据
-	if err := eh.performSimpleBackup(ctx, backupDB); err != nil {
-		os.Remove(tempBackupPath)
-		return fmt.Errorf("backup operation failed: %w", err)
-	}
-
-	// 原子性地移动备份文件
 	if err := os.Rename(tempBackupPath, backupPath); err != nil {
-		os.Remove(tempBackupPath)
 		return fmt.Errorf("failed to finalize backup: %w", err)
 	}
-
-	eh.logger.Info("Database backup created successfully", "backup_path", backupPath)
+	eh.logger.Info("Database backup created successfully", "backup_path", backupPath,
+		"duration", time.Since(startedAt), "size_bytes", info.Size())
 	return nil
 }
 
-// performSimpleBackup performs a simple backup by recreating schema and copying data
-func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.DB) error {
-	schemaSQL, err := schemaFS.ReadFile("schema.sql")
+// createSQLiteBackupSnapshot 使用独立只读连接，避免占用 tracker 的写连接。
+func createSQLiteBackupSnapshot(ctx context.Context, dbPath, backupPath string) (err error) {
+	sourceDB, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
-		return fmt.Errorf("failed to read backup schema: %w", err)
+		return fmt.Errorf("failed to open backup source read-only: %w", err)
 	}
-	if _, err := backupDB.ExecContext(ctx, string(schemaSQL)); err != nil {
-		return fmt.Errorf("failed to create backup schema: %w", err)
-	}
-
-	tables := []string{
-		"request_logs",
-		"usage_summary",
-		"upstream_accounts",
-	}
-
-	totalRows := 0
-	for _, table := range tables {
-		rowsCopied, err := eh.copyTableData(ctx, eh.tracker.db, backupDB, table)
-		if err != nil {
-			return fmt.Errorf("failed to backup %s: %w", table, err)
+	defer func() {
+		if closeErr := sourceDB.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close backup source: %w", closeErr))
 		}
-		totalRows += rowsCopied
+	}()
+	query := "VACUUM INTO '" + strings.ReplaceAll(backupPath, "'", "''") + "'"
+	if _, err := sourceDB.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("failed to create SQLite backup snapshot: %w", err)
 	}
-
-	eh.logger.Info("Backup completed", "tables", len(tables), "rows_copied", totalRows)
 	return nil
 }
 
-func (eh *ErrorHandler) copyTableData(ctx context.Context, srcDB, dstDB *sql.DB, table string) (int, error) {
-	exists, err := eh.tableExists(ctx, srcDB, table)
+// validateSQLiteBackup 只读检查临时快照，校验通过后才能替换旧备份。
+func validateSQLiteBackup(ctx context.Context, backupPath string) (err error) {
+	backupDB, err := sql.Open("sqlite", "file:"+backupPath+"?mode=ro")
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to open backup for validation: %w", err)
 	}
-	if !exists {
-		return 0, nil
-	}
-
-	srcColumns, hasID, err := eh.tableColumns(ctx, srcDB, table)
-	if err != nil {
-		return 0, err
-	}
-	dstColumns, _, err := eh.tableColumns(ctx, dstDB, table)
-	if err != nil {
-		return 0, err
-	}
-
-	allowed := make(map[string]struct{}, len(dstColumns))
-	for _, column := range dstColumns {
-		allowed[column] = struct{}{}
-	}
-
-	columns := make([]string, 0, len(srcColumns))
-	for _, column := range srcColumns {
-		if _, ok := allowed[column]; ok {
-			columns = append(columns, column)
+	defer func() {
+		if closeErr := backupDB.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close backup validation database: %w", closeErr))
 		}
+	}()
+	var result string
+	if err := backupDB.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
+		return fmt.Errorf("failed to check backup integrity: %w", err)
 	}
-	if len(columns) == 0 {
-		return 0, nil
+	if result != "ok" {
+		return fmt.Errorf("backup quick_check returned %q", result)
 	}
-
-	selectSQL := fmt.Sprintf("SELECT %s FROM %s", joinQuotedColumns(columns), quoteIdentifier(table))
-	if hasID {
-		selectSQL += " ORDER BY \"id\""
-	}
-
-	rows, err := srcDB.QueryContext(ctx, selectSQL)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
-	insertSQL := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s)",
-		quoteIdentifier(table),
-		joinQuotedColumns(columns),
-		placeholders(len(columns)),
-	)
-	stmt, err := dstDB.PrepareContext(ctx, insertSQL)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-
-	count := 0
-	for rows.Next() {
-		values := make([]any, len(columns))
-		dest := make([]any, len(columns))
-		for i := range values {
-			dest[i] = &values[i]
-		}
-		if err := rows.Scan(dest...); err != nil {
-			return count, err
-		}
-		for i, value := range values {
-			if raw, ok := value.([]byte); ok {
-				values[i] = string(raw)
-			}
-		}
-		if _, err := stmt.ExecContext(ctx, values...); err != nil {
-			return count, err
-		}
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		return count, err
-	}
-
-	return count, nil
-}
-
-func (eh *ErrorHandler) tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
-	var count int
-	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func (eh *ErrorHandler) tableColumns(ctx context.Context, db *sql.DB, table string) ([]string, bool, error) {
-	query := fmt.Sprintf("PRAGMA table_info(%s)", quoteIdentifier(table))
-	rows, err := db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-
-	columns := make([]string, 0, 16)
-	hasID := false
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			columnType string
-			notNull    int
-			defaultVal any
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
-			return nil, false, err
-		}
-		columns = append(columns, name)
-		if name == "id" {
-			hasID = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	return columns, hasID, nil
-}
-
-func quoteIdentifier(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-}
-
-func joinQuotedColumns(columns []string) string {
-	quoted := make([]string, 0, len(columns))
-	for _, column := range columns {
-		quoted = append(quoted, quoteIdentifier(column))
-	}
-	return strings.Join(quoted, ", ")
-}
-
-func placeholders(count int) string {
-	if count <= 0 {
-		return ""
-	}
-	parts := make([]string, count)
-	for i := range parts {
-		parts[i] = "?"
-	}
-	return strings.Join(parts, ", ")
+	return nil
 }
 
 // Error type detection helper functions
