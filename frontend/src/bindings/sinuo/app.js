@@ -360,11 +360,13 @@ export function GetConnectionActivityChart(minutes) {
 }
 
 /**
- * GetEndpointCosts 获取当日端点成本数据
+ * GetEndpointCosts 获取时间窗口内各上游的 Token 与成本（概览页上游成本排行）。
+ * 查询失败返回错误，由前端显示错误与重试，不以空列表冒充「暂无数据」。
+ * @param {$models.EndpointCostQueryParams} params
  * @returns {$CancellablePromise<$models.EndpointCostItem[] | null>}
  */
-export function GetEndpointCosts() {
-    return $Call.ByID(4029200640);
+export function GetEndpointCosts(params) {
+    return $Call.ByID(4029200640, params);
 }
 
 /**
@@ -655,6 +657,15 @@ export function GetUpstreamAccountCredential(id) {
  */
 export function GetUpstreamAccounts() {
     return $Call.ByID(894005690);
+}
+
+/**
+ * GetUsageHeatmap 查询近一年用量；独立于概览短时间范围快照，不写入 summary 缓存。
+ * @param {$models.UsageHeatmapQueryParams} params
+ * @returns {$CancellablePromise<$models.UsageHeatmapData>}
+ */
+export function GetUsageHeatmap(params) {
+    return $Call.ByID(2904758366, params);
 }
 
 /**

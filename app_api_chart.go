@@ -303,56 +303,64 @@ type EndpointCostItem struct {
 	Cost          float64 `json:"cost"`
 }
 
-// GetEndpointCosts 获取当日端点成本数据
-func (a *App) GetEndpointCosts() []EndpointCostItem {
+// EndpointCostQueryParams 上游成本排行查询参数；概览页与模型调用统计传同一个时间窗口
+type EndpointCostQueryParams struct {
+	Period    string `json:"period"`     // 1h/1d/7d/30d，默认 1d
+	StartDate string `json:"start_date"` // 优先于 period
+	EndDate   string `json:"end_date"`   // 优先于 period
+}
+
+// GetEndpointCosts 获取时间窗口内各上游的 Token 与成本（概览页上游成本排行）。
+// 查询失败返回错误，由前端显示错误与重试，不以空列表冒充「暂无数据」。
+func (a *App) GetEndpointCosts(params EndpointCostQueryParams) ([]EndpointCostItem, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	if a.usageTracker == nil {
-		return []EndpointCostItem{}
-	}
-
+	result := []EndpointCostItem{}
 	policy, err := a.activeTimezonePolicy()
 	if err != nil {
-		if a.logger != nil {
-			a.logger.Error("获取活动时区失败", "error", err)
-		}
-		return []EndpointCostItem{}
+		return result, err
 	}
-	date := policy.BusinessDate(time.Now())
+	period := strings.TrimSpace(params.Period)
+	if period == "" {
+		period = modelUsageDefaultPeriod
+	}
+	startTime, endTime, _, err := resolveOverviewStatsRange(policy, period, params.StartDate, params.EndDate)
+	if err != nil {
+		return result, err
+	}
+	if a.usageTracker == nil {
+		return result, nil
+	}
 
-	// 查询端点成本数据
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	costs, err := a.usageTracker.GetEndpointCostsForDate(ctx, date)
+	costs, err := a.usageTracker.GetEndpointCostsForRange(ctx, startTime, endTime)
 	if err != nil {
-		if a.logger != nil {
-			a.logger.Error("获取端点成本数据失败", "error", err)
-		}
-		return []EndpointCostItem{}
+		return result, err
 	}
-
-	// 转换为前端期望的格式
-	result := make([]EndpointCostItem, len(costs))
-	for i, cost := range costs {
-		name := cost.UpstreamName
-		if name == "" {
-			name = "未知上游"
-		}
-		upstreamType := strings.TrimSpace(cost.UpstreamType)
-		if upstreamType == "" {
-			upstreamType = "endpoint"
-		}
-
-		result[i] = EndpointCostItem{
-			Name:          name,
-			RequestFamily: cost.RequestFamily,
-			UpstreamType:  upstreamType,
-			Tokens:        cost.TotalTokens,
-			Cost:          cost.TotalCostUSD,
-		}
+	for _, cost := range costs {
+		result = append(result, newEndpointCostItem(cost))
 	}
+	return result, nil
+}
 
-	return result
+// newEndpointCostItem 转换为前端排行使用的格式：空名称与空类型给出展示兜底
+func newEndpointCostItem(cost tracking.EndpointCostSummary) EndpointCostItem {
+	name := cost.UpstreamName
+	if name == "" {
+		name = "未知上游"
+	}
+	upstreamType := strings.TrimSpace(cost.UpstreamType)
+	if upstreamType == "" {
+		upstreamType = "endpoint"
+	}
+	return EndpointCostItem{
+		Name:          name,
+		RequestFamily: cost.RequestFamily,
+		UpstreamType:  upstreamType,
+		Tokens:        cost.TotalTokens,
+		Cost:          cost.TotalCostUSD,
+	}
 }

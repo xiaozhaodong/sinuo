@@ -4,17 +4,18 @@
 // 2026-09-09 概览改版：从柱线图改为排行条列表，按上游名称汇总今日 Token 与成本；
 // 数据由概览快照统一加载，组件内不再有定时器与 chartUpdate 监听
 // 2026-10-07 桌面化：面板样式，排行条改为纯色细条
+// 2026-10-24 时段统计分区：不再固定为今日，跟随时间范围，与模型调用同一窗口
 // ============================================
 
 import Panel from '@components/desktop/Panel.jsx';
 import SectionError from './SectionError.jsx';
 import { buildCostRanking } from '../utils/overviewViewModel.js';
 
-const UpstreamCostRanking = ({ data = [], loading, error, onRetry }) => {
+const UpstreamCostRanking = ({ data = [], periodCaption = '', loading, error, onRetry }) => {
   const rows = buildCostRanking(data);
 
   return (
-    <Panel title="上游成本排行" subtitle="今日" bodyClassName="px-3 py-3">
+    <Panel title="上游成本排行" subtitle={periodCaption} bodyClassName="px-3 py-3">
       <div className="flex-1 min-h-[180px]">
         {loading ? (
           <div className="space-y-3">
@@ -26,7 +27,7 @@ const UpstreamCostRanking = ({ data = [], loading, error, onRetry }) => {
           <SectionError error={error} onRetry={onRetry} compact />
         ) : rows.length === 0 ? (
           <div className="flex h-full min-h-[180px] items-center justify-center text-sm text-fg-subtle">
-            今日暂无上游成本数据
+            {periodCaption || '当前时段'}暂无上游成本数据
           </div>
         ) : (
           <div className="space-y-2.5">

@@ -59,7 +59,7 @@ const TrendTooltip = ({ active, payload, label, chart }) => {
   );
 };
 
-// 时间范围由概览页统一持有并放在工具栏，这里只按 period 显示口径
+// 时间范围由概览页持有、放在时段统计分区标题，这里只按 period 显示口径
 const RequestTrendChart = ({ data, period, loading, error, onRetry }) => {
   const { formatTimeOnly, formatMonthDayTime } = useTimezone();
   const chart = useChartTheme();

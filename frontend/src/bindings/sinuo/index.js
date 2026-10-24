@@ -162,6 +162,11 @@ import * as $models from "./models.js";
  */
 
 /**
+ * EndpointCostQueryParams 上游成本排行查询参数；概览页与模型调用统计传同一个时间窗口
+ * @typedef {$models.EndpointCostQueryParams} EndpointCostQueryParams
+ */
+
+/**
  * EndpointHealthData 端点最近连通性状态数据结构
  * @typedef {$models.EndpointHealthData} EndpointHealthData
  */
@@ -460,6 +465,21 @@ import * as $models from "./models.js";
 /**
  * UpstreamAccountInfo 上游账号信息
  * @typedef {$models.UpstreamAccountInfo} UpstreamAccountInfo
+ */
+
+/**
+ * UsageHeatmapData 从第一列周一到今天的连续业务日快照。
+ * @typedef {$models.UsageHeatmapData} UsageHeatmapData
+ */
+
+/**
+ * UsageHeatmapDay 一个业务日的用量及请求页交接边界。
+ * @typedef {$models.UsageHeatmapDay} UsageHeatmapDay
+ */
+
+/**
+ * UsageHeatmapQueryParams 周数范围为 1..53，越界时按 53 周。
+ * @typedef {$models.UsageHeatmapQueryParams} UsageHeatmapQueryParams
  */
 
 /**

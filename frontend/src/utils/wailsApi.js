@@ -1452,6 +1452,14 @@ export const isProxyRunning = async () => {
 // 图表数据 API
 // ============================================
 
+// 用量活动一次返回全部日桶，指标与视图切换不重复查询。
+export const getUsageHeatmap = async (params = {}) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  const data = await getWailsMethod('GetUsageHeatmap')({ weeks: params.weeks ?? 53 });
+  return { ...data, days: Array.isArray(data.days) ? data.days : [] };
+};
+
 /**
  * 获取请求趋势图表数据（按 request_logs 时间分桶）
  * @param {Object} params - 查询参数
@@ -1566,16 +1574,24 @@ export const getEndpointHealthChart = async () => {
 // ============================================
 
 /**
- * 获取当日端点成本数据
- * @returns {Promise<Array>} - 端点成本数据 [{name, tokens, cost}]
+ * 获取时间窗口内各上游的 Token 与成本（概览页上游成本排行）
+ * 查询失败时后端返回错误、Promise reject，不会以空列表返回。
+ * @param {Object} params - 查询参数，与模型调用统计传同一个窗口
+ * @param {string} params.period - 时间周期: "1h", "1d", "7d", "30d"（默认 1d）
+ * @param {string} params.start_date - 开始时间（优先于 period）
+ * @param {string} params.end_date - 结束时间（优先于 period）
+ * @returns {Promise<Array>} - [{name, request_family, upstream_type, tokens, cost}]
  */
-export const getEndpointCosts = async () => {
+export const getEndpointCosts = async (params = {}) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  const data = await WailsApp.GetEndpointCosts();
-  // 数据已经是 [{name, tokens, cost}] 格式
-  return data || [];
+  const data = await WailsApp.GetEndpointCosts({
+    period: params.period || '1d',
+    start_date: params.start_date || '',
+    end_date: params.end_date || ''
+  });
+  return Array.isArray(data) ? data : [];
 };
 
 // ============================================

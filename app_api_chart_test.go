@@ -31,7 +31,10 @@ func TestCacheWriteEndpointCosts_UsesDeduplicatedTotalsAndStoredCosts(t *testing
 			t.Fatal(err)
 		}
 	}
-	got := app.GetEndpointCosts()
+	got, err := app.GetEndpointCosts(EndpointCostQueryParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("上游成本分组不正确：%+v", got)
 	}
@@ -66,7 +69,10 @@ func TestGetEndpointCosts_NormalizesAndReturnsUpstreamTypes(t *testing.T) {
 		}
 	}
 
-	got := app.GetEndpointCosts()
+	got, err := app.GetEndpointCosts(EndpointCostQueryParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	byName := make(map[string]string, len(got))
 	for _, row := range got {
 		byName[row.Name] = row.UpstreamType
@@ -292,5 +298,121 @@ func TestGetRequestTrendData_GenerationScopeExcludesCompaction(t *testing.T) {
 	}
 	if model.TotalRequests != 1 || model.TotalTokens != 117 || model.TotalCostUSD != 1.5 {
 		t.Fatalf("model summary must count generation but carry full usage: %+v", model)
+	}
+}
+
+// 上游成本排行跟随概览时间切换：只汇总请求窗口内的记录，窗口参数与模型调用统计同一套解析规则。
+func TestGetEndpointCosts_UsesRequestedWindow(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		name  string
+		start time.Time
+		cost  float64
+	}{
+		{"recent", now.Add(-30 * time.Minute), 0.1},
+		{"hours-ago", now.Add(-3 * time.Hour), 0.2},
+		{"days-ago", now.Add(-3 * 24 * time.Hour), 0.4},
+	} {
+		if _, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, upstream_type, upstream_name, input_tokens, total_cost_usd
+		) VALUES (?, ?, 'completed', 'claude', 'endpoint', ?, 10, ?)`,
+			"req-"+row.name, timezonepolicy.FormatStorage(row.start), row.name, row.cost); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const layout = "2006-01-02T15:04:05-07:00"
+	for _, tc := range []struct {
+		name   string
+		params EndpointCostQueryParams
+		want   []string
+	}{
+		{"显式窗口", EndpointCostQueryParams{Period: "1h", StartDate: now.Add(-time.Hour).Format(layout), EndDate: now.Add(time.Minute).Format(layout)}, []string{"recent"}},
+		{"默认近 24 小时", EndpointCostQueryParams{}, []string{"hours-ago", "recent"}},
+		{"近 7 天", EndpointCostQueryParams{Period: "7d"}, []string{"days-ago", "hours-ago", "recent"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := app.GetEndpointCosts(tc.params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := make([]string, 0, len(got))
+			for _, row := range got {
+				names = append(names, row.Name)
+			}
+			if fmt.Sprint(names) != fmt.Sprint(tc.want) {
+				t.Fatalf("窗口内上游不正确：got %v want %v", names, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetEndpointCosts_RejectsInvalidWindow(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	now := time.Now()
+	const layout = "2006-01-02T15:04:05-07:00"
+	for name, params := range map[string]EndpointCostQueryParams{
+		"只有开始时间": {StartDate: now.Add(-time.Hour).Format(layout)},
+		"结束早于开始": {StartDate: now.Format(layout), EndDate: now.Add(-time.Hour).Format(layout)},
+		"时间格式错误": {StartDate: "yesterday", EndDate: "today"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := app.GetEndpointCosts(params)
+			if err == nil {
+				t.Fatalf("非法窗口应返回错误，而不是空排行：%+v", got)
+			}
+		})
+	}
+}
+
+// 「今日」的窗口：开始是配置时区今天 0 点的墙钟时间，结束是快照时刻的 UTC；
+// 时段统计的三个接口都要按同一窗口解析，跨过 0 点的记录不计入。
+func TestOverviewTodayWindow_SharedByPeriodStatsAPIs(t *testing.T) {
+	app := newUsageStatsTestApp(t)
+	policy, err := app.activeTimezonePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	date := policy.BusinessDate(now)
+	dayStart, _, err := policy.DayRange(date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		name  string
+		start time.Time
+	}{
+		{"today", dayStart},
+		{"yesterday", dayStart.Add(-time.Second)},
+	} {
+		if _, err := app.usageTracker.GetWriteDB().Exec(`INSERT INTO request_logs (
+			request_id, start_time, status, request_family, request_kind, upstream_type, upstream_name, model_name, input_tokens, total_cost_usd
+		) VALUES (?, ?, 'completed', 'claude', 'generation', 'endpoint', ?, ?, 10, 0.1)`,
+			"req-"+row.name, timezonepolicy.FormatStorage(row.start), row.name, row.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	startDate, endDate := date+"T00:00", now.UTC().Format(time.RFC3339Nano)
+	costs, err := app.GetEndpointCosts(EndpointCostQueryParams{Period: "1d", StartDate: startDate, EndDate: endDate})
+	if err != nil || len(costs) != 1 || costs[0].Name != "today" {
+		t.Fatalf("上游成本应只含今日：%+v err=%v", costs, err)
+	}
+	usage, err := app.GetModelUsageStats(ModelUsageQueryParams{Period: "1d", StartDate: startDate, EndDate: endDate, SourceView: "all", Limit: 20})
+	if err != nil || len(usage.Rows) != 1 || usage.Rows[0].ModelName != "today" {
+		t.Fatalf("模型调用应只含今日：%+v err=%v", usage.Rows, err)
+	}
+	trend, err := app.GetRequestTrendData(RequestTrendQueryParams{Period: "1d", StartDate: startDate, EndDate: endDate, SourceView: "all"})
+	if err != nil || trend.Granularity != "hour" {
+		t.Fatalf("今日趋势应按小时分桶：%+v err=%v", trend, err)
+	}
+	var total int64
+	for _, point := range trend.Points {
+		total += point.Total
+	}
+	if total != 1 {
+		t.Fatalf("今日趋势应只含 1 个请求，got %d：%+v", total, trend.Points)
 	}
 }

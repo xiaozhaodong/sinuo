@@ -490,6 +490,12 @@ const transformChartJsToRecharts = (chartJsData, keyMapping) => {
   });
 };
 
+// 用量活动只走 Wails；查询失败交给面板呈现，不伪造空数据。
+export const fetchUsageHeatmap = async (params = {}) => {
+  if (isWailsEnvironment()) return await WailsApi.getUsageHeatmap(params);
+  throw new Error('当前运行环境暂不支持用量活动查询');
+};
+
 /**
  * 获取请求趋势数据（按 request_logs 时间分桶）
  * 失败时抛出错误，由调用方呈现局部错误状态（概览页快照需要区分「无数据」与「查询失败」）
@@ -568,37 +574,15 @@ export const fetchEndpointHealthData = async () => {
 };
 
 /**
- * 获取端点成本数据
+ * 获取时间窗口内各上游的成本数据（概览页上游成本排行）
  * 失败时抛出错误，由调用方呈现局部错误状态。
+ * @param {Object} params - { period, start_date, end_date }，与模型调用统计同一窗口
  */
-export const fetchEndpointCostsData = async () => {
-  // Wails 环境使用绑定
+export const fetchEndpointCostsData = async (params = {}) => {
   if (isWailsEnvironment()) {
-    return await WailsApi.getEndpointCosts();
+    return await WailsApi.getEndpointCosts(params);
   }
-
-  const data = await fetchWithTimeout('/api/v1/chart/endpoint-costs');
-  // 转换为 Recharts 格式: { name, tokens, cost }
-  if (data.labels && data.datasets) {
-    // 查找 Token 数据集（label 包含 "Token" 或 "token"）
-    const tokensDataset = data.datasets.find(d =>
-      d.label?.toLowerCase().includes('token')
-    );
-    // 查找成本数据集（label 包含 "成本" 或 "Cost" 或 "USD"）
-    const costDataset = data.datasets.find(d =>
-      d.label?.includes('成本') || d.label?.toLowerCase().includes('cost') || d.label?.includes('USD')
-    );
-
-    const tokensData = tokensDataset?.data || [];
-    const costData = costDataset?.data || [];
-
-    return data.labels.map((name, i) => ({
-      name,
-      tokens: tokensData[i] || 0,
-      cost: costData[i] || 0
-    }));
-  }
-  return [];
+  throw new Error('当前运行环境暂不支持上游成本统计');
 };
 
 /**

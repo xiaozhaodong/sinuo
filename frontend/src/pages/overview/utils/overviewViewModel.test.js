@@ -3,15 +3,18 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_OVERVIEW_PERIOD,
+  OVERVIEW_PERIODS,
   buildCostRanking,
   buildKpiCards,
   buildModelRows,
+  buildOverviewQuery,
   buildOverviewRange,
   buildRequestsRangeFromSnapshot,
   buildKpiTrends,
   buildTokenBreakdown,
   buildTrendSummary,
   formatDurationMs,
+  formatTokenCount,
   formatRequestShare,
   formatSuccessRate,
   formatTrendBucketLabel,
@@ -22,9 +25,21 @@ import {
   withTrendOther
 } from './overviewViewModel.js';
 
+test('Token 格式化支持一年合计的 B 档，并保留原有 K/M 档', () => {
+  assert.equal(formatTokenCount(0), '0');
+  assert.equal(formatTokenCount(1200), '1.2K');
+  assert.equal(formatTokenCount(1250000), '1.3M');
+  assert.equal(formatTokenCount(999000000), '999.0M');
+  assert.equal(formatTokenCount(1000000000), '1.0B');
+  assert.equal(formatTokenCount(12500000000), '12.5B');
+});
+
 test('时间范围解析：默认 24h，未知值回退到默认项', () => {
   assert.equal(DEFAULT_OVERVIEW_PERIOD, '1d');
+  // 「今日」排在最前面，兜底仍按默认值查找，不能按下标落到别的选项
+  assert.deepEqual(OVERVIEW_PERIODS.map((item) => item.label), ['今日', '1h', '24h', '7d', '30d']);
   assert.equal(resolveOverviewPeriod('不存在').value, '1d');
+  assert.equal(resolveOverviewPeriod('today').caption, '今日');
   assert.equal(resolveOverviewPeriod('7d').caption, '近 7 天');
   assert.equal(resolveOverviewPeriod('30d').label, '30d');
 });
@@ -375,6 +390,23 @@ test('快照滚动窗口精确到毫秒，24 小时不随 DST 改变', () => {
   assert.deepEqual(range, { start_date: '2026-10-31T06:30:45.123Z', end_date: '2026-11-01T06:30:45.123Z' });
   assert.deepEqual(buildOverviewRange('7d', new Date('2026-09-09T02:25:30.123Z')), {
     start_date: '2026-09-02T02:25:30.123Z', end_date: '2026-09-09T02:25:30.123Z'
+  });
+});
+
+test('时段查询：「今日」从配置时区的今天 0 点到快照时刻，按小时分桶；其余选项是滚动窗口', () => {
+  const now = new Date('2026-10-24T02:54:30.123Z');
+  // 配置时区的今日范围由 TimezoneContext 给出（墙钟时间，后端按配置时区解释）
+  const todayRange = { start_date: '2026-10-24T00:00', end_date: '2026-10-25T00:00' };
+
+  assert.deepEqual(buildOverviewQuery('today', now, todayRange), {
+    period: '1d', start_date: '2026-10-24T00:00', end_date: '2026-10-24T02:54:30.123Z'
+  });
+  assert.deepEqual(buildOverviewQuery('7d', now, todayRange), {
+    period: '7d', start_date: '2026-10-17T02:54:30.123Z', end_date: '2026-10-24T02:54:30.123Z'
+  });
+  // 未知值按默认 24h 处理
+  assert.deepEqual(buildOverviewQuery('不存在', now, todayRange), {
+    period: '1d', start_date: '2026-10-23T02:54:30.123Z', end_date: '2026-10-24T02:54:30.123Z'
   });
 });
 

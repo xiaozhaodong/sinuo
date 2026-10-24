@@ -25,6 +25,8 @@ const LIGHT_CHART_THEME = {
     itemStyle: { color: '#334155' }
   },
   series: {
+    // 用量活动需与 --app-accent-ring 保持一致。
+    activity: '#6366f1',
     // 请求趋势
     total: '#6366f1',
     success: '#10b981',
@@ -69,6 +71,8 @@ const DARK_CHART_THEME = {
     itemStyle: { color: '#cbd5e1' }
   },
   series: {
+    // 用量活动需与深色 --app-accent-ring 保持一致。
+    activity: '#818cf8',
     total: '#818cf8',
     success: '#34d399',
     fail: '#fb7185',

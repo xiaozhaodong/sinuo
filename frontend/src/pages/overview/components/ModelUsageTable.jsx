@@ -3,6 +3,7 @@
 // 2026-09-09 概览改版：按模型聚合请求数 / 成功率 / 平均耗时 / Token / 成本
 // 数据来自 GetModelUsageStats，口径与请求追踪页一致，不在前端二次聚合
 // 2026-10-07 桌面化：面板样式，表头去掉全大写小字
+// 2026-10-24 时段统计分区：面板高度由所在行决定，表格填满剩余空间并在表内滚动
 // ============================================
 
 import { ExternalLink } from 'lucide-react';
@@ -83,7 +84,7 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
         </div>
       )}
 
-      <div className="flex-1 min-h-[220px]">
+      <div className="flex min-h-0 flex-1 flex-col">
         {loading ? (
           <div className="space-y-2 p-3">
             {[0, 1, 2, 3].map((index) => (
@@ -91,13 +92,15 @@ const ModelUsageTable = ({ modelUsage, periodCaption = '', loading, error, onRet
             ))}
           </div>
         ) : error ? (
-          <SectionError error={error} onRetry={onRetry} />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <SectionError error={error} onRetry={onRetry} />
+          </div>
         ) : rows.length === 0 ? (
-          <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-fg-subtle">
+          <div className="flex flex-1 items-center justify-center text-sm text-fg-subtle">
             {unresolvedRequestCount > 0 ? `${formatCount(unresolvedRequestCount)} 个请求未解析模型` : '暂无模型调用数据'}
           </div>
         ) : (
-          <div className="@container max-h-[290px] overflow-auto">
+          <div className="@container min-h-0 flex-1 overflow-auto">
             <table className="desk-table desk-dense table-fixed">
               <colgroup>
                 <col />

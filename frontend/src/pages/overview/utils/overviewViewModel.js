@@ -5,9 +5,12 @@
 
 import { parseTimestamp } from '../../../utils/timezone.js';
 
-// 页面统一时间范围。period 同时用于 request_logs 聚合（模型表 / Token 分布）
-// 与趋势分桶接口（GetRequestTrendData）。
+// 时段统计的时间范围。period 同时用于 request_logs 聚合（模型表 / Token 分布 / 上游成本）
+// 与趋势分桶接口（GetRequestTrendData）。「今日」按自然日，其余从快照时刻往前推。
+export const OVERVIEW_TODAY_PERIOD = 'today';
+
 export const OVERVIEW_PERIODS = [
+  { value: OVERVIEW_TODAY_PERIOD, label: '今日', caption: '今日' },
   { value: '1h', label: '1h', caption: '近 1 小时' },
   { value: '1d', label: '24h', caption: '近 24 小时' },
   { value: '7d', label: '7d', caption: '近 7 天' },
@@ -17,7 +20,8 @@ export const OVERVIEW_PERIODS = [
 export const DEFAULT_OVERVIEW_PERIOD = '1d';
 
 export const resolveOverviewPeriod = (period) =>
-  OVERVIEW_PERIODS.find((item) => item.value === period) || OVERVIEW_PERIODS[1];
+  OVERVIEW_PERIODS.find((item) => item.value === period)
+  || OVERVIEW_PERIODS.find((item) => item.value === DEFAULT_OVERVIEW_PERIOD);
 
 export const periodCaption = (period) => resolveOverviewPeriod(period).caption;
 
@@ -31,6 +35,21 @@ export const buildOverviewRange = (period, now = new Date()) => {
     start_date: new Date(end.getTime() - hours * 3600000).toISOString(),
     end_date: end.toISOString()
   };
+};
+
+/**
+ * 时段统计三个请求共用的查询窗口。
+ * 「今日」从配置时区的今天 0 点到快照时刻，与 KPI 同一口径；趋势按小时分桶，所以 period 传 1d。
+ * @param {string} period - 页面选中的时间范围
+ * @param {Date} now - 快照时刻
+ * @param {{start_date: string}} todayRange - 配置时区的今日范围（TimezoneContext.getTodayTimeRange）
+ */
+export const buildOverviewQuery = (period, now, todayRange) => {
+  const { value } = resolveOverviewPeriod(period);
+  if (value === OVERVIEW_TODAY_PERIOD) {
+    return { period: '1d', start_date: todayRange.start_date, end_date: parseTimestamp(now).toISOString() };
+  }
+  return { period: value, ...buildOverviewRange(value, now) };
 };
 
 // 直接交接已经显示的快照时间，保留 UTC 和微秒；日期输入仅负责转换显示。
@@ -66,6 +85,7 @@ export const formatCount = (value) => {
 
 export const formatTokenCount = (value) => {
   const number = Number(value) || 0;
+  if (number >= 1000000000) return `${(number / 1000000000).toFixed(1)}B`;
   if (number >= 1000000) return `${(number / 1000000).toFixed(1)}M`;
   if (number >= 1000) return `${(number / 1000).toFixed(1)}K`;
   return String(number);

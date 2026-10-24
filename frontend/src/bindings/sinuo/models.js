@@ -406,6 +406,14 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
+ * EndpointCostQueryParams 上游成本排行查询参数；概览页与模型调用统计传同一个时间窗口
+ * @typedef {Object} EndpointCostQueryParams
+ * @property {string} period - 1h/1d/7d/30d，默认 1d
+ * @property {string} start_date - 优先于 period
+ * @property {string} end_date - 优先于 period
+ */
+
+/**
  * EndpointHealthData 端点最近连通性状态数据结构
  * @typedef {Object} EndpointHealthData
  * @property {number} healthy
@@ -1222,6 +1230,37 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} fingerprint
  * @property {string} created_at
  * @property {string} updated_at
+ */
+
+/**
+ * UsageHeatmapData 从第一列周一到今天的连续业务日快照。
+ * @typedef {Object} UsageHeatmapData
+ * @property {string} timezone
+ * @property {string} start_date
+ * @property {string} end_date
+ * @property {string} data_start_date
+ * @property {UsageHeatmapDay[] | null} days
+ */
+
+/**
+ * UsageHeatmapDay 一个业务日的用量及请求页交接边界。
+ * @typedef {Object} UsageHeatmapDay
+ * @property {string} date
+ * @property {string} start_time
+ * @property {string} end_time
+ * @property {number} request_count
+ * @property {number} total_tokens
+ * @property {number} input_tokens
+ * @property {number} output_tokens
+ * @property {number} cache_creation_tokens
+ * @property {number} cache_read_tokens
+ * @property {number} total_cost_usd
+ */
+
+/**
+ * UsageHeatmapQueryParams 周数范围为 1..53，越界时按 53 周。
+ * @typedef {Object} UsageHeatmapQueryParams
+ * @property {number} weeks
  */
 
 /**
