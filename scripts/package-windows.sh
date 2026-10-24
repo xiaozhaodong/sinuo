@@ -1,7 +1,7 @@
 #!/bin/bash
 # 打包 Windows 发布版本（包含所有必需文件）
 
-VERSION="6.2.1"
+VERSION="6.2.2"
 DIST_DIR="build/dist/Sinuo-Windows-v${VERSION}"
 
 echo "📦 打包 Windows 发布版本..."
