@@ -92,6 +92,46 @@ CREATE TABLE IF NOT EXISTS request_logs (
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
+-- 热力图按天汇总缓存：只存配置时区「前天及更早」业务日的库内聚合（不含热池）。
+-- 纯缓存，清空只能 DELETE：下面的触发器引用此表，DROP 会让 request_logs 写入报错。
+CREATE TABLE IF NOT EXISTS usage_daily (
+    timezone_name TEXT NOT NULL,
+    date TEXT NOT NULL,                        -- 业务日 YYYY-MM-DD
+    start_utc TEXT NOT NULL,                   -- FormatStorage 固定微秒 UTC 文本
+    end_utc TEXT NOT NULL,                     -- 业务日 UTC 终点（不含）
+    request_count INTEGER NOT NULL DEFAULT 0,  -- 生成口径次数
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (timezone_name, date)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_usage_daily_start ON usage_daily(start_utc);
+
+-- MAX 定位依赖单时区不变式：封存事务提交前必须清除其他时区行。
+CREATE TRIGGER IF NOT EXISTS usage_daily_invalidate_insert AFTER INSERT ON request_logs BEGIN
+    DELETE FROM usage_daily
+     WHERE start_utc = (SELECT MAX(start_utc) FROM usage_daily WHERE start_utc <= NEW.start_time)
+       AND end_utc > NEW.start_time;
+END;
+CREATE TRIGGER IF NOT EXISTS usage_daily_invalidate_update
+AFTER UPDATE OF start_time, request_kind, request_family, path,
+    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_cost_usd ON request_logs BEGIN
+    DELETE FROM usage_daily
+     WHERE start_utc = (SELECT MAX(start_utc) FROM usage_daily WHERE start_utc <= OLD.start_time)
+       AND end_utc > OLD.start_time;
+    DELETE FROM usage_daily
+     WHERE start_utc = (SELECT MAX(start_utc) FROM usage_daily WHERE start_utc <= NEW.start_time)
+       AND end_utc > NEW.start_time;
+END;
+CREATE TRIGGER IF NOT EXISTS usage_daily_invalidate_delete AFTER DELETE ON request_logs BEGIN
+    DELETE FROM usage_daily
+     WHERE start_utc = (SELECT MAX(start_utc) FROM usage_daily WHERE start_utc <= OLD.start_time)
+       AND end_utc > OLD.start_time;
+END;
+
 -- 索引优化
 CREATE INDEX IF NOT EXISTS idx_request_logs_request_id ON request_logs(request_id);
 CREATE INDEX IF NOT EXISTS idx_request_logs_start_time ON request_logs(start_time);

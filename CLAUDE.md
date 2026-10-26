@@ -155,6 +155,7 @@
 - `internal/tracking/tracker.go`：统一成本计算、倍率缓存、热池详情口径
 - `internal/tracking/archive_manager.go`：归档时成本计算口径
 - `internal/tracking/schema.sql`：SQLite schema
+- `internal/tracking/usage_daily.go`：热力图按天缓存；以配置时区昨天零点为封存线，前天及更早读缓存、昨天和今天现算，统计列写入由触发器失效；整段统一热池补偿，缓存只存库内值
 - `internal/tracking/sqlite_adapter.go`：SQLite 迁移逻辑
 - `internal/tracking/sqlite_driver.go`：SQLite 连接参数与驱动包装。驱动是 modernc，只认 `_pragma` / `_txlock` / `_time_format`，mattn 风格的 `_busy_timeout` 等会被静默忽略；当前为 WAL + busy_timeout 5s + `_txlock=immediate`，事务提交失败时在驱动层立即回滚，避免残留事务占住单连接池（CoreDatabase 与 UsageTracker 是两个连接池写同一文件）
 
@@ -308,6 +309,7 @@ cd frontend && npm run build
 
 ## 调试提示
 
+- 热力图缓存可用 `DELETE FROM usage_daily` 清空重建，禁止 `DROP`：失效触发器依赖此表，否则请求记录写入会报错
 - 请求追踪：用 `req-xxxxxxxx` 过滤日志
 - 数据库是 WAL 模式：App 运行时不要直接 `cp usage.db`（会漏掉 `-wal` 里的数据），先退出 App 或用 `sqlite3 usage.db ".backup 目标路径"`；损坏时不再自动用 `usage.db.backup` 覆盖，需退出 App 后手动替换并删除 `-wal` / `-shm`
 - Claude Code 订阅直通问题优先看：请求是否来自入口端口（主端口永远走端点）、入口卡片的运行状态与接入模式、请求记录的 `upstream_type`（`subscription` 才是订阅直通）；订阅直通不进端点调度，调度快照里不会有它

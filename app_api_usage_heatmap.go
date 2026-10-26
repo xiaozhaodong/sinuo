@@ -69,7 +69,8 @@ func (a *App) GetUsageHeatmap(params UsageHeatmapQueryParams) (UsageHeatmapData,
 	if err != nil {
 		return result, err
 	}
-	startDate, today, buckets, err := usageHeatmapRange(policy, time.Now(), params.Weeks)
+	now := time.Now()
+	startDate, today, buckets, err := usageHeatmapRange(policy, now, params.Weeks)
 	if err != nil {
 		return result, err
 	}
@@ -79,7 +80,7 @@ func (a *App) GetUsageHeatmap(params UsageHeatmapQueryParams) (UsageHeatmapData,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	usage, err := a.usageTracker.QueryDailyUsageWithHotPool(ctx, buckets)
+	usage, err := a.usageTracker.QueryUsageHeatmapDaily(ctx, policy, buckets, now)
 	if err != nil {
 		return result, err
 	}

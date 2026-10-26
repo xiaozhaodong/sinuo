@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import Panel from '@components/desktop/Panel.jsx';
 import SegmentedControl from '@components/desktop/SegmentedControl.jsx';
@@ -40,9 +40,12 @@ const UsageHeatmap = ({ data, loading, error, onRetry, onOpenRequests }) => {
   const tooltipId = useId();
   const chart = useChartTheme();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    // ResizeObserver 首次回调是异步的，先同步测量，避免首帧因宽度为 0 留空。
+    setWidth(body.getBoundingClientRect().width);
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    observer.observe(bodyRef.current);
+    observer.observe(body);
     return () => observer.disconnect();
   }, []);
 

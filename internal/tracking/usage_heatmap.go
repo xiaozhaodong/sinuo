@@ -25,6 +25,7 @@ type DailyUsage struct {
 }
 
 // dailyUsageQuery 所有桶共用一条范围 JOIN；重叠扣减复用相同查询及库内时间归桶。
+// 新增参与统计的列须同步 usage_daily 触发器。
 func dailyUsageQuery(buckets []TimeBucket, requestIDs []string) (string, []interface{}, error) {
 	values := make([]string, len(buckets))
 	args := make([]interface{}, 0, len(buckets)*3+5+len(requestIDs))
@@ -56,12 +57,15 @@ func dailyUsageQuery(buckets []TimeBucket, requestIDs []string) (string, []inter
 	return query + " GROUP BY b.bucket_index", args, nil
 }
 
-func (ut *UsageTracker) queryDailyUsage(ctx context.Context, buckets []TimeBucket, requestIDs []string) ([]DailyUsage, error) {
+func queryDailyUsage(ctx context.Context, querier usageSummaryQuerier, buckets []TimeBucket, requestIDs []string) ([]DailyUsage, error) {
+	if len(buckets) == 0 {
+		return []DailyUsage{}, nil
+	}
 	query, args, err := dailyUsageQuery(buckets, requestIDs)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := ut.readDB.QueryContext(ctx, query, args...)
+	rows, err := querier.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query daily usage: %w", err)
 	}
@@ -101,14 +105,30 @@ func (ut *UsageTracker) QueryDailyUsageWithHotPool(ctx context.Context, buckets 
 	if len(buckets) == 0 {
 		return []DailyUsage{}, nil
 	}
-	for i, bucket := range buckets {
-		if bucket.Start.IsZero() || !bucket.End.After(bucket.Start) || (i > 0 && bucket.Start.Before(buckets[i-1].End)) {
-			return nil, fmt.Errorf("invalid daily usage bucket at index %d", i)
-		}
+	if err := validateDailyUsageBuckets(buckets); err != nil {
+		return nil, err
 	}
-	result, err := ut.queryDailyUsage(ctx, buckets, nil)
+	result, err := queryDailyUsage(ctx, ut.readDB, buckets, nil)
 	if err != nil {
 		return nil, err
+	}
+	return ut.compensateDailyUsageHotPool(ctx, buckets, result)
+}
+
+func validateDailyUsageBuckets(buckets []TimeBucket) error {
+	for i, bucket := range buckets {
+		if bucket.Start.IsZero() || !bucket.End.After(bucket.Start) || (i > 0 && bucket.Start.Before(buckets[i-1].End)) {
+			return fmt.Errorf("invalid daily usage bucket at index %d", i)
+		}
+	}
+	return nil
+}
+
+// compensateDailyUsageHotPool 对整段库内结果补偿；归档失败的旧请求也可能仍在热池。
+// result 由调用方独占，补偿结果不得持久化进日缓存。
+func (ut *UsageTracker) compensateDailyUsageHotPool(ctx context.Context, buckets []TimeBucket, result []DailyUsage) ([]DailyUsage, error) {
+	if len(buckets) == 0 {
+		return result, nil
 	}
 	start, end := buckets[0].Start, buckets[len(buckets)-1].End
 	hotRequests := ut.getFilteredHotPoolRequests(&QueryOptions{
@@ -128,7 +148,7 @@ func (ut *UsageTracker) QueryDailyUsageWithHotPool(ctx context.Context, buckets 
 		unique = append(unique, req)
 		ids = append(ids, req.RequestID)
 	}
-	overlaps, err := ut.queryDailyUsage(ctx, buckets, ids)
+	overlaps, err := queryDailyUsage(ctx, ut.readDB, buckets, ids)
 	if err != nil {
 		return nil, err
 	}
