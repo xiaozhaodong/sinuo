@@ -38,7 +38,7 @@ type UpstreamAccountRecord struct {
 	SoftFailureWindowMinutes      *int       `json:"soft_failure_window_minutes"`
 	SoftFailureThreshold          *int       `json:"soft_failure_threshold"`
 	EnableRequestCompression      bool       `json:"enable_request_compression"`
-	StripCodexInternalMetadata    bool       `json:"strip_codex_internal_metadata"`
+	StripCodexInternalMetadata    bool       `json:"strip_codex_internal_metadata"` // 「标准 Responses 兼容」开关，为兼容保留列名
 	CostMultiplier                float64    `json:"cost_multiplier"`
 	InputCostMultiplier           float64    `json:"input_cost_multiplier"`
 	OutputCostMultiplier          float64    `json:"output_cost_multiplier"`

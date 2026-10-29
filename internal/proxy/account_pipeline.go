@@ -675,17 +675,18 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		requestID = lifecycleManager.GetRequestID()
 	}
 	if acc != nil && acc.StripCodexInternalMetadata && r.Method == http.MethodPost && isCodexResponsesAPIPath(r.URL.Path) {
-		filtered, removed, err := stripCodexInternalMetadata(bodyBytes)
+		filtered, stats, err := stripCodexPrivateFields(bodyBytes)
 		if err != nil {
 			return nil, nil, nil, &requestBodyError{
 				StatusCode: http.StatusBadRequest, Code: requestBodyCodeCodexMetadataInvalid,
-				Message: "Codex 内部元数据过滤失败：请求 JSON 或 input 结构无效", Cause: err,
+				Message: "Codex 私有字段过滤失败：请求 JSON 或 input 结构无效", Cause: err,
 			}
 		}
 		bodyBytes = filtered
-		slog.Info(fmt.Sprintf("🧹 [Codex 内部元数据] [%s] 出站兼容处理完成", requestID),
-			"account_id", acc.ID, "path", r.URL.Path,
-			"enabled", true, "removed_items", removed)
+		slog.Info(fmt.Sprintf("🧹 [Codex 私有字段] [%s] 出站兼容处理完成", requestID),
+			"account_id", acc.ID, "path", r.URL.Path, "enabled", true,
+			"metadata_items", stats.MetadataItems, "replay_items", stats.ReplayItems,
+			"include_removed", stats.IncludeRemoved)
 	}
 	targetURL, err := resolveAccountTargetURL(acc, r.URL.Path, r.URL.RawQuery)
 	if err != nil {

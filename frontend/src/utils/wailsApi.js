@@ -710,7 +710,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
   }
   const stripMetadata = stripSnake ?? stripCamel ?? stripGo;
   if (stripMetadata != null && typeof stripMetadata !== 'boolean') {
-    throw new TypeError('移除 Codex 内部元数据开关必须为布尔值');
+    throw new TypeError('标准 Responses 兼容开关必须为布尔值');
   }
   const providerType = String(input.provider_type || input.providerType || '').trim().toLowerCase();
   const isAPIKeyAccount = providerType === 'api_key';

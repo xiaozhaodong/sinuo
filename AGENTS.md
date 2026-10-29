@@ -14,7 +14,7 @@
 - **app_startup_connectivity.go**：桌面端启动后异步触发端点与账号池批量连通性检查。
 - **config/**：示例与运行配置，`config/example.yaml` 为基础模板，生产部署请复制为 `config/config.yaml`。
 - **data/** 与 `docs/`：分别存储运行时数据库、设计文档；保证数据目录可写。
-- **frontend/src/pages/account-pool/**：Codex 账号池前端工作台，包含账号 inventory、筛选搜索、批量移动、调度编排卡片/抽屉、最近一次调度快照，以及 `api_key` 账号成本倍率和模型兼容配置/展示。
+- **frontend/src/pages/account-pool/**：Codex 账号池前端工作台，包含账号 inventory、筛选搜索、批量移动、调度编排卡片/抽屉、最近一次调度快照，以及 `api_key` 账号成本倍率和模型兼容配置/展示、标准 Responses 兼容开关。
 - **frontend/src/pages/endpoints/**：Claude 端点管理，包含端点级模型兼容规则的显式配置与列表摘要。
 - **frontend/src/pages/requests/**：请求页与 Codex 账号切换器；切换具体账号会固定当前请求目标，切回 Auto 才恢复按编排调度。
 - **tests/**：单元与集成测试分层，`tests/unit/{module}` 与 `tests/integration/request_suspend` 对应主要质量保障。

@@ -247,14 +247,14 @@ const AccountFormDialog = ({
 
             <FormSection title="上游兼容">
 
-              <FormRow label="移除 Codex 内部元数据">
-                <span role="group" aria-label="移除 Codex 内部元数据" aria-describedby="codex-metadata-help" className="inline-flex">
-                <Switch label="移除 Codex 内部元数据" checked={accountForm.stripCodexInternalMetadata === true} disabled={accountSubmitting}
+              <FormRow label="标准 Responses 兼容">
+                <span role="group" aria-label="标准 Responses 兼容" aria-describedby="codex-standard-responses-help" className="inline-flex">
+                <Switch label="标准 Responses 兼容" checked={accountForm.stripCodexInternalMetadata === true} disabled={accountSubmitting}
                   onChange={(stripCodexInternalMetadata) => setAccountForm(prev => ({ ...prev, stripCodexInternalMetadata }))} />
                 </span>
               </FormRow>
-              <div id="codex-metadata-help" className="px-3.5 py-3 text-xs leading-5 text-fg-muted">
-                用于不接受 Codex 内部工具追踪或内容分类元数据的上游。开启后仅清理内部元数据，不改变工具参数、返回值或压缩内容。不提供远程压缩兼容。
+              <div id="codex-standard-responses-help" className="px-3.5 py-3 text-xs leading-5 text-fg-muted">
+                适用于 Azure 等只实现标准 Responses 接口的渠道。开启后移除 Codex 私有扩展：内部元数据，以及输出重放（include 中的 output.encrypted_content 和回放的输出密文）。推理密文、工具参数、返回值和压缩内容不变。不提供远程压缩兼容。
               </div>
 
               <FormRow label="启用模型兼容改写">

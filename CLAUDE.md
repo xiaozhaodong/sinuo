@@ -54,6 +54,10 @@
   - `model_rewrite_rules`
   - 当前前端支持多条精确匹配规则，例如 `gpt-5.4 -> gpt-5.5`、`gpt-5.4-mini -> gpt-5.5`
   - 不按渠道自动生成规则，所有改写规则都由前端显式启用并维护
+- Codex 账号池「标准 Responses 兼容」开关（列名沿用 `strip_codex_internal_metadata`）：
+  - 用于 Azure 等只实现标准 Responses 接口的渠道，只作用于账号池 `/v1/responses` 与 `/v1/responses/compact` 的 POST 出站
+  - 移除 `input[]` 条目直属的 `internal_chat_message_metadata_passthrough`、非 `reasoning` / `compaction` 条目上回放的 `encrypted_content`，以及顶层 `include` 中的 `output.encrypted_content`；推理与压缩密文保留
+  - Codex Desktop 用 Statsig 灰度在 `thread/start` 请求级配置里强开 `features.output_token_replay`，优先级高于 `~/.codex/config.toml`，客户端改配置关不掉；以后 Codex 新增的同类私有字段也放进这个开关
 - Claude 端点模型兼容改写：
   - `endpoints.model_rewrite_rules`
   - 前端支持多条精确匹配规则，默认关闭，不按渠道自动生成规则
@@ -141,6 +145,7 @@
 - `internal/service/model_routing_bindings.go`：「模型 → 端点集合」的事务聚合读写（专属组建/改/回收、历史共享组分裂）
 - `internal/store/endpoint.go` / `internal/service/endpoint.go`：Claude 端点 `model_rewrite_rules` 的持久化、校验与运行时配置同步
 - `internal/proxy/account_pipeline.go`：账号池转发链路
+- `internal/proxy/codex_request_metadata.go`：标准 Responses 兼容的私有字段剥离（`stripCodexPrivateFields`）
 - `internal/middleware/lan_access.go`：主端口局域网访问边界、Token 校验与远端拒绝
 - `internal/proxy/handlers/streaming.go`：非账号池 streaming 重试与 tail drain 入口
 - `internal/proxy/handlers/forwarder.go`：Claude 端点普通/流式 upstream request 构造与端点级模型改写；端点管线与订阅直通共用出站核心 `sendUpstream`；入口请求转第三方时剔除 OAuth beta 与来源类头
