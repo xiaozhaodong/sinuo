@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [6.2.4] - 2026-10-29
+
+### 🐛 修复 (Bug Fixes)
+
+- **Azure 渠道的 Codex 请求报 400**：新版 Codex Desktop 通过灰度默认开启了「输出重放」，请求的 `include` 会多出 `output.encrypted_content`。Azure 等只实现标准 Responses 接口的渠道不认这个值，直接返回 400（`Invalid value: 'output.encrypted_content'`）。这项设置由 Codex 桌面端强制下发，在 `~/.codex/config.toml` 里关不掉。
+- 账号表单的「移除 Codex 内部元数据」开关改名为「标准 Responses 兼容」：开启后除内部元数据外，还会移除上面这个值，以及对话中回放的输出密文；推理密文、工具参数、返回值和压缩内容不变。原来已开启该开关的账号升级后自动生效；Azure 渠道的账号请打开它。
+
 ## [6.2.3] - 2026-10-26
 
 ### 🐛 修复 (Bug Fixes)
