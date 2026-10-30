@@ -721,11 +721,11 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if isSSE {
 		requestCtx, release = h.newAccountStreamForwardContext(ctx)
 	}
-	var onWroteRequest func(handlers.UpstreamWriteTiming)
+	var recorder handlers.UpstreamTraceRecorder
 	if lifecycleManager != nil {
-		onWroteRequest = lifecycleManager.RecordUpstreamWrite
+		recorder = lifecycleManager
 	}
-	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, onWroteRequest)
+	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, recorder)
 
 	req, err := http.NewRequestWithContext(requestCtx, r.Method, targetURL, bytes.NewReader(wireBody))
 	if err != nil {

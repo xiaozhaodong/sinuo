@@ -118,6 +118,7 @@ func TestRequestTiming_EndpointAndClaudeSubscriptionHTTP(t *testing.T) {
 			t.Fatalf("端点请求失败：%d %s", rec.Code, rec.Body.String())
 		}
 		requireHTTPConnectionTiming(t, timingLifecycleData(t, tracker, "req-endpoint-pipeline"))
+		requireOnlyRetryObservation(t, tracker, 0)
 	})
 	t.Run("claude_subscription", func(t *testing.T) {
 		handler, _, tracker := newClaudeSubscriptionTestHandler(t, upstream.URL)
@@ -125,6 +126,7 @@ func TestRequestTiming_EndpointAndClaudeSubscriptionHTTP(t *testing.T) {
 			t.Fatalf("订阅请求失败：%d %s", rec.Code, rec.Body.String())
 		}
 		requireHTTPConnectionTiming(t, timingLifecycleData(t, tracker, "req-claude-subscription"))
+		requireOnlyRetryObservation(t, tracker, 0)
 	})
 }
 
@@ -169,6 +171,7 @@ func TestRequestTiming_AccountPoolResponsesCompactAndSearch(t *testing.T) {
 				t.Fatalf("账号池请求失败：%d %s", rec.Code, rec.Body.String())
 			}
 			requireHTTPConnectionTiming(t, timingLifecycleData(t, tracker, "timing-account"))
+			requireOnlyRetryObservation(t, tracker, 0)
 		})
 	}
 }
@@ -195,6 +198,7 @@ func TestRequestTiming_ImageHTTPIsDirect(t *testing.T) {
 		t.Fatalf("图像请求失败：%d %s", rec.Code, rec.Body.String())
 	}
 	requireHTTPConnectionTiming(t, timingLifecycleData(t, tracker, "timing-image"))
+	requireOnlyRetryObservation(t, tracker, 0)
 }
 
 func TestRequestTiming_CodexSubscriptionHTTPIsDirect(t *testing.T) {
@@ -219,6 +223,7 @@ func TestRequestTiming_CodexSubscriptionHTTPIsDirect(t *testing.T) {
 		t.Fatalf("订阅详情 = %v，err = %v", rows, err)
 	}
 	requireHTTPConnectionTiming(t, timingLifecycleData(t, tracker, rows[0].RequestID))
+	requireOnlyRetryObservation(t, tracker, 0)
 }
 
 // TestRequestTiming_SubscriptionTrackingDatabasePath 热池关闭时，Codex 订阅的三列经事件队列落库，

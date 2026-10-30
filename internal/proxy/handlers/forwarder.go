@@ -377,7 +377,7 @@ func ensureBetaFlag(header http.Header, flag string) {
 //   - 保留 4xx/5xx 响应结构（分类交给决策表，不在此转换为 error）；
 //   - detachUpstream 为 true 时创建独立 upstream context（下游断开后仍可短时 drain 尾部），返回其 release；
 //   - 非 SSE 请求恢复端点级总超时，SSE 保持无总超时，避免长流被硬切断。
-func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, isSSE, detachUpstream bool, onWroteRequest func(UpstreamWriteTiming)) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
+func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, isSSE, detachUpstream bool, recorder UpstreamTraceRecorder) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
 	// Config 返回 admission 快照的独立副本；后续 helper 继续复用既有逻辑，
 	// 但不会再读取 Manager 持有的可变 Endpoint 或动态凭据状态。
 	ep := &endpoint.Endpoint{Config: target.Config()}
@@ -394,23 +394,23 @@ func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bod
 		requestTimeout = ep.Config.Timeout
 	}
 	return f.sendUpstream(ctx, r, bodyBytes, upstreamSend{
-		baseURL:        ep.Config.URL,
-		timeout:        requestTimeout,
-		detach:         detachUpstream,
-		onWroteRequest: onWroteRequest,
-		upstreamModel:  upstreamModel,
-		copyHeaders:    func(dst *http.Request) { f.CopyAttemptHeaders(r, dst, target) },
+		baseURL:       ep.Config.URL,
+		timeout:       requestTimeout,
+		detach:        detachUpstream,
+		recorder:      recorder,
+		upstreamModel: upstreamModel,
+		copyHeaders:   func(dst *http.Request) { f.CopyAttemptHeaders(r, dst, target) },
 	})
 }
 
 // upstreamSend 一次出站请求的目标与头部策略；正文已完成改写与隐私过滤
 type upstreamSend struct {
-	baseURL        string
-	timeout        time.Duration // 0 表示不设总超时（SSE）
-	detach         bool          // 独立 upstream context，下游断开后仍可短时 drain 尾部
-	onWroteRequest func(UpstreamWriteTiming)
-	upstreamModel  string
-	copyHeaders    func(dst *http.Request)
+	baseURL       string
+	timeout       time.Duration // 0 表示不设总超时（SSE）
+	detach        bool          // 独立 upstream context，下游断开后仍可短时 drain 尾部
+	recorder      UpstreamTraceRecorder
+	upstreamModel string
+	copyHeaders   func(dst *http.Request)
 }
 
 // sendUpstream 端点管线与订阅直通共用的出站核心：挂 trace、构造请求、按调用方策略写头并发送
@@ -420,7 +420,7 @@ func (f *Forwarder) sendUpstream(ctx context.Context, r *http.Request, bodyBytes
 	if send.detach {
 		requestCtx, release = context.WithCancel(context.Background())
 	}
-	requestCtx, traceState := WithUpstreamTrace(requestCtx, send.onWroteRequest)
+	requestCtx, traceState := WithUpstreamTrace(requestCtx, send.recorder)
 	traceState.setUpstreamModel(send.upstreamModel)
 	fail := func(err error) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
 		if release != nil {

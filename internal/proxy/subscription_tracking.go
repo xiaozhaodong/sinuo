@@ -104,10 +104,11 @@ func (o *subscriptionTrackingObserver) publish(eventType events.EventType, prior
 }
 
 type subscriptionRequestTracking struct {
-	mu       sync.Mutex
-	observer *subscriptionTrackingObserver
-	active   bool
-	settled  bool
+	upstreamContactState // 在 mu 下维护；WS 不产生取连接事件
+	mu                   sync.Mutex
+	observer             *subscriptionTrackingObserver
+	active               bool
+	settled              bool
 
 	requestID     string
 	connectionID  string
@@ -198,40 +199,6 @@ func (t *subscriptionRequestTracking) SetHTTPStatus(status int) {
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{HttpStatus: &status})
 }
 
-// MarkOutbound 记录同一次尝试的取连接、连接就绪与写完；WS 提交没有建连阶段，只传写完时刻。
-func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, timing handlers.UpstreamWriteTiming) {
-	if requestBytes < 0 {
-		requestBytes = 0
-	}
-	t.mu.Lock()
-	if !t.active || t.settled || !t.firstOutputAt.IsZero() {
-		t.mu.Unlock()
-		return
-	}
-	at := timing.WroteAt
-	if at.IsZero() {
-		at = time.Now()
-	}
-	t.outboundAt = at
-	t.requestBytes = requestBytes
-	offset := func(moment time.Time) *int64 {
-		if moment.IsZero() {
-			return nil
-		}
-		ms := max(moment.Sub(t.startedAt).Milliseconds(), 0)
-		return &ms
-	}
-	opts := tracking.UpdateOptions{
-		UpstreamWriteMs:    offset(at),
-		UpstreamConnMs:     offset(timing.ConnReadyAt),
-		UpstreamDispatchMs: offset(timing.ConnStartAt),
-		FirstTokenStartAt:  &at,
-	}
-	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
-	t.mu.Unlock()
-	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, upstreamSentEventData(t.requestID, at))
-}
-
 func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at time.Time) {
 	if responseBytes < 0 {
 		responseBytes = 0
@@ -256,8 +223,14 @@ func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at ti
 	if ms < 0 {
 		ms = 0
 	}
+	opts := tracking.UpdateOptions{}
+	if t.upstreamContacts > 0 {
+		opts = t.contactUpdate(t.startedAt)
+	}
+	opts.FirstTokenMs, opts.FirstTokenAt = &ms, &at
+	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
+	t.persistedContacts = t.upstreamContacts
 	t.mu.Unlock()
-	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{FirstTokenMs: &ms, FirstTokenAt: &at})
 	// 订阅代理在开始与结算之间没有别的事件，不补这一条首响位会一直跑到请求结束。
 	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, firstResponseEventData(t.requestID, ms, at))
 }
@@ -336,6 +309,8 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 		t.mu.Unlock()
 		return
 	}
+	t.flushUpstreamContactsLocked()
+	retryCount := max(t.upstreamContacts-1, 0)
 	t.settled = true
 	httpStatus := t.httpStatus
 	if overrideHTTPStatus != nil {
@@ -367,37 +342,10 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 	}); err != nil {
 		slog.Warn("订阅请求追踪结算失败", "request_id", requestID, "code", "subscription_tracking_settlement_failed")
 	}
-	logArgs := []interface{}{
-		"request_id", requestID, "status", status, "request_bytes", requestBytes,
-		"response_bytes", responseBytes, "duration_ms", duration.Milliseconds(), "usage_known", usage != nil,
-		"failure_reason", failureCode,
-	}
-	if t.connectionID != "" {
-		logArgs = append(logArgs, "conn_id", t.connectionID)
-	}
-	if status == "completed" {
-		slog.Debug("订阅请求追踪结算完成", logArgs...)
-	} else {
-		slog.Warn("订阅请求追踪结算结束", logArgs...)
-	}
-	priority := events.PriorityNormal
-	changeType := "request_completed"
-	if status == "cancelled" {
-		changeType = "request_cancelled"
-	} else if status != "completed" {
-		priority = events.PriorityHigh
-		changeType = "request_failed"
-	}
-	t.observer.publish(events.EventRequestUpdated, priority, map[string]interface{}{
-		"request_id": requestID, "request_family": tracking.RequestFamilyCodex,
-		"request_source": tracking.RequestSourceCodexSubscriptionProxy,
-		"upstream_type":  "subscription", "upstream_name": subscriptionTrackingUpstreamName,
-		"status": status, "model_name": model, "failure_reason": failureCode,
-		"usage_known": usage != nil, "cost_known": usage != nil,
-		"request_bytes": requestBytes, "response_bytes": responseBytes, "change_type": changeType,
-	})
-	t.observer.publish(events.EventRequestCompleted, priority, map[string]interface{}{
-		"request_id": requestID, "status": status, "change_type": changeType,
+	t.publishSettlement(subscriptionSettlementNotice{
+		requestID: requestID, status: status, failureCode: failureCode, model: model,
+		requestBytes: requestBytes, responseBytes: responseBytes, duration: duration,
+		usageKnown: usage != nil, retryCount: retryCount,
 	})
 }
 

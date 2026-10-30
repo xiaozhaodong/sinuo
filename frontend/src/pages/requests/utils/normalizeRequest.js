@@ -41,6 +41,8 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   duration: pick(request, ['duration_ms', 'duration', 'response_time'], 0),
   statusCode: pick(request, ['status_code', 'statusCode', 'http_status'], null),
   retryCount: pick(request, ['retry_count', 'retryCount'], 0),
+  upstreamFirstDispatchMs: pick(request, ['upstream_first_dispatch_ms', 'upstreamFirstDispatchMs'], null),
+  retryStartedAt: pick(request, ['retry_started_at', 'retryStartedAt'], ''),
   failureReason: pick(request, ['failure_reason', 'failureReason'], ''),
   cancelReason: pick(request, ['cancel_reason', 'cancelReason'], ''),
   path: pick(request, ['path'], ''),

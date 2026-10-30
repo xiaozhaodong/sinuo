@@ -319,6 +319,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     ? {
       ...lifecycle.request,
       upstreamWriteMs: lifecycle.upstreamWriteMs ?? null,
+      upstreamFirstDispatchMs: lifecycle.upstreamFirstDispatchMs ?? null,
       upstreamDispatchMs: lifecycle.upstreamDispatchMs ?? null,
       upstreamConnMs: lifecycle.upstreamConnMs ?? null
     }

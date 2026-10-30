@@ -191,3 +191,17 @@ test('联网搜索的 0 用量按未知展示，其他请求不受影响', () =>
   assert.equal(responses.usageKnown, true);
   assert.equal(responses.costKnown, true);
 });
+
+test('首次联系偏移保留两种命名、NULL与真实0，重试起点可重复归一化', () => {
+  for (const key of ['upstream_first_dispatch_ms', 'upstreamFirstDispatchMs']) {
+    assert.equal(normalizeRequest({ [key]: 0 }).upstreamFirstDispatchMs, 0);
+    assert.equal(normalizeRequest({ [key]: 20 }).upstreamFirstDispatchMs, 20);
+  }
+  assert.equal(normalizeRequest({}).upstreamFirstDispatchMs, null);
+  assert.equal(normalizeRequest({ upstream_first_dispatch_ms: null }).upstreamFirstDispatchMs, null);
+  const at = '2026-10-30T00:00:02.000000Z';
+  const row = normalizeRequest({ retry_started_at: at, retry_count: 2, upstream_first_dispatch_ms: 0 });
+  assert.equal(normalizeRequest(row).retryStartedAt, at);
+  assert.equal(normalizeRequest(row).retryCount, 2);
+  assert.equal(normalizeRequest(row).upstreamFirstDispatchMs, 0);
+});

@@ -947,6 +947,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} [source] - hot_pool | database
  * @property {RequestRecord | null} [request]
  * @property {number | null} [upstream_write_ms]
+ * @property {number | null} [upstream_first_dispatch_ms]
  * @property {number | null} [upstream_dispatch_ms]
  * @property {number | null} [upstream_conn_ms]
  * @property {string} [schedule_snapshot_json]
@@ -990,6 +991,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} model
  * @property {string} status
  * @property {number | null} http_status - 无 HTTP 响应（如订阅 WS 内生成）为 null
+ * @property {number | null} upstream_first_dispatch_ms - 首次联系上游偏移；非空表示重试采用新口径
  * @property {number} retry_count - 重试次数
  * @property {string} [failure_reason] - 失败原因
  * @property {string} [cancel_reason] - 取消原因

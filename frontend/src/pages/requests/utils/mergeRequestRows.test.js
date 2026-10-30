@@ -131,3 +131,12 @@ test('COMPARED_FIELDS 覆盖详情面板与生命周期面板读到的字段', (
   const missing = [...readFields].filter((field) => !COMPARED_FIELDS.includes(field)).sort();
   assert.deepEqual(missing, [], `详情侧读了但未参与比对的字段：${missing.join(', ')}`);
 });
+
+test('首次联系与重试起点推进可触发行更新，值原样保留', () => {
+  const previous = row({ upstreamFirstDispatchMs: null, retryStartedAt: '' });
+  const next = row({ upstreamFirstDispatchMs: 0, retryStartedAt: '2026-10-30T00:00:02.000000Z' });
+  const merged = mergeRequestRows([previous], [next]);
+  assert.equal(merged[0], next);
+  assert.equal(merged[0].upstreamFirstDispatchMs, 0);
+  assert.equal(merged[0].retryStartedAt, next.retryStartedAt);
+});

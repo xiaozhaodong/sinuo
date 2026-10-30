@@ -11,6 +11,7 @@ import (
 // 只发通知的话，请求页要等 250ms 合并刷新 + 查询才知道，跑秒会先跑过头再往回跳。
 // 字段名与列表接口一致，端点管线与订阅代理共用。
 const (
+	requestChangeUpstreamRetry       = "upstream_retry"
 	requestChangeUpstreamSent        = "upstream_sent"
 	requestChangeFirstResponse       = "first_response"
 	requestChangeGenerationCompleted = "generation_completed"
@@ -22,6 +23,14 @@ func upstreamSentEventData(requestID string, startAt time.Time) map[string]inter
 		"request_id":           requestID,
 		"change_type":          requestChangeUpstreamSent,
 		"first_token_start_at": timezonepolicy.FormatStorage(startAt),
+	}
+}
+
+// upstreamRetryEventData 每次再次联系上游时即时通知；取连接阶段只更新内存与事件。
+func upstreamRetryEventData(requestID string, retries int, at time.Time) map[string]interface{} {
+	return map[string]interface{}{
+		"request_id": requestID, "change_type": requestChangeUpstreamRetry,
+		"retry_count": retries, "retry_started_at": timezonepolicy.FormatStorage(at),
 	}
 }
 

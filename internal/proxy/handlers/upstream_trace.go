@@ -15,6 +15,31 @@ type UpstreamWriteTiming struct {
 	WroteAt     time.Time
 }
 
+// UpstreamTraceRecorder 接收每次取连接与成功写完；取连接回调不得写库。
+type UpstreamTraceRecorder interface {
+	RecordUpstreamGetConn(UpstreamConnAttempt)
+	RecordUpstreamWrite(UpstreamWriteTiming)
+}
+
+// UpstreamAttemptSummary 是同一追踪内上一次连接尝试的摘要。
+type UpstreamAttemptSummary struct {
+	Elapsed      time.Duration
+	GotConn      bool
+	Reused       bool
+	WasIdle      bool
+	IdleTime     time.Duration
+	WroteHeaders bool
+	WroteRequest bool
+	WriteError   error
+}
+
+// UpstreamConnAttempt 标识一次取连接；TransportRetry 仅表示同一追踪内的重发。
+type UpstreamConnAttempt struct {
+	At             time.Time
+	TransportRetry bool
+	Previous       UpstreamAttemptSummary
+}
+
 // UpstreamTraceState 记录单次上游转发的连接级事件（端点侧与账号池侧共用）。
 // 以 WroteHeaders 是否触发作为「重放安全 / 歧义」分界：
 // WroteHeaders 前失败 = 请求确定未发出（DNS / refused / dial 超时 / TLS 握手失败），
@@ -27,6 +52,7 @@ type UpstreamTraceState struct {
 	wroteRequest     bool
 	wroteRequestErr  error
 	writeTiming      UpstreamWriteTiming
+	attemptSummary   UpstreamAttemptSummary
 	upstreamModel    string // v6.3 本 attempt 改写后实际发出的模型；未改写为空
 }
 
@@ -49,16 +75,29 @@ func (s *UpstreamTraceState) UpstreamModel() string {
 	return s.upstreamModel
 }
 
-func (s *UpstreamTraceState) markGetConn() {
+func (s *UpstreamTraceState) markGetConn() UpstreamConnAttempt {
 	s.mu.Lock()
-	// transport 内部换连接重发时，连接时刻必须来自新的尝试。
-	s.writeTiming = UpstreamWriteTiming{ConnStartAt: time.Now()}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	at := time.Now()
+	attempt := UpstreamConnAttempt{At: at}
+	if !s.writeTiming.ConnStartAt.IsZero() {
+		attempt.TransportRetry = true
+		attempt.Previous = s.attemptSummary
+		attempt.Previous.Elapsed = at.Sub(s.writeTiming.ConnStartAt)
+	}
+	// 最终尝试计时与摘要重置；重放安全边界 wroteHeaders 始终保持粘滞。
+	s.writeTiming = UpstreamWriteTiming{ConnStartAt: at}
+	s.attemptSummary = UpstreamAttemptSummary{}
+	return attempt
 }
 
-func (s *UpstreamTraceState) markGotConn() {
+func (s *UpstreamTraceState) markGotConn(info httptrace.GotConnInfo) {
 	s.mu.Lock()
 	s.gotConn = true
+	s.attemptSummary.GotConn = true
+	s.attemptSummary.Reused = info.Reused
+	s.attemptSummary.WasIdle = info.WasIdle
+	s.attemptSummary.IdleTime = info.IdleTime
 	s.writeTiming.ConnReadyAt = time.Now()
 	s.mu.Unlock()
 }
@@ -72,6 +111,7 @@ func (s *UpstreamTraceState) markTLSHandshakeDone() {
 func (s *UpstreamTraceState) markWroteHeaders() {
 	s.mu.Lock()
 	s.wroteHeaders = true
+	s.attemptSummary.WroteHeaders = true
 	s.mu.Unlock()
 }
 
@@ -80,6 +120,8 @@ func (s *UpstreamTraceState) markWroteRequest(err error) UpstreamWriteTiming {
 	defer s.mu.Unlock()
 	s.wroteRequest = true
 	s.wroteRequestErr = err
+	s.attemptSummary.WroteRequest = true
+	s.attemptSummary.WriteError = err
 	s.writeTiming.WroteAt = time.Now()
 	return s.writeTiming
 }
@@ -110,14 +152,17 @@ func (s *UpstreamTraceState) MarkWroteHeadersForTest() {
 }
 
 // WithUpstreamTrace 挂载连接与写出事件；成功写完后在锁外回调同次尝试的时刻。
-func WithUpstreamTrace(ctx context.Context, onWroteRequest func(UpstreamWriteTiming)) (context.Context, *UpstreamTraceState) {
+func WithUpstreamTrace(ctx context.Context, recorder UpstreamTraceRecorder) (context.Context, *UpstreamTraceState) {
 	state := &UpstreamTraceState{}
 	trace := &httptrace.ClientTrace{
 		GetConn: func(string) {
-			state.markGetConn()
+			attempt := state.markGetConn()
+			if recorder != nil {
+				recorder.RecordUpstreamGetConn(attempt)
+			}
 		},
-		GotConn: func(httptrace.GotConnInfo) {
-			state.markGotConn()
+		GotConn: func(info httptrace.GotConnInfo) {
+			state.markGotConn(info)
 		},
 		TLSHandshakeDone: func(tls.ConnectionState, error) {
 			state.markTLSHandshakeDone()
@@ -129,8 +174,8 @@ func WithUpstreamTrace(ctx context.Context, onWroteRequest func(UpstreamWriteTim
 			timing := state.markWroteRequest(info.Err)
 			// 只有完整写出成功才形成有效 upstream_write_ms；写出阶段报错时
 			// 请求可能只发送了部分内容，不能伪造“上游写完”时间。
-			if info.Err == nil && onWroteRequest != nil {
-				onWroteRequest(timing)
+			if info.Err == nil && recorder != nil {
+				recorder.RecordUpstreamWrite(timing)
 			}
 		},
 	}

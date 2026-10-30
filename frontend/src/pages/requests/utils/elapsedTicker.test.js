@@ -111,7 +111,7 @@ test('色阶跟着跑秒一起走 —— 卡住的请求会自己变黄变红', 
 test('跑秒落在当前正在进行的那一段上', () => {
   // 首字未到 -> 首响位从上游请求写完开始跑（threshold="first"，无 baseMs）；还没写完只放等待点
   assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.firstTokenStartAt\} threshold="first" \/>/);
-  assert.match(TABLE_SOURCE, /parseTimestampOrNull\(request\.firstTokenStartAt\)[\s\S]{0,200}<PendingSendPill timestamp=\{request\.timestamp\} \/>/);
+  assert.match(TABLE_SOURCE, /firstResponseWait\(request\)[\s\S]{0,100}<PendingSendPill \{\.\.\.waiting\} \/>/);
   // 生成耗时随事件先到时计时格先定格，不等状态刷新
   assert.match(TABLE_SOURCE, /timingRunning = running && !Number\.isFinite\(request\.completionMs\)/);
   // 首字已到 -> 生成位接过跑秒，起算点由 resolveGenerationTickAnchor 给出

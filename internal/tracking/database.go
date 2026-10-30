@@ -662,6 +662,10 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "upstream_write_ms = CASE WHEN first_token_ms IS NULL THEN ? ELSE upstream_write_ms END")
 		args = append(args, *opts.UpstreamWriteMs)
 	}
+	if opts.UpstreamFirstDispatchMs != nil && *opts.UpstreamFirstDispatchMs >= 0 {
+		setParts = append(setParts, "upstream_first_dispatch_ms = CASE WHEN upstream_first_dispatch_ms IS NULL AND first_token_ms IS NULL THEN ? ELSE upstream_first_dispatch_ms END")
+		args = append(args, *opts.UpstreamFirstDispatchMs)
+	}
 	if opts.UpstreamDispatchMs != nil && *opts.UpstreamDispatchMs >= 0 {
 		setParts = append(setParts, "upstream_dispatch_ms = CASE WHEN first_token_ms IS NULL THEN ? ELSE upstream_dispatch_ms END")
 		args = append(args, *opts.UpstreamDispatchMs)

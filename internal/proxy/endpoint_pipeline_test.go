@@ -188,6 +188,8 @@ func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingA
 		endpointPipelineConfig("backup", backup.URL, 2),
 	)
 
+	tracker := attachRetryTracker(t, handler)
+
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected backup success, got status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -205,6 +207,7 @@ func TestEndpointPipeline_ConnectionFailure_FailsOverAndRetainsWithoutMigratingA
 	if snapshot.Decisions[0].RuntimeOutcome != endpoint.EndpointScheduleRuntimeTryNext || snapshot.Decisions[1].RuntimeOutcome != endpoint.EndpointScheduleOutcomeSuccess {
 		t.Fatalf("unexpected failover attempt decisions: %+v", snapshot.Decisions)
 	}
+	requireOnlyRetryObservation(t, tracker, 1)
 }
 
 // [Phase3 §11.2] auth failover 成功后 active 不迁移；auth cooldown 断言保留
@@ -491,6 +494,8 @@ func TestEndpointPipeline_Ordinary429RetrySucceedsWithoutSoftFailure(t *testing.
 		endpointPipelineConfig("primary", primary.URL, 1),
 	)
 
+	tracker := attachRetryTracker(t, handler)
+
 	recorder := performEndpointPipelineRequest(t, handler, false)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected retry success 200, got status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -501,6 +506,7 @@ func TestEndpointPipeline_Ordinary429RetrySucceedsWithoutSoftFailure(t *testing.
 	if got := manager.GetFailureStats()["primary"]; got != 0 {
 		t.Fatalf("retry success must not record soft failure, got %d", got)
 	}
+	requireOnlyRetryObservation(t, tracker, 1)
 }
 
 // [Phase1 §9.2 规则 9] 第 3 个逻辑 429 达阈值：进入冷却并允许本请求内换下一候选

@@ -112,7 +112,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(response_reasoning, '') as response_reasoning,
 	COALESCE(session_id, '') as session_id,
 	COALESCE(is_streaming, false) as is_streaming,
-	status, http_status_code, retry_count,
+	status, http_status_code, retry_count, upstream_first_dispatch_ms,
 	COALESCE(failure_reason, '') as failure_reason,
 	COALESCE(last_failure_reason, '') as last_failure_reason,
 	COALESCE(cancel_reason, '') as cancel_reason,
@@ -284,7 +284,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.RequestReasoning, &detail.ResponseReasoning,
 			&detail.SessionID,
 			&detail.IsStreaming,
-			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
+			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount, &detail.UpstreamFirstDispatchMs,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
 			&input, &output,
 			&creation, &creation5m, &creation1h, &read,
@@ -506,9 +506,10 @@ type RequestDetail struct {
 	ResponseReasoning  string     `json:"response_reasoning"` // v6.3: 响应思考信息（归一化串）
 	IsStreaming        bool       `json:"is_streaming"`       // 是否为流式请求
 
-	Status         string `json:"status"`
-	HTTPStatusCode *int   `json:"http_status_code"`
-	RetryCount     int    `json:"retry_count"`
+	Status                  string `json:"status"`
+	HTTPStatusCode          *int   `json:"http_status_code"`
+	RetryCount              int    `json:"retry_count"`
+	UpstreamFirstDispatchMs *int64 `json:"upstream_first_dispatch_ms"`
 
 	// v3.5.0状态机重构新增字段 - 错误原因分离
 	FailureReason     string `json:"failure_reason"`      // 失败原因类型

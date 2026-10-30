@@ -448,11 +448,12 @@ type UpdateOptions struct {
 	RouteDecisionAt    *time.Time     // 路由决策时间
 
 	// v6.2 生命周期面板新增字段
-	UpstreamWriteMs      *int64  // 最终尝试写完偏移（毫秒），首响前覆盖、首响后冻结
-	UpstreamDispatchMs   *int64  // 最终尝试开始取连接偏移（毫秒），即本地处理段终点；HTTP 链路记录
-	UpstreamConnMs       *int64  // 最终尝试连接就绪偏移（毫秒），HTTP 链路
-	ScheduleSnapshotJSON *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
-	PrivacyScanJSON      *string // 隐私扫描摘要 JSON，覆盖写
+	UpstreamWriteMs         *int64  // 最终尝试写完偏移（毫秒），首响前覆盖、首响后冻结
+	UpstreamFirstDispatchMs *int64  // 第一次联系上游偏移（毫秒），只写一次，首响后冻结
+	UpstreamDispatchMs      *int64  // 最终尝试开始取连接偏移（毫秒），即重试段终点；HTTP 链路记录
+	UpstreamConnMs          *int64  // 最终尝试连接就绪偏移（毫秒），HTTP 链路
+	ScheduleSnapshotJSON    *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
+	PrivacyScanJSON         *string // 隐私扫描摘要 JSON，覆盖写
 
 	// v6.3 模型一致性（中间态尽力挂载；终态由 ResponseDiagnostics 原子落库）
 	UpstreamModel     *string // 最终 attempt 实际发给上游的模型；允许写空串
@@ -1070,6 +1071,10 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			// 首响落定后起点就不再动：晚到的重试写完回调不能改写已经算出首响的那个起点
 			if req.FirstTokenMs == nil {
+				if req.UpstreamFirstDispatchMs == nil && opts.UpstreamFirstDispatchMs != nil && *opts.UpstreamFirstDispatchMs >= 0 {
+					value := *opts.UpstreamFirstDispatchMs
+					req.UpstreamFirstDispatchMs = &value
+				}
 				if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 {
 					value := *opts.UpstreamWriteMs
 					req.UpstreamWriteMs = &value
@@ -2322,61 +2327,62 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	}
 
 	return RequestDetail{
-		ID:                    0, // 热池中的请求还没有数据库ID
-		RequestID:             req.RequestID,
-		ClientIP:              req.ClientIP,
-		UserAgent:             req.UserAgent,
-		Method:                req.Method,
-		Path:                  req.Path,
-		StartTime:             req.StartTime,
-		EndTime:               endTime,
-		DurationMs:            durationMs,
-		FirstTokenMs:          firstTokenMs,
-		FirstTokenStartAt:     req.FirstTokenStartAt,
-		FirstTokenAt:          req.FirstTokenAt,
-		CompletionMs:          completionMs,
-		EndpointName:          req.EndpointName,
-		RequestFamily:         req.RequestFamily,
-		RequestSource:         requestSource,
-		RequestKind:           requestKind,
-		UpstreamType:          req.UpstreamType,
-		UpstreamSourceName:    req.UpstreamSourceName,
-		UpstreamName:          req.UpstreamName,
-		UpstreamID:            req.UpstreamID,
-		RouteMode:             routeMode,
-		RequestedEndpoint:     req.RequestedEndpoint,
-		EffectiveEndpoint:     req.EffectiveEndpoint,
-		FallbackReason:        req.FallbackReason,
-		RouteDecisionAt:       req.RouteDecisionAt,
-		ModelName:             req.ModelName,
-		RequestModel:          req.RequestModel,
-		UpstreamModel:         req.UpstreamModel,
-		ResponseModel:         req.ResponseModel,
-		RequestReasoning:      req.RequestReasoning,
-		ResponseReasoning:     req.ResponseReasoning,
-		SessionID:             req.SessionID,
-		IsStreaming:           req.IsStreaming,
-		Status:                req.Status,
-		HTTPStatusCode:        httpStatus,
-		RetryCount:            req.RetryCount,
-		FailureReason:         req.FailureReason,
-		LastFailureReason:     "",
-		CancelReason:          req.CancelReason,
-		InputTokens:           req.InputTokens,
-		OutputTokens:          req.OutputTokens,
-		CacheCreationTokens:   req.CacheCreationTokens,
-		CacheCreation5mTokens: req.CacheCreation5mTokens, // v5.0.1+
-		CacheCreation1hTokens: req.CacheCreation1hTokens, // v5.0.1+
-		CacheReadTokens:       req.CacheReadTokens,
-		UsageKnown:            usageKnown,
-		InputCostUSD:          cost.InputCost,
-		OutputCostUSD:         cost.OutputCost,
-		CacheCreationCostUSD:  cost.CacheCreationCost,
-		CacheReadCostUSD:      cost.CacheReadCost,
-		TotalCostUSD:          cost.TotalCost,
-		CostKnown:             costKnown,
-		CreatedAt:             req.StartTime,
-		UpdatedAt:             ut.now(),
+		ID:                      0, // 热池中的请求还没有数据库ID
+		RequestID:               req.RequestID,
+		ClientIP:                req.ClientIP,
+		UserAgent:               req.UserAgent,
+		Method:                  req.Method,
+		Path:                    req.Path,
+		StartTime:               req.StartTime,
+		EndTime:                 endTime,
+		DurationMs:              durationMs,
+		FirstTokenMs:            firstTokenMs,
+		FirstTokenStartAt:       req.FirstTokenStartAt,
+		FirstTokenAt:            req.FirstTokenAt,
+		CompletionMs:            completionMs,
+		EndpointName:            req.EndpointName,
+		RequestFamily:           req.RequestFamily,
+		RequestSource:           requestSource,
+		RequestKind:             requestKind,
+		UpstreamType:            req.UpstreamType,
+		UpstreamSourceName:      req.UpstreamSourceName,
+		UpstreamName:            req.UpstreamName,
+		UpstreamID:              req.UpstreamID,
+		RouteMode:               routeMode,
+		RequestedEndpoint:       req.RequestedEndpoint,
+		EffectiveEndpoint:       req.EffectiveEndpoint,
+		FallbackReason:          req.FallbackReason,
+		RouteDecisionAt:         req.RouteDecisionAt,
+		ModelName:               req.ModelName,
+		RequestModel:            req.RequestModel,
+		UpstreamModel:           req.UpstreamModel,
+		ResponseModel:           req.ResponseModel,
+		RequestReasoning:        req.RequestReasoning,
+		ResponseReasoning:       req.ResponseReasoning,
+		SessionID:               req.SessionID,
+		IsStreaming:             req.IsStreaming,
+		Status:                  req.Status,
+		HTTPStatusCode:          httpStatus,
+		RetryCount:              req.RetryCount,
+		UpstreamFirstDispatchMs: req.UpstreamFirstDispatchMs,
+		FailureReason:           req.FailureReason,
+		LastFailureReason:       "",
+		CancelReason:            req.CancelReason,
+		InputTokens:             req.InputTokens,
+		OutputTokens:            req.OutputTokens,
+		CacheCreationTokens:     req.CacheCreationTokens,
+		CacheCreation5mTokens:   req.CacheCreation5mTokens, // v5.0.1+
+		CacheCreation1hTokens:   req.CacheCreation1hTokens, // v5.0.1+
+		CacheReadTokens:         req.CacheReadTokens,
+		UsageKnown:              usageKnown,
+		InputCostUSD:            cost.InputCost,
+		OutputCostUSD:           cost.OutputCost,
+		CacheCreationCostUSD:    cost.CacheCreationCost,
+		CacheReadCostUSD:        cost.CacheReadCost,
+		TotalCostUSD:            cost.TotalCost,
+		CostKnown:               costKnown,
+		CreatedAt:               req.StartTime,
+		UpdatedAt:               ut.now(),
 	}
 }
 

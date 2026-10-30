@@ -7,7 +7,7 @@
 // 两条数据来源（事件补丁 / 列表查询）谁先到都可能，所以合并规则只进不退：
 //   - 首响、首字时刻、生成耗时后端只写一次：已有值的一方为准，另一方只补空缺。
 //     否则一次在事件之前发出、之后才返回的查询，会把已定格的跑秒冲回去重跑。
-//   - 首响起点在重试时会后移：取较晚的那个。
+//   - 首响起点与重试起点会后移：取较晚者；新口径重试次数只取较大者。
 // 事件也可能早于这一行出现在列表里（新请求要等合并刷新与查询），这时补丁打不上。
 // 热池开着时紧接着的查询会带回计时；关着时数据库里没有首响起点，补丁丢了首响位就停在「···」。
 // 所以补丁再按请求 ID 暂存一小会儿，查询结果到达时补上。
@@ -18,6 +18,8 @@ import { parseTimestampOrNull } from './lifecycle.js';
 // 事件字段名 -> 行字段名（行对象已过 normalizeRequest，用驼峰）
 const TIMING_EVENT_FIELDS = [
   ['first_token_start_at', 'firstTokenStartAt'],
+  ['retry_started_at', 'retryStartedAt'],
+  ['retry_count', 'retryCount'],
   ['first_token_ms', 'firstTokenMs'],
   ['first_token_at', 'firstTokenAt'],
   ['completion_ms', 'completionMs']
@@ -37,7 +39,8 @@ const laterTimestamp = (left, right) => {
 const mergeTimingField = (field, baseValue, extraValue) => {
   if (isEmpty(extraValue)) return baseValue;
   if (isEmpty(baseValue)) return extraValue;
-  return field === 'firstTokenStartAt' ? laterTimestamp(baseValue, extraValue) : baseValue;
+  if (field === 'retryCount') return Math.max(baseValue, extraValue);
+  return field === 'firstTokenStartAt' || field === 'retryStartedAt' ? laterTimestamp(baseValue, extraValue) : baseValue;
 };
 
 // fillTiming 返回补齐计时后的行；没有任何变化时返回原引用，保住行级 memo。

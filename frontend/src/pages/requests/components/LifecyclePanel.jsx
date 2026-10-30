@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Property, PropertyList } from '@components/desktop/Inspector.jsx';
 import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } from '../utils/lifecycle.js';
+import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import {
@@ -199,14 +200,14 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
           <Property label="隐私" truncate={false}>
             {lifecycleLoading ? <LoadingLine /> : <PrivacyValue privacyScan={lifecycle?.privacyScan || null} />}
           </Property>
-          <Property label="重试" truncate={false}>
-            <span className="font-mono">{request.retryCount ?? 0}</span> 次
+          {retryPropertyVisible(request, accountSwitchCount, isAccountRequest) && <Property label="重试" truncate={false}>
+            {Number.isFinite(request.upstreamFirstDispatchMs) && <><span className="font-mono">{request.retryCount ?? 0}</span> 次</>}
             {isAccountRequest && accountSwitchCount > 0 && <span className="ml-1 text-xs text-fg-muted">换号 {accountSwitchCount} 次</span>}
             {!isAccountRequest && request.requestedEndpoint && request.effectiveEndpoint
               && request.requestedEndpoint !== request.effectiveEndpoint && (
               <span className="ml-1 text-xs text-warn">故障转移</span>
             )}
-          </Property>
+          </Property>}
         </PropertyList>
         {!lifecycleLoading && canExpand && (
           <button

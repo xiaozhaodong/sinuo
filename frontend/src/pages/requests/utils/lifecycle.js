@@ -2,6 +2,7 @@
 // lifecycle - 生命周期分段推导纯函数（方案 F2）
 // 2026-08-13
 // 输入：normalizeRequest 后的权威行数据（effective）。
+// 新数据额外记录 upstreamFirstDispatchMs：本地处理 → 重试 → 最终尝试；未写完按规则6降级。
 // 时间契约：timestamp / routeDecisionAt 均为固定微秒精度 UTC ISO（…Z）绝对时刻，
 // 直接相减即真实毫秒差；解析失败降级为 null，不制造假段。
 // ============================================
@@ -159,108 +160,115 @@ const LOCAL_SEGMENT_DETAIL = {
   direct: '读取与解析请求、隐私扫描与构造上游请求'
 };
 
-const resolveLocalSegmentDetail = (request) => {
-  if (request.upstreamType === 'subscription') {
-    return request.requestFamily === 'codex' ? LOCAL_SEGMENT_DETAIL.codexSubscription : LOCAL_SEGMENT_DETAIL.direct;
-  }
-  if (request.requestFamily === 'image') return LOCAL_SEGMENT_DETAIL.direct;
-  return request.upstreamType === 'account' ? LOCAL_SEGMENT_DETAIL.account : LOCAL_SEGMENT_DETAIL.endpoint;
+const NEW_LOCAL_SEGMENT_DETAIL = {
+  ...LOCAL_SEGMENT_DETAIL,
+  endpoint: '读取与解析请求、选路、模型改写、隐私扫描与构造请求；另含出站限速等待（如有）',
+  account: '读取与解析请求、选路、模型改写、隐私扫描、鉴权准备（可能刷新 OAuth token）与请求体压缩（按账号配置）'
 };
 
-// buildLifecycleSegments 分段推导（毫秒，全部防御 NULL 与非单调输入）。
-// 有 conn 与 write 时：本地处理 · 建连 · 发送 · 首字 · 流式输出（· 收尾）；
-// 本地处理段键沿用 queue；早期直通记录（2026-10）没有 dispatch，本地处理并入建连。
-// 缺任一项时保持旧数据降级规则：
-//   1. 全无 timing → 单段「总耗时」
-//   2. 只有 first/completion（旧数据）→ 前置 / 首字 / 流式输出
-//   3. 有 upstreamWriteMs 无 routeDecisionAt → 准备（本地处理+连接）/ 首字 / 流式输出；订阅（含 WS 提交）改为「准备与发送」
-//   4. 全量 → 本地处理 · 连接 · 首字 · 流式输出（· 收尾）
-//   5. failed/cancelled → 已知段照画，末尾补红/灰标注段
-export const buildLifecycleSegments = (request = {}) => {
-  const duration = toNullableMs(request.duration) ?? 0;
-  const firstMs = toNullableMs(request.firstTokenMs);
-  const completionMs = toNullableMs(request.completionMs);
-  const isStreaming = request.isStreaming !== false;
+const resolveLocalSegmentDetail = (request) => {
+  const detail = toNullableMs(request.upstreamFirstDispatchMs) === null ? LOCAL_SEGMENT_DETAIL : NEW_LOCAL_SEGMENT_DETAIL;
+  if (request.upstreamType === 'subscription') {
+    return request.requestFamily === 'codex' ? detail.codexSubscription : detail.direct;
+  }
+  if (request.requestFamily === 'image') return detail.direct;
+  return request.upstreamType === 'account' ? detail.account : detail.endpoint;
+};
+
+// 分段边界：新数据以首次取连接结束本地处理，最终取连接结束重试段。
+// 旧数据缺 first，保持原有五项降级规则；规则6：有 first、未写完时只画本地处理与终态残差。
+const resolvePrefixTiming = (request) => {
   const writeMs = toNullableMs(request.upstreamWriteMs);
   const connMs = toNullableMs(request.upstreamConnMs);
-  const hasConnectionTiming = connMs !== null && writeMs !== null;
-  // 写完偏移是首字的起点；向前钳制连接与取连接偏移，确保不与首字重叠。
-  const readyMs = hasConnectionTiming ? Math.min(connMs, writeMs) : null;
+  const firstDispatchMs = toNullableMs(request.upstreamFirstDispatchMs);
   const dispatchMs = toNullableMs(request.upstreamDispatchMs);
-  const queueMs = hasConnectionTiming
-    ? (dispatchMs === null ? null : Math.min(dispatchMs, readyMs))
-    : resolveQueueMs(request);
+  const hasConnectionTiming = connMs !== null && writeMs !== null;
+  const readyMs = hasConnectionTiming ? Math.min(connMs, writeMs) : null;
+  const boundaryMs = hasConnectionTiming && dispatchMs !== null ? Math.min(dispatchMs, readyMs) : null;
+  const queueMs = firstDispatchMs !== null
+    ? Math.min(firstDispatchMs, boundaryMs ?? writeMs ?? firstDispatchMs)
+    : (hasConnectionTiming ? boundaryMs : resolveQueueMs(request));
   const connectMs = hasConnectionTiming
-    ? Math.max(0, readyMs - (queueMs ?? 0))
-    : resolveConnectMs(request);
+    ? Math.max(0, readyMs - (boundaryMs ?? queueMs ?? 0))
+    : (firstDispatchMs === null ? resolveConnectMs(request) : (writeMs === null ? null : Math.max(0, writeMs - queueMs)));
+  const retryMs = firstDispatchMs !== null && boundaryMs !== null ? Math.max(0, boundaryMs - queueMs) : 0;
+  return { writeMs, readyMs, queueMs, connectMs, retryMs, hasConnectionTiming, firstDispatchMs };
+};
 
-  const hasTiming = firstMs !== null || completionMs !== null || queueMs !== null || connectMs !== null;
-
-  // 降级规则 1：全无 timing。
-  if (!hasTiming) {
-    const terminal = terminalSegment(request, duration);
-    return terminal ? [terminal] : [{ key: 'total', label: '总耗时', ms: duration }];
+const connectionSegment = (request, { hasConnectionTiming, connectMs, queueMs }) => {
+  if (hasConnectionTiming) {
+    return { key: 'connect', label: '建连', ms: connectMs, detail: `取得上游连接：新建连接含 DNS、TCP、TLS 与代理握手，复用连接接近 0${queueMs === null ? '；本条记录未单独计本地处理，已并入此段' : ''}` };
   }
+  if (queueMs !== null) return { key: 'connect', label: '连接', ms: connectMs };
+  return { key: 'connect', label: request.upstreamType === 'subscription' ? '准备与发送' : '准备（本地处理+连接）', ms: connectMs };
+};
 
+const buildPrefixSegments = (request, timing) => {
+  const { writeMs, readyMs, queueMs, connectMs, retryMs, hasConnectionTiming, firstDispatchMs } = timing;
   const segments = [];
-
   if (queueMs !== null && queueMs > 0) {
-    segments.push(hasConnectionTiming
-      ? { key: 'queue', label: '本地处理', ms: queueMs, detail: resolveLocalSegmentDetail(request) }
-      : { key: 'queue', label: '本地处理', ms: queueMs });
+    const local = { key: 'queue', label: '本地处理', ms: queueMs };
+    if (hasConnectionTiming || firstDispatchMs !== null) local.detail = resolveLocalSegmentDetail(request);
+    segments.push(local);
   }
-  if (connectMs !== null && connectMs > 0) {
-    // 降级规则 3：无 routeDecisionAt 时本地处理与连接不可分，合并为「准备」段。
-    segments.push(hasConnectionTiming
-      ? { key: 'connect', label: '建连', ms: connectMs, detail: `取得上游连接：新建连接含 DNS、TCP、TLS 与代理握手，复用连接接近 0${queueMs === null ? '；本条记录未单独计本地处理，已并入此段' : ''}` }
-      : (queueMs === null
-        ? { key: 'connect', label: request.upstreamType === 'subscription' ? '准备与发送' : '准备（本地处理+连接）', ms: connectMs }
-        : { key: 'connect', label: '连接', ms: connectMs }));
+  if (retryMs > 0) {
+    segments.push({ key: 'retry', label: '重试', ms: retryMs,
+      detail: `从第一次联系上游到最终那次：此前失败的尝试、重试前的等待（429 等待、出站限速），以及后续尝试的本地准备。共联系上游 ${(request.retryCount ?? 0) + 1} 次` });
   }
+  if (connectMs !== null && connectMs > 0) segments.push(connectionSegment(request, timing));
   if (hasConnectionTiming && writeMs > readyMs) {
     segments.push({ key: 'send', label: '发送', ms: writeMs - readyMs, detail: '写出请求头与请求体；请求体越大、上行越慢，这段越长' });
   }
-  // 降级规则 2：无本地处理/连接信息时，用总耗时扣除首字与流式推算「前置」。
-  if (queueMs === null && connectMs === null && firstMs !== null) {
-    const preMs = Math.max(0, duration - ((firstMs ?? 0) + (completionMs ?? 0)));
-    if (preMs > 0) {
-      segments.push({ key: 'pre', label: '前置', ms: preMs });
-    }
-  }
+  return segments;
+};
 
-  if (firstMs !== null) {
-    segments.push({ key: 'first', label: isStreaming ? '首字' : '响应', ms: firstMs });
-  }
-  // 非流式 completionMs=0，不出流式段。
-  if (isStreaming && completionMs !== null && completionMs > 0) {
-    segments.push({ key: 'stream', label: '流式输出', ms: completionMs });
-  }
-
+const finishLifecycleSegments = (request, segments, duration) => {
   const knownSum = segments.reduce((sum, seg) => sum + seg.ms, 0);
-
-  // 降级规则 5：终态标注段吸收残差。
   const terminal = terminalSegment(request, 0);
   if (terminal) {
     terminal.ms = Math.max(0, duration - knownSum);
-    segments.push(terminal);
-    return segments;
+    return [...segments, terminal];
   }
-
-  // 收尾残差：> 80ms 单独显示，否则并入末段。
   const tailMs = Math.max(0, duration - knownSum);
   if (tailMs > TAIL_THRESHOLD_MS) {
     segments.push({ key: 'tail', label: '收尾', ms: tailMs });
   } else if (tailMs > 0 && segments.length > 0) {
     segments[segments.length - 1].ms += tailMs;
   }
-
   return segments;
+};
+
+// buildLifecycleSegments 新数据拆出重试；旧数据继续按原有五项规则推导，不回填或猜测。
+export const buildLifecycleSegments = (request = {}) => {
+  const duration = toNullableMs(request.duration) ?? 0;
+  const firstMs = toNullableMs(request.firstTokenMs);
+  const completionMs = toNullableMs(request.completionMs);
+  const isStreaming = request.isStreaming !== false;
+  const timing = resolvePrefixTiming(request);
+  const { queueMs, connectMs } = timing;
+  const hasTiming = firstMs !== null || completionMs !== null || queueMs !== null || connectMs !== null;
+  if (!hasTiming) {
+    const terminal = terminalSegment(request, duration);
+    return terminal ? [terminal] : [{ key: 'total', label: '总耗时', ms: duration }];
+  }
+  const segments = buildPrefixSegments(request, timing);
+  // 旧数据降级规则2：首响与生成之外的残差为前置。
+  if (queueMs === null && connectMs === null && firstMs !== null) {
+    const preMs = Math.max(0, duration - (firstMs + (completionMs ?? 0)));
+    if (preMs > 0) segments.push({ key: 'pre', label: '前置', ms: preMs });
+  }
+  if (firstMs !== null) segments.push({ key: 'first', label: isStreaming ? '首字' : '响应', ms: firstMs });
+  if (isStreaming && completionMs !== null && completionMs > 0) {
+    segments.push({ key: 'stream', label: '流式输出', ms: completionMs });
+  }
+  return finishLifecycleSegments(request, segments, duration);
 };
 
 // lifecycleSegmentColors 分段配色（实心色块，深浅主题各给一套）。
 // 不走 tone-*：色块只需要底色，且暗色下要压深到能承载浅色标签文字。
 export const lifecycleSegmentColors = {
   queue: 'bg-slate-200 dark:bg-slate-600',
+  retry: 'bg-amber-200 dark:bg-amber-800',
   connect: 'bg-indigo-200 dark:bg-indigo-800',
   send: 'bg-sky-200 dark:bg-sky-800',
   pre: 'bg-slate-200 dark:bg-slate-600',
@@ -281,6 +289,7 @@ export const lifecycleSegmentColors = {
 // 两个背景上都够亮，再分叉只会让两个主题的比例观感对不上。
 export const railSegmentColors = {
   queue: 'bg-slate-300 dark:bg-slate-500',
+  retry: 'bg-amber-300 dark:bg-amber-400',
   connect: 'bg-indigo-300 dark:bg-indigo-400',
   send: 'bg-sky-300 dark:bg-sky-400',
   pre: 'bg-slate-300 dark:bg-slate-500',

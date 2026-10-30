@@ -170,7 +170,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
-			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.RecordUpstreamWrite)
+			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
 		recordEndpointUpstreamModel(lifecycleManager, traceState)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
@@ -218,7 +218,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								ep = &endpoint.Endpoint{Config: target.Config()}
 								slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay+pacedWait))
 								resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
-									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.RecordUpstreamWrite)
+									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
 								recordEndpointUpstreamModel(lifecycleManager, traceState)
 								releaseUpstream = func() {
 									if upstreamCancel != nil {

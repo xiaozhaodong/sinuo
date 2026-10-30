@@ -659,3 +659,18 @@ func TestGetUsageStats_IncludeCompactionMatchesListScope(t *testing.T) {
 		t.Fatalf("overview default must keep per-metric scopes: %+v", mixed)
 	}
 }
+
+// 列表与详情共用 Wails 行映射，必须保留新口径标识，且合法0不能被当作缺失。
+func TestRequestRetryAPI_FirstDispatchMapping(t *testing.T) {
+	first := int64(0)
+	record := requestDetailToRecord(tracking.RequestDetail{
+		RequestID: "retry-api", RetryCount: 1, UpstreamFirstDispatchMs: &first,
+	})
+	if record.UpstreamFirstDispatchMs == nil || *record.UpstreamFirstDispatchMs != 0 || record.RetryCount != 1 {
+		t.Fatalf("Wails行丢失重试口径: %+v", record)
+	}
+	legacy := requestDetailToRecord(tracking.RequestDetail{RequestID: "legacy", RetryCount: 1})
+	if legacy.UpstreamFirstDispatchMs != nil {
+		t.Fatal("旧行不得伪造新口径")
+	}
+}

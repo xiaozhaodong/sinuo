@@ -359,7 +359,6 @@ func (erm *ErrorRecoveryManager) ExecuteRetry(ctx context.Context, errorCtx *Err
 		opts := tracking.UpdateOptions{
 			EndpointName: &errorCtx.EndpointName,
 			Status:       stringPtr("retry"),
-			RetryCount:   &errorCtx.AttemptCount,
 			HttpStatus:   intPtr(0),
 		}
 		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
@@ -398,7 +397,6 @@ func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 		opts := tracking.UpdateOptions{
 			EndpointName: &errorCtx.EndpointName,
 			Status:       &status,
-			RetryCount:   &errorCtx.AttemptCount,
 			HttpStatus:   intPtr(0),
 		}
 		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)

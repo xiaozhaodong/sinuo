@@ -523,3 +523,70 @@ test('新数据落定：成功、小残差、大收尾、失败、取消各段�
   assert.equal(buildLifecycleSegments({ ...timedRequest, duration: 10050 }).at(-1).ms, 4550);
   assert.deepEqual(buildLifecycleSegments({ ...timedRequest, duration: 10500 }).at(-1), { key: 'tail', label: '收尾', ms: 500 });
 });
+
+const retryRequest = {
+  duration: 12000, status: 'completed', isStreaming: true, upstreamType: 'account',
+  upstreamFirstDispatchMs: 20, upstreamDispatchMs: 5020, upstreamConnMs: 5220,
+  upstreamWriteMs: 5500, firstTokenMs: 500, completionMs: 6000, retryCount: 1
+};
+
+test('新记录把失败尝试拆为琥珀重试段，各段之和等于总耗时', () => {
+  const segments = buildLifecycleSegments(retryRequest);
+  assert.deepEqual(segments.map(({ key, ms }) => [key, ms]), [
+    ['queue', 20], ['retry', 5000], ['connect', 200], ['send', 280], ['first', 500], ['stream', 6000]
+  ]);
+  assert.match(segments[1].detail, /共联系上游 2 次/);
+  assert.doesNotMatch(segments[0].detail, /此前失败/);
+  assert.equal(segments.reduce((sum, segment) => sum + segment.ms, 0), retryRequest.duration);
+});
+
+test('没有重试时新旧数据的分段与耗时一致，仅本地说明采用新口径', () => {
+  const input = { ...retryRequest, upstreamFirstDispatchMs: 5020, retryCount: 0 };
+  const current = buildLifecycleSegments(input);
+  const legacy = buildLifecycleSegments({ ...input, upstreamFirstDispatchMs: null });
+  assert.deepEqual(current.map(({ key, label, ms }) => [key, label, ms]), legacy.map(({ key, label, ms }) => [key, label, ms]));
+  assert.doesNotMatch(current[0].detail, /此前失败/);
+  assert.match(legacy[0].detail, /此前失败/);
+  assert.equal(current.reduce((sum, segment) => sum + segment.ms, 0), input.duration);
+});
+
+test('降级规则6：所有尝试未写完，以首次联系结束本地处理，终态吸收剩余', () => {
+  for (const status of ['failed', 'cancelled']) {
+    const segments = buildLifecycleSegments({
+      duration: 1000, status, upstreamFirstDispatchMs: 20, retryCount: 1,
+      routeDecisionAt: '2026-10-30T00:00:00.900000Z', timestamp: '2026-10-30T00:00:00.000000Z'
+    });
+    assert.deepEqual(segments.map(({ key, ms }) => [key, ms]), [['queue', 20], [status === 'failed' ? 'failure' : 'cancelled', 980]]);
+    assert.equal(segments.reduce((sum, segment) => sum + segment.ms, 0), 1000);
+  }
+});
+
+test('新数据非单调偏移向前钳制，负差不能生成重叠的重试段', () => {
+  const segments = buildLifecycleSegments({
+    ...retryRequest, upstreamFirstDispatchMs: 900, upstreamDispatchMs: 600,
+    upstreamConnMs: 500, upstreamWriteMs: 400, duration: 6900
+  });
+  assert.deepEqual(segments.map(({ key, ms }) => [key, ms]), [['queue', 400], ['first', 500], ['stream', 6000]]);
+  assert.equal(segments.reduce((sum, segment) => sum + segment.ms, 0), 6900);
+});
+
+test('新旧本地说明按端点、账号池与直通分别保留', () => {
+  for (const upstreamType of ['account', 'endpoint']) {
+    const current = buildLifecycleSegments({ ...retryRequest, upstreamType })[0];
+    const legacy = buildLifecycleSegments({ ...retryRequest, upstreamType, upstreamFirstDispatchMs: null })[0];
+    assert.doesNotMatch(current.detail, /此前失败/);
+    assert.match(legacy.detail, /此前失败/);
+  }
+  for (const request of [{ upstreamType: 'subscription', requestFamily: 'codex' }, { requestFamily: 'image' }]) {
+    const current = buildLifecycleSegments({ ...retryRequest, ...request })[0];
+    const legacy = buildLifecycleSegments({ ...retryRequest, ...request, upstreamFirstDispatchMs: null })[0];
+    assert.equal(current.detail, legacy.detail);
+  }
+});
+
+test('重试后失败的已知段与终态残差相加等于总耗时', () => {
+  const input = { ...retryRequest, status: 'failed', completionMs: null, firstTokenMs: null };
+  const segments = buildLifecycleSegments(input);
+  assert.equal(segments.at(-1).key, 'failure');
+  assert.equal(segments.reduce((sum, segment) => sum + segment.ms, 0), input.duration);
+});

@@ -239,46 +239,47 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 // RequestRecord 请求记录
 type RequestRecord struct {
-	SessionID             string  `json:"session_id,omitempty"`
-	ID                    string  `json:"id"`
-	RequestID             string  `json:"request_id"`
-	Timestamp             string  `json:"timestamp"`
-	RequestFamily         string  `json:"request_family"`
-	Endpoint              string  `json:"endpoint"` // Claude 路由诊断兼容字段
-	Model                 string  `json:"model"`
-	Status                string  `json:"status"`
-	HTTPStatus            *int    `json:"http_status"`              // 无 HTTP 响应（如订阅 WS 内生成）为 null
-	RetryCount            int     `json:"retry_count"`              // 重试次数
-	FailureReason         string  `json:"failure_reason,omitempty"` // 失败原因
-	CancelReason          string  `json:"cancel_reason,omitempty"`  // 取消原因
-	Path                  string  `json:"path"`                     // 规范化请求路径
-	Method                string  `json:"method"`                   // 请求方法（订阅 WS 内生成为 GET）
-	RequestSource         string  `json:"request_source"`           // legacy_proxy / codex_subscription_proxy
-	RequestKind           string  `json:"request_kind"`             // legacy / generation / compaction
-	UsageKnown            bool    `json:"usage_known"`              // false 表示未收到用量，token 列的 0 是未知而非真实零
-	CostKnown             bool    `json:"cost_known"`               // false 表示未收到成本，cost 的 0 是未知而非真实零
-	UpstreamType          string  `json:"upstream_type"`            // endpoint/account/subscription
-	UpstreamSourceName    string  `json:"upstream_source_name"`     // 订阅源
-	UpstreamName          string  `json:"upstream_name"`            // 账号名/端点名
-	UpstreamID            int64   `json:"upstream_id"`              // 账号ID（可空）
-	RouteMode             string  `json:"route_mode,omitempty"`
-	RequestedEndpoint     string  `json:"requested_endpoint,omitempty"`
-	EffectiveEndpoint     string  `json:"effective_endpoint,omitempty"`
-	FallbackReason        string  `json:"fallback_reason,omitempty"`
-	RouteDecisionAt       string  `json:"route_decision_at,omitempty"`
-	FirstTokenStartAt     string  `json:"first_token_start_at,omitempty"` // 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
-	FirstTokenAt          string  `json:"first_token_at,omitempty"`       // 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
-	InputTokens           int64   `json:"input_tokens"`
-	OutputTokens          int64   `json:"output_tokens"`
-	CacheCreationTokens   int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
-	CacheCreation5mTokens int64   `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
-	CacheCreation1hTokens int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
-	CacheReadTokens       int64   `json:"cache_read_tokens"`
-	ResponseTime          int64   `json:"response_time"`
-	FirstTokenMs          *int64  `json:"first_token_ms"`
-	CompletionMs          *int64  `json:"completion_ms"` // 首个有效流式响应到流式完成耗时（毫秒）
-	IsStreaming           bool    `json:"is_streaming"`
-	Cost                  float64 `json:"cost"`
+	SessionID               string  `json:"session_id,omitempty"`
+	ID                      string  `json:"id"`
+	RequestID               string  `json:"request_id"`
+	Timestamp               string  `json:"timestamp"`
+	RequestFamily           string  `json:"request_family"`
+	Endpoint                string  `json:"endpoint"` // Claude 路由诊断兼容字段
+	Model                   string  `json:"model"`
+	Status                  string  `json:"status"`
+	HTTPStatus              *int    `json:"http_status"`                // 无 HTTP 响应（如订阅 WS 内生成）为 null
+	UpstreamFirstDispatchMs *int64  `json:"upstream_first_dispatch_ms"` // 非空表示重试次数采用联系上游新口径
+	RetryCount              int     `json:"retry_count"`                // 重试次数
+	FailureReason           string  `json:"failure_reason,omitempty"`   // 失败原因
+	CancelReason            string  `json:"cancel_reason,omitempty"`    // 取消原因
+	Path                    string  `json:"path"`                       // 规范化请求路径
+	Method                  string  `json:"method"`                     // 请求方法（订阅 WS 内生成为 GET）
+	RequestSource           string  `json:"request_source"`             // legacy_proxy / codex_subscription_proxy
+	RequestKind             string  `json:"request_kind"`               // legacy / generation / compaction
+	UsageKnown              bool    `json:"usage_known"`                // false 表示未收到用量，token 列的 0 是未知而非真实零
+	CostKnown               bool    `json:"cost_known"`                 // false 表示未收到成本，cost 的 0 是未知而非真实零
+	UpstreamType            string  `json:"upstream_type"`              // endpoint/account/subscription
+	UpstreamSourceName      string  `json:"upstream_source_name"`       // 订阅源
+	UpstreamName            string  `json:"upstream_name"`              // 账号名/端点名
+	UpstreamID              int64   `json:"upstream_id"`                // 账号ID（可空）
+	RouteMode               string  `json:"route_mode,omitempty"`
+	RequestedEndpoint       string  `json:"requested_endpoint,omitempty"`
+	EffectiveEndpoint       string  `json:"effective_endpoint,omitempty"`
+	FallbackReason          string  `json:"fallback_reason,omitempty"`
+	RouteDecisionAt         string  `json:"route_decision_at,omitempty"`
+	FirstTokenStartAt       string  `json:"first_token_start_at,omitempty"` // 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
+	FirstTokenAt            string  `json:"first_token_at,omitempty"`       // 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
+	InputTokens             int64   `json:"input_tokens"`
+	OutputTokens            int64   `json:"output_tokens"`
+	CacheCreationTokens     int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
+	CacheCreation5mTokens   int64   `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
+	CacheCreation1hTokens   int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
+	CacheReadTokens         int64   `json:"cache_read_tokens"`
+	ResponseTime            int64   `json:"response_time"`
+	FirstTokenMs            *int64  `json:"first_token_ms"`
+	CompletionMs            *int64  `json:"completion_ms"` // 首个有效流式响应到流式完成耗时（毫秒）
+	IsStreaming             bool    `json:"is_streaming"`
+	Cost                    float64 `json:"cost"`
 
 	// v6.3 模型一致性监控：一致性判定由前端派生，后端只透传原始列
 	RequestModel      string `json:"request_model,omitempty"`      // 客户端原始请求模型
@@ -416,43 +417,44 @@ func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQue
 // formatAPITime 的真实契约：零值返回空串，非零值经 FormatStorage 输出固定微秒精度 UTC ISO。
 func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	record := RequestRecord{
-		RequestID:             r.RequestID,
-		Timestamp:             formatAPITime(r.StartTime),
-		RequestFamily:         r.RequestFamily,
-		Endpoint:              r.EndpointName,
-		Model:                 r.ModelName,
-		Status:                r.Status,
-		RetryCount:            r.RetryCount,
-		FailureReason:         r.FailureReason,
-		CancelReason:          r.CancelReason,
-		UpstreamType:          r.UpstreamType,
-		UpstreamSourceName:    r.UpstreamSourceName,
-		UpstreamName:          r.UpstreamName,
-		UpstreamID:            r.UpstreamID,
-		RouteMode:             r.RouteMode,
-		RequestedEndpoint:     r.RequestedEndpoint,
-		EffectiveEndpoint:     r.EffectiveEndpoint,
-		FallbackReason:        r.FallbackReason,
-		Path:                  r.Path,
-		Method:                r.Method,
-		RequestSource:         r.RequestSource,
-		RequestKind:           r.RequestKind,
-		UsageKnown:            r.UsageKnown,
-		CostKnown:             r.CostKnown,
-		InputTokens:           r.InputTokens,
-		OutputTokens:          r.OutputTokens,
-		CacheCreationTokens:   r.CacheCreationTokens,
-		CacheCreation5mTokens: r.CacheCreation5mTokens, // v5.0.1+
-		CacheCreation1hTokens: r.CacheCreation1hTokens, // v5.0.1+
-		CacheReadTokens:       r.CacheReadTokens,
-		IsStreaming:           r.IsStreaming,
-		Cost:                  r.TotalCostUSD,
-		RequestModel:          r.RequestModel,
-		UpstreamModel:         r.UpstreamModel,
-		ResponseModel:         r.ResponseModel,
-		RequestReasoning:      r.RequestReasoning,
-		ResponseReasoning:     r.ResponseReasoning,
-		SessionID:             r.SessionID,
+		RequestID:               r.RequestID,
+		Timestamp:               formatAPITime(r.StartTime),
+		RequestFamily:           r.RequestFamily,
+		Endpoint:                r.EndpointName,
+		Model:                   r.ModelName,
+		Status:                  r.Status,
+		RetryCount:              r.RetryCount,
+		UpstreamFirstDispatchMs: r.UpstreamFirstDispatchMs,
+		FailureReason:           r.FailureReason,
+		CancelReason:            r.CancelReason,
+		UpstreamType:            r.UpstreamType,
+		UpstreamSourceName:      r.UpstreamSourceName,
+		UpstreamName:            r.UpstreamName,
+		UpstreamID:              r.UpstreamID,
+		RouteMode:               r.RouteMode,
+		RequestedEndpoint:       r.RequestedEndpoint,
+		EffectiveEndpoint:       r.EffectiveEndpoint,
+		FallbackReason:          r.FallbackReason,
+		Path:                    r.Path,
+		Method:                  r.Method,
+		RequestSource:           r.RequestSource,
+		RequestKind:             r.RequestKind,
+		UsageKnown:              r.UsageKnown,
+		CostKnown:               r.CostKnown,
+		InputTokens:             r.InputTokens,
+		OutputTokens:            r.OutputTokens,
+		CacheCreationTokens:     r.CacheCreationTokens,
+		CacheCreation5mTokens:   r.CacheCreation5mTokens, // v5.0.1+
+		CacheCreation1hTokens:   r.CacheCreation1hTokens, // v5.0.1+
+		CacheReadTokens:         r.CacheReadTokens,
+		IsStreaming:             r.IsStreaming,
+		Cost:                    r.TotalCostUSD,
+		RequestModel:            r.RequestModel,
+		UpstreamModel:           r.UpstreamModel,
+		ResponseModel:           r.ResponseModel,
+		RequestReasoning:        r.RequestReasoning,
+		ResponseReasoning:       r.ResponseReasoning,
+		SessionID:               r.SessionID,
 	}
 
 	// 处理指针字段
@@ -475,16 +477,17 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 }
 
 // RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
-// 生命周期字段不在列表 DTO 中，只在本接口返回。
+// 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
 type RequestLifecycleDetail struct {
-	Found                bool           `json:"found"`
-	Source               string         `json:"source,omitempty"` // hot_pool | database
-	Request              *RequestRecord `json:"request,omitempty"`
-	UpstreamWriteMs      *int64         `json:"upstream_write_ms,omitempty"`
-	UpstreamDispatchMs   *int64         `json:"upstream_dispatch_ms,omitempty"`
-	UpstreamConnMs       *int64         `json:"upstream_conn_ms,omitempty"`
-	ScheduleSnapshotJSON string         `json:"schedule_snapshot_json,omitempty"`
-	PrivacyScanJSON      string         `json:"privacy_scan_json,omitempty"`
+	Found                   bool           `json:"found"`
+	Source                  string         `json:"source,omitempty"` // hot_pool | database
+	Request                 *RequestRecord `json:"request,omitempty"`
+	UpstreamWriteMs         *int64         `json:"upstream_write_ms,omitempty"`
+	UpstreamFirstDispatchMs *int64         `json:"upstream_first_dispatch_ms,omitempty"`
+	UpstreamDispatchMs      *int64         `json:"upstream_dispatch_ms,omitempty"`
+	UpstreamConnMs          *int64         `json:"upstream_conn_ms,omitempty"`
+	ScheduleSnapshotJSON    string         `json:"schedule_snapshot_json,omitempty"`
+	PrivacyScanJSON         string         `json:"privacy_scan_json,omitempty"`
 }
 
 // GetRequestLifecycleDetail 获取单请求生命周期详情（桌面专用）。
@@ -507,14 +510,15 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 
 	record := requestDetailToRecord(data.Detail)
 	return RequestLifecycleDetail{
-		Found:                true,
-		Source:               data.Source,
-		Request:              &record,
-		UpstreamWriteMs:      data.UpstreamWriteMs,
-		UpstreamDispatchMs:   data.UpstreamDispatchMs,
-		UpstreamConnMs:       data.UpstreamConnMs,
-		ScheduleSnapshotJSON: data.ScheduleSnapshotJSON,
-		PrivacyScanJSON:      data.PrivacyScanJSON,
+		Found:                   true,
+		Source:                  data.Source,
+		Request:                 &record,
+		UpstreamWriteMs:         data.UpstreamWriteMs,
+		UpstreamFirstDispatchMs: data.UpstreamFirstDispatchMs,
+		UpstreamDispatchMs:      data.UpstreamDispatchMs,
+		UpstreamConnMs:          data.UpstreamConnMs,
+		ScheduleSnapshotJSON:    data.ScheduleSnapshotJSON,
+		PrivacyScanJSON:         data.PrivacyScanJSON,
 	}, nil
 }
 

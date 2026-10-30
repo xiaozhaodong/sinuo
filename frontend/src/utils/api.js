@@ -411,13 +411,14 @@ export const safeParseJson = (value) => {
  */
 export const fetchRequestLifecycleDetail = async (requestId) => {
   if (!isWailsEnvironment()) {
-    return { found: false, request: null, upstreamWriteMs: null, upstreamDispatchMs: null, upstreamConnMs: null, scheduleSnapshot: null, privacyScan: null };
+    return { found: false, request: null, upstreamWriteMs: null, upstreamFirstDispatchMs: null, upstreamDispatchMs: null, upstreamConnMs: null, scheduleSnapshot: null, privacyScan: null };
   }
   const detail = await WailsApi.getRequestLifecycleDetail(requestId);
   return {
     found: detail?.found === true,
     request: detail?.request ? normalizeRequest(detail.request) : null,
     upstreamWriteMs: detail?.upstream_write_ms ?? null,
+    upstreamFirstDispatchMs: detail?.upstream_first_dispatch_ms ?? null,
     upstreamDispatchMs: detail?.upstream_dispatch_ms ?? null,
     upstreamConnMs: detail?.upstream_conn_ms ?? null,
     scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),

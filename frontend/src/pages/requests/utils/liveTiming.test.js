@@ -112,3 +112,26 @@ test('暂存补丁过期丢弃：行在别的页或被筛掉时不会一直留�
   assert.equal(applyPendingTimingPatches(queried, pending, 1000 + 2 * PENDING_TIMING_PATCH_TTL_MS + 2), queried, '过期补丁不再补');
   assert.equal(pending.size, 0);
 });
+
+test('重试事件提取两项新字段，时间取较晚者，次数取较大者', () => {
+  const earlier = '2026-10-30T00:00:01.000000Z';
+  const later = '2026-10-30T00:00:02.000000Z';
+  const patch = extractTimingPatch({ request_id: 'req-1', change_type: 'upstream_retry', retry_count: 2, retry_started_at: later });
+  assert.deepEqual(patch.fields, { retryStartedAt: later, retryCount: 2 });
+  const [current] = applyTimingPatch([row({ retryCount: 1, retryStartedAt: earlier })], patch);
+  assert.equal(current.retryCount, 2);
+  assert.equal(current.retryStartedAt, later);
+  assert.equal(applyTimingPatch([current], { requestId: 'req-1', fields: { retryCount: 1, retryStartedAt: earlier } })[0], current);
+  const [carried] = carryLiveTiming([current], [row({ retryCount: 0, retryStartedAt: earlier })]);
+  assert.equal(carried.retryCount, 2);
+  assert.equal(carried.retryStartedAt, later);
+});
+
+test('暂存重试事件不会被晚到的旧次数和旧起点覆盖', () => {
+  const pending = new Map();
+  stashTimingPatch(pending, { requestId: 'req-1', fields: { retryCount: 2, retryStartedAt: '2026-10-30T00:00:02.000000Z' } }, 0);
+  stashTimingPatch(pending, { requestId: 'req-1', fields: { retryCount: 1, retryStartedAt: '2026-10-30T00:00:01.000000Z' } }, 10);
+  const [current] = applyPendingTimingPatches([row({ retryCount: 0 })], pending, 20);
+  assert.equal(current.retryCount, 2);
+  assert.equal(current.retryStartedAt, '2026-10-30T00:00:02.000000Z');
+});

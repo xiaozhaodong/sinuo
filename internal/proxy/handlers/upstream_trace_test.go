@@ -8,17 +8,34 @@ import (
 	"time"
 )
 
+type testUpstreamRecorder struct {
+	onGet   func(UpstreamConnAttempt)
+	onWrite func(UpstreamWriteTiming)
+}
+
+func (r *testUpstreamRecorder) RecordUpstreamGetConn(attempt UpstreamConnAttempt) {
+	if r.onGet != nil {
+		r.onGet(attempt)
+	}
+}
+
+func (r *testUpstreamRecorder) RecordUpstreamWrite(timing UpstreamWriteTiming) {
+	if r.onWrite != nil {
+		r.onWrite(timing)
+	}
+}
+
 func TestUpstreamTrace_OrderedTimingAndFailedWrite(t *testing.T) {
 	var writes []UpstreamWriteTiming
 	var state *UpstreamTraceState
 	var ctx context.Context
-	ctx, state = WithUpstreamTrace(context.Background(), func(timing UpstreamWriteTiming) {
+	ctx, state = WithUpstreamTrace(context.Background(), &testUpstreamRecorder{onWrite: func(timing UpstreamWriteTiming) {
 		// 回调在锁外执行，允许读取重放安全状态。
 		if !state.WroteHeaders() {
 			t.Error("成功写完前应已写出请求头")
 		}
 		writes = append(writes, timing)
-	})
+	}})
 	trace := httptrace.ContextClientTrace(ctx)
 	trace.GetConn("localhost")
 	trace.GotConn(httptrace.GotConnInfo{})
@@ -39,9 +56,9 @@ func TestUpstreamTrace_OrderedTimingAndFailedWrite(t *testing.T) {
 
 func TestUpstreamTrace_TransportRetryUsesLatestConnection(t *testing.T) {
 	var writes []UpstreamWriteTiming
-	ctx, _ := WithUpstreamTrace(context.Background(), func(timing UpstreamWriteTiming) {
+	ctx, _ := WithUpstreamTrace(context.Background(), &testUpstreamRecorder{onWrite: func(timing UpstreamWriteTiming) {
 		writes = append(writes, timing)
-	})
+	}})
 	trace := httptrace.ContextClientTrace(ctx)
 	trace.GetConn("first")
 	trace.GotConn(httptrace.GotConnInfo{})
@@ -56,5 +73,36 @@ func TestUpstreamTrace_TransportRetryUsesLatestConnection(t *testing.T) {
 	}
 	if writes[1].ConnStartAt.After(writes[1].ConnReadyAt) || writes[1].ConnReadyAt.After(writes[1].WroteAt) {
 		t.Fatalf("重试三时刻不单调：%+v", writes[1])
+	}
+}
+
+// 每次 GetConn 摘要只描述上一次尝试，重放安全边界则跨尝试保持粘滞。
+func TestUpstreamTrace_ConnectionAttemptSummary(t *testing.T) {
+	var attempts []UpstreamConnAttempt
+	ctx, state := WithUpstreamTrace(context.Background(), &testUpstreamRecorder{onGet: func(attempt UpstreamConnAttempt) {
+		attempts = append(attempts, attempt)
+	}})
+	trace := httptrace.ContextClientTrace(ctx)
+	trace.GetConn("upstream")
+	trace.GotConn(httptrace.GotConnInfo{Reused: true, WasIdle: true, IdleTime: 2 * time.Second})
+	trace.WroteHeaders()
+	writeErr := errors.New("partial write")
+	trace.WroteRequest(httptrace.WroteRequestInfo{Err: writeErr})
+	trace.GetConn("upstream")
+	if len(attempts) != 2 || attempts[0].TransportRetry || !attempts[1].TransportRetry {
+		t.Fatalf("尝试: %+v", attempts)
+	}
+	prev := attempts[1].Previous
+	if !prev.GotConn || !prev.Reused || !prev.WasIdle || prev.IdleTime != 2*time.Second ||
+		!prev.WroteHeaders || !prev.WroteRequest || prev.WriteError != writeErr || prev.Elapsed <= 0 {
+		t.Fatalf("上一次摘要不完整: %+v", prev)
+	}
+	trace.GetConn("upstream")
+	prev = attempts[2].Previous
+	if prev.GotConn || prev.WroteHeaders || prev.WroteRequest || prev.WriteError != nil {
+		t.Fatalf("摘要未重置: %+v", prev)
+	}
+	if !state.WroteHeaders() {
+		t.Fatal("跨重发的请求头安全边界必须保持true")
 	}
 }

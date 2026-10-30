@@ -82,6 +82,7 @@ type RequestLifecycleManager struct {
 	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
 	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
 	firstTokenAt         time.Time                     // 首个有效响应到达时间
+	upstreamContactState                               // 在 timingMu 下维护首次联系时间与联系次数
 	timingMu             sync.RWMutex                  // 保护首响计时字段
 	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
@@ -112,6 +113,7 @@ type lifecycleStateSnapshot struct {
 }
 
 func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
+	retryCount := rlm.GetRetryCount()
 	rlm.stateMu.RLock()
 	defer rlm.stateMu.RUnlock()
 
@@ -130,7 +132,7 @@ func (rlm *RequestLifecycleManager) snapshotState() lifecycleStateSnapshot {
 		effectiveEndpoint:  rlm.effectiveEndpoint,
 		fallbackReason:     rlm.fallbackReason,
 		routeDecisionAt:    rlm.routeDecisionAt,
-		retryCount:         rlm.retryCount,
+		retryCount:         retryCount,
 		lastStatus:         rlm.lastStatus,
 		lastError:          rlm.lastError,
 		finalStatusCode:    rlm.finalStatusCode,
@@ -229,174 +231,11 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 	}
 }
 
-// UpdateStatus 更新请求状态
-// 调用 RecordRequestUpdate 记录状态变化，并实现模型信息搭便车更新机制
-// 如果retryCount为-1，则使用内部attemptCounter
-func (rlm *RequestLifecycleManager) UpdateStatus(status string, retryCount, httpStatus int) {
-	// 处理特殊的-1标记，使用内部计数器
-	actualRetryCount := retryCount
-	if retryCount == -1 {
-		actualRetryCount = rlm.GetAttemptCount()
-	}
-
-	state := rlm.snapshotState()
-
-	if rlm.usageTracker != nil && rlm.requestID != "" {
-		// 获取当前的模型信息（线程安全）
-		currentModel := rlm.GetModelName()
-
-		// 搭便车机制：检查是否需要更新模型到数据库
-		rlm.modelUpdateMu.Lock()
-		shouldUpdateModel := currentModel != "" &&
-			currentModel != "unknown" &&
-			!rlm.modelUpdatedInDB
-		if shouldUpdateModel {
-			rlm.modelUpdatedInDB = true // 标记为已更新，避免重复
-		}
-		rlm.modelUpdateMu.Unlock()
-
-		if shouldUpdateModel {
-			// 第一次有模型信息时，执行带模型的更新
-			opts := tracking.UpdateOptions{
-				EndpointName:       &state.endpointName,
-				RequestFamily:      &state.requestFamily,
-				UpstreamType:       &state.upstreamType,
-				UpstreamSourceName: &state.upstreamSourceName,
-				UpstreamName:       &state.upstreamName,
-				UpstreamID:         &state.upstreamID,
-				Status:             &status,
-				RetryCount:         &actualRetryCount,
-				HttpStatus:         &httpStatus,
-				ModelName:          &currentModel,
-			}
-			rlm.attachRouteDiagnostics(&opts, state)
-			rlm.attachResponseDiagnostics(&opts)
-			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
-		} else {
-			// 正常状态更新（模型已更新过或尚未就绪）
-			opts := tracking.UpdateOptions{
-				EndpointName:       &state.endpointName,
-				RequestFamily:      &state.requestFamily,
-				UpstreamType:       &state.upstreamType,
-				UpstreamSourceName: &state.upstreamSourceName,
-				UpstreamName:       &state.upstreamName,
-				UpstreamID:         &state.upstreamID,
-				Status:             &status,
-				RetryCount:         &actualRetryCount,
-				HttpStatus:         &httpStatus,
-			}
-			rlm.attachRouteDiagnostics(&opts, state)
-			rlm.attachResponseDiagnostics(&opts)
-			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
-		}
-	}
-
-	// 调用统一的状态通知方法
-	rlm.notifyStatusChange(status, actualRetryCount, httpStatus)
-}
-
-// notifyStatusChange 统一的状态通知方法
-// 负责更新内部状态、发布事件通知和记录状态变更日志
-// 这个方法被 UpdateStatus、CompleteRequest、FailRequest、CancelRequest 统一调用
-func (rlm *RequestLifecycleManager) notifyStatusChange(status string, retryCount, httpStatus int) {
-	// 更新内部状态
-	rlm.stateMu.Lock()
-	rlm.retryCount = retryCount
-	rlm.lastStatus = status
-	state := lifecycleStateSnapshot{
-		requestFamily:      rlm.requestFamily,
-		requestSource:      rlm.requestSource,
-		requestKind:        rlm.requestKind,
-		endpointName:       rlm.endpointName,
-		upstreamType:       rlm.upstreamType,
-		upstreamSourceName: rlm.upstreamSourceName,
-		upstreamName:       rlm.upstreamName,
-		upstreamID:         rlm.upstreamID,
-		retryCount:         rlm.retryCount,
-		lastStatus:         rlm.lastStatus,
-	}
-	rlm.stateMu.Unlock()
-
-	// 发布请求状态更新事件
-	if rlm.eventBus != nil {
-		// 根据状态确定优先级
-		priority := events.PriorityNormal
-		changeType := "status_changed"
-
-		switch status {
-		case "error", "timeout":
-			priority = events.PriorityHigh
-			changeType = "error_response"
-		case "suspended":
-			changeType = "suspended_change"
-		case "retry":
-			changeType = "retry_attempt"
-		case "completed":
-			changeType = "request_completed"
-		case "failed":
-			priority = events.PriorityHigh
-			changeType = "request_failed"
-		case "cancelled":
-			changeType = "request_cancelled"
-		}
-
-		rlm.eventBus.Publish(events.Event{
-			Type:     events.EventRequestUpdated,
-			Source:   "lifecycle_manager",
-			Priority: priority,
-			Data: map[string]interface{}{
-				"request_id":           rlm.requestID,
-				"request_family":       state.requestFamily,
-				"request_source":       state.requestSource,
-				"request_kind":         state.requestKind,
-				"endpoint_name":        state.endpointName,
-				"upstream_type":        state.upstreamType,
-				"upstream_source_name": state.upstreamSourceName,
-				"upstream_name":        state.upstreamName,
-				"upstream_id":          state.upstreamID,
-				"status":               status,
-				"retry_count":          retryCount,
-				"http_status":          httpStatus,
-				"model_name":           rlm.GetModelName(),
-				"change_type":          changeType,
-			},
-		})
-	}
-
-	// 记录状态变更日志
-	switch status {
-	case "forwarding":
-		slog.Info(fmt.Sprintf("🎯 [请求转发] [%s] 选择端点: %s",
-			rlm.requestID, state.endpointName))
-	case "retry":
-		slog.Info(fmt.Sprintf("🔄 [需要重试] [%s] 端点: %s (重试次数: %d)",
-			rlm.requestID, state.endpointName, retryCount))
-	case "processing":
-		slog.Info(fmt.Sprintf("⚙️ [请求处理] [%s] 端点: %s, 状态码: %d",
-			rlm.requestID, state.endpointName, httpStatus))
-	case "suspended":
-		slog.Warn(fmt.Sprintf("⏸️ [请求挂起] [%s] 端点: %s",
-			rlm.requestID, state.endpointName))
-	case "cancelled":
-		// 取消日志已在 CancelRequest 方法中记录完整信息，此处跳过避免重复
-	case "error":
-		slog.Error(fmt.Sprintf("❌ [请求错误] [%s] 端点: %s, 状态码: %d",
-			rlm.requestID, state.endpointName, httpStatus))
-	case "timeout":
-		slog.Error(fmt.Sprintf("⏰ [请求超时] [%s] 端点: %s",
-			rlm.requestID, state.endpointName))
-	case "completed":
-		slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s",
-			rlm.requestID, state.endpointName))
-	case "failed":
-		// 失败日志已在 FailRequest 方法中记录完整信息，此处跳过避免重复
-	}
-}
-
 // CompleteRequest 完成请求跟踪
 // 调用 RecordRequestComplete 记录请求完成，包含Token使用信息和成本计算
 // 这是所有请求完成的统一入口，确保架构一致性
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
+	rlm.finishUpstreamContacts()
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 	// 📊 [失败追踪] 记录端点成功；只清请求开始前的失败，保留进行期间的新失败证据
@@ -428,8 +267,8 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 			totalTokens := tokens.InputTokens + tokens.OutputTokens
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
 
-			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (总尝试 %d 个端点)",
-				rlm.requestID, state.endpointName, state.retryCount+1))
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (共联系上游 %d 次)",
+				rlm.requestID, state.endpointName, rlm.upstreamContactCount()))
 			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
 				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
@@ -448,6 +287,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 
 // CompleteRequestWithCost 完成不按 Token 计价的请求，并记录调用方计算的固定成本。
 func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
+	rlm.finishUpstreamContacts()
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 	modelName := rlm.billingModelName()
@@ -471,6 +311,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 //   - tokens: Token使用统计
 //   - failureReason: 数据质量问题标识（如 "incomplete_stream", "stream_truncated"）
 func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
+	rlm.finishUpstreamContacts()
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 
@@ -495,8 +336,8 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 		if tokens != nil {
 			totalTokens := tokens.InputTokens + tokens.OutputTokens
 			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
-			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (总尝试 %d 个端点)",
-				rlm.requestID, state.endpointName, state.retryCount+1))
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (共联系上游 %d 次)",
+				rlm.requestID, state.endpointName, rlm.upstreamContactCount()))
 			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
 				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
 				totalTokens, cacheTokens, duration.Milliseconds()))
@@ -761,86 +602,6 @@ func (rlm *RequestLifecycleManager) GetDuration() time.Duration {
 	return time.Since(rlm.startTime)
 }
 
-// SetFirstTokenStartTime 测试辅助：只有写完时刻时复用最终尝试的记录规则。
-func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
-	rlm.RecordUpstreamWrite(handlers.UpstreamWriteTiming{WroteAt: start})
-}
-
-// RecordUpstreamWrite 记录最终尝试的取连接、连接就绪与写完偏移；
-// 取连接偏移即本地处理段终点，调度型与直通链路一致记录。
-func (rlm *RequestLifecycleManager) RecordUpstreamWrite(timing handlers.UpstreamWriteTiming) {
-	if timing.WroteAt.IsZero() {
-		return
-	}
-	rlm.timingMu.Lock()
-	if !rlm.firstTokenAt.IsZero() {
-		rlm.timingMu.Unlock()
-		return
-	}
-	rlm.firstTokenStartTime = timing.WroteAt
-	if rlm.usageTracker == nil || rlm.requestID == "" {
-		rlm.timingMu.Unlock()
-		return
-	}
-	offset := func(at time.Time) *int64 {
-		if at.IsZero() {
-			return nil
-		}
-		ms := max(at.Sub(rlm.startTime).Milliseconds(), 0)
-		return &ms
-	}
-	opts := tracking.UpdateOptions{
-		FirstTokenStartAt:  &timing.WroteAt,
-		UpstreamWriteMs:    offset(timing.WroteAt),
-		UpstreamConnMs:     offset(timing.ConnReadyAt),
-		UpstreamDispatchMs: offset(timing.ConnStartAt),
-	}
-	// 与首响和其他写完回调串行，三列及首字起点始终属于同一次尝试。
-	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
-	rlm.timingMu.Unlock()
-	rlm.publishTimingEvent(upstreamSentEventData(rlm.requestID, timing.WroteAt))
-}
-
-// RecordFirstToken 记录首个有效响应到达耗时（首响）。
-// 流式请求以首个有效 SSE 事件为准；非流请求以完整响应可用为准。
-func (rlm *RequestLifecycleManager) RecordFirstToken() {
-	rlm.RecordFirstTokenAndReturn()
-}
-
-// RecordFirstTokenAndReturn 记录首响并返回本次调用是否首次记录成功。
-func (rlm *RequestLifecycleManager) RecordFirstTokenAndReturn() bool {
-	recorded := false
-	rlm.firstTokenOnce.Do(func() {
-		if rlm.usageTracker == nil || rlm.requestID == "" {
-			return
-		}
-
-		now := time.Now()
-		rlm.timingMu.Lock()
-		start := rlm.firstTokenStartTime
-		if start.IsZero() {
-			start = rlm.startTime
-		}
-		firstTokenMs := now.Sub(start).Milliseconds()
-		if firstTokenMs < 0 {
-			firstTokenMs = 0
-		}
-		rlm.firstTokenAt = now
-		rlm.timingMu.Unlock()
-
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
-			FirstTokenMs: &firstTokenMs,
-			FirstTokenAt: &now,
-		})
-		recorded = true
-		rlm.publishTimingEvent(firstResponseEventData(rlm.requestID, firstTokenMs, now))
-
-		slog.Info(fmt.Sprintf("📝 [首响耗时] [%s] 记录上游首个有效响应耗时: %dms",
-			rlm.requestID, firstTokenMs))
-	})
-	return recorded
-}
-
 // RecordStreamCompletion 记录首响后到响应完成的耗时。
 func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 	if rlm.usageTracker == nil || rlm.requestID == "" {
@@ -886,13 +647,6 @@ func (rlm *RequestLifecycleManager) GetLastStatus() string {
 	rlm.stateMu.RLock()
 	defer rlm.stateMu.RUnlock()
 	return rlm.lastStatus
-}
-
-// GetRetryCount 获取重试次数
-func (rlm *RequestLifecycleManager) GetRetryCount() int {
-	rlm.stateMu.RLock()
-	defer rlm.stateMu.RUnlock()
-	return rlm.retryCount
 }
 
 // IsCompleted 检查请求是否已完成
@@ -1022,15 +776,6 @@ func (rlm *RequestLifecycleManager) HandleError(err error) {
 	}
 }
 
-// IncrementRetry 增加重试计数
-func (rlm *RequestLifecycleManager) IncrementRetry() {
-	rlm.stateMu.Lock()
-	rlm.retryCount++
-	retryCount := rlm.retryCount
-	rlm.stateMu.Unlock()
-	slog.Info(fmt.Sprintf("🔄 [重试计数] [%s] 重试次数: %d", rlm.requestID, retryCount))
-}
-
 // billingModelName 获取终态计费模型；未拿到响应模型且当前模型仍是请求模型时，使用最终 attempt 的上游模型。
 func (rlm *RequestLifecycleManager) billingModelName() string {
 	rlm.modelMu.RLock()
@@ -1052,6 +797,7 @@ func (rlm *RequestLifecycleManager) billingModelName() string {
 // 设置状态为"failed"并记录失败原因和错误详情
 // 注意: 失败追踪由 handler 层根据 RetryDecision.ShouldRecord 决定，这里不重复记录
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
+	rlm.finishUpstreamContacts()
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()
@@ -1094,6 +840,7 @@ func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.Update
 // 统一的取消处理方法，确保记录完成时间和耗时
 // tokens参数可以为nil（无计费信息）或包含已产生的Token信息
 func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *tracking.TokenUsage) {
+	rlm.finishUpstreamContacts()
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()
@@ -1199,55 +946,6 @@ func (rlm *RequestLifecycleManager) RecordTokensForFailedRequest(tokens *trackin
 
 		slog.Info(fmt.Sprintf("💾 [失败请求Token记录] [%s] 端点: %s, 原因: %s, 模型: %s, 输入: %d, 输出: %d",
 			rlm.requestID, state.endpointName, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
-	}
-}
-
-// IncrementAttempt 线程安全地增加尝试计数
-// 用于统一重试计数语义，每次端点切换或重试时调用
-func (rlm *RequestLifecycleManager) IncrementAttempt() int {
-	rlm.attemptMu.Lock()
-	defer rlm.attemptMu.Unlock()
-	rlm.attemptCounter++
-	slog.Debug(fmt.Sprintf("🔢 [尝试计数] [%s] 当前尝试次数: %d", rlm.requestID, rlm.attemptCounter))
-	return rlm.attemptCounter
-}
-
-// GetAttemptCount 线程安全地获取当前尝试次数
-// 返回真实的尝试次数，用于数据库记录和监控
-func (rlm *RequestLifecycleManager) GetAttemptCount() int {
-	rlm.attemptMu.Lock()
-	defer rlm.attemptMu.Unlock()
-	return rlm.attemptCounter
-}
-
-// OnRetryDecision 处理重试决策结果
-func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, httpStatus int) {
-	actualRetryCount := rlm.GetAttemptCount()
-
-	if decision.RetrySameEndpoint {
-		rlm.UpdateStatus("retry", actualRetryCount, httpStatus)
-	} else if decision.FinalStatus != "" {
-		rlm.UpdateStatus(decision.FinalStatus, actualRetryCount, httpStatus)
-	}
-
-	// 记录决策原因
-	slog.Debug(fmt.Sprintf("📋 [重试决策记录] [%s] 状态: %s, 原因: %s",
-		rlm.requestID, decision.FinalStatus, decision.Reason))
-}
-
-// GetRetryContext 获取重试上下文信息
-func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
-	errorRecovery := rlm.errorRecovery
-	state := rlm.snapshotState()
-	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, attempt-1)
-
-	return RetryContext{
-		RequestID:     rlm.requestID,
-		Endpoint:      endpoint,
-		Attempt:       attempt,
-		AttemptGlobal: rlm.GetAttemptCount(),
-		Error:         errorCtx,
-		IsStreaming:   false, // 由调用方设置
 	}
 }
 

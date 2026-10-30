@@ -61,3 +61,23 @@ test('尚无计时的进行中请求不显示伪造的总耗时分段', () => {
   assert.doesNotMatch(details, /rounded-sm|>0ms<\/span>/);
   assert.match(details, /<span>总耗时<\/span><span>进行中<\/span>/);
 });
+
+test('重试属性：新数据显示次数，旧数据不显示不可信的1', () => {
+  const legacy = render({ status: 'completed', duration: 1000, retryCount: 1 });
+  assert.doesNotMatch(legacy, />重试</);
+  const current = render({ status: 'completed', duration: 1000, retryCount: 1, upstreamFirstDispatchMs: 0 });
+  assert.match(current, />重试</);
+  assert.match(current, /font-mono">1<\/span> 次/);
+});
+
+test('旧数据保留换号与故障转移标记，无标记时隐藏整行', () => {
+  const account = renderToStaticMarkup(createElement(LifecyclePanel, {
+    request: { status: 'completed', duration: 1000, upstreamType: 'account', retryCount: 99 },
+    lifecycle: { scheduleSnapshot: { candidates: [{ runtime_outcome: 'failed' }, { runtime_outcome: 'success' }] } }
+  }));
+  assert.match(account, /换号 1 次/);
+  assert.doesNotMatch(account, />99</);
+  const failover = render({ status: 'completed', duration: 1000, retryCount: 99, requestedEndpoint: 'a', effectiveEndpoint: 'b' });
+  assert.match(failover, /故障转移/);
+  assert.doesNotMatch(failover, />99</);
+});

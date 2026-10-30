@@ -1,7 +1,7 @@
 // request_lifecycle.go
 // 请求生命周期详情读取：热池安全快照 + DB 单行查询的统一出口。
 // 分段计时、调度快照与隐私摘要列
-// 不进入通用 RequestDetail 与列表读链路，只在本路径单独返回。
+// 仅首次取连接偏移同时进入列表，用作重试次数口径判定；其余分段字段只在详情返回。
 
 package tracking
 
@@ -14,13 +14,14 @@ import (
 // RequestLifecycleData 弹窗权威详情数据。
 // Detail 复用既有 RequestDetail 映射；生命周期字段仅在此结构返回。
 type RequestLifecycleData struct {
-	Detail               RequestDetail // 弹窗权威行数据（status/timing/tokens/route/failure 等）
-	UpstreamWriteMs      *int64
-	UpstreamDispatchMs   *int64
-	UpstreamConnMs       *int64
-	ScheduleSnapshotJSON string
-	PrivacyScanJSON      string
-	Source               string // "hot_pool" | "database"
+	Detail                  RequestDetail // 弹窗权威行数据（status/timing/tokens/route/failure 等）
+	UpstreamWriteMs         *int64
+	UpstreamFirstDispatchMs *int64
+	UpstreamDispatchMs      *int64
+	UpstreamConnMs          *int64
+	ScheduleSnapshotJSON    string
+	PrivacyScanJSON         string
+	Source                  string // "hot_pool" | "database"
 }
 
 // GetRequestLifecycleData 按 request_id 读取生命周期详情。
@@ -35,13 +36,14 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		if snapshot, ok := ut.hotPool.SnapshotRequest(requestID); ok {
 			return &RequestLifecycleData{
-				Detail:               ut.ActiveRequestToDetail(snapshot),
-				UpstreamWriteMs:      snapshot.UpstreamWriteMs,
-				UpstreamDispatchMs:   snapshot.UpstreamDispatchMs,
-				UpstreamConnMs:       snapshot.UpstreamConnMs,
-				ScheduleSnapshotJSON: snapshot.ScheduleSnapshotJSON,
-				PrivacyScanJSON:      snapshot.PrivacyScanJSON,
-				Source:               "hot_pool",
+				Detail:                  ut.ActiveRequestToDetail(snapshot),
+				UpstreamWriteMs:         snapshot.UpstreamWriteMs,
+				UpstreamFirstDispatchMs: snapshot.UpstreamFirstDispatchMs,
+				UpstreamDispatchMs:      snapshot.UpstreamDispatchMs,
+				UpstreamConnMs:          snapshot.UpstreamConnMs,
+				ScheduleSnapshotJSON:    snapshot.ScheduleSnapshotJSON,
+				PrivacyScanJSON:         snapshot.PrivacyScanJSON,
+				Source:                  "hot_pool",
 			}, nil
 		}
 	}
@@ -74,10 +76,11 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 	}
 
 	data := &RequestLifecycleData{
-		Detail:               details[0],
-		ScheduleSnapshotJSON: scheduleJSON,
-		PrivacyScanJSON:      privacyJSON,
-		Source:               "database",
+		Detail:                  details[0],
+		UpstreamFirstDispatchMs: details[0].UpstreamFirstDispatchMs,
+		ScheduleSnapshotJSON:    scheduleJSON,
+		PrivacyScanJSON:         privacyJSON,
+		Source:                  "database",
 	}
 	if upstreamWriteMs.Valid {
 		data.UpstreamWriteMs = &upstreamWriteMs.Int64

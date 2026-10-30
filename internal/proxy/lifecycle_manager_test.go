@@ -67,8 +67,8 @@ func TestRequestLifecycleManager_UpdateStatus(t *testing.T) {
 	if rlm.lastStatus != "processing" {
 		t.Errorf("Expected status 'processing', got '%s'", rlm.lastStatus)
 	}
-	if rlm.retryCount != 1 {
-		t.Errorf("Expected retry count 1, got %d", rlm.retryCount)
+	if rlm.retryCount != 0 {
+		t.Errorf("未联系上游时重试数应为0，got %d", rlm.retryCount)
 	}
 }
 
@@ -276,8 +276,8 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	if stats["status"] != "processing" {
 		t.Errorf("Expected status 'processing', got %v", stats["status"])
 	}
-	if stats["retry_count"] != 2 {
-		t.Errorf("Expected retry_count 2, got %v", stats["retry_count"])
+	if stats["retry_count"] != 0 {
+		t.Errorf("次数参数不能改变联系上游计数，got %v", stats["retry_count"])
 	}
 }
 
@@ -392,21 +392,21 @@ func TestRequestLifecycleManager_UpdateStatusWithAttemptCounter(t *testing.T) {
 	rlm.IncrementAttempt()
 	rlm.IncrementAttempt()
 
-	// 测试使用retryCount=-1时，应该使用内部计数器
+	// 次数参数 -1 不再使用旧内部计数器
 	rlm.UpdateStatus("suspended", -1, 0)
 
-	// 验证状态更新使用了内部计数器的值
+	// 未联系上游时，旧计数器不影响重试数
 	if rlm.lastStatus != "suspended" {
 		t.Errorf("Expected status 'suspended', got '%s'", rlm.lastStatus)
 	}
-	if rlm.retryCount != 3 {
-		t.Errorf("Expected retry count to use internal counter (3), got %d", rlm.retryCount)
+	if rlm.retryCount != 0 {
+		t.Errorf("旧尝试计数器不能改变重试数，got %d", rlm.retryCount)
 	}
 
-	// 测试使用正常retryCount时，应该使用提供的值
+	// 显式次数参数同样被忽略
 	rlm.UpdateStatus("processing", 5, 200)
-	if rlm.retryCount != 5 {
-		t.Errorf("Expected retry count to use provided value (5), got %d", rlm.retryCount)
+	if rlm.retryCount != 0 {
+		t.Errorf("显式次数参数不能改变重试数，got %d", rlm.retryCount)
 	}
 }
 
@@ -459,12 +459,12 @@ func TestRequestLifecycleManager_UpdateStatusSemanticFix(t *testing.T) {
 		t.Errorf("Expected 3 attempts, got %d", actualAttemptCount)
 	}
 
-	// 使用 retryCount=-1 来使用内部计数器（这是修复的核心）
+	// 保留 -1 调用形式，验证旧计数器不再参与新口径
 	rlm.UpdateStatus("suspended", -1, 0)
 
-	// 验证数据库中记录的是真实尝试次数，不是端点数量
-	if rlm.GetRetryCount() != 3 {
-		t.Errorf("Expected retry count in status to be 3 (actual attempts), got %d", rlm.GetRetryCount())
+	// 没有取连接事件，重试数仍为0
+	if rlm.GetRetryCount() != 0 {
+		t.Errorf("没有联系上游时重试数应为0，got %d", rlm.GetRetryCount())
 	}
 
 	// 验证状态正确设置为suspended而不是retry
@@ -482,7 +482,7 @@ func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testin
 	rlm.IncrementAttempt()
 	rlm.IncrementAttempt()
 
-	// 手动设置retryCount（模拟其他路径的更新）
+	// 模拟旧路径传入候选下标
 	rlm.UpdateStatus("processing", 5, 200)
 
 	// 验证attemptCounter和retryCount是独立的
@@ -492,8 +492,8 @@ func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testin
 	if attemptCount != 2 {
 		t.Errorf("Expected attempt count 2, got %d", attemptCount)
 	}
-	if retryCount != 5 {
-		t.Errorf("Expected retry count 5, got %d", retryCount)
+	if retryCount != 0 {
+		t.Errorf("候选下标不能改变重试数，got %d", retryCount)
 	}
 
 	// 继续增加尝试计数器
@@ -506,8 +506,8 @@ func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testin
 	if newAttemptCount != 3 {
 		t.Errorf("Expected new attempt count 3, got %d", newAttemptCount)
 	}
-	if sameRetryCount != 5 {
-		t.Errorf("Expected retry count unchanged (5), got %d", sameRetryCount)
+	if sameRetryCount != 0 {
+		t.Errorf("重试数应保持0，got %d", sameRetryCount)
 	}
 }
 

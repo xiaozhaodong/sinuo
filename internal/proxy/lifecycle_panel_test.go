@@ -179,7 +179,7 @@ func TestUpstreamWriteMs_IgnoresFailedWroteRequest(t *testing.T) {
 
 	rlm := NewRequestLifecycleManager(tracker, nil, requestID, nil)
 	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses", true)
-	traceCtx, _ := handlers.WithUpstreamTrace(context.Background(), rlm.RecordUpstreamWrite)
+	traceCtx, _ := handlers.WithUpstreamTrace(context.Background(), rlm)
 	trace := httptrace.ContextClientTrace(traceCtx)
 	trace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("partial write")})
 

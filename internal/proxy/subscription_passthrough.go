@@ -132,9 +132,8 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	p.logger.Debug(fmt.Sprintf("🗜️ [Codex 订阅代理] [%s] 出站正文编码: %s", requestID, bodyMode),
 		"conn_id", requestID, "kind", string(route.Kind), "mode", bodyMode,
 		"plaintext_bytes", len(body.normalizedBody), "wire_bytes", len(wireBody))
-	traceCtx, _ := handlers.WithUpstreamTrace(r.Context(), func(timing handlers.UpstreamWriteTiming) {
-		track.MarkOutbound(int64(len(wireBody)), timing)
-	})
+	track.setOutboundBytes(int64(len(wireBody)))
+	traceCtx, _ := handlers.WithUpstreamTrace(r.Context(), track)
 	r = r.WithContext(traceCtx)
 
 	resp, cancel, err := p.roundTrip(r, route, wireBody, outboundEncoding)

@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Waves, RefreshCw } from 'lucide-react';
+import { Waves, RefreshCw, RotateCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
@@ -20,7 +20,7 @@ import { buildModelAlert } from '../utils/modelConsistency.js';
 import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import { resolveGenerationTickAnchor } from '../utils/elapsedTicker.js';
-import { parseTimestampOrNull } from '../utils/lifecycle.js';
+import { firstResponseWait, visibleRetryCount } from '../utils/retryTiming.js';
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -79,34 +79,16 @@ const TimingTooltip = ({ anchorRect, items }) => {
 
 // 首响位在跑的样子：从上游请求写完开始跑，与后端首响同一起点，定格时不跳。
 // 还没发到上游时首响还没开始计，只放等待点、不给数字（见 PendingSendPill）。
-const RunningFirstResponsePill = ({ request }) => (
-  parseTimestampOrNull(request.firstTokenStartAt)
-    ? <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />
-    : <PendingSendPill timestamp={request.timestamp} />
-);
+const RunningFirstResponsePill = ({ request }) => {
+  const waiting = firstResponseWait(request);
+  return waiting
+    ? <PendingSendPill {...waiting} />
+    : <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />;
+};
 
-const RequestTimingCell = ({ request }) => {
+// 进行中只使用各胶囊的说明；已结束请求才展示总耗时、TPS与重试提示。
+const useTimingTooltip = (running) => {
   const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
-  const running = IN_FLIGHT_STATUSES.has(request.status);
-  // 计时可以比状态先定格：生成耗时随计时事件先到，状态与 token 要等下一次查询。
-  const timingRunning = running && !Number.isFinite(request.completionMs);
-  // 进行中只认后端真实写入的 firstTokenMs。
-  // resolveFirstResponseMs 对非流式请求会拿 duration 兜底首响，而那条降级的前提是
-  // 「请求已结束」—— 进行中 duration 还是 0（tracker 只在终态写 duration_ms），
-  // 兜底会让每条非流式请求都先显示一个假的 0.0s 首响。
-  const firstResponseMs = running
-    ? (Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null)
-    : resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
-  const hasFirstResponse = Number.isFinite(firstResponseMs);
-  const completionMs = hasFirstResponse
-    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
-    : null;
-  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
-  const timingTooltipItems = [
-    { label: '总耗时', value: formatTimingBadge(request.duration) },
-    { label: 'TPS', value: formatTpsBadge(tokensPerSecond) }
-  ];
-
   const showTooltip = (event) => {
     setTooltipAnchor(event.currentTarget.getBoundingClientRect());
   };
@@ -124,6 +106,34 @@ const RequestTimingCell = ({ request }) => {
     onFocus: showTooltip,
     onBlur: hideTooltip
   };
+
+  return { tooltipAnchor, hoverHandlers };
+};
+
+const RequestTimingCell = ({ request }) => {
+  const running = IN_FLIGHT_STATUSES.has(request.status);
+  const { tooltipAnchor, hoverHandlers } = useTimingTooltip(running);
+  // 计时可以比状态先定格：生成耗时随计时事件先到，状态与 token 要等下一次查询。
+  const timingRunning = running && !Number.isFinite(request.completionMs);
+  const retryCount = visibleRetryCount(request, running);
+  // 进行中只认后端真实写入的 firstTokenMs。
+  // resolveFirstResponseMs 对非流式请求会拿 duration 兜底首响，而那条降级的前提是
+  // 「请求已结束」—— 进行中 duration 还是 0（tracker 只在终态写 duration_ms），
+  // 兜底会让每条非流式请求都先显示一个假的 0.0s 首响。
+  const firstResponseMs = running
+    ? (Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null)
+    : resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  const hasFirstResponse = Number.isFinite(firstResponseMs);
+  const completionMs = hasFirstResponse
+    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
+    : null;
+  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
+  const timingTooltipItems = [
+    { label: '总耗时', value: formatTimingBadge(request.duration) },
+    { label: 'TPS', value: formatTpsBadge(tokensPerSecond) }
+  ];
+
+  if (retryCount > 0) timingTooltipItems.push({ label: '重试', value: `${retryCount} 次` });
 
   return (
     <div className="inline-flex items-center gap-1.5" {...hoverHandlers}>
@@ -149,6 +159,11 @@ const RequestTimingCell = ({ request }) => {
       ) : (
         <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('duration', completionMs ?? request.duration)}`}>
           {formatOptionalTimingBadge(completionMs)}
+        </span>
+      )}
+      {retryCount > 0 && (
+        <span className="inline-flex items-center gap-0.5 font-mono text-[11px] leading-4 font-medium text-amber-700 dark:text-amber-300" title={`重试 ${retryCount} 次`}>
+          <RotateCw size={11} strokeWidth={2.5} aria-hidden="true" />{retryCount}
         </span>
       )}
       {!running && <TimingTooltip anchorRect={tooltipAnchor} items={timingTooltipItems} />}

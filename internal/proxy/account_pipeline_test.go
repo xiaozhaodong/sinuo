@@ -2820,11 +2820,14 @@ func TestAccountPipeline_SoftFailurePolicy_独立阈值触发换号(t *testing.T
 		{ProviderType: "api_key", AccountName: "policy-backup", CredentialRaw: "fixture-backup", BaseURL: backup.URL, Priority: 10, Enabled: true, State: "active"},
 	})
 	handler := newAccountPipelineTestHandler(t, primary.URL, svc)
-	result := performResponsesRequest(t, handler)
+	tracker := attachRetryTracker(t, handler)
+
+	result := performRetryResponsesRequest(t, handler)
 	if result.Code != http.StatusOK {
 		t.Fatalf("自定义阈值未触发换号: %d %s", result.Code, result.Body.String())
 	}
 	if atomic.LoadInt32(&primaryHits) != 1 || atomic.LoadInt32(&backupHits) != 1 {
 		t.Fatal("同账号重试次数发生变化")
 	}
+	requireOnlyRetryObservation(t, tracker, 1)
 }

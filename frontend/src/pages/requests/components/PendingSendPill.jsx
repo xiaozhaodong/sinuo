@@ -27,9 +27,10 @@ const INITIAL_CLASS_NAME = buildClassName(getPendingSendPillState(0));
 
 /**
  * @param {Object} props
- * @param {string} props.timestamp 请求进入时刻（固定微秒精度 UTC ISO）
+ * @param {string} props.timestamp 等待起算时刻（请求进入或本次重试取连接）
+ * @param {string} [props.hint] 等待说明
  */
-const PendingSendPill = ({ timestamp }) => {
+const PendingSendPill = ({ timestamp, hint = PENDING_SEND_HINT }) => {
   const nodeRef = useRef(null);
   const startedAt = parseTimestampOrNull(timestamp)?.getTime();
   const canTick = Number.isFinite(startedAt);
@@ -53,7 +54,7 @@ const PendingSendPill = ({ timestamp }) => {
   }, [canTick, startedAt]);
 
   return (
-    <span ref={nodeRef} className={INITIAL_CLASS_NAME} title={PENDING_SEND_HINT} aria-label={PENDING_SEND_HINT}>
+    <span ref={nodeRef} className={INITIAL_CLASS_NAME} title={hint} aria-label={hint}>
       <i>·</i><i>·</i><i>·</i>
     </span>
   );

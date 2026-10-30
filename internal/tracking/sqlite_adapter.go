@@ -191,6 +191,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "upstream_first_dispatch_ms",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_first_dispatch_ms INTEGER",
+			description: "首次联系上游偏移字段（重试口径标识）",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "upstream_dispatch_ms",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN upstream_dispatch_ms INTEGER",
 			description: "最终尝试开始取连接偏移字段（仅调度链路）",

@@ -13,6 +13,7 @@ func TestRequestHistoryMigration_TimingColumnsPreservedOrNull(t *testing.T) {
 			defer db.Close()
 			if existing {
 				for _, statement := range []string{
+					`ALTER TABLE request_logs ADD COLUMN upstream_first_dispatch_ms INTEGER`,
 					`ALTER TABLE request_logs ADD COLUMN upstream_dispatch_ms INTEGER`,
 					`ALTER TABLE request_logs ADD COLUMN upstream_conn_ms INTEGER`,
 				} {
@@ -20,7 +21,7 @@ func TestRequestHistoryMigration_TimingColumnsPreservedOrNull(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if _, err := db.Exec(`UPDATE request_logs SET upstream_dispatch_ms = ?, upstream_conn_ms = ? WHERE request_id = ?`, 100, 200, "req-fixture-codex"); err != nil {
+				if _, err := db.Exec(`UPDATE request_logs SET upstream_first_dispatch_ms = ?, upstream_dispatch_ms = ?, upstream_conn_ms = ? WHERE request_id = ?`, 50, 100, 200, "req-fixture-codex"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -37,9 +38,12 @@ func TestRequestHistoryMigration_TimingColumnsPreservedOrNull(t *testing.T) {
 				if err := tx.Commit(); err != nil {
 					t.Fatal(err)
 				}
-				var dispatch, conn sql.NullInt64
-				if err := db.QueryRow(`SELECT upstream_dispatch_ms, upstream_conn_ms FROM request_logs WHERE request_id = ?`, "req-fixture-codex").Scan(&dispatch, &conn); err != nil {
+				var first, dispatch, conn sql.NullInt64
+				if err := db.QueryRow(`SELECT upstream_first_dispatch_ms, upstream_dispatch_ms, upstream_conn_ms FROM request_logs WHERE request_id = ?`, "req-fixture-codex").Scan(&first, &dispatch, &conn); err != nil {
 					t.Fatal(err)
+				}
+				if first.Valid != existing || (existing && first.Int64 != 50) {
+					t.Fatalf("首次联系迁移错误或旧行被回填：%v", first)
 				}
 				if existing {
 					if !dispatch.Valid || !conn.Valid || dispatch.Int64 != 100 || conn.Int64 != 200 {

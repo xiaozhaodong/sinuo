@@ -65,11 +65,12 @@ type ActiveRequest struct {
 	RouteDecisionAt *time.Time `json:"route_decision_at,omitempty"`
 
 	// v6.2 生命周期面板新增字段（热池合并；归档 INSERT 时落库）
-	UpstreamWriteMs      *int64 `json:"upstream_write_ms,omitempty"`
-	UpstreamDispatchMs   *int64 `json:"upstream_dispatch_ms,omitempty"`
-	UpstreamConnMs       *int64 `json:"upstream_conn_ms,omitempty"`
-	ScheduleSnapshotJSON string `json:"schedule_snapshot_json,omitempty"`
-	PrivacyScanJSON      string `json:"privacy_scan_json,omitempty"`
+	UpstreamWriteMs         *int64 `json:"upstream_write_ms,omitempty"`
+	UpstreamFirstDispatchMs *int64 `json:"upstream_first_dispatch_ms,omitempty"`
+	UpstreamDispatchMs      *int64 `json:"upstream_dispatch_ms,omitempty"`
+	UpstreamConnMs          *int64 `json:"upstream_conn_ms,omitempty"`
+	ScheduleSnapshotJSON    string `json:"schedule_snapshot_json,omitempty"`
+	PrivacyScanJSON         string `json:"privacy_scan_json,omitempty"`
 
 	// v6.3 模型一致性字段（请求两项随 start 写入；其余三项终态 finalizer 合并）
 	RequestModel      string `json:"request_model,omitempty"`
@@ -329,6 +330,10 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 	if req.UpstreamWriteMs != nil {
 		value := *req.UpstreamWriteMs
 		clone.UpstreamWriteMs = &value
+	}
+	if req.UpstreamFirstDispatchMs != nil {
+		value := *req.UpstreamFirstDispatchMs
+		clone.UpstreamFirstDispatchMs = &value
 	}
 	if req.UpstreamDispatchMs != nil {
 		value := *req.UpstreamDispatchMs
