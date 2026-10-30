@@ -198,6 +198,10 @@ func (rlm *RequestLifecycleManager) SetFirstTokenStartTime(start time.Time) {
 
 // RecordUpstreamGetConn 在首响前计数；此钩子不得访问数据库。
 func (rlm *RequestLifecycleManager) RecordUpstreamGetConn(attempt handlers.UpstreamConnAttempt) {
+	if attempt.SameContact {
+		logSameContactReconnect(rlm.requestID, rlm.snapshotState().upstreamName, attempt)
+		return
+	}
 	rlm.timingMu.Lock()
 	if !rlm.firstTokenAt.IsZero() || rlm.upstreamSettled {
 		rlm.timingMu.Unlock()

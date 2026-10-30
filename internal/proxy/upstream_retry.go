@@ -41,6 +41,13 @@ func upstreamOffset(start, at time.Time) *int64 {
 	return &ms
 }
 
+// logSameContactReconnect 记录连接池换掉失效连接后的重取：上游没收到过请求，不算重试。
+func logSameContactReconnect(requestID, upstream string, attempt handlers.UpstreamConnAttempt) {
+	prev := attempt.Previous
+	slog.Debug(fmt.Sprintf("🔌 [连接池换连接] [%s] 上一次取到的连接不可用，未发出请求即重取连接", requestID),
+		"upstream", upstream, "prev_elapsed", prev.Elapsed, "prev_got_conn", prev.GotConn)
+}
+
 func logTransportRetry(requestID, upstream string, contacts int, attempt handlers.UpstreamConnAttempt) {
 	if !attempt.TransportRetry {
 		return

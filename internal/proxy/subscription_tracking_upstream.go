@@ -11,6 +11,10 @@ import (
 
 // RecordUpstreamGetConn 与生命周期管理器共用联系上游口径；只更新内存并发布事件。
 func (t *subscriptionRequestTracking) RecordUpstreamGetConn(attempt handlers.UpstreamConnAttempt) {
+	if attempt.SameContact {
+		logSameContactReconnect(t.requestID, subscriptionTrackingUpstreamName, attempt)
+		return
+	}
 	t.mu.Lock()
 	if !t.active || t.settled || !t.firstOutputAt.IsZero() {
 		t.mu.Unlock()

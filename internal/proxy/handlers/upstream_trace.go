@@ -33,10 +33,14 @@ type UpstreamAttemptSummary struct {
 	WriteError   error
 }
 
-// UpstreamConnAttempt 标识一次取连接；TransportRetry 仅表示同一追踪内的重发。
+// UpstreamConnAttempt 标识一次取连接，两个标记只在同一追踪内的再次取连接时出现：
+//   - TransportRetry：上一次已把请求写给上游，上游收到过请求，这是传输层重发；
+//   - SameContact：上一次还没写出任何请求，是连接池换掉失效连接后重取（如 HTTP/2 缓存连接
+//     接不了新请求时 ErrNoCachedConn 重拨），上游没收到过请求，仍算同一次联系。
 type UpstreamConnAttempt struct {
 	At             time.Time
 	TransportRetry bool
+	SameContact    bool
 	Previous       UpstreamAttemptSummary
 }
 
@@ -81,9 +85,10 @@ func (s *UpstreamTraceState) markGetConn() UpstreamConnAttempt {
 	at := time.Now()
 	attempt := UpstreamConnAttempt{At: at}
 	if !s.writeTiming.ConnStartAt.IsZero() {
-		attempt.TransportRetry = true
 		attempt.Previous = s.attemptSummary
 		attempt.Previous.Elapsed = at.Sub(s.writeTiming.ConnStartAt)
+		attempt.TransportRetry = attempt.Previous.WroteHeaders || attempt.Previous.WroteRequest
+		attempt.SameContact = !attempt.TransportRetry
 	}
 	// 最终尝试计时与摘要重置；重放安全边界 wroteHeaders 始终保持粘滞。
 	s.writeTiming = UpstreamWriteTiming{ConnStartAt: at}
