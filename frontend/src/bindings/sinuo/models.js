@@ -941,7 +941,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 
 /**
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
- * 生命周期字段不在列表 DTO 中，只在本接口返回。
+ * 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
  * @typedef {Object} RequestLifecycleDetail
  * @property {boolean} found
  * @property {string} [source] - hot_pool | database
@@ -991,7 +991,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} model
  * @property {string} status
  * @property {number | null} http_status - 无 HTTP 响应（如订阅 WS 内生成）为 null
- * @property {number | null} upstream_first_dispatch_ms - 首次联系上游偏移；非空表示重试采用新口径
+ * @property {number | null} upstream_first_dispatch_ms - 非空表示重试次数采用联系上游新口径
  * @property {number} retry_count - 重试次数
  * @property {string} [failure_reason] - 失败原因
  * @property {string} [cancel_reason] - 取消原因

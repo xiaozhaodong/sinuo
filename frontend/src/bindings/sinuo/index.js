@@ -361,7 +361,7 @@ import * as $models from "./models.js";
 
 /**
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
- * 生命周期字段不在列表 DTO 中，只在本接口返回。
+ * 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
  * @typedef {$models.RequestLifecycleDetail} RequestLifecycleDetail
  */
 
