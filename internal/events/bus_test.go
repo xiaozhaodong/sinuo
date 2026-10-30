@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+func TestRequestUpdateWhitelistKeepsRetryAnchors(t *testing.T) {
+	filter := NewEventBus(nil).(*eventBus).filters[EventRequestUpdated]
+	at := "2026-10-30T00:00:00.125000Z"
+	data := filter.DataTransformer(Event{Type: EventRequestUpdated, Data: map[string]interface{}{
+		"request_id": "synthetic-retry", "change_type": "upstream_retry",
+		"retry_count": 1, "retry_started_at": at,
+		"credential_raw": "synthetic-must-be-filtered",
+	}})
+	if data["retry_count"] != 1 || data["retry_started_at"] != at {
+		t.Fatalf("L1重试锚点必须透传: %+v", data)
+	}
+	if _, ok := data["credential_raw"]; ok {
+		t.Fatal("禁止放宽其他字段白名单")
+	}
+}
+
 type capturedFrontendEvent struct {
 	eventType string
 	data      map[string]interface{}

@@ -130,6 +130,7 @@ func (eb *eventBus) setupDefaultFilters() {
 		for _, key := range []string{
 			"request_id", "change_type", "status",
 			"first_token_start_at", "first_token_ms", "first_token_at", "completion_ms",
+			"retry_started_at", "retry_count",
 		} {
 			if value, exists := event.Data[key]; exists {
 				data[key] = value
