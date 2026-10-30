@@ -1,6 +1,16 @@
 // 计时事件补丁单测：事件与查询谁先到都不能让已定格的跑秒回退
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('first_content只补空缺，乱序查询与重复事件不覆盖已交接锚点', () => {
+  const at = '2026-10-30T00:00:01.000000Z';
+  const patch = extractTimingPatch({ request_id: 'synthetic-content', change_type: 'first_content', first_content_at: at });
+  const rows = applyTimingPatch([{ requestId: 'synthetic-content', firstContentAt: '' }], patch);
+  assert.equal(rows[0].firstContentAt, at);
+  const duplicate = extractTimingPatch({ request_id: 'synthetic-content', first_content_at: '2026-10-30T00:00:02.000000Z' });
+  assert.equal(applyTimingPatch(rows, duplicate), rows);
+  assert.equal(carryLiveTiming(rows, [{ requestId: 'synthetic-content', firstContentAt: '' }])[0].firstContentAt, at);
+});
 import {
   PENDING_TIMING_PATCH_TTL_MS,
   applyPendingTimingPatches,

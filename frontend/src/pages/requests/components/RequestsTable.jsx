@@ -6,31 +6,17 @@
 // ============================================
 
 import React from 'react';
-import { createPortal } from 'react-dom';
-import { Waves, RefreshCw, RotateCw } from 'lucide-react';
+import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
 import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { RequestTraceCell } from './TraceRail.jsx';
-import LiveElapsedPill from './LiveElapsedPill.jsx';
-import PendingSendPill from './PendingSendPill.jsx';
+import RequestTimingCell from './RequestTimingCell.jsx';
 import ModelTag from './ModelTag.jsx';
 import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
-import { IN_FLIGHT_STATUSES, UNSETTLED_STATUSES } from '../utils/constants.js';
+import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
-import { resolveGenerationTickAnchor } from '../utils/elapsedTicker.js';
-import { firstResponseWait, visibleRetryCount } from '../utils/retryTiming.js';
-import {
-  calculateTokensPerSecond,
-  formatOptionalTimingBadge,
-  formatTimingBadge,
-  formatTpsBadge,
-  getTimingPillClassName,
-  resolveCompletionMs,
-  resolveFirstResponseMs,
-  TIMING_PILL_BASE
-} from '../utils/timing.js';
 
 // 整套入场里收尾最晚的一条动画（左缘亮线 620ms）。摘 class 必须等它 ——
 // 单元格位移只有 200ms 且会从 td 冒泡上来，认 target 会提前 420ms 摘掉，
@@ -47,128 +33,6 @@ const RequestStreamIcon = ({ request }) => {
   const iconColor = request.isStreaming ? 'text-info' : 'text-fg-subtle';
 
   return <StreamIcon className={`w-3 h-3 ${iconColor} flex-shrink-0`} title={streamTitle} />;
-};
-
-const TimingTooltip = ({ anchorRect, items }) => {
-  if (!anchorRect) {
-    return null;
-  }
-
-  const style = {
-    left: `${anchorRect.left + anchorRect.width / 2}px`,
-    top: `${anchorRect.bottom + 6}px`
-  };
-
-  return createPortal(
-    <div
-      className="pointer-events-none fixed z-[10001] -translate-x-1/2 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-body shadow-lg ring-1 ring-hairline"
-      style={style}
-    >
-      <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
-        {items.map(item => (
-          <React.Fragment key={item.label}>
-            <span className="text-fg-subtle">{item.label}</span>
-            <span className="text-right font-mono font-semibold text-fg-body">{item.value}</span>
-          </React.Fragment>
-        ))}
-      </div>
-    </div>,
-    document.body
-  );
-};
-
-// 首响位在跑的样子：从上游请求写完开始跑，与后端首响同一起点，定格时不跳。
-// 还没发到上游时首响还没开始计，只放等待点、不给数字（见 PendingSendPill）。
-const RunningFirstResponsePill = ({ request }) => {
-  const waiting = firstResponseWait(request);
-  return waiting
-    ? <PendingSendPill {...waiting} />
-    : <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />;
-};
-
-// 进行中只使用各胶囊的说明；已结束请求才展示总耗时、TPS与重试提示。
-const useTimingTooltip = (running) => {
-  const [tooltipAnchor, setTooltipAnchor] = React.useState(null);
-  const showTooltip = (event) => {
-    setTooltipAnchor(event.currentTarget.getBoundingClientRect());
-  };
-
-  const hideTooltip = () => {
-    setTooltipAnchor(null);
-  };
-
-  // 进行中不挂 tooltip：那两项此刻都还没有值（duration 为 0、TPS 为 null），
-  // 而 pill 自己就在实时显示数字，tooltip 没有任何增量信息。
-  const hoverHandlers = running ? undefined : {
-    onMouseEnter: showTooltip,
-    onMouseMove: showTooltip,
-    onMouseLeave: hideTooltip,
-    onFocus: showTooltip,
-    onBlur: hideTooltip
-  };
-
-  return { tooltipAnchor, hoverHandlers };
-};
-
-const RequestTimingCell = ({ request }) => {
-  const running = IN_FLIGHT_STATUSES.has(request.status);
-  const { tooltipAnchor, hoverHandlers } = useTimingTooltip(running);
-  // 计时可以比状态先定格：生成耗时随计时事件先到，状态与 token 要等下一次查询。
-  const timingRunning = running && !Number.isFinite(request.completionMs);
-  const retryCount = visibleRetryCount(request, running);
-  // 进行中只认后端真实写入的 firstTokenMs。
-  // resolveFirstResponseMs 对非流式请求会拿 duration 兜底首响，而那条降级的前提是
-  // 「请求已结束」—— 进行中 duration 还是 0（tracker 只在终态写 duration_ms），
-  // 兜底会让每条非流式请求都先显示一个假的 0.0s 首响。
-  const firstResponseMs = running
-    ? (Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null)
-    : resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
-  const hasFirstResponse = Number.isFinite(firstResponseMs);
-  const completionMs = hasFirstResponse
-    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
-    : null;
-  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
-  const timingTooltipItems = [
-    { label: '总耗时', value: formatTimingBadge(request.duration) },
-    { label: 'TPS', value: formatTpsBadge(tokensPerSecond) }
-  ];
-
-  if (retryCount > 0) timingTooltipItems.push({ label: '重试', value: `${retryCount} 次` });
-
-  return (
-    <div className="inline-flex items-center gap-1.5" {...hoverHandlers}>
-      {/* 首响位。已定值就静态显示；进行中且首字未到时，这一格自己在跑秒。 */}
-      {hasFirstResponse ? (
-        <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('first', firstResponseMs)}`}>
-          {formatTimingBadge(firstResponseMs)}
-        </span>
-      ) : timingRunning ? (
-        <RunningFirstResponsePill request={request} />
-      ) : null}
-
-      {/* 生成位。进行中且首字已到时，这一格接过跑秒 —— 交接的那一刻正是首字到达。
-          首字未到时不出这一格：生成还没开始，画一个 '-' 只是噪音。
-          起算点见 resolveGenerationTickAnchor：优先从首字到达时刻算，与定稿值同一起点。 */}
-      {timingRunning ? (
-        hasFirstResponse && (
-          <LiveElapsedPill
-            {...resolveGenerationTickAnchor(request, firstResponseMs)}
-            threshold="duration"
-          />
-        )
-      ) : (
-        <span className={`${TIMING_PILL_BASE} ${getTimingPillClassName('duration', completionMs ?? request.duration)}`}>
-          {formatOptionalTimingBadge(completionMs)}
-        </span>
-      )}
-      {retryCount > 0 && (
-        <span className="inline-flex items-center gap-0.5 font-mono text-[11px] leading-4 font-medium text-amber-700 dark:text-amber-300" title={`重试 ${retryCount} 次`}>
-          <RotateCw size={11} strokeWidth={2.5} aria-hidden="true" />{retryCount}
-        </span>
-      )}
-      {!running && <TimingTooltip anchorRect={tooltipAnchor} items={timingTooltipItems} />}
-    </div>
-  );
 };
 
 // 在途时 token 与成本都还没有值：后端只在终态写这几个字段

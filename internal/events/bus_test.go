@@ -23,6 +23,21 @@ func TestRequestUpdateWhitelistKeepsRetryAnchors(t *testing.T) {
 	}
 }
 
+func TestStreamPhases_FirstContentSurvivesBroadcastWhitelist(t *testing.T) {
+	filter := NewEventBus(nil).(*eventBus).filters[EventRequestUpdated]
+	at := "2026-10-30T00:00:00.125000Z"
+	data := filter.DataTransformer(Event{Type: EventRequestUpdated, Data: map[string]interface{}{
+		"request_id": "synthetic-first-content", "change_type": "first_content", "first_content_at": at,
+		"credential_raw": "synthetic-must-be-filtered",
+	}})
+	if data["request_id"] != "synthetic-first-content" || data["change_type"] != "first_content" || data["first_content_at"] != at {
+		t.Fatalf("广播丢失锚点: %+v", data)
+	}
+	if _, ok := data["credential_raw"]; ok {
+		t.Fatal("禁止放宽其他字段白名单")
+	}
+}
+
 type capturedFrontendEvent struct {
 	eventType string
 	data      map[string]interface{}

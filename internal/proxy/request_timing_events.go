@@ -14,8 +14,16 @@ const (
 	requestChangeUpstreamRetry       = "upstream_retry"
 	requestChangeUpstreamSent        = "upstream_sent"
 	requestChangeFirstResponse       = "first_response"
+	requestChangeFirstContent        = "first_content"
 	requestChangeGenerationCompleted = "generation_completed"
 )
+
+func firstContentEventData(requestID string, at time.Time) map[string]interface{} {
+	return map[string]interface{}{
+		"request_id": requestID, "change_type": requestChangeFirstContent,
+		"first_content_at": timezonepolicy.FormatStorage(at),
+	}
+}
 
 // upstreamSentEventData 上游请求写完：首响从这一刻起算，重试时随新的尝试后移。
 func upstreamSentEventData(requestID string, startAt time.Time) map[string]interface{} {
@@ -34,7 +42,7 @@ func upstreamRetryEventData(requestID string, retries int, at time.Time) map[str
 	}
 }
 
-// firstResponseEventData 首响落定：首响位定格，生成位从首字时刻起算。
+// firstResponseEventData 首个事件落定；旧口径从此开始生成，新口径继续等待首个内容。
 func firstResponseEventData(requestID string, firstTokenMs int64, firstTokenAt time.Time) map[string]interface{} {
 	return map[string]interface{}{
 		"request_id":     requestID,

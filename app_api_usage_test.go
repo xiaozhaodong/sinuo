@@ -674,3 +674,19 @@ func TestRequestRetryAPI_FirstDispatchMapping(t *testing.T) {
 		t.Fatal("旧行不得伪造新口径")
 	}
 }
+
+func TestStreamPhases_APIListMapping(t *testing.T) {
+	zero, flow, stop := int64(0), int64(500), "max_tokens"
+	at := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	record := requestDetailToRecord(tracking.RequestDetail{
+		FirstContentMs: &zero, FirstTextMs: &zero, UpstreamWriteMs: &zero,
+		StreamFlowMs: &flow, StopReason: &stop, FirstContentAt: &at,
+	})
+	if record.FirstContentMs == nil || *record.FirstContentMs != 0 || record.FirstTextMs == nil || record.UpstreamWriteMs == nil || *record.StreamFlowMs != 500 || *record.StopReason != stop || record.FirstContentAt != formatAPITime(at) {
+		t.Fatalf("列表观测丢失: %+v", record)
+	}
+	legacy := requestDetailToRecord(tracking.RequestDetail{})
+	if legacy.FirstContentMs != nil || legacy.FirstTextMs != nil || legacy.StreamFlowMs != nil || legacy.StopReason != nil || legacy.FirstContentAt != "" {
+		t.Fatal("缺失值不能伪造为0")
+	}
+}

@@ -25,6 +25,7 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, _ int, httpStatu
 	rlm.timingMu.Lock()
 	retries := max(rlm.upstreamContacts-1, 0)
 	opts := tracking.UpdateOptions{
+		StreamPhases: tracking.StreamPhases{StopReason: rlm.phaseStopReason, UpstreamRequestID: rlm.phaseRequestID},
 		EndpointName: &state.endpointName, RequestFamily: &state.requestFamily,
 		UpstreamType: &state.upstreamType, UpstreamSourceName: &state.upstreamSourceName,
 		UpstreamName: &state.upstreamName, UpstreamID: &state.upstreamID,
@@ -248,6 +249,7 @@ func (rlm *RequestLifecycleManager) finishUpstreamContacts() {
 	rlm.timingMu.Lock()
 	defer rlm.timingMu.Unlock()
 	rlm.upstreamSettled = true
+	rlm.flushStreamPhasesLocked()
 	if rlm.persistedContacts == rlm.upstreamContacts || rlm.usageTracker == nil || rlm.requestID == "" {
 		return
 	}

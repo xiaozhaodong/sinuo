@@ -227,6 +227,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 				upstreamCancel = nil
 			}
 		}
+		lifecycleManager.SetUpstreamResponse(resp)
 		if forwardErr != nil {
 			releaseUpstream()
 			if e := codexIdentityError(forwardErr); e != nil {
@@ -1113,6 +1114,7 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		return fmt.Errorf("empty response body")
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
+	lifecycleManager.recordRegularStopReason(responseBytes)
 
 	// v6.3：先提取响应模型 / 思考信息再写回客户端，写入失败的结算仍保留已收到的诊断字段。
 	analysis := h.tokenAnalyzer.AnalyzeResponseUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)
@@ -1167,6 +1169,7 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 	tokenParser := NewTokenParserWithUsageTracker(lifecycleManager.GetRequestID(), h.usageTracker)
 	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, lifecycleManager.GetRequestID(), endpointName)
 	processor.SetStreamTimingRecorders(lifecycleManager.RecordFirstTokenAndReturn, lifecycleManager.RecordStreamCompletion)
+	processor.SetStreamPhaseObserver(lifecycleManager.ObserveStreamResult)
 	if upstreamCancel != nil {
 		processor.EnableDownstreamTailDrain(h.accountStreamTailDrainTimeout(), upstreamCancel)
 	}

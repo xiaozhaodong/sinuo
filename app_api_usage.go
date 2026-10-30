@@ -239,6 +239,12 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 // RequestRecord 请求记录
 type RequestRecord struct {
+	UpstreamWriteMs         *int64  `json:"upstream_write_ms"`          // 最终尝试写完偏移（毫秒），列表首字起点
+	FirstContentMs          *int64  `json:"first_content_ms"`           // 首个内容偏移（毫秒），只写一次
+	FirstTextMs             *int64  `json:"first_text_ms"`              // 首个正文偏移（毫秒），只写一次
+	StreamFlowMs            *int64  `json:"stream_flow_ms"`             // data内容字节中间80%到达跨度乘10/8（毫秒）
+	StopReason              *string `json:"stop_reason"`                // 上游结束原因原文
+	FirstContentAt          string  `json:"first_content_at,omitempty"` // 首个内容时刻，只有热池请求才有，供生成位跑秒起算
 	SessionID               string  `json:"session_id,omitempty"`
 	ID                      string  `json:"id"`
 	RequestID               string  `json:"request_id"`
@@ -268,7 +274,7 @@ type RequestRecord struct {
 	FallbackReason          string  `json:"fallback_reason,omitempty"`
 	RouteDecisionAt         string  `json:"route_decision_at,omitempty"`
 	FirstTokenStartAt       string  `json:"first_token_start_at,omitempty"` // 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
-	FirstTokenAt            string  `json:"first_token_at,omitempty"`       // 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
+	FirstTokenAt            string  `json:"first_token_at,omitempty"`       // 首个事件到达时刻，只有进行中的热池请求才有，供旧口径生成位跑秒起算
 	InputTokens             int64   `json:"input_tokens"`
 	OutputTokens            int64   `json:"output_tokens"`
 	CacheCreationTokens     int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
@@ -425,6 +431,11 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		Status:                  r.Status,
 		RetryCount:              r.RetryCount,
 		UpstreamFirstDispatchMs: r.UpstreamFirstDispatchMs,
+		UpstreamWriteMs:         r.UpstreamWriteMs,
+		FirstContentMs:          r.FirstContentMs,
+		FirstTextMs:             r.FirstTextMs,
+		StreamFlowMs:            r.StreamFlowMs,
+		StopReason:              r.StopReason,
 		FailureReason:           r.FailureReason,
 		CancelReason:            r.CancelReason,
 		UpstreamType:            r.UpstreamType,
@@ -471,14 +482,20 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	if r.FirstTokenAt != nil {
 		record.FirstTokenAt = formatAPITime(*r.FirstTokenAt)
 	}
+	if r.FirstContentAt != nil {
+		record.FirstContentAt = formatAPITime(*r.FirstContentAt)
+	}
 	record.FirstTokenMs = r.FirstTokenMs
 	record.CompletionMs = r.CompletionMs
 	return record
 }
 
 // RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
-// 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
+// 内容计时与首次取连接偏移同时供列表使用；思考信号与上游请求ID仅详情返回。
 type RequestLifecycleDetail struct {
+	FirstReasoningMs        *int64         `json:"first_reasoning_ms"`  // 首个可见思考偏移（毫秒），只写一次
+	ReasoningHidden         *bool          `json:"reasoning_hidden"`    // 是否观测到不可见思考，只写一次
+	UpstreamRequestID       *string        `json:"upstream_request_id"` // 最终尝试响应头请求ID
 	Found                   bool           `json:"found"`
 	Source                  string         `json:"source,omitempty"` // hot_pool | database
 	Request                 *RequestRecord `json:"request,omitempty"`
@@ -510,6 +527,9 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 
 	record := requestDetailToRecord(data.Detail)
 	return RequestLifecycleDetail{
+		FirstReasoningMs:        data.FirstReasoningMs,
+		ReasoningHidden:         data.ReasoningHidden,
+		UpstreamRequestID:       data.UpstreamRequestID,
 		Found:                   true,
 		Source:                  data.Source,
 		Request:                 &record,

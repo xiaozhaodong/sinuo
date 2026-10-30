@@ -45,6 +45,7 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 	resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardClaudeSubscription(
 		ctx, r, bodyBytes, h.claudeSubscriptionBaseURL, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
 	recordEndpointUpstreamModel(lifecycleManager, traceState)
+	lifecycleManager.SetUpstreamResponse(resp)
 	releaseUpstream := func() {
 		if upstreamCancel != nil {
 			upstreamCancel()

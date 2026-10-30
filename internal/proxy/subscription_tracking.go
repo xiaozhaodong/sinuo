@@ -104,6 +104,10 @@ func (o *subscriptionTrackingObserver) publish(eventType events.EventType, prior
 }
 
 type subscriptionRequestTracking struct {
+	phaseCollector  *StreamPhaseCollector // 在mu下维护；非流式不创建
+	phaseRequestID  *string               // 最终尝试响应头请求ID，在 mu 下覆盖
+	phaseStopReason *string               // 上游结束原因原文，在 mu 下维护
+
 	upstreamContactState // 在 mu 下维护；WS 不产生取连接事件
 	mu                   sync.Mutex
 	observer             *subscriptionTrackingObserver
@@ -199,6 +203,7 @@ func (t *subscriptionRequestTracking) SetHTTPStatus(status int) {
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{HttpStatus: &status})
 }
 
+// MarkFirstOutput 沿用历史名称，现记录首个非空事件；首个内容由采集器单独记录。
 func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at time.Time) {
 	if responseBytes < 0 {
 		responseBytes = 0
@@ -272,6 +277,7 @@ func (t *subscriptionRequestTracking) ApplyParseResult(result *ParseResult) {
 	}
 	t.SetModel(result.ModelName)
 	t.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
+	t.recordStopReason(result.StopReason)
 	if !result.IsCompleted {
 		return
 	}
@@ -326,6 +332,7 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 	firstOutputAt := t.firstOutputAt
 	requestID := t.requestID
 	path := t.path
+	phaseUpdate := t.streamPhaseUpdateLocked()
 	t.mu.Unlock()
 
 	if !firstOutputAt.IsZero() {
@@ -333,8 +340,11 @@ func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *
 		if completionMs < 0 {
 			completionMs = 0
 		}
-		t.observer.tracker.RecordRequestUpdate(requestID, tracking.UpdateOptions{CompletionMs: &completionMs})
-		t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, generationCompletedEventData(requestID, completionMs))
+		phaseUpdate.CompletionMs = &completionMs
+	}
+	t.observer.tracker.RecordRequestUpdate(requestID, phaseUpdate)
+	if phaseUpdate.CompletionMs != nil {
+		t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, generationCompletedEventData(requestID, *phaseUpdate.CompletionMs))
 	}
 	if err := t.observer.tracker.RecordRequestSettlement(requestID, tracking.RequestSettlement{
 		Status: status, ModelName: model, Path: path, FailureReason: failureCode,

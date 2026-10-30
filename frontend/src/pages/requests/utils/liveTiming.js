@@ -22,6 +22,7 @@ const TIMING_EVENT_FIELDS = [
   ['retry_count', 'retryCount'],
   ['first_token_ms', 'firstTokenMs'],
   ['first_token_at', 'firstTokenAt'],
+  ['first_content_at', 'firstContentAt'],
   ['completion_ms', 'completionMs']
 ];
 

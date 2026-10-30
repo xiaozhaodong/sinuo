@@ -421,6 +421,8 @@ type WriteRequest struct {
 // UpdateOptions 统一的请求更新选项
 // 支持可选字段更新，只更新非nil的字段
 type UpdateOptions struct {
+	StreamPhases
+	FirstContentAt     *time.Time     // 首个内容绝对时刻，只在热池供进行中跑秒，不落库
 	EndpointName       *string        // 端点名称
 	RequestFamily      *string        // 请求类型 claude/codex/image/other
 	UpstreamType       *string        // 上游类型 endpoint/account
@@ -1012,6 +1014,11 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 	// 🔥 v4.1 热池模式：直接更新内存（核心优化点：无数据库写入）
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
+			// 流阶段的写一次规则由共享模块维护。
+			req.StreamPhases.merge(opts.StreamPhases)
+			if req.FirstContentAt == nil && opts.FirstContentAt != nil {
+				req.FirstContentAt = phaseCopy(opts.FirstContentAt)
+			}
 			// 只更新非nil的字段
 			if opts.EndpointName != nil {
 				req.EndpointName = *opts.EndpointName
@@ -2339,6 +2346,12 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		FirstTokenMs:            firstTokenMs,
 		FirstTokenStartAt:       req.FirstTokenStartAt,
 		FirstTokenAt:            req.FirstTokenAt,
+		FirstContentAt:          phaseCopy(req.FirstContentAt),
+		FirstContentMs:          phaseCopy(req.FirstContentMs),
+		FirstTextMs:             phaseCopy(req.FirstTextMs),
+		StreamFlowMs:            phaseCopy(req.StreamFlowMs),
+		StopReason:              phaseCopy(req.StopReason),
+		UpstreamWriteMs:         phaseCopy(req.UpstreamWriteMs),
 		CompletionMs:            completionMs,
 		EndpointName:            req.EndpointName,
 		RequestFamily:           req.RequestFamily,

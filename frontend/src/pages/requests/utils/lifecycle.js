@@ -9,6 +9,7 @@
 
 import { parseTimestamp } from '../../../utils/timezone.js';
 import { getRequestPresentation } from './requestPresentation.js';
+import { streamPhaseSegments, streamPhaseBounds } from './streamPhases.js';
 
 // 收尾残差超过该阈值才单独显示「收尾」微段，否则并入末段。
 export const TAIL_THRESHOLD_MS = 80;
@@ -239,12 +240,18 @@ const finishLifecycleSegments = (request, segments, duration) => {
 };
 
 // buildLifecycleSegments 新数据拆出重试；旧数据继续按原有五项规则推导，不回填或猜测。
-export const buildLifecycleSegments = (request = {}) => {
+export const buildLifecycleSegments = (request = {}, { streamPhases = true } = {}) => {
   const duration = toNullableMs(request.duration) ?? 0;
   const firstMs = toNullableMs(request.firstTokenMs);
   const completionMs = toNullableMs(request.completionMs);
   const isStreaming = request.isStreaming !== false;
-  const timing = resolvePrefixTiming(request);
+  const bounds = streamPhases ? streamPhaseBounds(request) : null;
+  const timing = resolvePrefixTiming(bounds ? {
+    ...request, upstreamWriteMs: bounds.write,
+    upstreamConnMs: toNullableMs(request.upstreamConnMs) === null ? null : Math.min(request.upstreamConnMs, bounds.write),
+    upstreamDispatchMs: toNullableMs(request.upstreamDispatchMs) === null ? null : Math.min(request.upstreamDispatchMs, bounds.write),
+    upstreamFirstDispatchMs: toNullableMs(request.upstreamFirstDispatchMs) === null ? null : Math.min(request.upstreamFirstDispatchMs, bounds.write)
+  } : request);
   const { queueMs, connectMs } = timing;
   const hasTiming = firstMs !== null || completionMs !== null || queueMs !== null || connectMs !== null;
   if (!hasTiming) {
@@ -252,6 +259,8 @@ export const buildLifecycleSegments = (request = {}) => {
     return terminal ? [terminal] : [{ key: 'total', label: '总耗时', ms: duration }];
   }
   const segments = buildPrefixSegments(request, timing);
+  const phases = streamPhases ? streamPhaseSegments(request) : null;
+  if (phases) return finishLifecycleSegments(request, [...segments, ...phases], duration);
   // 旧数据降级规则2：首响与生成之外的残差为前置。
   if (queueMs === null && connectMs === null && firstMs !== null) {
     const preMs = Math.max(0, duration - (firstMs + (completionMs ?? 0)));
@@ -264,9 +273,15 @@ export const buildLifecycleSegments = (request = {}) => {
   return finishLifecycleSegments(request, segments, duration);
 };
 
+// 列表轨道沿用既有分段，内容阶段只在详情条展示。
+export const buildRailLifecycleSegments = (request) => buildLifecycleSegments(request, { streamPhases: false });
+
 // lifecycleSegmentColors 分段配色（实心色块，深浅主题各给一套）。
 // 不走 tone-*：色块只需要底色，且暗色下要压深到能承载浅色标签文字。
 export const lifecycleSegmentColors = {
+  think: 'bg-fuchsia-200 dark:bg-fuchsia-800',
+  await: 'bg-slate-200 dark:bg-slate-600',
+  output: 'bg-emerald-300 dark:bg-emerald-700',
   queue: 'bg-slate-200 dark:bg-slate-600',
   retry: 'bg-amber-200 dark:bg-amber-800',
   connect: 'bg-indigo-200 dark:bg-indigo-800',
@@ -288,6 +303,9 @@ export const lifecycleSegmentColors = {
 // first / stream / failure 双主题同值：violet-400 / emerald-400 / rose-400 在
 // 两个背景上都够亮，再分叉只会让两个主题的比例观感对不上。
 export const railSegmentColors = {
+  think: 'bg-fuchsia-300 dark:bg-fuchsia-400',
+  await: 'bg-slate-300 dark:bg-slate-500',
+  output: 'bg-emerald-400',
   queue: 'bg-slate-300 dark:bg-slate-500',
   retry: 'bg-amber-300 dark:bg-amber-400',
   connect: 'bg-indigo-300 dark:bg-indigo-400',

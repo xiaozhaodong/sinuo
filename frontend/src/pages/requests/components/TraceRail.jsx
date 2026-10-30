@@ -2,15 +2,14 @@
 // TraceRail - 请求轨道（列表用的生命周期缩略图）
 // 2026-08-30
 // 表格负责「扫一眼知道状态」，详情面板负责「展开后理解耗时」。
-// 两者同源：这条 74px 轨道与 LifecyclePanel 顶部那条分段条读的是
-// 同一个 buildLifecycleSegments，只是密度不同。
+// 两者使用同一分段引擎；74px轨道保留既有投影，详情额外拆分内容阶段。
 // ============================================
 
 import { useEffect, useRef } from 'react';
 import { Check, X, Ban, Minus } from 'lucide-react';
 import { getStatusConfig } from '@utils/constants.js';
 import { IN_FLIGHT_STATUSES } from '../utils/constants.js';
-import { buildLifecycleSegments, railSegmentColors } from '../utils/lifecycle.js';
+import { buildRailLifecycleSegments as buildLifecycleSegments, railSegmentColors } from '../utils/lifecycle.js';
 import { formatTimingBadge } from '../utils/timing.js';
 import { getRequestPresentation } from '../utils/requestPresentation.js';
 

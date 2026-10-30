@@ -83,6 +83,10 @@ type RequestLifecycleManager struct {
 	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
 	firstTokenAt         time.Time                     // 首个有效响应到达时间
 	upstreamContactState                               // 在 timingMu 下维护首次联系时间与联系次数
+	phaseCollector       *StreamPhaseCollector         // 在timingMu下采集；不保留流内容
+	phaseRequestID       *string                       // 最终尝试响应头请求ID，在 timingMu 下覆盖
+	phaseStopReason      *string                       // 上游结束原因原文，在 timingMu 下维护
+	phasesRecorded       bool                          // 阶段快照已落定，在 timingMu 下拒绝后续采集
 	timingMu             sync.RWMutex                  // 保护首响计时字段
 	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
 	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
@@ -608,10 +612,10 @@ func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 		return
 	}
 
-	rlm.timingMu.RLock()
+	rlm.timingMu.Lock()
 	firstTokenAt := rlm.firstTokenAt
-	rlm.timingMu.RUnlock()
-	if firstTokenAt.IsZero() {
+	if firstTokenAt.IsZero() || rlm.upstreamSettled {
+		rlm.timingMu.Unlock()
 		return
 	}
 
@@ -621,7 +625,10 @@ func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 	}
 	rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
 		CompletionMs: &completionMs,
+		StreamPhases: rlm.streamPhasesLocked(),
 	})
+	rlm.phasesRecorded = true
+	rlm.timingMu.Unlock()
 	rlm.publishTimingEvent(generationCompletedEventData(rlm.requestID, completionMs))
 
 	slog.Info(fmt.Sprintf("📝 [生成耗时] [%s] 记录首响后流式完成耗时: %dms",

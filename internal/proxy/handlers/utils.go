@@ -165,23 +165,7 @@ func readAndRestoreResponseBody(resp *http.Response, limit int64) string {
 }
 
 func extractUpstreamRequestID(header http.Header) string {
-	if header == nil {
-		return ""
-	}
-
-	candidates := []string{
-		"request-id",
-		"anthropic-request-id",
-		"x-request-id",
-	}
-
-	for _, key := range candidates {
-		if value := strings.TrimSpace(header.Get(key)); value != "" {
-			return value
-		}
-	}
-
-	return ""
+	return UpstreamRequestID(header)
 }
 
 func normalizeUpstreamErrorPreview(text string) string {

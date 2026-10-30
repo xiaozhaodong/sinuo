@@ -941,8 +941,11 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 
 /**
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
- * 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
+ * 内容计时与首次取连接偏移同时供列表使用；思考信号与上游请求ID仅详情返回。
  * @typedef {Object} RequestLifecycleDetail
+ * @property {number | null} first_reasoning_ms - 首个可见思考偏移（毫秒），只写一次
+ * @property {boolean | null} reasoning_hidden - 是否观测到不可见思考，只写一次
+ * @property {string | null} upstream_request_id - 最终尝试响应头请求ID
  * @property {boolean} found
  * @property {string} [source] - hot_pool | database
  * @property {RequestRecord | null} [request]
@@ -982,6 +985,12 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * RequestRecord 请求记录
  * @typedef {Object} RequestRecord
+ * @property {number | null} upstream_write_ms - 最终尝试写完偏移（毫秒），列表首字起点
+ * @property {number | null} first_content_ms - 首个内容偏移（毫秒），只写一次
+ * @property {number | null} first_text_ms - 首个正文偏移（毫秒），只写一次
+ * @property {number | null} stream_flow_ms - data内容字节中间80%到达跨度乘10/8（毫秒）
+ * @property {string | null} stop_reason - 上游结束原因原文
+ * @property {string} [first_content_at] - 首个内容时刻，只有热池请求才有，供生成位跑秒起算
  * @property {string} [session_id]
  * @property {string} id
  * @property {string} request_id
@@ -1011,7 +1020,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} [fallback_reason]
  * @property {string} [route_decision_at]
  * @property {string} [first_token_start_at] - 首响计时起点，只有进行中的热池请求才有，供首响位跑秒起算
- * @property {string} [first_token_at] - 首字到达时刻，只有进行中的热池请求才有，供生成位跑秒起算
+ * @property {string} [first_token_at] - 首个事件到达时刻，只有进行中的热池请求才有，供旧口径生成位跑秒起算
  * @property {number} input_tokens
  * @property {number} output_tokens
  * @property {number} cache_creation_tokens - 总缓存创建（向后兼容）

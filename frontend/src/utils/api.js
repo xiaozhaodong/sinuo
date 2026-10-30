@@ -421,6 +421,9 @@ export const fetchRequestLifecycleDetail = async (requestId) => {
     upstreamFirstDispatchMs: detail?.upstream_first_dispatch_ms ?? null,
     upstreamDispatchMs: detail?.upstream_dispatch_ms ?? null,
     upstreamConnMs: detail?.upstream_conn_ms ?? null,
+    firstReasoningMs: detail?.first_reasoning_ms ?? null,
+    reasoningHidden: detail?.reasoning_hidden ?? null,
+    upstreamRequestId: detail?.upstream_request_id ?? '',
     scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),
     privacyScan: safeParseJson(detail?.privacy_scan_json)
   };

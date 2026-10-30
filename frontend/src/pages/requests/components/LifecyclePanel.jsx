@@ -14,6 +14,8 @@ import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } 
 import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
+import { contentTiming, streamSpeed } from '../utils/streamPhases.js';
+import StreamPhaseProperties from './StreamPhaseProperties.jsx';
 import {
   calculateTokensPerSecond,
   formatOptionalTimingBadge,
@@ -31,17 +33,21 @@ const TIMING_CHIP = 'inline-flex items-center rounded border px-1.5 py-px';
 const LoadingLine = () => <span className="block h-3 w-24 animate-pulse rounded bg-surface-mut" />;
 const DashText = () => <span className="text-fg-subtle">—</span>;
 
-// 顶部耗时标签：首字 / 生成 / 总耗时 / TPS。
-// 未落定时只给首字：后端只在终态写 duration，此刻的 0 是「还不知道」。
+// 顶部标签：新数据首个内容 / 生成 / 总耗时 / 速度；旧数据保留TPS口径。
+// 完成计时可先于终态查询到达；此时显示已落定的生成耗时，总耗时仍保持进行中。
 const TimingChips = ({ request }) => {
   const settled = !UNSETTLED_STATUSES.has(request.status);
-  const firstResponseMs = settled
-    ? resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming)
-    : (Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null);
-  const completionMs = settled && Number.isFinite(firstResponseMs)
-    ? resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming)
-    : null;
-  const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
+  const phase = contentTiming(request, !settled);
+  let firstResponseMs = Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null;
+  if (phase.useContent) firstResponseMs = phase.first;
+  else if (settled) firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  let completionMs = null;
+  if (settled || Number.isFinite(request.completionMs)) {
+    if (phase.useContent) completionMs = phase.completion;
+    else if (Number.isFinite(firstResponseMs)) {
+      completionMs = resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming);
+    }
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-1 font-mono text-[11px]">
@@ -50,9 +56,23 @@ const TimingChips = ({ request }) => {
       {settled
         ? <span className={`tone-slate ${TIMING_CHIP}`}>总耗时 {formatTimingBadge(request.duration)}</span>
         : <span className="font-sans text-xs text-fg-subtle">进行中，完成后显示完整耗时</span>}
-      {Number.isFinite(tokensPerSecond) && <span className={`tone-slate ${TIMING_CHIP}`}>TPS {formatTpsBadge(tokensPerSecond)}</span>}
+      <SpeedChip request={request} useContent={phase.useContent} completionMs={completionMs} />
     </div>
   );
+};
+
+const SpeedChip = ({ request, useContent, completionMs }) => {
+  if (!useContent) {
+    const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
+    return Number.isFinite(tokensPerSecond)
+      ? <span className={`tone-slate ${TIMING_CHIP}`}>TPS {formatTpsBadge(tokensPerSecond)}</span> : null;
+  }
+  const speed = streamSpeed(request);
+  let label = '速度 —';
+  if (speed.reason === 'burst') label = '一次性下发';
+  else if (Number.isFinite(speed.value)) label = `速度 ${formatTpsBadge(speed.value)} tok/s`;
+  const tone = speed.reason === 'burst' ? 'tone-amber' : 'tone-slate';
+  return <span className={`${tone} ${TIMING_CHIP}`} title={speed.title}>{label}</span>;
 };
 
 // 分段耗时条：块宽按耗时比例伸展；完整信息见 title 与下方明细。
@@ -193,7 +213,8 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
       <SegmentBar segments={segments} totalMs={totalMs} duration={request.duration} settled={settled} />
 
       <div className="mt-3">
-        <PropertyList labelWidth={40} align="start">
+        <PropertyList labelWidth={84} align="start">
+          <StreamPhaseProperties request={request} />
           <Property label="调度" truncate={false}>
             {lifecycleLoading ? <LoadingLine /> : <ScheduleValue request={request} snapshot={snapshot} isAccountRequest={isAccountRequest} />}
           </Property>
@@ -213,7 +234,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
           <button
             type="button"
             onClick={() => setScheduleExpanded((value) => !value)}
-            className="ml-[50px] mt-1.5 inline-flex items-center gap-1 text-xs text-accent hover:text-accent-fg"
+            className="ml-[94px] mt-1.5 inline-flex items-center gap-1 text-xs text-accent hover:text-accent-fg"
           >
             {scheduleExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             候选决策（{decisionRows.length}）

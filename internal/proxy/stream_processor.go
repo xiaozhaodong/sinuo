@@ -61,6 +61,7 @@ type StreamProcessor struct {
 	firstTokenRecorded bool // 是否已记录首个有效流式响应耗时
 	firstTokenRecorder func() bool
 	completionRecorder func()
+	phaseObserver      func(*ParseResult, int, time.Time)
 
 	// 🔍 [调试缓冲区] 轻量级调试数据收集（仅在token解析失败时使用）
 	debugLines []string // SSE行数据收集，默认最多保存DebugLineLimit行
@@ -228,6 +229,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 
 		if n > 0 {
 			chunk := buffer[:n]
+			sp.observeStreamRead(chunk)
 
 			// 保存部分数据用于错误恢复
 			sp.savePartialData(chunk)
@@ -332,6 +334,9 @@ func (sp *StreamProcessor) processSSELine(line string) {
 
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
+	if sp.phaseObserver != nil {
+		sp.phaseObserver(result, 0, time.Now())
+	}
 
 	if result != nil {
 		if result.HasStreamOutput || result.HasVisibleText || result.HasFallbackOutput {
@@ -628,6 +633,9 @@ func (sp *StreamProcessor) waitForBackgroundParsing() {
 	// ✅ 强制刷新缓存的待处理事件
 	// 确保即使上游没有发送终止空行，也能解析完整的 usage 信息
 	if result := sp.tokenParser.FlushPendingEvent(); result != nil {
+		if sp.phaseObserver != nil {
+			sp.phaseObserver(result, 0, time.Now())
+		}
 		// 处理刷新后的解析结果
 		if result.ErrorInfo != nil {
 			slog.Error(fmt.Sprintf("❌ [Flush错误] [%s] 类型: %s, 消息: %s",

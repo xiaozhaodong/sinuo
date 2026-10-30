@@ -24,6 +24,12 @@ const TABLE_FIELDS = [
   'upstreamFirstDispatchMs',
   'retryCount',
   'firstTokenAt',
+  'firstContentAt',
+  'firstContentMs',
+  'firstTextMs',
+  'upstreamWriteMs',
+  'streamFlowMs',
+  'stopReason',
   'completionMs',
   'isStreaming',
   'inputTokens',
@@ -46,6 +52,9 @@ const TABLE_FIELDS = [
 // 会持久显示错误数据。
 // 后端同时下发 camelCase 与 snake_case 两套命名，面板也两套都读，故都要比。
 const DETAIL_ONLY_FIELDS = [
+  'firstReasoningMs',
+  'reasoningHidden',
+  'upstreamRequestId',
   'cacheCreation5mTokens',
   'cacheCreation1hTokens',
   'effectiveEndpoint',

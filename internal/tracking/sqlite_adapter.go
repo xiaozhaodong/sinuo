@@ -165,6 +165,9 @@ func (s *SQLiteAdapter) InitSchema() error {
 
 // migrateSchema 执行数据库迁移（v5.0.1+: 添加 5m/1h 缓存字段）
 func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
+	if err := s.migrateStreamPhaseColumns(ctx); err != nil {
+		return err
+	}
 	migrations := []struct {
 		table       string
 		checkColumn string

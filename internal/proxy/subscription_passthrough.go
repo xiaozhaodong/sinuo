@@ -150,6 +150,7 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	}
 	defer cancel()
 	defer resp.Body.Close()
+	track.SetUpstreamResponse(resp)
 	track.SetHTTPStatus(resp.StatusCode)
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		track.SetStreaming(true)
@@ -159,8 +160,9 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	if kind != "" && resp.Body != nil {
 		capture = &subscriptionResponseCapture{
 			compaction: kind == tracking.RequestKindCompaction, httpStatus: resp.StatusCode,
-			onResult: track.ApplyParseResult,
-			onOutput: func(at time.Time) { track.MarkFirstOutput(responseBytes, at) },
+			onResult:      track.ApplyParseResult,
+			phaseObserver: track.ObserveStreamResult,
+			onOutput:      func(at time.Time) { track.MarkFirstOutput(responseBytes, at) },
 			onWarning: func(code string) {
 				p.logger.Warn("⚠️ [Codex 订阅代理] 响应用量解析受限", "conn_id", requestID, "code", code)
 			},
@@ -358,18 +360,20 @@ func (f subscriptionFlushingWriter) Write(data []byte) (int, error) {
 // subscriptionResponseCapture 只暂存有界事件/JSON，不保留整段流，也不改动转发正文。
 // SSE 仅在此分行，终态和用量仍由共享 TokenParser/ParseResponsesEventJSON 解释。
 type subscriptionResponseCapture struct {
-	mode        string
-	pending     []byte
-	parser      *TokenParser
-	eventBytes  int
-	skipEvent   bool
-	discardLine bool
-	eventType   string
-	compaction  bool
-	httpStatus  int
-	onResult    func(*ParseResult)
-	onOutput    func(time.Time)
-	onWarning   func(string)
+	mode           string
+	pending        []byte
+	parser         *TokenParser
+	eventBytes     int
+	skipEvent      bool
+	discardLine    bool
+	eventType      string
+	compaction     bool
+	httpStatus     int
+	onResult       func(*ParseResult)
+	onOutput       func(time.Time)
+	onWarning      func(string)
+	phaseObserver  func(*ParseResult, int, time.Time)
+	phaseReadBytes int // 模式识别前的空白也计入流速总读取上限
 }
 
 const subscriptionCaptureLimit = 16 << 20
@@ -385,6 +389,7 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 	if c.mode == "opaque" {
 		return size, nil
 	}
+	c.phaseReadBytes += size
 	if c.mode == "" {
 		c.pending = append(c.pending, data...)
 		prefix := bytes.TrimSpace(c.pending)
@@ -418,6 +423,10 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 			c.warn("subscription_response_capture_limit")
 		}
 		return size, nil
+	}
+	if c.phaseObserver != nil {
+		c.phaseObserver(nil, c.phaseReadBytes, time.Now())
+		c.phaseReadBytes = 0
 	}
 	for len(data) > 0 {
 		newline := bytes.IndexByte(data, '\n')
@@ -469,11 +478,14 @@ func (c *subscriptionResponseCapture) line(line string) {
 		c.eventType = responsesEventType([]byte(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))))
 	}
 	result := c.parser.ParseSSELineV2(line)
+	if isFirstResponseDataLine(line) && c.onOutput != nil {
+		c.onOutput(time.Now())
+		c.onOutput = nil
+	}
+	if result != nil && c.phaseObserver != nil {
+		c.phaseObserver(result, 0, time.Now())
+	}
 	if trimmed == "" {
-		if isSubscriptionOutputEvent(c.eventType) && c.onOutput != nil {
-			c.onOutput(time.Now())
-			c.onOutput = nil
-		}
 		c.eventBytes, c.eventType = 0, ""
 	}
 	if result != nil && c.onResult != nil {

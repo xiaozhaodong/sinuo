@@ -11,7 +11,9 @@ import (
 // ActiveRequest 表示一个活跃的请求（完整状态）
 // 请求在内存中保持活跃状态，只有完成时才归档到数据库
 type ActiveRequest struct {
-	SessionID string `json:"session_id,omitempty"`
+	StreamPhases
+	FirstContentAt *time.Time `json:"first_content_at,omitempty"` // 只在热池供首个内容与生成位交接，不落库
+	SessionID      string     `json:"session_id,omitempty"`
 	// 基础信息（创建时设置，不变）
 	RequestID     string    `json:"request_id"`
 	StartTime     time.Time `json:"start_time"`
@@ -299,6 +301,8 @@ func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
 		RequestReasoning:      req.RequestReasoning,
 		ResponseReasoning:     req.ResponseReasoning,
 	}
+	clone.StreamPhases = req.StreamPhases.Clone()
+	clone.FirstContentAt = phaseCopy(req.FirstContentAt)
 	if req.EndTime != nil {
 		value := *req.EndTime
 		clone.EndTime = &value

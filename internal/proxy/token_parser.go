@@ -27,6 +27,10 @@ var (
 // ParseResult 解析结果结构体
 // 用于将Token解析与状态记录分离，支持职责纯化
 type ParseResult struct {
+	ContentKind       ContentKind // 独立的内容分类，不参与完整性判定
+	ContentBytes      int         // SSE事件data字节数；WS取事件JSON长度
+	ReasoningHidden   bool        // 本事件含不可见思考信号
+	StopReason        string      // 本事件上游结束原因原文
 	TokenUsage        *tracking.TokenUsage
 	HasTokenUsage     bool
 	ModelName         string
@@ -228,7 +232,7 @@ func NewTokenParserWithUsageTracker(requestID string, usageTracker *tracking.Usa
 
 // ParseSSELineV2 新版本的SSE解析方法
 // 返回 ParseResult 而不是直接调用 usageTracker
-func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
+func (tp *TokenParser) parseSSELineV2(line string) *ParseResult {
 	line = strings.TrimSpace(line)
 
 	// 处理事件类型行 - 支持 "event: " 和 "event:" 两种格式
@@ -558,6 +562,7 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 		return result
 	}
 	result := parseResponsesEventPayload(eventType, payload)
+	result = attachStreamPhase(result, streamPhasePayload(eventType, payload, len(jsonData)))
 	attachResponsesReasoning(result, reasoning.ExtractCodexFields(payload), eventType)
 	return result
 }
@@ -1843,7 +1848,7 @@ func (tp *TokenParser) GetPartialUsage() *tracking.TokenUsage {
 
 // FlushPendingEvent 强制解析缓存中的待处理事件
 // 在流结束或连接中断时调用，确保不会因为缺少终止空行而丢失 usage 信息
-func (tp *TokenParser) FlushPendingEvent() *ParseResult {
+func (tp *TokenParser) flushPendingEvent() *ParseResult {
 	// 只有在收集数据且缓存非空时才需要flush
 	if !tp.collectingData || tp.eventBuffer.Len() == 0 {
 		return nil

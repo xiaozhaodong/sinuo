@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS request_logs (
     duration_ms INTEGER,                    -- 总耗时(毫秒)
     first_token_ms INTEGER,                 -- 上游请求写完到首个有效流式响应耗时(毫秒，仅流式请求)
     completion_ms INTEGER,                  -- 首个有效流式响应到流式完成耗时(毫秒，仅流式请求)
+    first_content_ms INTEGER,               -- 首个正文、思考或工具内容相对 start_time 偏移；只写一次
+    first_text_ms INTEGER,                  -- 首个正文偏移；只写一次
+    first_reasoning_ms INTEGER,             -- 首个可见思考偏移；只写一次
+    reasoning_hidden INTEGER,               -- 观测到不可见思考为1，否则为0；未观测为NULL，只写一次
+    stream_flow_ms INTEGER,                 -- data内容字节中间80%到达跨度乘10/8；超限或未知为NULL
+    stop_reason TEXT,                       -- 上游结束原因原文，最终尝试覆盖写
+    upstream_request_id TEXT,               -- 最终尝试响应头请求ID，覆盖写
     upstream_write_ms INTEGER,              -- 最终尝试完整写出相对 start_time 偏移；首响前覆盖，首响后冻结
     upstream_first_dispatch_ms INTEGER,     -- 本次请求第一次联系上游（取连接）的偏移，本地处理段终点；只写一次
     upstream_dispatch_ms INTEGER,           -- 最终尝试开始取连接的偏移（重试段终点）；HTTP 链路记录

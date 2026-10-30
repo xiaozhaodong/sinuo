@@ -1,0 +1,19 @@
+{
+  "source": "全部内容、ID与时钟均为合成测试数据；仅事件结构遵循协议，不代表线上实测",
+  "claude_thinking": {
+    "at_ms": [200, 400, 500, 1500, 1600, 1800, 2000, 3000, 4000, 4100, 4200, 4300],
+    "duration": 4400, "upstreamFirstDispatchMs": 10, "upstreamDispatchMs": 10,
+    "upstreamConnMs": 50, "upstreamWriteMs": 100, "firstTokenMs": 100, "completionMs": 4100,
+    "firstContentMs": 500, "firstTextMs": 2000, "firstReasoningMs": 500,
+    "reasoningHidden": false, "streamFlowMs": 4375, "stopReason": "end_turn",
+    "outputTokens": 400, "responseReasoning": "thinking:present", "requestFamily": "claude"
+  },
+  "codex_hidden_reasoning": {
+    "at_ms": [200, 300, 900, 950, 1000, 1500, 2000, 2500, 3000, 3050, 3100, 3200],
+    "duration": 3300, "upstreamFirstDispatchMs": 10, "upstreamDispatchMs": 10,
+    "upstreamConnMs": 50, "upstreamWriteMs": 100, "firstTokenMs": 100, "completionMs": 3000,
+    "firstContentMs": 1000, "firstTextMs": 1000, "firstReasoningMs": null,
+    "reasoningHidden": true, "streamFlowMs": 2500, "stopReason": "completed",
+    "outputTokens": 500, "responseReasoning": "effort:high reasoning_tokens:200", "requestFamily": "codex"
+  }
+}

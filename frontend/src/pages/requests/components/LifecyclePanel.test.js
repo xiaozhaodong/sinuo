@@ -81,3 +81,43 @@ test('旧数据保留换号与故障转移标记，无标记时隐藏整行', ()
   assert.match(failover, /故障转移/);
   assert.doesNotMatch(failover, />99</);
 });
+
+test('S2/C2/R1：思考品红、速度与首内容口径、结束原因文字、请求ID复制', () => {
+  const html = render({ status: 'completed', isStreaming: true, duration: 2200,
+    upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
+    firstContentMs: 1000, firstTextMs: 1000, reasoningHidden: true, streamFlowMs: 1500,
+    outputTokens: 300, stopReason: 'max_tokens', upstreamRequestId: 'synthetic-upstream-request-id' });
+  assert.match(html, /bg-fuchsia-200 dark:bg-fuchsia-800/);
+  assert.match(html, /首字 900ms/);
+  assert.match(html, /生成 1\.20s/);
+  assert.match(html, /速度 250 tok\/s/);
+  assert.match(html, /text-amber-700 dark:text-amber-300/);
+  assert.match(html, /title="max_tokens">达到输出上限/);
+  assert.match(html, /title="synthetic-upstream-request-id"/);
+  assert.match(html, /复制上游请求 ID/);
+  assert.match(html, /width="13" height="13"/);
+  assert.doesNotMatch(render({ status: 'completed' }), /上游请求 ID/);
+});
+
+test('一次性下发给琥珀标签，不给虚假速度', () => {
+  const html = render({ status: 'completed', isStreaming: true, duration: 2200,
+    upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
+    firstContentMs: 1000, firstTextMs: 1000, streamFlowMs: 1, outputTokens: 300 });
+  assert.match(html, /tone-amber[^>]*title="内容几乎同时到达/);
+  assert.match(html, />一次性下发<\/span>/);
+  assert.doesNotMatch(html, /速度 250|TPS /);
+});
+
+test('复审顶部标签：图像首响用旧口径，无内容完成事件立即显示完整计时', () => {
+  const image = render({ status: 'processing', requestFamily: 'image', isStreaming: true,
+    duration: 0, firstTokenMs: 100, completionMs: null });
+  assert.match(image, /首字 100ms/);
+  assert.doesNotMatch(image, /速度 /);
+  for (const requestFamily of ['image', 'claude', 'codex']) {
+    const completed = render({ status: 'processing', requestFamily, isStreaming: true,
+      duration: 0, firstTokenMs: 100, completionMs: 900, firstContentMs: null, firstContentAt: '' });
+    assert.match(completed, /首字 100ms/);
+    assert.match(completed, /生成 900ms/);
+    assert.doesNotMatch(completed, /速度 /);
+  }
+});

@@ -113,6 +113,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(session_id, '') as session_id,
 	COALESCE(is_streaming, false) as is_streaming,
 	status, http_status_code, retry_count, upstream_first_dispatch_ms,
+	upstream_write_ms, first_content_ms, first_text_ms, stream_flow_ms, stop_reason,
 	COALESCE(failure_reason, '') as failure_reason,
 	COALESCE(last_failure_reason, '') as last_failure_reason,
 	COALESCE(cancel_reason, '') as cancel_reason,
@@ -285,6 +286,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&detail.SessionID,
 			&detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount, &detail.UpstreamFirstDispatchMs,
+			&detail.UpstreamWriteMs, &detail.FirstContentMs, &detail.FirstTextMs, &detail.StreamFlowMs, &detail.StopReason,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
 			&input, &output,
 			&creation, &creation5m, &creation1h, &read,
@@ -510,6 +512,13 @@ type RequestDetail struct {
 	HTTPStatusCode          *int   `json:"http_status_code"`
 	RetryCount              int    `json:"retry_count"`
 	UpstreamFirstDispatchMs *int64 `json:"upstream_first_dispatch_ms"`
+	UpstreamWriteMs         *int64 `json:"upstream_write_ms"`
+	FirstContentMs          *int64 `json:"first_content_ms"`
+	FirstTextMs             *int64 `json:"first_text_ms"`
+	StreamFlowMs            *int64 `json:"stream_flow_ms"`
+
+	StopReason     *string    `json:"stop_reason"`
+	FirstContentAt *time.Time `json:"first_content_at,omitempty"`
 
 	// v3.5.0状态机重构新增字段 - 错误原因分离
 	FailureReason     string `json:"failure_reason"`      // 失败原因类型

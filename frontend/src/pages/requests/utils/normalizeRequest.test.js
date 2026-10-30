@@ -1,6 +1,20 @@
 // normalizeRequest 统一字段单测（方案 F1 测试计划）
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('流阶段列表字段保留0、缺失与重复规范化，详情保留false', () => {
+  const row = normalizeRequest({ first_content_ms: 0, first_text_ms: 0, upstream_write_ms: 0,
+    stream_flow_ms: 1, stop_reason: 'completed', reasoning_hidden: false,
+    first_content_at: '2026-10-30T00:00:00.000000Z', upstream_request_id: 'synthetic-id' });
+  assert.equal(row.firstContentMs, 0);
+  assert.equal(row.firstTextMs, 0);
+  assert.equal(row.upstreamWriteMs, 0);
+  assert.equal(row.streamFlowMs, 1);
+  assert.equal(row.reasoningHidden, false);
+  assert.equal(row.upstreamRequestId, 'synthetic-id');
+  assert.deepEqual(normalizeRequest(row), row);
+  assert.equal(normalizeRequest({}).firstContentMs, null);
+});
 import { normalizeRequest } from './normalizeRequest.js';
 
 test('会话字段兼容两种命名，旧数据保持空值', () => {

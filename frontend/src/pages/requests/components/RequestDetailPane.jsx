@@ -314,14 +314,17 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     return <InspectorEmpty icon={MousePointerClick}>选择一条请求查看详情</InspectorEmpty>;
   }
 
-  // 详情接口为唯一权威数据源；分段计时偏移仅详情携带，合并后才能拆出本地处理、建连与发送。
+  // 详情接口为权威数据源，补足完整计时、思考信号和上游请求ID。
   const request = lifecycle?.request
     ? {
       ...lifecycle.request,
       upstreamWriteMs: lifecycle.upstreamWriteMs ?? null,
       upstreamFirstDispatchMs: lifecycle.upstreamFirstDispatchMs ?? null,
       upstreamDispatchMs: lifecycle.upstreamDispatchMs ?? null,
-      upstreamConnMs: lifecycle.upstreamConnMs ?? null
+      upstreamConnMs: lifecycle.upstreamConnMs ?? null,
+      firstReasoningMs: lifecycle.firstReasoningMs ?? null,
+      reasoningHidden: lifecycle.reasoningHidden ?? null,
+      upstreamRequestId: lifecycle.upstreamRequestId ?? ''
     }
     : initialRequest;
   const presentation = getRequestPresentation(request);

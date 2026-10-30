@@ -130,10 +130,10 @@ func (s *subscriptionSubmissionState) handleUpstream(payload []byte) *ParseResul
 
 	if eventType == "response.created" {
 		s.bindCreated(responseID, result)
-		s.responseProgress(responseID, eventType, int64(len(payload)))
+		s.responseProgress(responseID, result, int64(len(payload)))
 		return result
 	}
-	s.responseProgress(responseID, eventType, int64(len(payload)))
+	s.responseProgress(responseID, result, int64(len(payload)))
 	if result == nil || !result.IsCompleted || !isResponsesTerminalEvent(eventType) {
 		// 中间事件（如 response.in_progress）可能独立回显 reasoning.effort / model，
 		// 按 response ID 合并到已绑定 submission，否则终态只带 usage 时会丢失。
@@ -163,7 +163,7 @@ func (s *subscriptionSubmissionState) mergeIntermediateDiagnostics(responseID st
 }
 
 // responseProgress 只向观察者传有界关联与字节/时序，不保存帧或逐帧推送 UI。
-func (s *subscriptionSubmissionState) responseProgress(responseID, eventType string, size int64) {
+func (s *subscriptionSubmissionState) responseProgress(responseID string, result *ParseResult, size int64) {
 	s.mu.Lock()
 	submission := s.byResponseID[responseID]
 	if responseID == "" && len(s.active) > 0 {
@@ -174,7 +174,7 @@ func (s *subscriptionSubmissionState) responseProgress(responseID, eventType str
 		return
 	}
 	submission.responseBytes += size
-	first := !submission.firstOutput && isSubscriptionOutputEvent(eventType)
+	first := !submission.firstOutput
 	if first {
 		submission.firstOutput = true
 	}
@@ -188,19 +188,14 @@ func (s *subscriptionSubmissionState) responseProgress(responseID, eventType str
 		}
 	}
 	if observer, ok := s.observer.(interface {
+		SubmissionStreamResult(*subscriptionSubmission, *ParseResult, int64, time.Time)
+	}); ok {
+		observer.SubmissionStreamResult(submission, result, size, time.Now())
+	}
+	if observer, ok := s.observer.(interface {
 		SubmissionResponseProgress(*subscriptionSubmission, int64)
 	}); ok {
 		observer.SubmissionResponseProgress(submission, total)
-	}
-}
-
-func isSubscriptionOutputEvent(eventType string) bool {
-	switch eventType {
-	case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta",
-		"response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.output_item.added", "response.content_part.added":
-		return true
-	default:
-		return false
 	}
 }
 

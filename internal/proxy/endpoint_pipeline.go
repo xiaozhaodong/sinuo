@@ -172,6 +172,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
 			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
 		recordEndpointUpstreamModel(lifecycleManager, traceState)
+		lifecycleManager.SetUpstreamResponse(resp)
 		releaseUpstream := func() {
 			if upstreamCancel != nil {
 				upstreamCancel()
@@ -220,6 +221,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
 									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
 								recordEndpointUpstreamModel(lifecycleManager, traceState)
+								lifecycleManager.SetUpstreamResponse(resp)
 								releaseUpstream = func() {
 									if upstreamCancel != nil {
 										upstreamCancel()
@@ -517,6 +519,7 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
 	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, connID, endpointName)
 	processor.SetStreamTimingRecorders(lifecycleManager.RecordFirstTokenAndReturn, lifecycleManager.RecordStreamCompletion)
+	processor.SetStreamPhaseObserver(lifecycleManager.ObserveStreamResult)
 	if upstreamCancel != nil {
 		processor.EnableDownstreamTailDrain(endpointStreamTailDrainTimeout, upstreamCancel)
 	}
@@ -632,6 +635,7 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 		return ProcessOutcomeFailedAfterCommit, "Upstream returned 200 with empty body"
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
+	lifecycleManager.recordRegularStopReason(responseBytes)
 
 	// v6.3：上游响应已完整读入，先提取响应模型 / 思考信息再写回客户端，
 	// 客户端断连导致写入失败时失败结算仍保留已收到的诊断字段。

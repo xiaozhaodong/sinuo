@@ -25,7 +25,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const readSource = (relativePath) => readFileSync(join(HERE, relativePath), 'utf8');
 
 const PILL_SOURCE = readSource('../components/LiveElapsedPill.jsx');
-const TABLE_SOURCE = readSource('../components/RequestsTable.jsx');
+const TABLE_SOURCE = readSource('../components/RequestTimingCell.jsx');
 const PENDING_SOURCE = readSource('../components/PendingSendPill.jsx');
 const CSS_SOURCE = readSource('../../../index.css');
 

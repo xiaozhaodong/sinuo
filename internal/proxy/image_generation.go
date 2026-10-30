@@ -144,6 +144,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	defer resp.Body.Close()
+	lifecycleManager.SetUpstreamResponse(resp)
 
 	lifecycleManager.UpdateStatus("processing", 0, resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {

@@ -1373,6 +1373,12 @@ export const getRequests = async (params = {}) => {
     http_status_code: r.http_status,  // 添加 http_status_code 映射
     retry_count: r.retry_count || 0,  // 添加重试次数
     upstream_first_dispatch_ms: r.upstream_first_dispatch_ms ?? null,
+    upstream_write_ms: r.upstream_write_ms ?? null,
+    first_content_ms: r.first_content_ms ?? null,
+    first_text_ms: r.first_text_ms ?? null,
+    stream_flow_ms: r.stream_flow_ms ?? null,
+    stop_reason: r.stop_reason ?? '',
+    first_content_at: r.first_content_at || '',
     path: r.path || '',
     method: r.method || '',
     usage_known: r.usage_known !== false,

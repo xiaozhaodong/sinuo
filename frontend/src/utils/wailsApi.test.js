@@ -21,7 +21,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
 
 // 保留真实适配层，只替换桌面绑定与运行时，不依赖运行中的 App。
-const loadRequestMappingBindings = async () => {
+const loadRequestMappingBindings = async (requests = [22, 0, undefined].map((first, index) => ({
+  request_id: 'retry-mapping-' + index, status: 'completed', retry_count: 1,
+  ...(first === undefined ? {} : { upstream_first_dispatch_ms: first })
+}))) => {
   const compiled = await build({
     entryPoints: [sourcePath], bundle: true, write: false, platform: 'node', format: 'esm',
     plugins: [{
@@ -29,13 +32,8 @@ const loadRequestMappingBindings = async () => {
       setup(builder) {
         builder.onResolve({ filter: /^(@wailsjs\/sinuo\/app\.js|@wailsio\/runtime)$/ }, ({ path }) => ({ path, namespace: 'test-bindings' }));
         builder.onLoad({ filter: /.*/, namespace: 'test-bindings' }, ({ path }) => ({
-          contents: path === '@wailsio/runtime' ? 'export {};' : `
-            export const GetRequests = async () => ({
-              requests: [22, 0, undefined].map((first, index) => ({
-                request_id: 'retry-mapping-' + index, status: 'completed', retry_count: 1,
-                ...(first === undefined ? {} : { upstream_first_dispatch_ms: first })
-              })), total: 3, page: 1, page_size: 50
-            });`
+          contents: path === '@wailsio/runtime' ? 'export {};' :
+            `export const GetRequests = async () => (${JSON.stringify({ requests, total: requests.length, page: 1, page_size: 50 })});`
         }));
       }
     }]
@@ -61,6 +59,33 @@ test('GetRequests 透传首次取连接偏移：22、真实0与缺失，并保�
   } finally {
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
+  }
+});
+
+test('GetRequests 全部流阶段列表字段保留数值、真实0与缺失', async (t) => {
+  const fields = ['upstream_write_ms', 'first_content_ms', 'first_text_ms', 'stream_flow_ms'];
+  const rows = [25, 0, undefined].map((value, index) => ({
+    request_id: `synthetic-phase-${index}`, is_streaming: true,
+    ...Object.fromEntries(fields.map((field) => [field, value])),
+    stop_reason: index === 0 ? 'max_tokens' : undefined,
+    first_content_at: index === 0 ? '2026-10-30T00:00:00.025000Z' : undefined
+  }));
+  const bindings = await loadRequestMappingBindings(rows);
+  const original = globalThis.window;
+  t.mock.method(console, 'log', () => {});
+  try {
+    globalThis.window = { location: { protocol: 'wails:' } };
+    const result = await bindings.getRequests();
+    for (const [index, expected] of [25,0,null].entries()) {
+      for (const field of fields) assert.equal(result.requests[index][field], expected);
+    }
+    assert.equal(result.requests[0].stop_reason, 'max_tokens');
+    assert.equal(result.requests[0].first_content_at, rows[0].first_content_at);
+    assert.equal(result.requests[1].stop_reason, '');
+    assert.equal(result.requests[2].first_content_at, '');
+  } finally {
+    if (original === undefined) delete globalThis.window;
+    else globalThis.window = original;
   }
 });
 
