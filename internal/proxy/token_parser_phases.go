@@ -1,9 +1,9 @@
 package proxy
 
 import (
-	"encoding/json"
 	"strings"
 
+	"sinuo/internal/proxy/response"
 	"sinuo/internal/reasoning"
 )
 
@@ -16,28 +16,6 @@ const (
 	ContentReasoning ContentKind = "reasoning"
 	ContentTool      ContentKind = "tool"
 )
-
-// ParseSSELineV2 在旧解析入口外附加观测，不改变其完整性与输出标志。
-func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
-	var phase *ParseResult
-	if strings.TrimSpace(line) == "" {
-		phase = tp.pendingStreamPhase()
-	}
-	return attachStreamPhase(tp.parseSSELineV2(line), phase)
-}
-
-// FlushPendingEvent 保留原来的flush语义，同时覆盖缺终止空行的阶段观测。
-func (tp *TokenParser) FlushPendingEvent() *ParseResult {
-	phase := tp.pendingStreamPhase()
-	return attachStreamPhase(tp.flushPendingEvent(), phase)
-}
-
-func (tp *TokenParser) pendingStreamPhase() *ParseResult {
-	if !tp.collectingData || tp.eventBuffer.Len() == 0 || strings.HasPrefix(tp.currentEvent, "response.") {
-		return nil
-	}
-	return parseStreamPhaseJSON(tp.currentEvent, []byte(tp.eventBuffer.String()))
-}
 
 func attachStreamPhase(result, phase *ParseResult) *ParseResult {
 	if phase == nil {
@@ -55,41 +33,51 @@ func attachStreamPhase(result, phase *ParseResult) *ParseResult {
 	return result
 }
 
-func parseStreamPhaseJSON(event string, data []byte) *ParseResult {
-	var payload map[string]interface{}
-	if json.Unmarshal(data, &payload) != nil {
-		return nil
-	}
-	return streamPhasePayload(event, payload, len(data))
-}
-
 func streamPhasePayload(event string, p map[string]interface{}, size int) *ParseResult {
 	result := &ParseResult{ContentBytes: size}
 	if event == "" {
 		event, _ = p["type"].(string)
 	}
-	switch event {
-	case "content_block_delta":
-		result.ContentKind = claudeContentKind(p)
-	case "content_block_start":
-		block, _ := p["content_block"].(map[string]interface{})
-		typ, _ := block["type"].(string)
-		result.ThinkingBlock = reasoning.IsThinkingBlockType(typ)
-		result.ReasoningHidden = typ == "redacted_thinking"
-		if typ == "tool_use" || typ == "server_tool_use" {
-			result.ContentKind = ContentTool
-		}
-	case "message_delta":
-		delta, _ := p["delta"].(map[string]interface{})
-		result.StopReason, _ = delta["stop_reason"].(string)
-	default:
-		responsesContentKind(event, p, result)
-	}
+	responsesContentKind(event, p, result)
 	return result
 }
 
-func claudeContentKind(p map[string]interface{}) ContentKind {
-	delta, _ := p["delta"].(map[string]interface{})
+// 直接复用已经解码的 delta，补充阶段字段，不改写完整性和输出标志。
+func attachClaudeDeltaPhase(result *ParseResult, event string, data interface{}, size int) *ParseResult {
+	delta, _ := data.(map[string]interface{})
+	var kind ContentKind
+	var stop string
+	if event == "content_block_delta" {
+		kind = claudeContentKind(delta)
+	} else if event == "message_delta" {
+		stop, _ = delta["stop_reason"].(string)
+	}
+	if result == nil {
+		if kind == ContentNone && stop == "" {
+			return nil
+		}
+		result = &ParseResult{}
+	}
+	result.ContentKind, result.ContentBytes, result.StopReason = kind, size, stop
+	return result
+}
+
+func claudeBlockPhase(event, typ string, size int) *ParseResult {
+	if event != "content_block_start" {
+		return nil
+	}
+	thinking := reasoning.IsThinkingBlockType(typ)
+	kind := ContentNone
+	if typ == "tool_use" || typ == "server_tool_use" {
+		kind = ContentTool
+	}
+	if !thinking && kind == ContentNone {
+		return nil
+	}
+	return &ParseResult{ContentKind: kind, ContentBytes: size, ThinkingBlock: thinking, ReasoningHidden: typ == "redacted_thinking"}
+}
+
+func claudeContentKind(delta map[string]interface{}) ContentKind {
 	for _, field := range []struct {
 		key  string
 		kind ContentKind
@@ -124,27 +112,6 @@ func responsesContentKind(event string, p map[string]interface{}, result *ParseR
 		}
 	}
 	if strings.HasPrefix(event, "response.") && isResponsesTerminalEvent(event) {
-		result.StopReason = responseStopReason(event, p)
+		result.StopReason = response.ResponsesStopReason(event, p)
 	}
-}
-
-func responseStopReason(event string, p map[string]interface{}) string {
-	response, ok := p["response"].(map[string]interface{})
-	if !ok {
-		response = p
-	}
-	status, _ := response["status"].(string)
-	if status == "" {
-		status = strings.TrimPrefix(event, "response.")
-		if status == "done" {
-			status = "completed"
-		}
-	}
-	if status == "incomplete" {
-		details, _ := response["incomplete_details"].(map[string]interface{})
-		if reason, _ := details["reason"].(string); reason != "" {
-			return status + ":" + reason
-		}
-	}
-	return status
 }

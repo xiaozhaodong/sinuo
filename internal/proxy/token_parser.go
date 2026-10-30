@@ -233,7 +233,7 @@ func NewTokenParserWithUsageTracker(requestID string, usageTracker *tracking.Usa
 
 // ParseSSELineV2 新版本的SSE解析方法
 // 返回 ParseResult 而不是直接调用 usageTracker
-func (tp *TokenParser) parseSSELineV2(line string) *ParseResult {
+func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 	line = strings.TrimSpace(line)
 
 	// 处理事件类型行 - 支持 "event: " 和 "event:" 两种格式
@@ -282,14 +282,14 @@ func (tp *TokenParser) parseSSELineV2(line string) *ParseResult {
 		switch tp.currentEvent {
 		case "message_start":
 			// message_start 代表已收到首个流式业务事件，可用于记录首响。
+			size := tp.eventBuffer.Len()
 			tp.parseMessageStart()
-			return &ParseResult{HasStreamOutput: true, ResponseModel: tp.GetResponseModel()}
+			return &ParseResult{HasStreamOutput: true, ResponseModel: tp.GetResponseModel(), ContentBytes: size}
 		case "message_delta", "content_block_delta":
 			// 使用新的V2方法解析message_delta/content_block_delta
 			return tp.parseMessageDeltaV2()
 		case "content_block_start", "content_block_stop":
-			tp.parseContentBlockBoundary(tp.currentEvent)
-			return nil
+			return tp.parseContentBlockBoundary(tp.currentEvent)
 		case "error":
 			// 使用新的V2方法解析error事件
 			return tp.parseErrorEventV2()
@@ -444,7 +444,7 @@ func (tp *TokenParser) markContentBlockProtocolError(reason string) {
 	}
 }
 
-func (tp *TokenParser) parseContentBlockBoundary(eventType string) {
+func (tp *TokenParser) parseContentBlockBoundary(eventType string) (result *ParseResult) {
 	defer func() {
 		tp.eventBuffer.Reset()
 		tp.collectingData = false
@@ -452,6 +452,9 @@ func (tp *TokenParser) parseContentBlockBoundary(eventType string) {
 	}()
 
 	var event contentBlockEvent
+	defer func() {
+		result = claudeBlockPhase(eventType, event.ContentBlock.Type, tp.eventBuffer.Len())
+	}()
 	if err := json.Unmarshal([]byte(tp.eventBuffer.String()), &event); err != nil {
 		tp.markContentBlockProtocolError(fmt.Sprintf("%s 事件不是有效 JSON", eventType))
 		return
@@ -500,6 +503,7 @@ func (tp *TokenParser) parseContentBlockBoundary(eventType string) {
 		}
 		tp.contentBlockStates[index] = true
 	}
+	return result
 }
 
 func (tp *TokenParser) trackContentBlockDelta(index *int) {
@@ -1153,7 +1157,7 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 
 // parseMessageDeltaV2 新版本的message_delta解析方法
 // 返回 ParseResult 而不是直接调用 usageTracker
-func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
+func (tp *TokenParser) parseMessageDeltaV2() (result *ParseResult) {
 	eventType := tp.currentEvent
 	defer func() {
 		tp.eventBuffer.Reset()
@@ -1168,6 +1172,9 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 
 	// 解析JSON数据
 	var messageDelta MessageDelta
+	defer func() {
+		result = attachClaudeDeltaPhase(result, eventType, messageDelta.Delta, len(jsonData))
+	}()
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
 		if eventType == "content_block_delta" {
 			tp.markContentBlockProtocolError("content_block_delta 事件不是有效 JSON")
@@ -1516,10 +1523,11 @@ func (tp *TokenParser) parseErrorEventV2() *ParseResult {
 			CacheCreationTokens: 0,
 			CacheReadTokens:     0,
 		},
-		ModelName:   errorModelName,
-		ErrorInfo:   errorInfo,
-		IsCompleted: true,
-		Status:      StatusErrorAPI,
+		ModelName:    errorModelName,
+		ContentBytes: len(jsonData),
+		ErrorInfo:    errorInfo,
+		IsCompleted:  true,
+		Status:       StatusErrorAPI,
 	}
 }
 
@@ -1849,7 +1857,7 @@ func (tp *TokenParser) GetPartialUsage() *tracking.TokenUsage {
 
 // FlushPendingEvent 强制解析缓存中的待处理事件
 // 在流结束或连接中断时调用，确保不会因为缺少终止空行而丢失 usage 信息
-func (tp *TokenParser) flushPendingEvent() *ParseResult {
+func (tp *TokenParser) FlushPendingEvent() *ParseResult {
 	// 只有在收集数据且缓存非空时才需要flush
 	if !tp.collectingData || tp.eventBuffer.Len() == 0 {
 		return nil
@@ -1866,8 +1874,7 @@ func (tp *TokenParser) flushPendingEvent() *ParseResult {
 		if tp.requestID != "" {
 			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的内容块边界事件: %s", tp.requestID, tp.currentEvent))
 		}
-		tp.parseContentBlockBoundary(tp.currentEvent)
-		return nil
+		return tp.parseContentBlockBoundary(tp.currentEvent)
 	case "message_start":
 		if tp.requestID != "" {
 			slog.Info(fmt.Sprintf("🔄 [事件Flush] [%s] 强制解析缓存的message_start事件", tp.requestID))

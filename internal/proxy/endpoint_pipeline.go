@@ -635,7 +635,6 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 		return ProcessOutcomeFailedAfterCommit, "Upstream returned 200 with empty body"
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
-	lifecycleManager.recordRegularStopReason(responseBytes)
 
 	// v6.3：上游响应已完整读入，先提取响应模型 / 思考信息再写回客户端，
 	// 客户端断连导致写入失败时失败结算仍保留已收到的诊断字段。

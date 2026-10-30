@@ -66,8 +66,8 @@ func (rlm *RequestLifecycleManager) flushStreamPhasesLocked() {
 	rlm.phasesRecorded = true
 }
 
-func (rlm *RequestLifecycleManager) recordRegularStopReason(data []byte) {
-	if reason := regularStopReason(data); reason != "" {
+func (rlm *RequestLifecycleManager) recordRegularStopReason(reason string) {
+	if reason != "" {
 		rlm.timingMu.Lock()
 		if !rlm.upstreamSettled {
 			rlm.phaseStopReason = &reason

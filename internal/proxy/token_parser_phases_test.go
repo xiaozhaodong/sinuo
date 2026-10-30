@@ -1,15 +1,63 @@
 package proxy
 
 import (
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"sinuo/internal/proxy/response"
 	"sinuo/internal/tracking"
 )
+
+var phaseBenchmarkResult *ParseResult
+
+// 使用同一公开入口比较优化前后，覆盖每条增量的解析和分配。
+func BenchmarkStreamPhases_ClaudeDelta(b *testing.B) {
+	for _, size := range []int{16, 128, 4096} {
+		b.Run(fmt.Sprintf("text_%d", size), func(b *testing.B) {
+			parser := NewTokenParser()
+			parser.partialUsage = &tracking.TokenUsage{InputTokens: 1}
+			parser.contentBlockStates = map[int]bool{0: false}
+			line := `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + strings.Repeat("x", size) + `"}}`
+			b.ReportAllocs()
+			b.SetBytes(int64(len(line)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				parser.ParseSSELineV2("event: content_block_delta")
+				parser.ParseSSELineV2(line)
+				phaseBenchmarkResult = parser.ParseSSELineV2("")
+			}
+		})
+	}
+}
+
+// 本地非流式处理：含读取、统一分析和写回，不包含网络、数据库与日志 I/O。
+func BenchmarkStreamPhases_RegularResponse(b *testing.B) {
+	logger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})))
+	b.Cleanup(func() { slog.SetDefault(logger) })
+	handler := &Handler{responseProcessor: response.NewProcessor(), tokenAnalyzer: newReasoningAnalyzer()}
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	for _, size := range []int{64 << 10, 1 << 20} {
+		body := `{"object":"response","model":"synthetic-model","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"` + strings.Repeat("x", size) + `"}]}],"usage":{"input_tokens":10,"output_tokens":100}}`
+		b.Run(fmt.Sprintf("bytes_%d", size), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(body)))
+			for i := 0; i < b.N; i++ {
+				upstream := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+				lifecycle := NewRequestLifecycleManager(nil, nil, "", nil)
+				if err := handler.processAccountRegularResponse(httptest.NewRecorder(), upstream, lifecycle, "synthetic", request); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func phaseEvent(t *testing.T, event, payload string) *ParseResult {
 	t.Helper()
@@ -142,10 +190,90 @@ func TestStreamPhases_StopReasons(t *testing.T) {
 	}
 	for raw, want := range map[string]string{
 		`{"stop_reason":"tool_use"}`: "tool_use", `{"status":"completed"}`: "completed",
-		`{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}`: "incomplete:content_filter",
+		`{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}`:                 "incomplete:content_filter",
+		`{"response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`: "incomplete:max_output_tokens",
+		`{"stop_reason":"end_turn","status":"completed"}`:                                          "end_turn",
+		`{"object":"response","output":[]}`:                                                        "",
+		`{"status":"completed"`:                                                                    "",
+		`{"stop_reason":12,"content":[]}`:                                                          "",
 	} {
-		if got := regularStopReason([]byte(raw)); got != want {
+		if got := newReasoningAnalyzer().AnalyzeResponseUnified([]byte(raw), "", "synthetic").StopReason; got != want {
 			t.Fatalf("%q != %q", got, want)
+		}
+	}
+}
+
+func TestStreamPhases_ClaudeSingleDecodeKeepsProtocolErrors(t *testing.T) {
+	for _, tc := range []struct {
+		event, payload string
+		kind           ContentKind
+	}{
+		{"content_block_start", `{"index":"bad","content_block":{"type":"tool_use"}}`, ContentTool},
+		{"content_block_delta", `{"index":0,"delta":{"type":"text_delta","text":"sample"},"usage":{"output_tokens":"bad"}}`, ContentText},
+		{"content_block_delta", `{"index":0,"delta":{"type":"thinking_delta","thinking":"sample"}}`, ContentReasoning},
+	} {
+		for _, flush := range []bool{false, true} {
+			parser := NewTokenParser()
+			feedSSEV2(t, parser, claudeStreamHead)
+			parser.ParseSSELineV2("event: " + tc.event)
+			parser.ParseSSELineV2("data: " + tc.payload)
+			var result *ParseResult
+			if flush {
+				result = parser.FlushPendingEvent()
+			} else {
+				result = parser.ParseSSELineV2("")
+			}
+			if result == nil || result.ContentKind != tc.kind || result.ContentBytes != len(tc.payload) {
+				t.Fatalf("独立观测丢失: event=%s flush=%v result=%+v", tc.event, flush, result)
+			}
+			if result.HasVisibleText || result.HasStreamOutput || result.HasFallbackOutput || result.TokenUsage != nil || parser.contentBlockProtocolError == "" {
+				t.Fatalf("协议错误被掩盖或输出标志变化: %+v", result)
+			}
+			if parser.FlushPendingEvent() != nil {
+				t.Fatal("事件已消费，不应再次 flush")
+			}
+		}
+	}
+	if result := phaseEvent(t, "content_block_delta", `{"delta":{"text":"unfinished"}`); result != nil {
+		t.Fatalf("坏 JSON 不应产生阶段: %+v", result)
+	}
+}
+
+func TestStreamPhases_RegularDiagnosticsBeforeClientWrite(t *testing.T) {
+	for _, tc := range []struct{ route, path, body, stop, model string }{
+		{"endpoint", "/v1/messages", `{"model":"claude-synthetic","content":[],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":8}}`, "end_turn", "claude-synthetic"},
+		{"account", "/v1/responses", `{"object":"response","model":"gpt-synthetic","output":[],"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":8}}`, "incomplete:max_output_tokens", "gpt-synthetic"},
+		{"endpoint", "/v1/messages", `{"model":"claude-synthetic","content":[],"stop_reason":"tool_use"}`, "tool_use", "claude-synthetic"},
+		{"account", "/v1/responses", `{"object":"response","model":"gpt-synthetic","output":[],"status":"completed"}`, "completed", "gpt-synthetic"},
+	} {
+		for _, writeFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%s/write_fails_%v", tc.route, tc.stop, writeFails), func(t *testing.T) {
+				handler := &Handler{responseProcessor: response.NewProcessor(), tokenAnalyzer: newReasoningAnalyzer()}
+				lifecycle := NewRequestLifecycleManager(nil, nil, "", nil)
+				request := httptest.NewRequest(http.MethodPost, tc.path, nil)
+				upstream := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(tc.body))}
+				recorder := httptest.NewRecorder()
+				var writer http.ResponseWriter = recorder
+				if writeFails {
+					writer = &failingBodyWriter{ResponseRecorder: recorder}
+				}
+				var failed bool
+				if tc.route == "account" {
+					failed = handler.processAccountRegularResponse(writer, upstream, lifecycle, "synthetic", request) != nil
+				} else {
+					outcome, _ := handler.processEndpointRegularResponse(writer, request, upstream, lifecycle, "synthetic")
+					failed = outcome == ProcessOutcomeFailedAfterCommit
+				}
+				if failed != writeFails {
+					t.Fatalf("写出结果变化: failed=%v", failed)
+				}
+				if !writeFails && (recorder.Body.String() != tc.body || recorder.Header().Get("Content-Type") != "application/json") {
+					t.Fatal("响应内容或头被改变")
+				}
+				if lifecycle.phaseStopReason == nil || *lifecycle.phaseStopReason != tc.stop || lifecycle.responseModel != tc.model {
+					t.Fatalf("诊断缺失: stop=%v model=%s", lifecycle.phaseStopReason, lifecycle.responseModel)
+				}
+			})
 		}
 	}
 }

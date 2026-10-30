@@ -1114,7 +1114,6 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 		return fmt.Errorf("empty response body")
 	}
 	lifecycleManager.RecordNonStreamingResponseComplete()
-	lifecycleManager.recordRegularStopReason(responseBytes)
 
 	// v6.3：先提取响应模型 / 思考信息再写回客户端，写入失败的结算仍保留已收到的诊断字段。
 	analysis := h.tokenAnalyzer.AnalyzeResponseUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)

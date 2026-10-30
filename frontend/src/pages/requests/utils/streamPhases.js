@@ -1,5 +1,6 @@
 import { parseTimestamp } from '../../../utils/timezone.js';
-import { calculateTokensPerSecond, resolveCompletionMs, resolveFirstResponseMs } from './timing.js';
+import { UNSETTLED_STATUSES } from './constants.js';
+import { formatTpsBadge } from './timing.js';
 
 const ms = (value) => Number.isFinite(value) ? Math.max(0, value) : null;
 const absoluteMs = (value) => {
@@ -31,19 +32,37 @@ const hasClaudeThinking = (request) => request.requestFamily === 'claude'
   && (/(?:^|\s)thinking:present(?:\s|$)/.test(request.responseReasoning || '')
     || Boolean(request.reasoningHidden) || ms(request.firstReasoningMs) !== null);
 
+// 两种速度共用采样边界；边界值本身有效。
+const invalidSpeedWindow = (tokens, windowMs) => windowMs < 100 || tokens * 1000 > 10000 * windowMs;
+
+// 生成吞吐只使用首事件到完成的实测耗时；不扣推理 token，也不以总耗时兜底。
+export const generationThroughput = (request) => {
+  const result = { value: null, reason: 'unknown', title: '缺少完整的输出用量或生成耗时' };
+  if (UNSETTLED_STATUSES.has(request.status) || request.usageKnown === false
+    || !Number.isFinite(request.outputTokens) || request.outputTokens < 0
+    || (request.outputTokens === 0 && request.usageKnown !== true)
+    || !Number.isFinite(request.completionMs) || request.completionMs < 0) return result;
+  // 非流式按设计记 0ms 生成耗时，不是上游集中返回，不给「耗时过短」说明。
+  if (request.isStreaming === false) return { ...result, reason: 'non-streaming', title: '非流式响应没有生成耗时' };
+  if (invalidSpeedWindow(request.outputTokens, request.completionMs)) {
+    return { ...result, reason: 'window', title: '生成耗时过短（上游一次性返回），无法计算' };
+  }
+  return { value: request.outputTokens * 1000 / request.completionMs, reason: '',
+    title: '总输出 token ÷ 生成耗时（首个事件到完成）；包含推理 token，不含本地处理、建连、发送和首响' };
+};
+
 // Claude思考token无法扣除，从首事件起算；其余沿用magpie口径，时间点允许真实0。
+// 缺失内容计时的旧记录只显示生成吞吐，不混用另一种分母冒充流式速度。
 export const streamSpeed = (request) => {
   const bounds = streamPhaseBounds(request);
   if (!bounds) {
-    const first = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
-    const completion = resolveCompletionMs(request.completionMs, request.duration, first, request.isStreaming);
-    return { legacy: true, value: calculateTokensPerSecond(request.outputTokens, completion) };
+    return { value: null, reason: 'no-timing', title: '缺少流式内容计时，无法计算流式输出速度' };
   }
   const claudeThinking = hasClaudeThinking(request);
   const reasoning = reasoningTokenCount(request);
-  const result = { legacy: false, value: null, reasoning, reason: 'unknown', title: '尚无完整输出窗口' };
+  const result = { value: null, reasoning, reason: 'unknown', title: '缺少完整的输出用量或计时' };
   if (reasoning > 0 && ms(request.firstTextMs) === null) {
-    return { ...result, reason: 'no-text', title: '上游报告了推理 token，但没有正文，无法计算速度' };
+    return { ...result, reason: 'no-text', title: '上游报告了推理 token，但未采集到正文增量时间；工具调用或仅推理响应可能没有正文' };
   }
   const tokens = request.outputTokens - reasoning;
   let start = reasoning > 0 ? bounds.text : bounds.content;
@@ -51,17 +70,37 @@ export const streamSpeed = (request) => {
   const windowMs = bounds.done === null ? null : bounds.done - start;
   let title = reasoning > 0 ? `扣除推理 ${reasoning} tok，从首个正文起算` : '扣除推理 0 tok，从首个内容起算';
   if (claudeThinking) title = 'Claude 不单报思考 token：输出含思考，从首个事件起算';
-  if (!(tokens > 0) || windowMs === null || request.usageKnown === false) return result;
+  if (!Number.isFinite(tokens) || !(tokens > 0) || windowMs === null
+    || request.usageKnown === false || UNSETTLED_STATUSES.has(request.status)) return result;
   if (!claudeThinking && ms(request.streamFlowMs) > 0 && request.streamFlowMs * 4 < windowMs) {
     return { ...result, reason: 'burst', title: '内容几乎同时到达，无法计算速度：上游憋住后一次性放出' };
   }
-  if (windowMs < 100 || tokens * 1000 > 10000 * windowMs) {
+  if (invalidSpeedWindow(tokens, windowMs)) {
     return { ...result, reason: 'window', title: '输出窗口短于100ms或超过10000 tok/s，无法计算速度' };
   }
   if (reasoning > 0 && tokens * (bounds.text - bounds.content) > 20 * reasoning * windowMs) {
     return { ...result, reason: 'held-text', title: '正文相对思考过快，可能被上游缓冲后放出，无法计算速度' };
   }
   return { ...result, value: tokens * 1000 / windowMs, reason: '', title, tokens, windowMs };
+};
+
+// 详情和列表悬停共用标签、单位、缺失原因；两项指标始终保持各自的计算口径。
+export const requestSpeedMetrics = (request) => {
+  if (UNSETTLED_STATUSES.has(request.status)) return [];
+  const throughput = generationThroughput(request);
+  const metrics = [{
+    label: '生成吞吐', value: Number.isFinite(throughput.value) ? `${formatTpsBadge(throughput.value)} tok/s` : '—',
+    title: throughput.title, note: throughput.reason === 'window' ? throughput.title : undefined, tone: 'tone-slate'
+  }];
+  if (request.isStreaming === false || request.requestFamily === 'image') return metrics;
+  const speed = streamSpeed(request);
+  let value = Number.isFinite(speed.value) ? `${formatTpsBadge(speed.value)} tok/s` : '—';
+  if (speed.reason === 'burst') value = '—（集中下发）';
+  else if (speed.reason === 'no-text') value = '—（缺少正文计时）';
+  else if (speed.reason === 'no-timing') value = '—（缺少流式计时）';
+  metrics.push({ label: '流式输出速度', value, title: speed.title,
+    tone: speed.reason === 'burst' ? 'tone-amber' : 'tone-slate' });
+  return metrics;
 };
 
 const STOP_REASONS = {

@@ -6,9 +6,9 @@ import PendingSendPill from './PendingSendPill.jsx';
 import { IN_FLIGHT_STATUSES } from '../utils/constants.js';
 import { firstResponseWait, visibleRetryCount } from '../utils/retryTiming.js';
 import { resolveGenerationTickAnchor } from '../utils/elapsedTicker.js';
-import { firstContentDelayMs, streamSpeed, stopReasonView } from '../utils/streamPhases.js';
+import { firstContentDelayMs, requestSpeedMetrics, stopReasonView } from '../utils/streamPhases.js';
 import {
-  calculateTokensPerSecond, formatOptionalTimingBadge, formatTimingBadge, formatTpsBadge,
+  formatOptionalTimingBadge, formatTimingBadge,
   getTimingPillClassName, resolveCompletionMs, resolveFirstResponseMs, TIMING_PILL_BASE
 } from '../utils/timing.js';
 
@@ -21,6 +21,7 @@ export const TimingTooltip = ({ anchorRect, items }) => {
         {items.map((item) => <React.Fragment key={item.label}>
           <span className="text-fg-subtle">{item.label}</span>
           <span className={`text-right font-mono font-semibold ${item.className || 'text-fg-body'}`}>{item.value}</span>
+          {item.note && <span className="col-span-2 max-w-72 whitespace-normal text-fg-subtle">{item.note}</span>}
         </React.Fragment>)}
       </div>
     </div>, document.body
@@ -43,18 +44,6 @@ const useTimingTooltip = (running) => {
   } };
 };
 
-const speedTooltipItem = (request, completion, hasContent) => {
-  if (!hasContent) {
-    return { label: 'TPS', value: formatTpsBadge(calculateTokensPerSecond(request.outputTokens, completion)) };
-  }
-  const speed = streamSpeed(request);
-  if (speed.reason === 'burst') {
-    return { label: '速度', value: '一次性下发', className: 'text-amber-700 dark:text-amber-300' };
-  }
-  const value = Number.isFinite(speed.value) ? `${formatTpsBadge(speed.value)} tok/s` : '—';
-  return { label: '速度', value, className: '' };
-};
-
 const timingCellData = (request, running, first) => {
   const contentDelayMs = firstContentDelayMs(request);
   const completion = Number.isFinite(first)
@@ -63,7 +52,8 @@ const timingCellData = (request, running, first) => {
   const retryCount = visibleRetryCount(request, running);
   const items = [
     { label: '总耗时', value: formatTimingBadge(request.duration) },
-    speedTooltipItem(request, completion, contentDelayMs !== null)
+    ...requestSpeedMetrics(request).map(({ label, value, note, tone }) => ({ label, value, note,
+      className: tone === 'tone-amber' ? 'text-amber-700 dark:text-amber-300' : '' }))
   ];
   if (contentDelayMs !== null) {
     items.unshift({ label: '首字', value: formatTimingBadge(contentDelayMs) });

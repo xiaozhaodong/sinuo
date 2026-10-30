@@ -14,13 +14,11 @@ import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } 
 import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
-import { firstContentDelayMs, streamSpeed } from '../utils/streamPhases.js';
+import { firstContentDelayMs, requestSpeedMetrics } from '../utils/streamPhases.js';
 import StreamPhaseProperties from './StreamPhaseProperties.jsx';
 import {
-  calculateTokensPerSecond,
   formatOptionalTimingBadge,
   formatTimingBadge,
-  formatTpsBadge,
   resolveCompletionMs,
   resolveFirstResponseMs
 } from '../utils/timing.js';
@@ -33,7 +31,7 @@ const TIMING_CHIP = 'inline-flex items-center rounded border px-1.5 py-px';
 const LoadingLine = () => <span className="block h-3 w-24 animate-pulse rounded bg-surface-mut" />;
 const DashText = () => <span className="text-fg-subtle">—</span>;
 
-// 顶部标签：首响 / 首字 / 生成 / 总耗时 / 速度；首响与生成和列表同口径，旧数据保留TPS。
+// 顶部标签：计时与列表同口径，生成吞吐与流式输出速度各自独立。
 // 完成计时可先于终态查询到达；此时显示已落定的生成耗时，总耗时仍保持进行中。
 const TimingChips = ({ request }) => {
   const settled = !UNSETTLED_STATUSES.has(request.status);
@@ -55,23 +53,13 @@ const TimingChips = ({ request }) => {
       {settled
         ? <span className={`tone-slate ${TIMING_CHIP}`}>总耗时 {formatTimingBadge(request.duration)}</span>
         : <span className="font-sans text-xs text-fg-subtle">进行中，完成后显示完整耗时</span>}
-      <SpeedChip request={request} hasContent={contentDelayMs !== null} completionMs={completionMs} />
+      {requestSpeedMetrics(request).map((metric) => (
+        <span key={metric.label} className={`${metric.tone} ${TIMING_CHIP}`} title={metric.title}>
+          {metric.label} {metric.value}
+        </span>
+      ))}
     </div>
   );
-};
-
-const SpeedChip = ({ request, hasContent, completionMs }) => {
-  if (!hasContent) {
-    const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
-    return Number.isFinite(tokensPerSecond)
-      ? <span className={`tone-slate ${TIMING_CHIP}`}>TPS {formatTpsBadge(tokensPerSecond)}</span> : null;
-  }
-  const speed = streamSpeed(request);
-  let label = '速度 —';
-  if (speed.reason === 'burst') label = '一次性下发';
-  else if (Number.isFinite(speed.value)) label = `速度 ${formatTpsBadge(speed.value)} tok/s`;
-  const tone = speed.reason === 'burst' ? 'tone-amber' : 'tone-slate';
-  return <span className={`${tone} ${TIMING_CHIP}`} title={speed.title}>{label}</span>;
 };
 
 // 分段耗时条：块宽按耗时比例伸展；完整信息见 title 与下方明细。

@@ -249,7 +249,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 				}
 			}
 
-			// 3. 并行解析Token信息 - 不影响转发性能
+			// 3. 当前块写出后同步解析 Token 与阶段信息，再读取下一块。
 			sp.parseTokensFromChunk(chunk)
 
 			// 4. 更新处理状态

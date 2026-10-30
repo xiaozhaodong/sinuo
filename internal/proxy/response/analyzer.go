@@ -301,13 +301,14 @@ func (a *TokenAnalyzer) AnalyzeResponseForTokensWithLifecycle(ctx context.Contex
 }
 
 // ResponseAnalysis 是非流式响应的统一解析结果（v6.3）。
-// TokenUsage 为 nil 表示无 Token 信息；ResponseModel / ResponseReasoning 与 usage 相互独立，
+// TokenUsage 为 nil 表示无 Token 信息；ResponseModel / ResponseReasoning / StopReason 与 usage 相互独立，
 // 无 usage 时仍可能非空。ModelName 保持旧语义（含 unknown / default / error_response 等占位）。
 type ResponseAnalysis struct {
 	TokenUsage        *tracking.TokenUsage
 	ModelName         string
 	ResponseModel     string
 	ResponseReasoning string
+	StopReason        string
 }
 
 // reasoningAwareParser 是 TokenParser 的可选扩展：具备响应模型 / 思考信息累计能力。
@@ -449,6 +450,7 @@ func (a *TokenAnalyzer) parseJSONForTokens(responseStr, connID, endpointName str
 	analysis := ResponseAnalysis{ModelName: "default"}
 	var jsonResp map[string]interface{}
 	if err := json.Unmarshal([]byte(responseStr), &jsonResp); err == nil {
+		analysis.StopReason = StopReason(jsonResp)
 		if model, ok := jsonResp["model"].(string); ok && model != "" {
 			analysis.ModelName = model
 			analysis.ResponseModel = model

@@ -27,7 +27,7 @@ func applyStreamResponseDiagnostics(lifecycleManager *RequestLifecycleManager, p
 }
 
 // applyResponseAnalysisDiagnostics 非流式响应：无条件应用响应模型（SetModelWithComparison + SetResponseModel）
-// 与思考串，然后由调用方再按 usage 是否为 nil 分流终态。
+// 与思考串、结束原因，然后由调用方再按 usage 是否为 nil 分流终态。
 func applyResponseAnalysisDiagnostics(lifecycleManager *RequestLifecycleManager, analysis response.ResponseAnalysis, source string) {
 	if lifecycleManager == nil {
 		return
@@ -37,4 +37,5 @@ func applyResponseAnalysisDiagnostics(lifecycleManager *RequestLifecycleManager,
 		lifecycleManager.SetResponseModel(analysis.ResponseModel)
 	}
 	lifecycleManager.SetResponseReasoning(analysis.ResponseReasoning)
+	lifecycleManager.recordRegularStopReason(analysis.StopReason)
 }
