@@ -51,7 +51,7 @@ test('空串 / 无时区 / 无效 ISO：本地处理与连接降级为 null', ()
   assert.equal(resolveConnectMs({ ...base, upstreamWriteMs: null }), null);
 });
 
-test('降级 2：只有 first/completion（旧数据）→ 前置/首字/流式输出', () => {
+test('降级 2：只有 first/completion（旧数据）→ 前置/首响/流式输出', () => {
   const segments = buildLifecycleSegments({
     duration: 10000,
     firstTokenMs: 3000,
@@ -406,11 +406,11 @@ const timedRequest = {
   status: 'completed'
 };
 
-test('新数据：本地处理、建连、发送、首字、流式输出首尾相接', () => {
+test('新数据：本地处理、建连、发送、首响、流式输出首尾相接', () => {
   const segments = buildLifecycleSegments(timedRequest);
   assert.deepEqual(segments.map(({ key, label, ms }) => [key, label, ms]), [
     ['queue', '本地处理', 1000], ['connect', '建连', 500], ['send', '发送', 1000],
-    ['first', '首字', 3000], ['stream', '流式输出', 4500]
+    ['first', '首响', 3000], ['stream', '流式输出', 4500]
   ]);
   assert.match(segments[0].detail, /选路.*出站限速.*此前失败/);
   assert.doesNotMatch(segments[0].detail, /压缩|鉴权/);

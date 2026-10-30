@@ -14,7 +14,7 @@ import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } 
 import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
-import { contentTiming, streamSpeed } from '../utils/streamPhases.js';
+import { firstContentDelayMs, streamSpeed } from '../utils/streamPhases.js';
 import StreamPhaseProperties from './StreamPhaseProperties.jsx';
 import {
   calculateTokensPerSecond,
@@ -33,36 +33,35 @@ const TIMING_CHIP = 'inline-flex items-center rounded border px-1.5 py-px';
 const LoadingLine = () => <span className="block h-3 w-24 animate-pulse rounded bg-surface-mut" />;
 const DashText = () => <span className="text-fg-subtle">—</span>;
 
-// 顶部标签：新数据首个内容 / 生成 / 总耗时 / 速度；旧数据保留TPS口径。
+// 顶部标签：首响 / 首字 / 生成 / 总耗时 / 速度；首响与生成和列表同口径，旧数据保留TPS。
 // 完成计时可先于终态查询到达；此时显示已落定的生成耗时，总耗时仍保持进行中。
 const TimingChips = ({ request }) => {
   const settled = !UNSETTLED_STATUSES.has(request.status);
-  const phase = contentTiming(request, !settled);
+  const contentDelayMs = firstContentDelayMs(request);
   let firstResponseMs = Number.isFinite(request.firstTokenMs) ? Math.max(request.firstTokenMs, 0) : null;
-  if (phase.useContent) firstResponseMs = phase.first;
-  else if (settled) firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
+  if (settled) firstResponseMs = resolveFirstResponseMs(request.firstTokenMs, request.duration, request.isStreaming);
   let completionMs = null;
   if (settled || Number.isFinite(request.completionMs)) {
-    if (phase.useContent) completionMs = phase.completion;
-    else if (Number.isFinite(firstResponseMs)) {
+    if (Number.isFinite(firstResponseMs)) {
       completionMs = resolveCompletionMs(request.completionMs, request.duration, firstResponseMs, request.isStreaming);
     }
   }
 
   return (
     <div className="flex flex-wrap items-center gap-1 font-mono text-[11px]">
-      {Number.isFinite(firstResponseMs) && <span className={`tone-violet ${TIMING_CHIP}`}>首字 {formatOptionalTimingBadge(firstResponseMs)}</span>}
-      {Number.isFinite(completionMs) && <span className={`tone-emerald ${TIMING_CHIP}`}>生成 {formatOptionalTimingBadge(completionMs)}</span>}
+      {Number.isFinite(firstResponseMs) && <span className={`tone-violet ${TIMING_CHIP}`} title="写完请求到上游第一个事件（受理、排队）">首响 {formatOptionalTimingBadge(firstResponseMs)}</span>}
+      {contentDelayMs !== null && <span className={`tone-fuchsia ${TIMING_CHIP}`} title="写完请求到首个内容（含思考或等待）">首字 {formatOptionalTimingBadge(contentDelayMs)}</span>}
+      {Number.isFinite(completionMs) && <span className={`tone-emerald ${TIMING_CHIP}`} title="上游第一个事件到流完成">生成 {formatOptionalTimingBadge(completionMs)}</span>}
       {settled
         ? <span className={`tone-slate ${TIMING_CHIP}`}>总耗时 {formatTimingBadge(request.duration)}</span>
         : <span className="font-sans text-xs text-fg-subtle">进行中，完成后显示完整耗时</span>}
-      <SpeedChip request={request} useContent={phase.useContent} completionMs={completionMs} />
+      <SpeedChip request={request} hasContent={contentDelayMs !== null} completionMs={completionMs} />
     </div>
   );
 };
 
-const SpeedChip = ({ request, useContent, completionMs }) => {
-  if (!useContent) {
+const SpeedChip = ({ request, hasContent, completionMs }) => {
+  if (!hasContent) {
     const tokensPerSecond = calculateTokensPerSecond(request.outputTokens, completionMs);
     return Number.isFinite(tokensPerSecond)
       ? <span className={`tone-slate ${TIMING_CHIP}`}>TPS {formatTpsBadge(tokensPerSecond)}</span> : null;

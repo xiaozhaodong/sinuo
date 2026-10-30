@@ -23,6 +23,7 @@ type StreamPhaseCollector struct {
 	start                  time.Time
 	first, text, reasoning *int64
 	hidden                 bool
+	thinkingBlock          bool
 	read                   int64
 	sum                    int64
 	flow                   []streamFlowMark
@@ -46,6 +47,7 @@ func (c *StreamPhaseCollector) Observe(result *ParseResult, eventBytes int, at t
 		return nil
 	}
 	c.hidden = c.hidden || result.ReasoningHidden
+	c.thinkingBlock = c.thinkingBlock || result.ThinkingBlock
 	if result.ResponseReasoningFields.ReasoningTokens != nil {
 		c.reasoningTokens = *result.ResponseReasoningFields.ReasoningTokens
 	}
@@ -95,7 +97,7 @@ func (c *StreamPhaseCollector) Snapshot(reasoningTokens int64) tracking.StreamPh
 	if reasoningTokens <= 0 {
 		reasoningTokens = c.reasoningTokens
 	}
-	hidden := c.hidden
+	hidden := c.hidden || (c.thinkingBlock && c.reasoning == nil)
 	p := tracking.StreamPhases{
 		FirstContentMs: c.first, FirstTextMs: c.text, FirstReasoningMs: c.reasoning,
 		ReasoningHidden: &hidden,

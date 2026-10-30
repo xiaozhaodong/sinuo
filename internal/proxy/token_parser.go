@@ -29,6 +29,7 @@ var (
 type ParseResult struct {
 	ContentKind       ContentKind // 独立的内容分类，不参与完整性判定
 	ContentBytes      int         // SSE事件data字节数；WS取事件JSON长度
+	ThinkingBlock     bool        // 本事件含Claude思考块；可见性由最终快照判定
 	ReasoningHidden   bool        // 本事件含不可见思考信号
 	StopReason        string      // 本事件上游结束原因原文
 	TokenUsage        *tracking.TokenUsage

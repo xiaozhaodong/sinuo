@@ -27,7 +27,11 @@ export const reasoningTokenCount = (request) => {
   return value ? Number(value[1]) : 0;
 };
 
-// 数值与 magpie DecodeOf / DecodeWindow 同口径；可空时间点允许真实0。
+const hasClaudeThinking = (request) => request.requestFamily === 'claude'
+  && (/(?:^|\s)thinking:present(?:\s|$)/.test(request.responseReasoning || '')
+    || Boolean(request.reasoningHidden) || ms(request.firstReasoningMs) !== null);
+
+// Claude思考token无法扣除，从首事件起算；其余沿用magpie口径，时间点允许真实0。
 export const streamSpeed = (request) => {
   const bounds = streamPhaseBounds(request);
   if (!bounds) {
@@ -35,17 +39,20 @@ export const streamSpeed = (request) => {
     const completion = resolveCompletionMs(request.completionMs, request.duration, first, request.isStreaming);
     return { legacy: true, value: calculateTokensPerSecond(request.outputTokens, completion) };
   }
+  const claudeThinking = hasClaudeThinking(request);
   const reasoning = reasoningTokenCount(request);
   const result = { legacy: false, value: null, reasoning, reason: 'unknown', title: '尚无完整输出窗口' };
   if (reasoning > 0 && ms(request.firstTextMs) === null) {
     return { ...result, reason: 'no-text', title: '上游报告了推理 token，但没有正文，无法计算速度' };
   }
   const tokens = request.outputTokens - reasoning;
-  const start = reasoning > 0 ? bounds.text : bounds.content;
+  let start = reasoning > 0 ? bounds.text : bounds.content;
+  if (claudeThinking) start = bounds.event;
   const windowMs = bounds.done === null ? null : bounds.done - start;
-  const title = reasoning > 0 ? `扣除推理 ${reasoning} tok，从首个正文起算` : '扣除推理 0 tok，从首个内容起算';
+  let title = reasoning > 0 ? `扣除推理 ${reasoning} tok，从首个正文起算` : '扣除推理 0 tok，从首个内容起算';
+  if (claudeThinking) title = 'Claude 不单报思考 token：输出含思考，从首个事件起算';
   if (!(tokens > 0) || windowMs === null || request.usageKnown === false) return result;
-  if (ms(request.streamFlowMs) > 0 && request.streamFlowMs * 4 < windowMs) {
+  if (!claudeThinking && ms(request.streamFlowMs) > 0 && request.streamFlowMs * 4 < windowMs) {
     return { ...result, reason: 'burst', title: '内容几乎同时到达，无法计算速度：上游憋住后一次性放出' };
   }
   if (windowMs < 100 || tokens * 1000 > 10000 * windowMs) {
@@ -75,42 +82,31 @@ export const stopReasonView = (raw) => {
 export const streamPhaseSegments = (request) => {
   const b = streamPhaseBounds(request);
   if (!b) return null;
-  const thinking = Boolean(request.reasoningHidden) || ms(request.firstReasoningMs) !== null;
+  const claudeThinking = hasClaudeThinking(request);
+  const thinking = claudeThinking || Boolean(request.reasoningHidden) || ms(request.firstReasoningMs) !== null;
+  const hidden = Boolean(request.reasoningHidden) || (claudeThinking && ms(request.firstReasoningMs) === null);
+  const thinkingDetail = hidden ? '模型在思考；上游不下发思考内容（不可见推理）' : '模型在思考（可见的思考内容）';
   const start = thinking && ms(request.firstTextMs) !== null ? b.text : b.content;
-  const speed = streamSpeed(request);
+  const outputMs = b.done === null ? 0 : b.done - start;
+  const burst = ms(request.streamFlowMs) > 0 && request.streamFlowMs * 4 < outputMs;
   return [
     { key: 'first', label: '首响', ms: b.event - b.write, detail: '写完请求到上游第一个事件（受理、排队）' },
     { key: thinking ? 'think' : 'await', label: thinking ? '思考' : '等待内容', ms: start - b.event,
-      detail: thinking ? (request.reasoningHidden ? '模型在思考；上游不下发思考内容（不可见推理）' : '模型在思考（可见的思考内容）')
-        : '没有思考信号：上游开始回应后到第一个内容（预填充等）' },
-    { key: 'output', label: '输出', ms: b.done === null ? 0 : b.done - start,
-      detail: `从首个正文（无正文时首个内容）到流完成${speed.reason === 'burst' ? '；内容几乎一次性下发（上游憋住后放出）' : ''}` }
+      detail: thinking ? thinkingDetail : '没有思考信号：上游开始回应后到第一个内容（预填充等）' },
+    { key: 'output', label: '输出', ms: outputMs,
+      detail: `从首个正文（无正文时首个内容）到流完成${burst ? '；内容几乎一次性下发（上游憋住后放出）' : ''}` }
   ].filter((segment) => segment.ms > 0);
 };
 
-// 列表跑秒和定格共用C/W锚点；事件先于列表查询到达时可从绝对时刻计算。
-export const contentTiming = (request, running) => {
-  const b = streamPhaseBounds(request);
+// 首字只用于详情标签和列表悬停；实时内容事件先到时用绝对时刻计算C−W。
+export const firstContentDelayMs = (request) => {
+  if (request.isStreaming !== true || request.requestFamily === 'image') return null;
+  const content = ms(request.firstContentMs);
+  const write = ms(request.upstreamWriteMs);
+  if (content !== null && write !== null) return Math.max(0, content - write);
   const contentAt = absoluteMs(request.firstContentAt);
   const sentAt = absoluteMs(request.firstTokenStartAt);
-  const startedAt = absoluteMs(request.timestamp);
-  const contentOffset = b?.content ?? (contentAt === null || startedAt === null ? null : contentAt - startedAt);
-  const first = b ? b.content - b.write : (contentAt !== null && sentAt !== null ? Math.max(0, contentAt - sentAt) : null);
-  // 图像不采内容阶段；空流收到完成计时后立即恢复旧口径，避免两个胶囊丢值。
-  const useContent = request.requestFamily !== 'image' && (hasStreamContent(request) || contentAt !== null
-    || (request.isStreaming === true && running && ms(request.completionMs) === null));
-  const eventAt = absoluteMs(request.firstTokenAt);
-  const writeOffset = ms(request.upstreamWriteMs) ?? (sentAt === null || startedAt === null ? null : sentAt - startedAt);
-  const done = ms(request.completionMs) === null ? null
-    : (writeOffset ?? 0) + (ms(request.firstTokenMs) ?? 0) + request.completionMs;
-  const liveCompletion = eventAt !== null && contentAt !== null && ms(request.completionMs) !== null
-    ? Math.max(0, eventAt + request.completionMs - contentAt)
-    : (done !== null && contentOffset !== null ? Math.max(0, done - contentOffset) : null);
-  return {
-    useContent, first,
-    completion: b ? (b.done === null ? null : b.done - b.content)
-      : liveCompletion,
-    anchor: contentAt !== null ? { timestamp: request.firstContentAt, baseMs: 0 }
-      : { timestamp: request.timestamp, baseMs: contentOffset ?? 0 }
-  };
+  if (contentAt === null || sentAt === null) return null;
+  const delay = contentAt - sentAt;
+  return Number.isFinite(delay) ? Math.max(0, delay) : null;
 };

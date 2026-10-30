@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { contentTiming, streamPhaseBounds, streamSpeed, stopReasonView } from './streamPhases.js';
+import { firstContentDelayMs, streamPhaseBounds, streamSpeed, stopReasonView } from './streamPhases.js';
 import { buildLifecycleSegments, buildRailLifecycleSegments, lifecycleSegmentColors, railSegmentColors } from './lifecycle.js';
 
 const row = (extra = {}) => ({
@@ -51,22 +51,19 @@ test('分段：可见思考、不可见思考、无思考、仅工具、失败�
   assert.ok(!buildRailLifecycleSegments(row()).some((s) => ['think','await','output'].includes(s.key)));
 });
 
-test('实时K2：首个事件后仍等内容，内容事件先到时锚点一致，结束无内容按旧口径', () => {
+test('首字耗时：内容事件先到时使用绝对时刻，查询补齐后数值一致', () => {
   const start = '2026-10-30T00:00:00.000000Z';
   const sent = '2026-10-30T00:00:00.100000Z';
   const content = '2026-10-30T00:00:01.000000Z';
   const r = row({ timestamp: start, firstTokenStartAt: sent, firstContentAt: '', firstContentMs: null, completionMs: null });
-  assert.equal(contentTiming(r, true).first, null);
-  const live = contentTiming({ ...r, firstContentAt: content }, true);
-  assert.equal(live.first, 900);
-  assert.deepEqual(live.anchor, { timestamp: content, baseMs: 0 });
-  const settled = contentTiming({ ...r, firstContentMs: 1000, firstContentAt: content, completionMs: 2000 }, false);
-  assert.equal(settled.first, live.first);
-  assert.equal(settled.completion, 1200);
-  assert.equal(contentTiming({ ...r, status: 'completed' }, false).useContent, false);
+  assert.equal(firstContentDelayMs(r), null);
+  const live = firstContentDelayMs({ ...r, firstContentAt: content });
+  assert.equal(live, 900);
+  assert.equal(firstContentDelayMs({ ...r, firstContentMs: 1000, firstContentAt: content, completionMs: 2000 }), live);
+  assert.equal(firstContentDelayMs({ ...r, status: 'completed' }), null);
   const eventOnly = { ...r, upstreamWriteMs: null, firstContentAt: content,
     firstTokenAt: '2026-10-30T00:00:00.200000Z', completionMs: 2000 };
-  assert.equal(contentTiming(eventOnly,true).completion,1200, '完成事件先于列表查询时仍从C定格');
+  assert.equal(firstContentDelayMs(eventOnly), 900, '只有实时内容时刻和写完时刻时也可计算首字');
 });
 
 test('结束原因：普通、警示、拒答、未知原文及对象属性名', () => {
@@ -79,38 +76,117 @@ test('结束原因：普通、警示、拒答、未知原文及对象属性名',
 
 test('合成SSE回放：用同一份时钟与Go采集结果手算分段和速度', () => {
   const samples = JSON.parse(readFileSync(new URL('../../../../../tests/testdata/stream_phases/replay_timing.json', import.meta.url)));
-  for (const [name, tokens, windowMs] of [['claude_thinking',400,3800], ['codex_hidden_reasoning',300,2200]]) {
+  for (const [name, tokens, windowMs] of [['claude_thinking',400,4100], ['codex_hidden_reasoning',300,2200]]) {
     const r = { ...samples[name], isStreaming: true, status: 'completed' };
     assert.equal(streamSpeed(r).value, tokens*1000/windowMs);
     const segments = buildLifecycleSegments(r);
     assert.equal(segments.reduce((n,s) => n+s.ms, 0), r.duration);
-    console.log(`${name}: ${JSON.stringify({ segments, speed: streamSpeed(r).value, first: contentTiming(r,false).first, generation: contentTiming(r,false).completion })}`);
+    console.log(`${name}: ${JSON.stringify({ segments, speed: streamSpeed(r).value, firstContent: firstContentDelayMs(r), generation: r.completionMs })}`);
   }
 });
 
-test('复审K2：图像始终用旧口径，无内容流完成后立即回到旧口径', () => {
+test('首字耗时：图像、非流式和无内容请求返回空，不推断未知时间', () => {
   const empty = row({ firstContentMs: null, firstContentAt: '', firstTextMs: null });
-  assert.equal(contentTiming({ ...empty, requestFamily: 'image', completionMs: null }, true).useContent, false);
-  assert.equal(contentTiming({ ...row(), requestFamily: 'image' }, false).useContent, false);
+  assert.equal(firstContentDelayMs({ ...empty, requestFamily: 'image', completionMs: null }), null);
+  assert.equal(firstContentDelayMs({ ...row(), requestFamily: 'image' }), null);
+  assert.equal(firstContentDelayMs(row({ isStreaming: false })), null);
+  assert.equal(firstContentDelayMs(row({ upstreamWriteMs: null })), null);
+  assert.equal(firstContentDelayMs({ ...empty, firstContentAt: 'invalid', firstTokenStartAt: 'invalid' }), null);
   for (const requestFamily of ['claude', 'codex']) {
-    assert.equal(contentTiming({ ...empty, requestFamily, completionMs: null }, true).useContent, true);
-    assert.equal(contentTiming({ ...empty, requestFamily, completionMs: 0 }, true).useContent, false);
-    assert.equal(contentTiming({ ...empty, requestFamily, completionMs: 900 }, true).useContent, false);
+    assert.equal(firstContentDelayMs({ ...empty, requestFamily, completionMs: null }), null);
+    assert.equal(firstContentDelayMs({ ...empty, requestFamily, completionMs: 0 }), null);
+    assert.equal(firstContentDelayMs({ ...empty, requestFamily, completionMs: 900 }), null);
   }
 });
 
-test('复审K2：内容实时事件先到时，完成与状态查询不能切回旧口径', () => {
+test('首字耗时：内容实时事件先到时，完成和状态变化不丢值，保留真实0', () => {
   const request = row({
     firstContentMs: null, timestamp: '2026-10-30T00:00:00.000000Z',
     firstTokenStartAt: '2026-10-30T00:00:00.100000Z',
     firstTokenAt: '2026-10-30T00:00:00.200000Z',
     firstContentAt: '2026-10-30T00:00:01.000000Z'
   });
-  for (const running of [true, false]) {
-    const timing = contentTiming(request, running);
-    assert.equal(timing.useContent, true);
-    assert.equal(timing.first, 900);
-    assert.equal(timing.completion, 1200);
+  for (const status of ['processing', 'completed']) {
+    assert.equal(firstContentDelayMs({ ...request, status }), 900);
   }
-  assert.equal(contentTiming(row({ firstContentMs: 0 }), false).useContent, true);
+  assert.equal(firstContentDelayMs(row({ firstContentMs: 0, upstreamWriteMs: 0 })), 0);
+});
+
+const claudeThinkingSamples = [
+  { requestId: 'synthetic-claude-a', upstreamWriteMs: 1839, firstTokenMs: 2166, firstContentMs: 17976,
+    firstReasoningMs: 17976, streamFlowMs: 1843, completionMs: 15445, outputTokens: 1610,
+    duration: 19450, thinkingMs: 13971, outputMs: 1474 },
+  { requestId: 'synthetic-claude-b', upstreamWriteMs: 369, firstTokenMs: 1929, firstContentMs: 6078,
+    firstReasoningMs: null, streamFlowMs: 1, completionMs: 6739, outputTokens: 807,
+    duration: 9037, thinkingMs: 3780, outputMs: 2959 },
+  { requestId: 'synthetic-claude-c', upstreamWriteMs: 2013, firstTokenMs: 1586, firstContentMs: 4209,
+    firstReasoningMs: null, streamFlowMs: 823, completionMs: 1275, outputTokens: 161,
+    duration: 4874, thinkingMs: 610, outputMs: 665 }
+].map((sample) => row({ ...sample, requestFamily: 'claude', responseReasoning: 'thinking:present',
+  firstTextMs: null, reasoningHidden: false }));
+
+test('Claude思考真机数值回归：三段与首事件测速，列表详情结论一致', () => {
+  for (const request of claudeThinkingSamples) {
+    const speed = streamSpeed(request);
+    assert.equal(speed.value, request.outputTokens * 1000 / request.completionMs);
+    assert.equal(speed.windowMs, request.completionMs);
+    assert.equal(speed.tokens, request.outputTokens);
+    assert.equal(speed.reason, '');
+    assert.equal(speed.title, 'Claude 不单报思考 token：输出含思考，从首个事件起算');
+    const segments = buildLifecycleSegments(request);
+    assert.deepEqual(segments.filter((s) => ['first', 'think', 'output'].includes(s.key)).map((s) => [s.label, s.ms]),
+      [['首响', request.firstTokenMs], ['思考', request.thinkingMs], ['输出', request.outputMs]]);
+    assert.match(segments.find((s) => s.key === 'think').detail, request.firstReasoningMs === null ? /不可见推理/ : /可见的思考内容/);
+    assert.equal(segments.reduce((sum, s) => sum + s.ms, 0), request.duration);
+    const listRow = { ...request };
+    delete listRow.firstReasoningMs;
+    delete listRow.reasoningHidden;
+    assert.deepEqual(streamSpeed(listRow), speed);
+    assert.ok(buildLifecycleSegments(listRow).some((s) => s.key === 'think'));
+  }
+  assert.match(buildLifecycleSegments(claudeThinkingSamples[1]).find((s) => s.key === 'output').detail, /内容几乎一次性下发（上游憋住后放出）/);
+});
+
+test('Claude思考信号：整项匹配，详情独立信号与零时刻也有效', () => {
+  for (const signal of [{ responseReasoning: 'effort:high thinking:present speed:fast' },
+    { reasoningHidden: true }, { firstReasoningMs: 0 }]) {
+    const request = row({ requestFamily: 'claude', streamFlowMs: 1, ...signal });
+    assert.equal(streamSpeed(request).value, 150);
+    assert.ok(buildLifecycleSegments(request).some((s) => s.key === 'think'));
+  }
+  for (const responseReasoning of ['', 'thinking:absent', 'xthinking:present', 'thinking:present_extra', 'thinking:present:other']) {
+    const request = row({ requestFamily: 'claude', responseReasoning });
+    assert.equal(streamSpeed(request).value, 250);
+    assert.ok(buildLifecycleSegments(request).some((s) => s.key === 'await'));
+    assert.equal(streamSpeed({ ...request, streamFlowMs: 1 }).reason, 'burst');
+  }
+});
+
+test('Claude思考测速边界：未知用量、无完成、无token、短窗和超速不显示速度', () => {
+  const request = claudeThinkingSamples[1];
+  for (const extra of [{ outputTokens: 0 }, { outputTokens: -1 }, { completionMs: null }, { usageKnown: false }]) {
+    assert.equal(streamSpeed({ ...request, ...extra }).value, null);
+  }
+  const short = row({ requestFamily: 'claude', responseReasoning: 'thinking:present',
+    upstreamWriteMs: 0, firstTokenMs: 0, firstContentMs: 50, firstTextMs: null,
+    completionMs: 99, duration: 99, streamFlowMs: 1, outputTokens: 10 });
+  assert.equal(streamSpeed(short).value, null);
+  assert.equal(streamSpeed(short).reason, 'window');
+  assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100 }).value, 100);
+  assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100, outputTokens: 1000 }).value, 10000);
+  assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100, outputTokens: 1001 }).value, null);
+});
+
+test('Claude修正保留旧数据和Codex口径，输出段的突发提示独立于测速窗口', () => {
+  const legacy = row({ requestFamily: 'claude', responseReasoning: 'thinking:present', firstContentMs: null });
+  assert.equal(streamSpeed(legacy).legacy, true);
+  assert.equal(streamSpeed(legacy).value, 150);
+  const codex = row({ responseReasoning: 'thinking:present reasoning_tokens:100' });
+  assert.equal(streamSpeed(codex).value, 200 * 1000 / 1200);
+  assert.equal(streamSpeed({ ...codex, streamFlowMs: 1 }).reason, 'burst');
+  const request = row({ requestFamily: 'claude', responseReasoning: 'thinking:present',
+    firstContentMs: 500, firstReasoningMs: 500, firstTextMs: 2000, streamFlowMs: 50 });
+  assert.equal(streamSpeed(request).value, 150);
+  assert.doesNotMatch(buildLifecycleSegments(request).find((s) => s.key === 'output').detail, /一次性下发/);
+  assert.match(buildLifecycleSegments({ ...request, streamFlowMs: 49 }).find((s) => s.key === 'output').detail, /一次性下发/);
 });

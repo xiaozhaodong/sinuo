@@ -3,7 +3,7 @@ import { Property } from '@components/desktop/Inspector.jsx';
 import { stopReasonView } from '../utils/streamPhases.js';
 import { copyTextToClipboard } from './clipboard.js';
 
-const ICON_BUTTON = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg';
+const ICON_BUTTON = 'inline-flex -my-1 h-6 w-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg';
 
 export default function StreamPhaseProperties({ request }) {
   const stop = stopReasonView(request.stopReason);

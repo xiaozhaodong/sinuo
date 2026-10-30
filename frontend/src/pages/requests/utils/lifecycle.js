@@ -266,7 +266,7 @@ export const buildLifecycleSegments = (request = {}, { streamPhases = true } = {
     const preMs = Math.max(0, duration - (firstMs + (completionMs ?? 0)));
     if (preMs > 0) segments.push({ key: 'pre', label: '前置', ms: preMs });
   }
-  if (firstMs !== null) segments.push({ key: 'first', label: isStreaming ? '首字' : '响应', ms: firstMs });
+  if (firstMs !== null) segments.push({ key: 'first', label: isStreaming ? '首响' : '响应', ms: firstMs });
   if (isStreaming && completionMs !== null && completionMs > 0) {
     segments.push({ key: 'stream', label: '流式输出', ms: completionMs });
   }

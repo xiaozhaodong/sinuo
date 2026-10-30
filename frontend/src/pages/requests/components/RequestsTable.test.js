@@ -76,27 +76,29 @@ test('首次发送前沿用原等待点文案，首响已落定后不再进入�
   assert.match(settledFirst, />100ms<\/span>/);
 });
 
-test('K2首个内容替代首个事件定格，W1只给警示级且排在重试之后', () => {
-  const fields = { isStreaming: true, upstreamWriteMs: 100, firstTokenMs: 100,
-    firstContentMs: 1000, firstTextMs: 1000, completionMs: 2000, duration: 2200,
+test('新数据仍按首响和生成定格，W1只给警示级且排在重试之后', () => {
+  const fields = { isStreaming: true, upstreamWriteMs: 983, firstTokenMs: 3680,
+    firstContentMs: 8083, firstTextMs: 8083, completionMs: 14720, duration: 20000,
     retryCount: 1, upstreamFirstDispatchMs: 0, stopReason: 'max_tokens' };
   const html = render(fields);
-  assert.match(html, />900ms<\/span>/);
-  assert.match(html, />1\.20s<\/span>/);
+  assert.match(html, />3\.68s<\/span>/);
+  assert.match(html, />14\.7s<\/span>/);
+  assert.doesNotMatch(html, />7\.10s<\/span>/);
   assert.match(html, /lucide-triangle-alert/);
   assert.ok(html.indexOf('title="重试 1 次"') < html.indexOf('title="达到输出上限"'));
   assert.doesNotMatch(render({ ...fields, stopReason: 'completed' }), /lucide-triangle-alert/);
   assert.match(render({ ...fields, stopReason: 'refusal' }), /text-rose-700 dark:text-rose-300/);
 });
 
-test('进行中K2：首个事件后首字继续跑，首内容交接后才显示定格值', () => {
+test('进行中首个事件即定格首响，内容事件不会改胶囊或跑秒锚点', () => {
   const fields = { status: 'processing', isStreaming: true, firstTokenMs: 100, completionMs: null,
     timestamp: '2026-10-30T00:00:00.000000Z', firstTokenStartAt: '2026-10-30T00:00:00.100000Z' };
-  assert.doesNotMatch(render(fields), />100ms<\/span>/);
-  assert.match(render({ ...fields, firstContentAt: '2026-10-30T00:00:01.000000Z' }), />900ms<\/span>/);
+  assert.match(render(fields), />100ms<\/span>/);
+  assert.match(render({ ...fields, firstContentAt: '2026-10-30T00:00:01.000000Z' }), />100ms<\/span>/);
+  assert.doesNotMatch(render({ ...fields, firstContentMs: 1000 }), />900ms<\/span>/);
 });
 
-test('复审图像SSE：首个事件定格首字，生成位接过跑秒，完成后保留旧口径', () => {
+test('复审图像SSE：首个事件定格首响，生成位接过跑秒，完成后保留旧口径', () => {
   const image = { status: 'processing', requestFamily: 'image', isStreaming: true,
     duration: 0, firstTokenMs: 100, completionMs: null,
     timestamp: '2026-10-30T00:00:00.000000Z',

@@ -3,6 +3,8 @@ package proxy
 import (
 	"encoding/json"
 	"strings"
+
+	"sinuo/internal/reasoning"
 )
 
 // ContentKind 与流完整性、可见输出标志独立；只用于阶段观测。
@@ -42,12 +44,13 @@ func attachStreamPhase(result, phase *ParseResult) *ParseResult {
 		return result
 	}
 	if result == nil {
-		if phase.ContentKind == ContentNone && !phase.ReasoningHidden && phase.StopReason == "" {
+		if phase.ContentKind == ContentNone && !phase.ThinkingBlock && !phase.ReasoningHidden && phase.StopReason == "" {
 			return nil
 		}
 		result = &ParseResult{}
 	}
 	result.ContentKind, result.ContentBytes = phase.ContentKind, phase.ContentBytes
+	result.ThinkingBlock = phase.ThinkingBlock
 	result.ReasoningHidden, result.StopReason = phase.ReasoningHidden, phase.StopReason
 	return result
 }
@@ -71,6 +74,7 @@ func streamPhasePayload(event string, p map[string]interface{}, size int) *Parse
 	case "content_block_start":
 		block, _ := p["content_block"].(map[string]interface{})
 		typ, _ := block["type"].(string)
+		result.ThinkingBlock = reasoning.IsThinkingBlockType(typ)
 		result.ReasoningHidden = typ == "redacted_thinking"
 		if typ == "tool_use" || typ == "server_tool_use" {
 			result.ContentKind = ContentTool

@@ -1,8 +1,14 @@
 package proxy
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"sinuo/internal/tracking"
 )
 
 func phaseEvent(t *testing.T, event, payload string) *ParseResult {
@@ -42,7 +48,16 @@ func TestStreamPhases_ClaudeStartClassification(t *testing.T) {
 	for _, typ := range []string{"tool_use", "server_tool_use", "redacted_thinking", "thinking", "text"} {
 		payload := `{"type":"content_block_start","index":0,"content_block":{"type":"` + typ + `"}}`
 		result := phaseEvent(t, "content_block_start", payload)
-		if typ == "thinking" || typ == "text" {
+		if typ == "thinking" {
+			if result == nil || !result.ThinkingBlock || result.ContentKind != ContentNone || result.ReasoningHidden {
+				t.Fatalf("思考块只提供观测信号: %+v", result)
+			}
+			if result.HasVisibleText || result.HasStreamOutput || result.HasFallbackOutput {
+				t.Fatal("旧标志被改写")
+			}
+			continue
+		}
+		if typ == "text" {
 			if result != nil {
 				t.Fatalf("空块不是内容: %+v", result)
 			}
@@ -147,5 +162,127 @@ func TestStreamPhases_FlushMissingBlankLine(t *testing.T) {
 	p.ParseSSELineV2(`data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":1}}`)
 	if result := p.FlushPendingEvent(); result == nil || result.StopReason != "max_tokens" {
 		t.Fatalf("flush丢失结束原因: %+v", result)
+	}
+}
+
+func claudeThinkingToolStream(blockType, delta string) string {
+	body := `event: message_start
+data: {"type":"message_start","message":{"id":"synthetic-thinking-tool","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}
+
+`
+	if blockType != "" {
+		body += "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"" + blockType + "\"}}\n\n"
+		if delta != "" {
+			body += "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":" + delta + "}\n\n"
+		}
+		body += "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	}
+	return body + `event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"synthetic-tool-call","name":"synthetic_lookup","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":807}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+}
+
+func collectClaudeThinkingStream(body string) tracking.StreamPhases {
+	parser, start := NewTokenParser(), time.Unix(0, 0)
+	collector := newStreamPhaseCollector(start)
+	for i, line := range strings.Split(body, "\n") {
+		collector.Observe(parser.ParseSSELineV2(line), len(line)+1, start.Add(time.Duration(i)*time.Millisecond))
+	}
+	return collector.Snapshot(0)
+}
+
+func TestStreamPhases_ClaudeThinkingVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, blockType, delta string
+		hidden, visible        bool
+	}{
+		{"signature-only", "thinking", `{"type":"signature_delta","signature":"synthetic"}`, true, false},
+		{"empty-thinking", "thinking", `{"type":"thinking_delta","thinking":""}`, true, false},
+		{"visible-thinking", "thinking", `{"type":"thinking_delta","thinking":"synthetic thought"}`, false, true},
+		{"redacted", "redacted_thinking", "", true, false},
+		{"redacted-with-visible", "redacted_thinking", `{"type":"thinking_delta","thinking":"synthetic thought"}`, true, true},
+		{"no-thinking", "", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			phases := collectClaudeThinkingStream(claudeThinkingToolStream(tc.blockType, tc.delta))
+			if phases.ReasoningHidden == nil || *phases.ReasoningHidden != tc.hidden || (phases.FirstReasoningMs != nil) != tc.visible {
+				t.Fatalf("思考可见性: %+v", phases)
+			}
+			if phases.FirstContentMs == nil || phases.FirstTextMs != nil || phases.StopReason == nil || *phases.StopReason != "tool_use" {
+				t.Fatalf("工具输出与终态: %+v", phases)
+			}
+		})
+	}
+}
+
+func TestStreamPhases_ThinkingBlockFlushAndFinalVisibility(t *testing.T) {
+	parser, start := NewTokenParser(), time.Unix(0, 0)
+	feedSSEV2(t, parser, claudeStreamHead)
+	parser.ParseSSELineV2("event: content_block_start")
+	parser.ParseSSELineV2(`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`)
+	result := parser.FlushPendingEvent()
+	if result == nil || !result.ThinkingBlock || result.ContentKind != ContentNone || result.ReasoningHidden || result.HasVisibleText || result.HasStreamOutput || result.HasFallbackOutput {
+		t.Fatalf("flush丢失思考块或改变旧标志: %+v", result)
+	}
+	collector := newStreamPhaseCollector(start)
+	if at := collector.Observe(result, 0, start); at != nil {
+		t.Fatal("思考块不应提前记录首内容")
+	}
+	before := collector.Snapshot(0)
+	if before.ReasoningHidden == nil || !*before.ReasoningHidden || before.FirstContentMs != nil || before.StreamFlowMs != nil {
+		t.Fatalf("没有可见思考时的快照: %+v", before)
+	}
+	visible := feedSSEV2(t, parser, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"synthetic\"}}\n\n")
+	collector.Observe(visible, 0, start.Add(time.Second))
+	after := collector.Snapshot(0)
+	if after.ReasoningHidden == nil || *after.ReasoningHidden || after.FirstReasoningMs == nil || !*before.ReasoningHidden {
+		t.Fatalf("最终可见性或快照隔离: before=%+v, after=%+v", before, after)
+	}
+}
+
+func TestStreamPhases_ClaudeSignatureOnlyEndToEnd(t *testing.T) {
+	body := claudeThinkingToolStream("thinking", `{"type":"signature_delta","signature":"synthetic"}`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, body)
+	}))
+	defer upstream.Close()
+	for _, route := range []string{"endpoint", "claude_subscription"} {
+		t.Run(route, func(t *testing.T) {
+			var tracker *tracking.UsageTracker
+			var rec *httptest.ResponseRecorder
+			if route == "endpoint" {
+				h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("synthetic-thinking", upstream.URL, 1))
+				tracker = attachRetryTracker(t, h)
+				rec = performEndpointPipelineRequest(t, h, true)
+			} else {
+				h, _, usageTracker := newClaudeSubscriptionTestHandler(t, upstream.URL)
+				tracker = usageTracker
+				rec = performClaudeSubscriptionRequest(t, h, claudeSubscriptionRequest{streaming: true})
+			}
+			if rec.Code != http.StatusOK || rec.Body.String() != body {
+				t.Fatalf("转发改变: %d %s", rec.Code, rec.Body.String())
+			}
+			data := onlyPhaseRequest(t, tracker)
+			if data.Detail.Status != "completed" || data.ReasoningHidden == nil || !*data.ReasoningHidden || data.FirstReasoningMs != nil || data.FirstTextMs != nil || data.FirstContentMs == nil {
+				t.Fatalf("最终阶段观测: %+v", data)
+			}
+			if data.Detail.ResponseReasoning != "thinking:present" || data.Detail.OutputTokens != 807 || data.StopReason == nil || *data.StopReason != "tool_use" {
+				t.Fatalf("思考、用量或完整性改变: %+v", data)
+			}
+		})
 	}
 }
