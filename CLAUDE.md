@@ -70,6 +70,12 @@
   - `speed` 记录请求与实际速度档位：Codex 请求读 `service_tier`，响应只采用终态 `service_tier`（忽略 `auto`，不采用开场回显）；Claude 请求读 `speed`，响应读 `usage.speed`，不把 Anthropic 的 `usage.service_tier` 当作 Fast。档位只在请求详情中展示「请求 / 上游回报」，不做一致性判定、不进列表告警与悬停提示（有中转按 Fast 计费却回报 `default`，回报值不代表实际处理档位）；只记录、不改变任何计费
   - `request_logs.session_id` 在开始记录时写入客户端原始会话：订阅代理优先读 context association 的 session / thread，其他入口依次读 `X-Claude-Code-Session-Id`、`session-id`、`session_id`、`thread-id`；池模式头被剥离后仍从 association 取值。会话筛选只在请求页生效，「只看此会话」与只看模型 / 上游一致，保留当前时间范围（跨天会话由用户手动扩大范围），列表与顶部统计同步筛选；会话列默认隐藏，历史不回填，会话 ID 不写入 Go 后端日志
   - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
+- 请求重试可见化（v6.3.0）：`upstream_first_dispatch_ms` 记本次请求第一次取连接的偏移，本地处理只算到这里，到最终取连接之间为「重试」段；`retry_count` 统一为「联系上游次数 − 1」，由 `upstreamContactState` 一处维护（连接池换掉失效连接后的重取标记 `SameContact`，不计重试）；重试进行中经 `upstream_retry` 事件推送 `retry_count / retry_started_at`，列表不带这两个字段
+- 流式阶段观测（v6.3.0）：`request_logs` 新增 `first_content_ms / first_text_ms / first_reasoning_ms / reasoning_hidden / stream_flow_ms / stop_reason / upstream_request_id`，时间点只记最终尝试、只写一次，结束原因与请求 ID 以最终尝试覆盖；历史不回填，缺这些列的旧数据按旧规则显示
+  - 内容分类在 `TokenParser` 原解析之上附加（`ContentKind` / `ThinkingBlock` / `ReasoningHidden` / `StopReason`），不改变 `HasVisibleText / HasStreamOutput / HasFallbackOutput` 与流完整性；Claude 有思考块却全程没有思考增量时记为不可见思考
+  - 首响（`first_token_ms`）所有链路统一为上游第一个非空事件；「首字」= 写完到首个内容，只在详情顶部与列表悬停显示；列表两格固定为首响 / 生成，阈值按首响定，不要改成首字
+  - 速度两个都显示：生成吞吐 = 输出 token（含推理）÷ `completion_ms`（非流式与 <100ms / >10000 tok/s 显示「—」）；流式输出速度照 magpie `DecodeOf`（首个内容 / 首个正文起算、扣 Codex 推理 token；Claude 有思考时从首个事件起算，因其输出含思考且不单报），算不出时注明原因
+  - 上游请求 ID 按 `request-id → anthropic-request-id → x-request-id → openai-request-id → x-oneapi-request-id → cf-ray` 取；首个内容实时事件 `first_content` 经广播白名单放行 `first_content_at`
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
 - Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：
   - Claude Code 专用 loopback 入口（默认 `127.0.0.1:18088`，端口被占用即启动失败、不漂移；不经 AuthMiddleware）；配置存 settings 受保护分类 `claude_code_entry`
@@ -138,6 +144,8 @@
 - `internal/modelrewrite/`：Codex 账号池与 Claude 端点共用的模型改写解析、校验与匹配引擎
 - `internal/reasoning/`：请求 / 响应模型与思考配置提取的纯引擎（归一化 token 串、按字段合并的 `ResponseState`）
 - `internal/proxy/lifecycle_manager_diagnostics.go` / `pipeline_response_diagnostics.go` / `token_parser_reasoning.go`：模型一致性诊断字段在生命周期管理器、两条管线与 TokenParser 的接入点
+- `internal/proxy/stream_phases.go` / `token_parser_phases.go` / `lifecycle_manager_stream_phases.go` / `subscription_tracking_stream_phases.go`：流阶段采集器（流速采样照 magpie `flowMs`）、内容分类与两条追踪链路的接入点；`internal/tracking/stream_phases.go` 为新列的写一次合并与 SQL 片段
+- `internal/proxy/upstream_retry.go` / `internal/proxy/handlers/upstream_trace.go`：重试段的联系上游计数与取连接 / 写完追踪（`UpstreamTraceRecorder`）
 - `internal/tracking/response_diagnostics.go`：终态随 success / final_failure / settlement 原子落库的 `ResponseDiagnostics` 与共用 SQL 片段
 - `internal/modelrouting/`：Claude 模型到端点集合的精确匹配编译与校验引擎
 - `internal/endpoint/route_scope.go`：全局、模型端点集合与未分配请求的统一路由作用域契约
@@ -184,6 +192,7 @@
 - `frontend/src/pages/claude/index.jsx` / `frontend/src/pages/codex/index.jsx`：Claude 五个、Codex 六个管理页签，页签条 `components/layout/PageTabs.jsx` 共用；模型路由、模型目录、图像生成与调度页签首次访问挂载，操作投送到统一工具栏；请求页与托盘入口直接切到 `routing` 页签
 - `frontend/src/components/claude-code-entry/`：Claude Code 客户端接入卡片（启停、端口、接入模式、试用命令与配置片段）与共用状态 hook `useClaudeCodeEntry`；订阅额度面板 `SubscriptionRateLimitPanel`、hook `useClaudeSubscriptionRateLimit` 与纯函数 `subscriptionRateLimit.js` 也在这里，由请求页 Claude 按钮使用
 - `frontend/src/pages/requests/components/ClaudeAccessSwitcher.jsx`：请求页 Claude 按钮；入口未启用时即端点切换器，启用后分「接入模式 / 端点策略」两页（浮层定位 `useAnchoredPanel` 与 Codex 共用）；订阅直通模式下带额度角标与额度区
+- `frontend/src/pages/requests/utils/streamPhases.js`：流式阶段分段、首字、生成吞吐与流式输出速度、结束原因映射的纯函数；列表计时单元格在 `components/RequestTimingCell.jsx`
 - `frontend/src/pages/requests/utils/modelConsistency.js`：模型 / 思考等级一致性判定纯函数（`assessModel` / `assessReasoning` / `buildModelAlert`），列表 `ModelTag` 警告与详情「模型与思考」卡片共用
 - `frontend/src/bindings/*`：Wails v3 生成的前端绑定
 
