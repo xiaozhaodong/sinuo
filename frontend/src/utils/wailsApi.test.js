@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+import { normalizeRequest } from '../pages/requests/utils/normalizeRequest.js';
+import { visibleRetryCount } from '../pages/requests/utils/retryTiming.js';
 
 import {
   buildEndpointRecordPayload,
@@ -16,6 +19,50 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
+
+// 保留真实适配层，只替换桌面绑定与运行时，不依赖运行中的 App。
+const loadRequestMappingBindings = async () => {
+  const compiled = await build({
+    entryPoints: [sourcePath], bundle: true, write: false, platform: 'node', format: 'esm',
+    plugins: [{
+      name: 'request-mapping-bindings',
+      setup(builder) {
+        builder.onResolve({ filter: /^(@wailsjs\/sinuo\/app\.js|@wailsio\/runtime)$/ }, ({ path }) => ({ path, namespace: 'test-bindings' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test-bindings' }, ({ path }) => ({
+          contents: path === '@wailsio/runtime' ? 'export {};' : `
+            export const GetRequests = async () => ({
+              requests: [22, 0, undefined].map((first, index) => ({
+                request_id: 'retry-mapping-' + index, status: 'completed', retry_count: 1,
+                ...(first === undefined ? {} : { upstream_first_dispatch_ms: first })
+              })), total: 3, page: 1, page_size: 50
+            });`
+        }));
+      }
+    }]
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+};
+
+test('GetRequests 透传首次取连接偏移：22、真实0与缺失，并保留重试标记的可信判定', async (t) => {
+  const bindings = await loadRequestMappingBindings();
+  const originalWindow = globalThis.window;
+  t.mock.method(console, 'log', () => {});
+  try {
+    globalThis.window = { location: { protocol: 'wails:' } };
+    const result = await bindings.getRequests();
+    assert.equal(result.requests.length, 3);
+    for (const [index, expected] of [22, 0, null].entries()) {
+      const row = result.requests[index];
+      assert.equal(row.upstream_first_dispatch_ms, expected);
+      const normalized = normalizeRequest(row);
+      assert.equal(normalized.upstreamFirstDispatchMs, expected);
+      assert.equal(visibleRetryCount(normalized, false), expected === null ? 0 : 1);
+    }
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
 
 test('Wails 环境识别覆盖 v3 的自定义协议与 Windows host', () => {
   const originalWindow = globalThis.window;

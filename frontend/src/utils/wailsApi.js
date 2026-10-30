@@ -1372,6 +1372,7 @@ export const getRequests = async (params = {}) => {
     status_code: r.http_status,
     http_status_code: r.http_status,  // 添加 http_status_code 映射
     retry_count: r.retry_count || 0,  // 添加重试次数
+    upstream_first_dispatch_ms: r.upstream_first_dispatch_ms ?? null,
     path: r.path || '',
     method: r.method || '',
     usage_known: r.usage_known !== false,
