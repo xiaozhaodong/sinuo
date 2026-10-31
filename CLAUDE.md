@@ -74,7 +74,8 @@
 - 流式阶段观测（v6.3.0）：`request_logs` 新增 `first_content_ms / first_text_ms / first_reasoning_ms / reasoning_hidden / stream_flow_ms / stop_reason / upstream_request_id`，时间点只记最终尝试、只写一次，结束原因与请求 ID 以最终尝试覆盖；历史不回填，缺这些列的旧数据按旧规则显示
   - 内容分类在 `TokenParser` 原解析之上附加（`ContentKind` / `ThinkingBlock` / `ReasoningHidden` / `StopReason`），不改变 `HasVisibleText / HasStreamOutput / HasFallbackOutput` 与流完整性；Claude 有思考块却全程没有思考增量时记为不可见思考
   - 首响（`first_token_ms`）所有链路统一为上游第一个非空事件；「首字」= 写完到首个内容，只在详情顶部与列表悬停显示；列表两格固定为首响 / 生成，阈值按首响定，不要改成首字
-  - 速度两个都显示：生成吞吐 = 输出 token（含推理）÷ `completion_ms`（非流式与 <100ms / >10000 tok/s 显示「—」）；流式输出速度照 magpie `DecodeOf`（首个内容 / 首个正文起算、扣 Codex 推理 token；Claude 有思考时从首个事件起算，因其输出含思考且不单报），算不出时注明原因
+  - 速度指标（v6.3.1）仅成功的流式生成请求展示：生成吞吐 = 输出 token（含推理）÷ `completion_ms`；流式输出速度照 magpie `DecodeOf`（首个内容 / 首个正文起算、扣 Codex 推理 token；Claude 有思考时从首个事件起算，因其输出含思考且不单报）。失败、取消、中断、进行中、非流式与图像请求隐藏两项指标；<100ms 提示「时间过短」，>10000 tok/s 提示「采样异常」，其他缺失原因独立标明；已知零输出不冒充缺少用量。
+  - 列表与详情共用 `streamPhases.js` 的测速适用范围、短原因和完整说明；列表悬浮卡片合并相同说明，按实际尺寸避让窗口边缘，滚动或缩放后关闭；短窗口只说明采样不足，不断言缓冲发生在哪一层。
   - 上游请求 ID 按 `request-id → anthropic-request-id → x-request-id → openai-request-id → x-oneapi-request-id → cf-ray` 取；首个内容实时事件 `first_content` 经广播白名单放行 `first_content_at`
 - Claude 端点手动解除冷却：端点页一键清除冷却阻断，故障 epoch + 写时 fencing 拒绝旧在途请求的晚到故障结算；tombstone 单事务落库，失败置位 pending 保留页面重试入口（`ResetEndpointFailureState` / `ApplyEndpointFailureSettlement` / `SetEndpointCooldownFenced` / `RecordSoftFailureFenced` / `SetScopedCooldownFenced`）
 - Claude Code 订阅直通（本机 claude.ai 登录透传，与 Codex 订阅直通对齐）：
