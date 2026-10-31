@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [6.3.2] - 2026-10-31
+
+### 🔧 改进 (Improvements)
+
+- **精简请求耗时提示**：缺少正文计时时，列表悬浮卡片仅显示简短说明，推理 token 与工具调用相关解释保留在请求详情中。
+
 ## [6.3.1] - 2026-10-31
 
 ### 🐛 修复 (Bug Fixes)
