@@ -49,12 +49,14 @@ test('旧数据、图像和非流式悬停提示没有首字，生成吞吐不�
   }
 });
 
-test('Codex缺少正文计时：列表显示生成吞吐和明确缺失原因', () => {
-  const tooltip = items(row({ requestFamily: 'codex', duration: 9615, upstreamWriteMs: 1672,
+test('Codex缺少正文计时：列表显示生成吞吐和简短缺失说明', () => {
+  const request = row({ requestFamily: 'codex', duration: 9615, upstreamWriteMs: 1672,
     firstTokenMs: 2502, completionMs: 5440, firstContentMs: 6504, firstTextMs: null,
-    outputTokens: 380, responseReasoning: 'reasoning_tokens:73', streamFlowMs: 1747 }));
+    outputTokens: 380, responseReasoning: 'reasoning_tokens:73', streamFlowMs: 1747 });
+  const { items: tooltip, notes } = timingCellData(request, false, request.firstTokenMs);
   assert.equal(tooltip.find((m) => m.label === '生成吞吐').value, '69.9 tok/s');
   assert.equal(tooltip.find((m) => m.label === '流式输出速度').value, '—（缺少计时）');
+  assert.deepEqual(notes, ['未采集到正文输出时间，无法计算流式速度。']);
 });
 
 test('短生成窗口在列表悬停层直接提供说明，不传递嵌套title', () => {

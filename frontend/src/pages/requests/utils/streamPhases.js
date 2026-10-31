@@ -39,7 +39,8 @@ const SPEED_UNAVAILABLE = {
   'not-applicable': ['', '仅成功的流式生成请求展示速度指标'],
   'no-usage': ['缺少用量', '缺少完整的输出 token 用量，无法可靠测速。'],
   'no-timing': ['缺少计时', '缺少完整的流式阶段计时，无法可靠测速。'],
-  'no-text': ['缺少计时', '上游报告了推理 token，但未采集到正文增量时间；工具调用或仅推理响应可能没有正文。'],
+  'no-text': ['缺少计时', '上游报告了推理 token，但未采集到正文增量时间；工具调用或仅推理响应可能没有正文。',
+    '未采集到正文输出时间，无法计算流式速度。'],
   'no-output': ['无输出', '扣除推理 token 后，没有可用于测速的输出 token。'],
   'short-window': ['时间过短', '输出时间窗口不足 100ms，无法可靠测速。'],
   'speed-range': ['采样异常', '计算速度超过可信范围（10000 tok/s），无法可靠测速。'],
@@ -49,8 +50,8 @@ const SPEED_UNAVAILABLE = {
 };
 
 const unavailableSpeed = (reason) => {
-  const [label, title] = SPEED_UNAVAILABLE[reason];
-  return { value: null, reason, label, title };
+  const [label, title, note = title] = SPEED_UNAVAILABLE[reason];
+  return { value: null, reason, label, title, note };
 };
 
 const hasOutputUsage = (request) => request.usageKnown !== false
@@ -118,7 +119,7 @@ export const requestSpeedMetrics = (request) => {
       const measured = Number.isFinite(result.value);
       return {
         label, value: measured ? `${formatTpsBadge(result.value)} tok/s` : `—（${result.label}）`,
-        title: result.title, note: measured ? undefined : result.title,
+        title: result.title, note: measured ? undefined : result.note,
         tone: result.reason === 'burst' ? 'tone-amber' : 'tone-slate'
       };
     });
