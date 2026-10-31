@@ -21,8 +21,8 @@ test('速度：首个内容到流完成，推理扣除、正文起算，缺计�
 });
 
 test('速度：窗口、超速、一次性下发、正文憋着、无正文与未知flow边界', () => {
-  assert.equal(streamSpeed(row({ firstContentMs: 2150, firstTextMs: 2150 })).reason, 'window');
-  assert.equal(streamSpeed(row({ outputTokens: 12001 })).reason, 'window');
+  assert.equal(streamSpeed(row({ firstContentMs: 2150, firstTextMs: 2150 })).reason, 'short-window');
+  assert.equal(streamSpeed(row({ outputTokens: 12001 })).reason, 'speed-range');
   assert.equal(streamSpeed(row({ outputTokens: 12000 })).value, 10000);
   assert.equal(streamSpeed(row({ streamFlowMs: 299 })).reason, 'burst');
   assert.equal(streamSpeed(row({ streamFlowMs: 300 })).value, 250);
@@ -144,7 +144,7 @@ test('Claude思考真机数值回归：三段与首事件测速，列表详情�
     assert.deepEqual(streamSpeed(listRow), speed);
     assert.ok(buildLifecycleSegments(listRow).some((s) => s.key === 'think'));
   }
-  assert.match(buildLifecycleSegments(claudeThinkingSamples[1]).find((s) => s.key === 'output').detail, /内容几乎一次性下发（上游憋住后放出）/);
+  assert.match(buildLifecycleSegments(claudeThinkingSamples[1]).find((s) => s.key === 'output').detail, /内容集中到达，可能存在上游或链路缓冲/);
 });
 
 test('Claude思考信号：整项匹配，详情独立信号与零时刻也有效', () => {
@@ -171,7 +171,7 @@ test('Claude思考测速边界：未知用量、无完成、无token、短窗和
     upstreamWriteMs: 0, firstTokenMs: 0, firstContentMs: 50, firstTextMs: null,
     completionMs: 99, duration: 99, streamFlowMs: 1, outputTokens: 10 });
   assert.equal(streamSpeed(short).value, null);
-  assert.equal(streamSpeed(short).reason, 'window');
+  assert.equal(streamSpeed(short).reason, 'short-window');
   assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100 }).value, 100);
   assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100, outputTokens: 1000 }).value, 10000);
   assert.equal(streamSpeed({ ...short, completionMs: 100, duration: 100, outputTokens: 1001 }).value, null);
@@ -187,8 +187,8 @@ test('Claude和Codex流式口径保持不变，旧记录缺少计时不计算流
   const request = row({ requestFamily: 'claude', responseReasoning: 'thinking:present',
     firstContentMs: 500, firstReasoningMs: 500, firstTextMs: 2000, streamFlowMs: 50 });
   assert.equal(streamSpeed(request).value, 150);
-  assert.doesNotMatch(buildLifecycleSegments(request).find((s) => s.key === 'output').detail, /一次性下发/);
-  assert.match(buildLifecycleSegments({ ...request, streamFlowMs: 49 }).find((s) => s.key === 'output').detail, /一次性下发/);
+  assert.doesNotMatch(buildLifecycleSegments(request).find((s) => s.key === 'output').detail, /内容集中到达/);
+  assert.match(buildLifecycleSegments({ ...request, streamFlowMs: 49 }).find((s) => s.key === 'output').detail, /内容集中到达/);
 });
 
 test('生成吞吐：首个事件到完成，包含推理且与严格流式速度独立', () => {
@@ -201,7 +201,7 @@ test('生成吞吐：首个事件到完成，包含推理且与严格流式速�
   assert.equal(generation.label, '生成吞吐');
   assert.equal(generation.value, '69.9 tok/s');
   assert.match(generation.title, /总输出 token ÷ 生成耗时（首个事件到完成）/);
-  assert.equal(stream.value, '—（缺少正文计时）');
+  assert.equal(stream.value, '—（缺少计时）');
   assert.match(stream.title, /未采集到正文增量时间/);
   for (const fields of [{ firstContentMs: null }, { duration: 30000, upstreamWriteMs: 10000, firstTokenMs: 9000 },
     { duration: null, upstreamWriteMs: null, firstTokenMs: null }]) {
@@ -218,23 +218,20 @@ test('生成吞吐：未知、零用量、进行中和非法生成耗时不混�
     assert.equal(generationThroughput(row(fields)).value, null);
   }
   assert.equal(generationThroughput(row({ outputTokens: 0, usageKnown: true })).value, 0);
-  for (const status of ['pending', 'forwarding', 'processing', 'retry', 'suspended']) {
+  for (const status of ['pending', 'forwarding', 'processing', 'retry', 'suspended', 'failed', 'cancelled', 'interrupted', undefined, 'unknown']) {
     assert.equal(generationThroughput(row({ status })).value, null);
     assert.deepEqual(requestSpeedMetrics(row({ status })), []);
     assert.equal(streamSpeed(row({ status })).value, null);
   }
   assert.equal(streamSpeed(row({ outputTokens: Infinity })).value, null);
   assert.equal(requestSpeedMetrics(row({ firstContentMs: null }))[0].value, '150 tok/s');
-  assert.equal(requestSpeedMetrics(row({ firstContentMs: null }))[1].value, '—（缺少流式计时）');
-  assert.deepEqual(requestSpeedMetrics(row({ isStreaming: false })).map((m) => m.label), ['生成吞吐']);
-  assert.deepEqual(requestSpeedMetrics(row({ requestFamily: 'image' })).map((m) => m.label), ['生成吞吐']);
-  assert.equal(requestSpeedMetrics(row({ completionMs: null }))[0].value, '—');
-  assert.equal(requestSpeedMetrics(row({ isStreaming: false, completionMs: 0 }))[0].value, '—');
-  for (const completionMs of [0, 2000]) {
-    const nonStreaming = row({ isStreaming: false, completionMs });
-    assert.equal(generationThroughput(nonStreaming).reason, 'non-streaming');
-    assert.equal(requestSpeedMetrics(nonStreaming)[0].title, '非流式响应没有生成耗时');
-    assert.equal(requestSpeedMetrics(nonStreaming)[0].note, undefined, '非流式不显示「耗时过短」说明');
+  assert.equal(requestSpeedMetrics(row({ firstContentMs: null }))[1].value, '—（缺少计时）');
+  assert.equal(requestSpeedMetrics(row({ completionMs: null }))[0].value, '—（缺少计时）');
+  for (const fields of [{ isStreaming: false }, { isStreaming: undefined }, { requestFamily: 'image' }]) {
+    const request = row(fields);
+    assert.deepEqual(requestSpeedMetrics(request), []);
+    assert.equal(generationThroughput(request).reason, 'not-applicable');
+    assert.equal(streamSpeed(request).reason, 'not-applicable');
   }
 });
 
@@ -250,9 +247,9 @@ test('生成吞吐采样边界：整段缓冲回放、短窗口和异常速度�
       const metric = requestSpeedMetrics(request)[0];
       assert.equal(result.value, expected, `${requestFamily}: ${outputTokens} tok / ${completionMs} ms`);
       if (expected === null) {
-        assert.equal(result.reason, 'window');
-        assert.equal(metric.value, '—');
-        assert.equal(metric.title, '生成耗时过短（上游一次性返回），无法计算');
+        assert.equal(result.reason, completionMs < 100 ? 'short-window' : 'speed-range');
+        assert.equal(metric.value, completionMs < 100 ? '—（时间过短）' : '—（采样异常）');
+        assert.doesNotMatch(metric.title, /上游一次性返回|上游憋住/);
         assert.equal(metric.note, metric.title);
       } else {
         assert.equal(result.reason, '');
@@ -260,6 +257,49 @@ test('生成吞吐采样边界：整段缓冲回放、短窗口和异常速度�
       }
     }
   }
-  assert.equal(generationThroughput(row({ completionMs: null })).reason, 'unknown');
-  assert.equal(generationThroughput(row({ completionMs: 1, usageKnown: false })).reason, 'unknown');
+  assert.equal(generationThroughput(row({ completionMs: null })).reason, 'no-timing');
+  assert.equal(generationThroughput(row({ completionMs: 1, usageKnown: false })).reason, 'no-usage');
+});
+
+test('成功但无法测速：短原因区分缺少用量、缺少计时、集中到达与采样异常', () => {
+  for (const fields of [{ usageKnown: false }, { outputTokens: undefined }, { outputTokens: 0 }]) {
+    const metrics = requestSpeedMetrics(row(fields));
+    assert.deepEqual(metrics.map((metric) => metric.value), ['—（缺少用量）', '—（缺少用量）']);
+  }
+  for (const field of ['upstreamWriteMs', 'firstTokenMs', 'firstContentMs']) {
+    const metrics = requestSpeedMetrics(row({ [field]: null }));
+    assert.equal(metrics[0].value, '150 tok/s', '生成吞吐只依赖独立的生成耗时');
+    assert.equal(metrics[1].value, '—（缺少计时）');
+  }
+  const missingCompletion = requestSpeedMetrics(row({ completionMs: null }));
+  assert.deepEqual(missingCompletion.map((metric) => metric.value), ['—（缺少计时）', '—（缺少计时）']);
+  const burst = requestSpeedMetrics(row({ streamFlowMs: 1 }));
+  assert.equal(burst[0].value, '150 tok/s');
+  assert.equal(burst[1].value, '—（集中下发）');
+  assert.match(burst[1].title, /可能存在上游或链路缓冲/);
+  const held = requestSpeedMetrics(row({ firstContentMs: 300, firstTextMs: 2000, responseReasoning: 'reasoning_tokens:1' }));
+  assert.equal(held[1].value, '—（采样异常）');
+  assert.match(held[1].title, /正文相对推理/);
+});
+
+test('req-e9dcb87c：3ms生成与2ms输出窗口均提示时间过短', () => {
+  const metrics = requestSpeedMetrics(row({ requestFamily: 'claude', duration: 6270,
+    upstreamWriteMs: 1658, firstTokenMs: 4607, completionMs: 3,
+    firstContentMs: 6266, firstTextMs: 6266, streamFlowMs: 1, outputTokens: 317,
+    responseReasoning: 'thinking:absent speed:standard' }));
+  assert.deepEqual(metrics.map((metric) => metric.value), ['—（时间过短）', '—（时间过短）']);
+  assert.equal(metrics[0].note, metrics[1].note);
+  assert.doesNotMatch(metrics[0].note, /上游一次性|集中下发/);
+});
+
+test('已知零输出和推理用量矛盾不能误报为缺少用量', () => {
+  const zero = requestSpeedMetrics(row({ outputTokens: 0, usageKnown: true }));
+  assert.equal(zero[0].value, '0.0 tok/s');
+  assert.equal(zero[1].value, '—（无输出）');
+  const reasoningOnly = requestSpeedMetrics(row({ outputTokens: 100, responseReasoning: 'reasoning_tokens:100' }));
+  assert.equal(reasoningOnly[0].value, '50.0 tok/s');
+  assert.equal(reasoningOnly[1].value, '—（无输出）');
+  const inconsistent = requestSpeedMetrics(row({ outputTokens: 100, responseReasoning: 'reasoning_tokens:101' }));
+  assert.equal(inconsistent[1].value, '—（采样异常）');
+  assert.match(inconsistent[1].title, /用量不一致/);
 });

@@ -43,7 +43,7 @@ test('新数据悬停首项为首字，两个胶囊恢复首响与生成口径',
 
 test('旧数据、图像和非流式悬停提示没有首字，生成吞吐不依赖首字计时', () => {
   for (const [fields, labels] of [[{ firstContentMs: null }, ['总耗时', '生成吞吐', '流式输出速度']],
-    [{ requestFamily: 'image' }, ['总耗时', '生成吞吐']], [{ isStreaming: false }, ['总耗时', '生成吞吐']]]) {
+    [{ requestFamily: 'image' }, ['总耗时']], [{ isStreaming: false }, ['总耗时']]]) {
     const tooltip = items(row(fields));
     assert.deepEqual(tooltip.map((item) => item.label), labels);
   }
@@ -54,15 +54,38 @@ test('Codex缺少正文计时：列表显示生成吞吐和明确缺失原因', 
     firstTokenMs: 2502, completionMs: 5440, firstContentMs: 6504, firstTextMs: null,
     outputTokens: 380, responseReasoning: 'reasoning_tokens:73', streamFlowMs: 1747 }));
   assert.equal(tooltip.find((m) => m.label === '生成吞吐').value, '69.9 tok/s');
-  assert.equal(tooltip.find((m) => m.label === '流式输出速度').value, '—（缺少正文计时）');
+  assert.equal(tooltip.find((m) => m.label === '流式输出速度').value, '—（缺少计时）');
 });
 
 test('短生成窗口在列表悬停层直接提供说明，不传递嵌套title', () => {
-  const metric = items(row({ requestFamily: 'claude', completionMs: 1, outputTokens: 628 }))
-    .find((item) => item.label === '生成吞吐');
-  assert.equal(metric.value, '—');
-  assert.equal(metric.note, '生成耗时过短（上游一次性返回），无法计算');
+  const request = row({ requestFamily: 'claude', completionMs: 1, outputTokens: 628 });
+  const data = timingCellData(request, false, request.firstTokenMs);
+  const metric = data.items.find((item) => item.label === '生成吞吐');
+  assert.equal(metric.value, '—（时间过短）');
+  assert.deepEqual(data.notes, ['输出时间窗口不足 100ms，无法可靠测速。']);
   assert.equal(metric.title, undefined);
+});
+
+test('失败、取消和中断即使用量完整也不展示速度与缺失说明', () => {
+  for (const status of ['failed', 'cancelled', 'interrupted']) {
+    const request = row({ status, outputTokens: 300, usageKnown: true });
+    const data = timingCellData(request, false, request.firstTokenMs);
+    assert.deepEqual(data.items.map((item) => item.label), ['首字', '总耗时']);
+    assert.deepEqual(data.notes, []);
+  }
+});
+
+test('列表底部合并相同原因，独立原因分别保留', () => {
+  for (const fields of [{ usageKnown: false }, { completionMs: null }]) {
+    const request = row({ outputTokens: 300, ...fields });
+    const data = timingCellData(request, false, request.firstTokenMs);
+    assert.equal(data.notes.length, 1);
+    assert.equal(data.items.length, 4, '两个速度指标都保留');
+  }
+  const mixed = row({ outputTokens: 300, completionMs: 3, firstContentMs: null });
+  const data = timingCellData(mixed, false, mixed.firstTokenMs);
+  assert.deepEqual(data.items.slice(1).map((item) => item.value), ['—（时间过短）', '—（缺少计时）']);
+  assert.deepEqual(data.notes, ['输出时间窗口不足 100ms，无法可靠测速。', '缺少完整的流式阶段计时，无法可靠测速。']);
 });
 
 test('缺失首响不影响已知首字，首内容实时事件先到时也能计算', () => {

@@ -106,7 +106,7 @@ test('一次性下发给琥珀标签，不给虚假速度', () => {
   const html = render({ status: 'completed', isStreaming: true, duration: 2200,
     upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
     firstContentMs: 1000, firstTextMs: 1000, streamFlowMs: 1, outputTokens: 300 });
-  assert.match(html, /tone-amber[^>]*title="内容几乎同时到达/);
+  assert.match(html, /tone-amber[^>]*title="内容集中到达/);
   assert.match(html, /流式输出速度 —（集中下发）<\/span>/);
   assert.match(html, /生成吞吐 150 tok\/s/);
   assert.doesNotMatch(html, /速度 250|TPS /);
@@ -119,16 +119,15 @@ test('Codex无正文计时仍显示生成吞吐，缺少生成耗时不回退到
     outputTokens: 380, responseReasoning: 'reasoning_tokens:73' };
   const html = render(request);
   assert.match(html, /生成吞吐 69\.9 tok\/s/);
-  assert.match(html, /流式输出速度 —（缺少正文计时）/);
+  assert.match(html, /流式输出速度 —（缺少计时）/);
   assert.match(html, /title="上游报告了推理 token，但未采集到正文增量时间/);
   assert.doesNotMatch(html, /39\.5 tok\/s|平均吞吐|TPS /);
   const legacy = render({ ...request, firstContentMs: null });
   assert.match(legacy, /生成吞吐 69\.9 tok\/s/);
-  assert.match(legacy, /流式输出速度 —（缺少流式计时）/);
+  assert.match(legacy, /流式输出速度 —（缺少计时）/);
   const regular = render({ ...request, isStreaming: false, completionMs: 0 });
-  assert.match(regular, /生成吞吐 —/);
-  assert.doesNotMatch(regular, /流式输出速度/);
-  assert.match(render({ ...request, completionMs: null }), /生成吞吐 —/);
+  assert.doesNotMatch(regular, /生成吞吐|流式输出速度/);
+  assert.match(render({ ...request, completionMs: null }), /生成吞吐 —（缺少计时）/);
   assert.doesNotMatch(render({ ...request, status: 'processing' }), /生成吞吐|流式输出速度/);
 });
 
@@ -136,8 +135,25 @@ test('生成吞吐拒绝1ms整段返回，在详情标签悬停解释原因', ()
   const html = render({ status: 'completed', requestFamily: 'claude', isStreaming: true,
     duration: 10000, upstreamWriteMs: 1000, firstTokenMs: 8999, completionMs: 1,
     outputTokens: 628, usageKnown: true });
-  assert.match(html, /title="生成耗时过短（上游一次性返回），无法计算">生成吞吐 —/);
+  assert.match(html, /title="输出时间窗口不足 100ms，无法可靠测速。">生成吞吐 —（时间过短）/);
   assert.doesNotMatch(html, /628000|生成吞吐 [\d.]+ tok\/s/);
+});
+
+test('详情仅成功流式请求显示速度，其余状态与非流式保持隐藏', () => {
+  const request = { status: 'completed', requestFamily: 'claude', isStreaming: true,
+    duration: 2200, upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
+    firstContentMs: 1000, firstTextMs: 1000, streamFlowMs: 1500, outputTokens: 300, usageKnown: true };
+  assert.match(render(request), /生成吞吐 150 tok\/s/);
+  assert.match(render(request), /流式输出速度 250 tok\/s/);
+  for (const fields of [
+    ...['pending', 'forwarding', 'processing', 'retry', 'suspended', 'failed', 'cancelled', 'interrupted'].map((status) => ({ status })),
+    { isStreaming: false }, { requestFamily: 'image' }
+  ]) {
+    assert.doesNotMatch(render({ ...request, ...fields }), /生成吞吐|流式输出速度/);
+  }
+  const missing = render({ ...request, usageKnown: false });
+  assert.match(missing, /生成吞吐 —（缺少用量）/);
+  assert.match(missing, /流式输出速度 —（缺少用量）/);
 });
 
 test('复审顶部标签：图像首响用旧口径，无内容完成事件立即显示完整计时', () => {
