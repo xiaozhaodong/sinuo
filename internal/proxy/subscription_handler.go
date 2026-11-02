@@ -67,11 +67,13 @@ type subscriptionPoolServer interface {
 
 // subscriptionRequestInfo 写入 context 的请求元信息，供池适配器与后续追踪读取。
 type subscriptionRequestInfo struct {
-	RequestID   string
-	Route       *subscriptionRoute
-	Mode        string
-	Revision    int64
-	Association subscriptionClientAssociation
+	RequestID     string
+	Route         *subscriptionRoute
+	Mode          string
+	Revision      int64
+	Association   subscriptionClientAssociation
+	activity      *monitor.RequestActivity
+	handshakeDone func()
 }
 
 type subscriptionRequestInfoKey struct{}
@@ -111,6 +113,7 @@ type CodexSubscriptionProxyHandler struct {
 	ws             subscriptionWebSocketServer
 	wsRegistry     *subscriptionWSRegistry
 	activeRequests atomic.Int64
+	activity       *monitor.RequestActivity
 }
 
 // NewCodexSubscriptionProxyHandler 创建处理器；WS 与池分支由 subscription_ws.go / subscription_pool.go 装配。
@@ -134,6 +137,11 @@ func NewCodexSubscriptionProxyHandler(opts SubscriptionProxyHandlerOptions) *Cod
 		monitoring: opts.Monitoring,
 		logger:     logger,
 		snapshot:   snapshot,
+	}
+	if opts.Monitoring != nil {
+		h.activity = opts.Monitoring.GetMetrics().RequestActivity()
+	} else {
+		h.activity = &monitor.RequestActivity{}
 	}
 	h.passthrough = newSubscriptionPassthrough(opts.Proxy, logger, baseURL)
 	h.pool = newSubscriptionPoolAdapter(opts.Proxy, logger)
@@ -218,17 +226,25 @@ func (h *CodexSubscriptionProxyHandler) ServeHTTP(w http.ResponseWriter, r *http
 
 // serveRoute 完成 RequestID 注入、头剥离与分发。
 func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *http.Request, route *subscriptionRoute, snap *SubscriptionProxySnapshot) {
+	lease, accepted := h.activity.TryStart()
+	if !accepted {
+		writeAccountPipelineError(w, http.StatusServiceUnavailable, "codex_subscription_proxy_draining", "proxy is shutting down")
+		return
+	}
+	defer lease.End()
 	start := time.Now()
 	clientIP := subscriptionRemoteIP(r.RemoteAddr)
 	userAgent := truncateSubscriptionText(r.UserAgent(), 50)
 	requestID := h.newRequestID(clientIP, userAgent, r.Method, route.InternalPath)
 
 	info := &subscriptionRequestInfo{
-		RequestID:   requestID,
-		Route:       route,
-		Mode:        snap.Mode,
-		Revision:    snap.Revision,
-		Association: extractSubscriptionClientAssociation(r.Header),
+		RequestID:     requestID,
+		Route:         route,
+		Mode:          snap.Mode,
+		Revision:      snap.Revision,
+		Association:   extractSubscriptionClientAssociation(r.Header),
+		activity:      h.activity,
+		handshakeDone: lease.End,
 	}
 	ctx := context.WithValue(r.Context(), "conn_id", requestID) //nolint:staticcheck // 与旧入口 LoggingMiddleware 使用同一 key
 	ctx = withSubscriptionRequestInfo(ctx, info)

@@ -15,8 +15,9 @@ import (
 
 // message 一条完整的（已解压、已重组）WS 消息。
 type message struct {
-	typ  websocket.MessageType
-	data []byte
+	typ       websocket.MessageType
+	data      []byte
+	forwarded func()
 }
 
 // messageQueue 条数 + 字节数双限、ctx 感知的消息队列。

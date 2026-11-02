@@ -23,13 +23,7 @@ func (a *App) setupAppUpdate(ctx context.Context) {
 	}
 	manager := newAppUpdateManager(a, ctx, a.settingsService.GetBool(ctx, service.CategoryAppUpdate, "auto_check", true))
 	a.appUpdate = manager
-	metrics := a.monitoringMiddleware
-	manager.activeRequests = func() int64 {
-		if metrics == nil {
-			return 0
-		}
-		return int64(metrics.GetMetrics().ActiveConnectionCount())
-	}
+	manager.activeRequests = a.activeRequestCount
 	// 回执不依赖网络，代理或 provider 初始化失败时仍必须处理。
 	manager.consumePendingUpdate()
 	manager.scheduleUpdateCleanup()

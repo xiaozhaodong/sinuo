@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"sinuo/internal/middleware"
 	"sinuo/internal/store"
 )
 
@@ -97,6 +102,214 @@ func TestAppUpdate_WaitForIdleAndCancel(t *testing.T) {
 	}
 	if restarts.Load() != 1 {
 		t.Fatal("请求归零后没有重启")
+	}
+}
+
+func TestAppUpdate_SharedRequestDrain(t *testing.T) {
+	app, manager, _, restarts := readyAppUpdate(t)
+	app.monitoringMiddleware = middleware.NewMonitoringMiddleware(nil)
+	metrics := app.monitoringMiddleware.GetMetrics()
+	activity := metrics.RequestActivity()
+	manager.activeRequests = app.activeRequestCount
+	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	lease, _ := activity.TryStart()
+	result, err := app.RestartToUpdate("")
+	if err != nil || !result.NeedsConfirm || result.ActiveRequests != 1 {
+		t.Fatalf("计数错误: %+v %v", result, err)
+	}
+	probe, accepted := activity.TryStart()
+	if !accepted {
+		t.Fatal("确认前关闭了接收")
+	}
+	probe.End()
+	if _, err := app.RestartToUpdate("wait"); err != nil {
+		t.Fatal(err)
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("等待重启没有阻止新请求")
+	}
+	if err := app.CancelAppUpdateRestart(); err != nil {
+		t.Fatal(err)
+	}
+	probe, accepted = activity.TryStart()
+	if !accepted {
+		t.Fatal("取消等待后没有恢复接收")
+	}
+	probe.End()
+	if _, err := app.RestartToUpdate("wait"); err != nil {
+		t.Fatal(err)
+	}
+	lease.End()
+	waitAppUpdateState(t, manager, func(s AppUpdateStatus) bool { return s.State == "restarting" })
+	deadline := time.Now().Add(time.Second)
+	for restarts.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if restarts.Load() != 1 || metrics.ActiveConnectionCount() != 1 {
+		t.Fatal("空闲 WS 阻止重启或未保留到最终关停")
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("重启前放开了接收")
+	}
+}
+
+func TestAppUpdate_DrainFailuresRestoreAdmission(t *testing.T) {
+	for _, pendingFailure := range []bool{false, true} {
+		t.Run(map[bool]string{false: "restart", true: "pending-write"}[pendingFailure], func(t *testing.T) {
+			app, manager, _, _ := readyAppUpdate(t)
+			app.monitoringMiddleware = middleware.NewMonitoringMiddleware(nil)
+			metrics := app.monitoringMiddleware.GetMetrics()
+			activity := metrics.RequestActivity()
+			manager.activeRequests = app.activeRequestCount
+			app.tray = &appTray{app: app}
+			app.tray.metrics.Store(metrics)
+			lease, _ := activity.TryStart()
+			if pendingFailure {
+				app.settingsStore = appUpdateFailPendingStore{app.settingsStore}
+			} else {
+				manager.restart = func(context.Context) error {
+					if !app.shouldQuit() {
+						t.Error("立即更新再次触发托盘确认")
+					}
+					return errors.New("helper failed")
+				}
+			}
+			if _, err := app.RestartToUpdate("now"); err == nil {
+				t.Fatal("重启失败未暴露")
+			}
+			probe, accepted := activity.TryStart()
+			if !accepted {
+				t.Fatal("失败后没有恢复接收，或托盘留下了排空状态")
+			}
+			probe.End()
+			lease.End()
+		})
+	}
+}
+
+func TestAppUpdate_CancelKeepsTrayDrain(t *testing.T) {
+	app, manager, _, _ := readyAppUpdate(t)
+	app.monitoringMiddleware = middleware.NewMonitoringMiddleware(nil)
+	activity := app.requestActivity()
+	manager.activeRequests = app.activeRequestCount
+	lease, _ := activity.TryStart()
+	activity.BeginDrain(trayDrainOwner)
+	if _, err := app.RestartToUpdate("wait"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.CancelAppUpdateRestart(); err != nil {
+		t.Fatal(err)
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("取消更新等待解除了托盘等待")
+	}
+	lease.End()
+	activity.CancelDrain(trayDrainOwner)
+}
+
+func waitRestartWatchdog(t *testing.T, manager *appUpdateManager) {
+	t.Helper()
+	manager.checkMu.Lock()
+	done := manager.restartWatchdogDone
+	manager.checkMu.Unlock()
+	if done == nil {
+		t.Fatal("未启动重启兜底任务")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("重启兜底任务未完成")
+	}
+}
+
+func TestAppUpdate_RestartWatchdogRecoversOnlyWhileRunning(t *testing.T) {
+	for _, scenario := range []string{"running", "closing", "context-cancelled"} {
+		t.Run(scenario, func(t *testing.T) {
+			app, manager, _, restarts := readyAppUpdate(t)
+			app.monitoringMiddleware = middleware.NewMonitoringMiddleware(nil)
+			activity := app.requestActivity()
+			manager.activeRequests = app.activeRequestCount
+			expired := make(chan time.Time)
+			manager.restartWatchdogAfter = func(timeout time.Duration) <-chan time.Time {
+				if timeout <= 30*time.Second {
+					t.Error("兜底早于 helper 的等待上限")
+				}
+				return expired
+			}
+			var logs bytes.Buffer
+			manager.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			if _, err := app.RestartToUpdate(""); err != nil {
+				t.Fatal(err)
+			}
+			if restarts.Load() != 1 || manager.status().State != "restarting" {
+				t.Fatal("重启没有正常派发")
+			}
+			if _, accepted := activity.TryStart(); accepted {
+				t.Fatal("超时前提前恢复了接收")
+			}
+			switch scenario {
+			case "closing":
+				app.closing.Store(true)
+			case "context-cancelled":
+				manager.cancel()
+			}
+			close(expired)
+			waitRestartWatchdog(t, manager)
+			if scenario == "running" {
+				lease, accepted := activity.TryStart()
+				if !accepted || app.updateRestarting.Load() {
+					t.Fatal("重启超时后未恢复接收或遗留强制退出标志")
+				}
+				lease.End()
+				if state := manager.status(); state.State != "error" || state.ErrorStage != "install" || !strings.Contains(state.Error, "已恢复接收请求") {
+					t.Fatalf("兜底状态=%+v", state)
+				}
+				var record map[string]any
+				if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil || record["level"] != "WARN" || !strings.Contains(fmt.Sprint(record["msg"]), "已恢复接收请求") {
+					t.Fatalf("缺少恢复接收告警: %s err=%v", logs.Bytes(), err)
+				}
+			} else {
+				if _, accepted := activity.TryStart(); accepted {
+					t.Fatal("正常关停期间被恢复接收")
+				}
+				if !app.updateRestarting.Load() || manager.status().State != "restarting" || logs.Len() != 0 {
+					t.Fatal("兜底改变了正常退出状态或产生误告警")
+				}
+			}
+			for key, want := range map[string]string{appUpdatePendingVersionKey: "99.0.0", appUpdatePendingFromKey: Version} {
+				if value, err := manager.readSetting(key); err != nil || value != want {
+					t.Fatalf("兜底改动了更新回执: %s=%q err=%v", key, value, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAppUpdate_RestartWatchdogSkipsShutdownAndStops(t *testing.T) {
+	for _, alreadyClosing := range []bool{true, false} {
+		t.Run(map[bool]string{true: "already-closing", false: "manager-stopped"}[alreadyClosing], func(t *testing.T) {
+			app, manager, _, _ := readyAppUpdate(t)
+			clockCreated := false
+			manager.restartWatchdogAfter = func(time.Duration) <-chan time.Time {
+				clockCreated = true
+				return make(chan time.Time)
+			}
+			if alreadyClosing {
+				restart := manager.restart
+				manager.restart = func(ctx context.Context) error { err := restart(ctx); app.closing.Store(true); return err }
+			}
+			if _, err := app.RestartToUpdate(""); err != nil {
+				t.Fatal(err)
+			}
+			if alreadyClosing {
+				if clockCreated || manager.restartWatchdogDone != nil {
+					t.Fatal("已关停时仍启动了重启兜底")
+				}
+			} else {
+				manager.Stop()
+				waitRestartWatchdog(t, manager)
+			}
+		})
 	}
 }
 

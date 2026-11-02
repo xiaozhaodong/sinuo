@@ -75,6 +75,14 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 // Wrap wraps an HTTP handler with logging
 func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if lm.monitoringMiddleware != nil {
+			lease, accepted := lm.monitoringMiddleware.GetMetrics().RequestActivity().TryStart()
+			if !accepted {
+				http.Error(w, "proxy shutting down", http.StatusServiceUnavailable)
+				return
+			}
+			defer lease.End()
+		}
 		start := time.Now()
 		clientIP := getClientIP(r)
 		userAgent := truncateString(r.UserAgent(), 50)

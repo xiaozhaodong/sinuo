@@ -59,6 +59,8 @@ type subscriptionSubmissionState struct {
 	byResponseID map[string]*subscriptionSubmission
 	recentIDs    map[string]struct{}
 	recentOrder  []string
+	activity     *monitor.RequestActivity
+	inFlight     map[*subscriptionSubmission]*monitor.RequestLease
 }
 
 const subscriptionRecentResponseIDLimit = 256
@@ -67,7 +69,7 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &subscriptionSubmissionState{
+	state := &subscriptionSubmissionState{
 		connectionID: connectionID,
 		sessionID:    clientSessionFromContext(ctx),
 		baseContext:  ctx,
@@ -75,6 +77,10 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 		byResponseID: make(map[string]*subscriptionSubmission),
 		recentIDs:    make(map[string]struct{}),
 	}
+	if info := subscriptionRequestInfoFromContext(ctx); info != nil {
+		state.activity = info.activity
+	}
+	return state
 }
 
 // beginCreate 在隐私扫描前登记提交；generate 缺省为 true。
@@ -109,6 +115,10 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 		PrivacyState:       privacyState,
 		Context:            ctx,
 	}
+	if !s.admitActivityLocked(submission) {
+		s.mu.Unlock()
+		return nil, true
+	}
 	s.pending = append(s.pending, submission)
 	s.active = append(s.active, submission)
 	s.mu.Unlock()
@@ -119,29 +129,30 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	return submission, true
 }
 
-// handleUpstream 关联 response.created 与终态。终态/token 只来自 ParseResponsesEventJSON。
-func (s *subscriptionSubmissionState) handleUpstream(payload []byte) *ParseResult {
+// handleUpstreamForForward 只解析一次上游事件，返回对应消息成功写出后的收尾回调。
+func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (*ParseResult, func(), error) {
 	eventType := responsesEventType(payload)
 	if eventType == "" {
-		return nil
+		return nil, nil, nil
 	}
 	result := ParseResponsesEventJSON(eventType, payload)
 	responseID := responsesEventID(payload)
 
 	if eventType == "response.created" {
-		s.bindCreated(responseID, result)
+		if !s.bindCreated(responseID, result) {
+			return result, nil, errSubscriptionDraining
+		}
 		s.responseProgress(responseID, result, int64(len(payload)))
-		return result
+		return result, nil, nil
 	}
 	s.responseProgress(responseID, result, int64(len(payload)))
 	if result == nil || !result.IsCompleted || !isResponsesTerminalEvent(eventType) {
 		// 中间事件（如 response.in_progress）可能独立回显 reasoning.effort / model，
 		// 按 response ID 合并到已绑定 submission，否则终态只带 usage 时会丢失。
 		s.mergeIntermediateDiagnostics(responseID, result)
-		return result
+		return result, nil, nil
 	}
-	s.finishTerminal(responseID, eventType, result)
-	return result
+	return result, s.finishTerminal(responseID, eventType, result), nil
 }
 
 // mergeIntermediateDiagnostics 把非 created、非终态事件携带的响应模型 / 思考字段合并进对应 submission。
@@ -199,24 +210,24 @@ func (s *subscriptionSubmissionState) responseProgress(responseID string, result
 	}
 }
 
-func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) {
+func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) bool {
 	var submission *subscriptionSubmission
 	var started bool
 	if responseID == "" {
 		s.warn("response_created_without_id")
-		return
+		return true
 	}
 
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	// 判重必须发生在消费 pending 或创建 successor 之前。
 	if _, duplicate := s.recentIDs[responseID]; duplicate {
 		s.mu.Unlock()
 		s.warn("duplicate_response_id")
-		return
+		return true
 	}
 	for len(s.pending) > 0 {
 		candidate := s.pending[0]
@@ -243,6 +254,10 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		if result != nil && result.ModelName != "default" {
 			submission.Model = result.ModelName
 		}
+		if !s.admitActivityLocked(submission) {
+			s.mu.Unlock()
+			return false
+		}
 		s.active = append(s.active, submission)
 		started = true
 	}
@@ -257,9 +272,10 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		}
 		s.observer.SubmissionBound(submission, result)
 	}
+	return true
 }
 
-func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType string, result *ParseResult) {
+func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType string, result *ParseResult) func() {
 	var submission *subscriptionSubmission
 
 	s.mu.Lock()
@@ -268,7 +284,7 @@ func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType strin
 		if submission == nil {
 			s.mu.Unlock()
 			s.warn("terminal_response_id_not_found")
-			return
+			return nil
 		}
 	} else {
 		for _, candidate := range s.active {
@@ -280,13 +296,13 @@ func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType strin
 		if submission == nil {
 			s.mu.Unlock()
 			s.warn("terminal_without_submission")
-			return
+			return nil
 		}
 	}
 	if submission.settled {
 		s.mu.Unlock()
 		s.warn("duplicate_terminal")
-		return
+		return nil
 	}
 	submission.settled = true
 	if submission.ResponseID != "" {
@@ -300,16 +316,17 @@ func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType strin
 		s.observer.SubmissionTerminal(submission, result)
 	}
 	releaseSubscriptionSubmission(submission)
+	return s.activityForwarded(submission)
 }
 
-func (s *subscriptionSubmissionState) reject(submission *subscriptionSubmission, policyErr *privacy.PolicyError) {
+func (s *subscriptionSubmissionState) reject(submission *subscriptionSubmission, policyErr *privacy.PolicyError) func() {
 	if submission == nil {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	if submission.settled {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	submission.settled = true
 	if submission.ResponseID != "" {
@@ -321,10 +338,12 @@ func (s *subscriptionSubmissionState) reject(submission *subscriptionSubmission,
 		s.observer.SubmissionRejected(submission, sanitizeSubscriptionPolicyError(policyErr))
 	}
 	releaseSubscriptionSubmission(submission)
+	return s.activityForwarded(submission)
 }
 
 // close 一次性中断所有未终结提交；重复 close/terminal 不会重复回调。
 func (s *subscriptionSubmissionState) close(reason string) {
+	defer s.releaseActivity()
 	var interrupted []*subscriptionSubmission
 	s.mu.Lock()
 	if s.closed {

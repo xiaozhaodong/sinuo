@@ -81,8 +81,10 @@ func TestTray_RequestEndSettlesEvenWithoutAnimation(t *testing.T) {
 	start := time.Date(2026, 10, 6, 1, 0, 0, 0, time.UTC)
 
 	id := metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	lease, _ := metrics.RequestActivity().TryStart()
 	tc.stepIcon(start)
 	metrics.RecordResponse(id, 200, time.Millisecond, 0, "test")
+	lease.End()
 	ended := start.Add(time.Second)
 	if wait := tc.stepIcon(ended); wait != traySettleDelay {
 		t.Fatalf("请求结束后应等用量落库再补算: wait=%v", wait)
@@ -103,8 +105,10 @@ func TestTray_RequestEndSettlesEvenWithoutAnimation(t *testing.T) {
 
 	settled := ended.Add(traySettleDelay)
 	id = metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	lease, _ = metrics.RequestActivity().TryStart()
 	tc.stepIcon(settled.Add(time.Second))
 	metrics.RecordResponse(id, 200, time.Millisecond, 0, "test")
+	lease.End()
 	if wait := tc.stepIcon(settled.Add(2 * time.Second)); wait != healthRefreshInterval-2*time.Second {
 		t.Fatalf("距上次补算不足 %v 时推迟到满间隔: wait=%v", healthRefreshInterval, wait)
 	}

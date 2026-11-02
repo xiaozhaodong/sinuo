@@ -19,7 +19,8 @@ type TokenUsage struct {
 
 // Metrics contains all monitoring metrics
 type Metrics struct {
-	mu sync.RWMutex
+	mu              sync.RWMutex
+	requestActivity RequestActivity
 
 	// Request metrics
 	TotalRequests      int64

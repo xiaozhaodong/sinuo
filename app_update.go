@@ -77,16 +77,18 @@ type appUpdateManager struct {
 	check  func(context.Context) (*updater.Release, error)
 	notify func(string, string, string)
 	// 操作字段由 checkMu 保护；下载任务不持锁执行外部 I/O。
-	release           *updater.Release
-	baseBlockedReason string
-	download          func(context.Context) error
-	restart           func(context.Context) error
-	activeRequests    func() int64
-	downloadCancel    context.CancelFunc
-	downloadDone      chan struct{}
-	waitCancel        context.CancelFunc
-	waitInterval      time.Duration
-	progressAt        time.Time
+	release              *updater.Release
+	baseBlockedReason    string
+	download             func(context.Context) error
+	restart              func(context.Context) error
+	activeRequests       func() int64
+	downloadCancel       context.CancelFunc
+	downloadDone         chan struct{}
+	waitCancel           context.CancelFunc
+	waitInterval         time.Duration
+	progressAt           time.Time
+	restartWatchdogAfter func(time.Duration) <-chan time.Time
+	restartWatchdogDone  chan struct{}
 }
 
 func newAppUpdateManager(app *App, parent context.Context, autoCheck bool) *appUpdateManager {
@@ -95,15 +97,16 @@ func newAppUpdateManager(app *App, parent context.Context, autoCheck bool) *appU
 	}
 	ctx, cancel := context.WithCancel(parent)
 	manager := &appUpdateManager{
-		app:               app,
-		rootCtx:           ctx,
-		cancel:            cancel,
-		state:             defaultAppUpdateStatus(autoCheck),
-		firstDelay:        appUpdateCheckDelay,
-		interval:          appUpdateCheckInterval,
-		logger:            slog.Default(),
-		waitInterval:      time.Second,
-		baseBlockedReason: appUpdateInstallBlockedReason(runtimeAppUpdateEnvironment()),
+		app:                  app,
+		rootCtx:              ctx,
+		cancel:               cancel,
+		state:                defaultAppUpdateStatus(autoCheck),
+		firstDelay:           appUpdateCheckDelay,
+		interval:             appUpdateCheckInterval,
+		logger:               slog.Default(),
+		waitInterval:         time.Second,
+		restartWatchdogAfter: time.After,
+		baseBlockedReason:    appUpdateInstallBlockedReason(runtimeAppUpdateEnvironment()),
 	}
 	if app != nil {
 		manager.notify = app.emitNotification
@@ -193,10 +196,17 @@ func (m *appUpdateManager) Stop() {
 	if m.waitCancel != nil {
 		m.waitCancel()
 	}
+	if m.app != nil && !m.app.closing.Load() && !m.app.updateRestarting.Load() {
+		m.app.setRequestDrain(updateDrainOwner, false)
+	}
 	downloadDone := m.downloadDone
+	restartWatchdogDone := m.restartWatchdogDone
 	m.checkMu.Unlock()
 	if downloadDone != nil {
 		<-downloadDone
+	}
+	if restartWatchdogDone != nil {
+		<-restartWatchdogDone
 	}
 }
 

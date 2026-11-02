@@ -55,16 +55,15 @@ func shouldLeaveTrayFullscreen(goos string, fullscreen bool) bool {
 
 // shouldQuit 不在原生退出回调中等待对话框，防止阻塞主线程。
 func (a *App) shouldQuit() bool {
+	// 更新入口已完成同一套排空/立即重启决策，不再创建第二个托盘排空来源。
+	if a.updateRestarting.Load() {
+		return true
+	}
 	if a.tray == nil {
 		return true
 	}
 	t := a.tray
-	active, powerOff := t.activeCount(), traySystemEnding()
-	if t.autoQuit.Swap(false) && !powerOff && t.quit.WaitingWithoutPrompt() {
-		// “等完成后退出”的内部重试不能再次弹确认；请求归零才放行。
-		return active == 0
-	}
-	allow, prompt := t.quit.Request(active, powerOff)
+	allow, prompt, active := t.requestQuit(traySystemEnding())
 	if prompt {
 		go t.confirmQuit(active)
 	}
@@ -77,7 +76,7 @@ func (t *appTray) confirmQuit(active int) {
 	dialog.SetMessage(fmt.Sprintf("仍有 %d 个请求进行中，请选择退出方式。", active))
 	choose := func(choice tray.QuitChoice) func() {
 		return func() {
-			quit := t.quit.Choose(choice, t.activeCount())
+			quit := t.chooseQuit(choice)
 			t.signal(t.immediate)
 			if quit {
 				if choice == tray.QuitWait {

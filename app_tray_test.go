@@ -141,12 +141,112 @@ func TestTray_AutomaticQuitRechecksNewRequest(t *testing.T) {
 	a.tray.quit.Choose(tray.QuitWait, 1)
 	a.tray.autoQuit.Store(true)
 	id := m.RecordRequest("test", "", "", "POST", "/v1/responses")
+	lease, _ := m.RequestActivity().TryStart()
 	if a.shouldQuit() {
 		t.Fatal("归零通知后新请求到达，应继续等待")
 	}
 	m.RecordResponse(id, 200, time.Millisecond, 0, "test")
+	lease.End()
 	if !a.shouldQuit() {
 		t.Fatal("请求结束后应允许退出")
+	}
+}
+
+func TestTray_QuitCountsBusinessRequestsAndResumesAdmission(t *testing.T) {
+	metrics := monitor.NewMetrics()
+	activity := metrics.RequestActivity()
+	// 保留两条空闲 WS，只影响连接统计。
+	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	instance := &appTray{app: NewApp()}
+	instance.metrics.Store(metrics)
+	lease, _ := activity.TryStart()
+	allow, prompt, count := instance.requestQuit(false)
+	if allow || !prompt || count != 1 {
+		t.Fatalf("退出提示未按业务请求计数: %v %v %d", allow, prompt, count)
+	}
+	probe, accepted := activity.TryStart()
+	if !accepted {
+		t.Fatal("仅弹框就停止接收了请求")
+	}
+	probe.End()
+	if instance.chooseQuit(tray.QuitWait) {
+		t.Fatal("在途请求未结束就退出")
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("等待退出时仍受理新请求")
+	}
+	instance.chooseQuit(tray.QuitCancel)
+	probe, accepted = activity.TryStart()
+	if !accepted {
+		t.Fatal("取消后没有恢复接收")
+	}
+	probe.End()
+	if instance.chooseQuit(tray.QuitWait) {
+		t.Fatal("重新等待提前退出")
+	}
+	lease.End()
+	instance.autoQuit.Store(true)
+	allow, prompt, count = instance.requestQuit(false)
+	if !allow || prompt || count != 0 || metrics.ActiveConnectionCount() != 2 {
+		t.Fatal("空闲 WS 阻挡了排空后的自动退出")
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("最终退出前重新放开了接收")
+	}
+}
+
+func TestTray_IdleWebSocketsAllowImmediateQuit(t *testing.T) {
+	metrics := monitor.NewMetrics()
+	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	instance := &appTray{app: NewApp()}
+	instance.metrics.Store(metrics)
+	allow, prompt, active := instance.requestQuit(false)
+	if !allow || prompt || active != 0 {
+		t.Fatal("空闲 WS 导致退出确认")
+	}
+	if _, accepted := metrics.RequestActivity().TryStart(); accepted {
+		t.Fatal("直接退出没有原子关闭接收")
+	}
+}
+
+func TestTray_QuitWaitRechecksAfterLastNotificationConsumed(t *testing.T) {
+	metrics := monitor.NewMetrics()
+	activity := metrics.RequestActivity()
+	changes, unsubscribe := activity.Subscribe()
+	defer unsubscribe()
+	<-changes
+	lease, _ := activity.TryStart()
+	defer lease.End()
+	<-changes
+	app := NewApp()
+	instance := &appTray{app: app}
+	app.tray = instance
+	instance.metrics.Store(metrics)
+	if allow, prompt, _ := instance.requestQuit(false); allow || !prompt {
+		t.Fatal("测试未进入退出确认阶段")
+	}
+	// 固定在 BeginDrain 已采样、Choose 尚未执行的边界。
+	active := activity.BeginDrain(trayDrainOwner)
+	if active != 1 {
+		t.Fatal("未取得请求结束前的快照")
+	}
+	lease.End()
+	<-changes
+	instance.handleActiveConnectionChange()
+	if instance.quit.Waiting() || activity.Count() != 0 {
+		t.Fatal("最后一次通知没有在选择前被消费")
+	}
+	if !instance.finishQuitChoice(tray.QuitWait, active) {
+		t.Fatal("最后通知先到后停在 waiting + count 0，接收门无法通过退出释放")
+	}
+	// 与确认框回调一致：进入自动退出后必须获准，不再等待下一次通知。
+	instance.autoQuit.Store(true)
+	if !app.shouldQuit() {
+		t.Fatal("补检后仍未获准退出")
+	}
+	if _, accepted := activity.TryStart(); accepted {
+		t.Fatal("最终退出前提前恢复了接收")
 	}
 }
 
@@ -188,6 +288,8 @@ func TestTray_RebuildTriggersExcludeStatusAndRequestChanges(t *testing.T) {
 func TestTray_RequestChangesRefreshOnlyDuringQuitWait(t *testing.T) {
 	metrics := monitor.NewMetrics()
 	connID := metrics.RecordRequest("test", "", "", "POST", "/v1/responses")
+	lease, _ := metrics.RequestActivity().TryStart()
+	defer lease.End()
 	a := NewApp()
 	trayInstance := &appTray{app: a, refresh: make(chan struct{}, 1)}
 	trayInstance.metrics.Store(metrics)
@@ -232,6 +334,7 @@ func TestTray_IconAnimatesDuringRequestsAndRefreshesHealthAfter(t *testing.T) {
 	start := time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC)
 
 	connID := metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	lease, _ := metrics.RequestActivity().TryStart()
 	if wait := tc.stepIcon(start); wait != tray.StartDelay || len(setter.frames) != 1 {
 		t.Fatalf("请求刚开始应保持静态并等待起播: wait=%v frames=%d", wait, len(setter.frames))
 	}
@@ -249,6 +352,7 @@ func TestTray_IconAnimatesDuringRequestsAndRefreshesHealthAfter(t *testing.T) {
 	}
 
 	metrics.RecordResponse(connID, 200, time.Millisecond, 0, "test")
+	lease.End()
 	now := start.Add(tray.StartDelay)
 	for i := 0; i < 100; i++ {
 		now = now.Add(tray.FrameInterval)

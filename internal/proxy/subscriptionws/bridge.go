@@ -43,6 +43,9 @@ const (
 type InterceptResult struct {
 	Forward []byte
 	Reply   []byte
+	// 回调只在对应完整消息成功写出后执行，不把读取或入队视为转发完成。
+	Forwarded      func()
+	ReplyForwarded func()
 }
 
 // MessageInterceptor 在消息进入转发队列前逐条处理。
@@ -284,6 +287,7 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 			stop("read", err)
 			break
 		}
+		var forwarded func()
 		if opts.Interceptor != nil {
 			intercepted, interceptErr := opts.Interceptor.Intercept(laneCtx, direction, payload)
 			err = interceptErr
@@ -292,17 +296,18 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 				break
 			}
 			if intercepted.Reply != nil {
-				if err := reverseQueue.push(laneCtx, message{typ: websocket.MessageText, data: intercepted.Reply}); err != nil {
+				if err := reverseQueue.push(laneCtx, message{typ: websocket.MessageText, data: intercepted.Reply, forwarded: intercepted.ReplyForwarded}); err != nil {
 					stop("reply_enqueue", err)
 					break
 				}
 			}
 			payload = intercepted.Forward
+			forwarded = intercepted.Forwarded
 			if payload == nil {
 				continue
 			}
 		}
-		if err := queue.push(laneCtx, message{typ: typ, data: payload}); err != nil {
+		if err := queue.push(laneCtx, message{typ: typ, data: payload, forwarded: forwarded}); err != nil {
 			stop("enqueue", err)
 			break
 		}
@@ -376,6 +381,9 @@ func writeLane(ctx context.Context, onWriteError func(), queue *messageQueue, ds
 		}
 		result.messages++
 		result.bytes += int64(len(msg.data))
+		if msg.forwarded != nil {
+			msg.forwarded()
+		}
 		if observer, ok := opts.Interceptor.(MessageForwardObserver); ok {
 			observer.Forwarded(direction, int64(len(msg.data)), time.Now())
 		}

@@ -330,12 +330,19 @@ func (a *App) attachTrayMetrics(metrics *monitor.Metrics) {
 	t := a.tray
 	t.metrics.Store(metrics)
 	changes, cancel := metrics.SubscribeActiveConnections()
+	requests, cancelRequests := metrics.RequestActivity().Subscribe()
 	go func() {
 		defer cancel()
+		defer cancelRequests()
 		for {
 			select {
 			case <-t.done:
 				return
+			case _, ok := <-requests:
+				if !ok || t.metrics.Load() != metrics {
+					return
+				}
+				t.handleActiveConnectionChange()
 			case _, ok := <-changes:
 				if !ok || t.metrics.Load() != metrics {
 					return
@@ -360,7 +367,7 @@ func (t *appTray) handleActiveConnectionChange() {
 
 func (t *appTray) activeCount() int {
 	if metrics := t.metrics.Load(); metrics != nil {
-		return metrics.ActiveConnectionCount()
+		return metrics.RequestActivity().Count()
 	}
 	return 0
 }

@@ -125,6 +125,10 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 		observer = newSubscriptionTrackingObserver(p.passthrough.proxy.usageTracker, p.passthrough.proxy.eventBus)
 	}
 	submissions := newSubscriptionSubmissionState(r.Context(), requestID, observer)
+	if info := subscriptionRequestInfoFromContext(r.Context()); info != nil && info.handshakeDone != nil {
+		// 已升级的连接可长期空闲；后续按每条逻辑提交持有业务请求。
+		info.handshakeDone()
+	}
 	options.Interceptor = &subscriptionWSInterceptor{
 		filter:      p.passthrough.privacyFilter(),
 		logger:      p.logger,
@@ -299,7 +303,8 @@ type subscriptionWSInterceptor struct {
 func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction subscriptionws.Direction, payload []byte) (subscriptionws.InterceptResult, error) {
 	if direction == subscriptionws.DirectionUpstreamToDownstream {
 		if i.submissions != nil {
-			i.submissions.handleUpstream(payload)
+			_, forwarded, err := i.submissions.handleUpstreamForForward(payload)
+			return subscriptionws.InterceptResult{Forward: payload, Forwarded: forwarded}, err
 		}
 		return subscriptionws.InterceptResult{Forward: payload}, nil
 	}
@@ -311,6 +316,12 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	}
 
 	submission, isCreate := i.submissions.beginCreate(payload)
+	if isCreate && submission == nil {
+		create, _ := parseSubscriptionCreate(payload) // isCreate 已确认正文是合法 create。
+		i.warn("codex_subscription_proxy_draining", create.StreamID)
+		return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusServiceUnavailable,
+			"codex_subscription_proxy_draining", "proxy is shutting down", create.StreamID)}, nil
+	}
 	requestID := monitor.NewConnectionID()
 	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
 	requestContext := ctx
@@ -341,13 +352,14 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 		policyErr = &privacy.PolicyError{StatusCode: http.StatusUnprocessableEntity, Code: privacy.CodeScanFailed, Message: "privacy scan failed"}
 	}
 	policyErr = sanitizeSubscriptionPolicyError(policyErr)
+	var replyForwarded func()
 	if isCreate && submission != nil {
-		i.submissions.reject(submission, policyErr)
+		replyForwarded = i.submissions.reject(submission, policyErr)
 	} else {
 		i.submissions.warn("non_create_privacy_rejected")
 	}
 	i.warn(policyErr.Code)
-	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message)}, nil
+	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message), ReplyForwarded: replyForwarded}, nil
 }
 
 func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction, size int64, at time.Time) {
@@ -371,7 +383,7 @@ func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction
 	}
 }
 
-func (i *subscriptionWSInterceptor) warn(code string) {
+func (i *subscriptionWSInterceptor) warn(code string, streamIDs ...string) {
 	if i == nil || i.logger == nil {
 		return
 	}
@@ -379,29 +391,43 @@ func (i *subscriptionWSInterceptor) warn(code string) {
 	if i.submissions != nil {
 		connectionID = i.submissions.connectionID
 	}
-	i.logger.Warn("⚠️ [Codex 订阅代理] WS 提交被本地拒绝", "conn_id", connectionID, "code", code)
+	attributes := []any{"conn_id", connectionID, "code", code}
+	if len(streamIDs) != 0 {
+		attributes = append(attributes, "stream_id", streamIDs[0])
+	}
+	i.logger.Warn("⚠️ [Codex 订阅代理] WS 提交被本地拒绝", attributes...)
 }
 
-func subscriptionWSErrorReply(status int, code, message string) []byte {
-	if status < 400 || status > 499 {
+func subscriptionWSErrorReply(status int, code, message string, streamIDs ...string) []byte {
+	if status < 400 || status > 599 {
 		status = http.StatusUnprocessableEntity
 	}
+	streamID := ""
+	if len(streamIDs) != 0 {
+		streamID = streamIDs[0]
+	}
+	errorType := "invalid_request_error"
+	if status >= 500 {
+		errorType = "server_error"
+	}
 	payload, _ := json.Marshal(struct {
-		Type   string `json:"type"`
-		Status int    `json:"status"`
-		Error  struct {
+		Type     string `json:"type"`
+		Status   int    `json:"status"`
+		StreamID string `json:"stream_id,omitempty"`
+		Error    struct {
 			Type    string `json:"type"`
 			Code    string `json:"code,omitempty"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}{
-		Type:   "error",
-		Status: status,
+		Type:     "error",
+		Status:   status,
+		StreamID: streamID,
 		Error: struct {
 			Type    string `json:"type"`
 			Code    string `json:"code,omitempty"`
 			Message string `json:"message"`
-		}{Type: "invalid_request_error", Code: code, Message: message},
+		}{Type: errorType, Code: code, Message: message},
 	})
 	return payload
 }

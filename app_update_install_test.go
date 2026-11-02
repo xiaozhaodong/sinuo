@@ -83,8 +83,8 @@ func TestAppUpdate_DownloadGuardCancelAndProgress(t *testing.T) {
 	m.check = func(ctx context.Context) (*updater.Release, error) { checks.Add(1); return check(ctx) }
 	entered := make(chan struct{})
 	m.download = func(ctx context.Context) error {
-		close(entered)
 		m.downloadProgress(10, 100)
+		close(entered)
 		for i := 0; i < 20; i++ {
 			m.downloadProgress(int64(i+20), 100)
 		}

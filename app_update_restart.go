@@ -12,6 +12,8 @@ import (
 const (
 	appUpdatePendingVersionKey = "pending_version"
 	appUpdatePendingFromKey    = "pending_from"
+	// helper 等父进程 30 秒；兜底略晚于其退出时限，避免恢复接收时仍可能开始替换。
+	appUpdateRestartWatchdogTimeout = 35 * time.Second
 )
 
 // RestartToUpdateResult 在有活跃请求时把决定交还给用户。
@@ -49,9 +51,11 @@ func (m *appUpdateManager) restartToUpdate(mode string) (RestartToUpdateResult, 
 		m.checkMu.Unlock()
 		return RestartToUpdateResult{}, errors.New("没有已就绪的更新")
 	}
+	m.app.setRequestDrain(updateDrainOwner, true)
 	active := m.requestCount()
 	result := RestartToUpdateResult{ActiveRequests: active}
 	if mode == "" && active > 0 {
+		m.app.setRequestDrain(updateDrainOwner, false)
 		result.NeedsConfirm = true
 		m.checkMu.Unlock()
 		return result, nil
@@ -98,6 +102,7 @@ func (m *appUpdateManager) waitForIdle(ctx context.Context) {
 func (m *appUpdateManager) beginRestartLocked() error {
 	version := m.status().ReadyVersion
 	if err := m.writePending(version, Version); err != nil {
+		m.app.setRequestDrain(updateDrainOwner, false)
 		if m.waitCancel != nil {
 			m.waitCancel()
 			m.waitCancel = nil
@@ -117,11 +122,17 @@ func (m *appUpdateManager) beginRestartLocked() error {
 	m.checkMu.Unlock()
 	err := m.restart(m.rootCtx)
 	if err == nil {
+		m.checkMu.Lock()
+		if m.rootCtx.Err() == nil && !m.app.closing.Load() {
+			m.startRestartWatchdogLocked()
+		}
+		m.checkMu.Unlock()
 		return nil
 	}
 	m.checkMu.Lock()
 	defer m.checkMu.Unlock()
 	m.app.updateRestarting.Store(false)
+	m.app.setRequestDrain(updateDrainOwner, false)
 	if m.rootCtx.Err() == nil {
 		if clearErr := m.writePending("", ""); clearErr != nil {
 			err = errors.Join(err, clearErr)
@@ -132,6 +143,35 @@ func (m *appUpdateManager) beginRestartLocked() error {
 		s.State, s.ErrorStage, s.Error = "error", "install", "重启更新失败，请重新下载后重试或前往下载"
 	})
 	return errors.New("重启更新失败，App 将继续运行")
+}
+
+// startRestartWatchdogLocked 只覆盖已派发 Quit 但未开始关停的情况；更新回执保持原样。
+// 调用方持有 checkMu，Stop 会取消并等待该任务，避免管理器关闭后仍更新状态。
+func (m *appUpdateManager) startRestartWatchdogLocked() {
+	done := make(chan struct{})
+	m.restartWatchdogDone = done
+	expired := m.restartWatchdogAfter(appUpdateRestartWatchdogTimeout)
+	go func() {
+		defer close(done)
+		select {
+		case <-m.rootCtx.Done():
+			return
+		case <-expired:
+		}
+		m.checkMu.Lock()
+		defer m.checkMu.Unlock()
+		if m.rootCtx.Err() != nil || m.app.closing.Load() ||
+			!m.app.updateRestarting.Load() || m.status().State != "restarting" {
+			return
+		}
+		m.app.updateRestarting.Store(false)
+		m.app.setRequestDrain(updateDrainOwner, false)
+		m.logger.Warn("更新重启已请求但应用仍在运行，已恢复接收请求", "timeout", appUpdateRestartWatchdogTimeout)
+		m.update(func(s *AppUpdateStatus) {
+			s.State, s.ActiveRequests, s.ErrorStage = "error", m.requestCount(), "install"
+			s.Error = "重启未完成，已恢复接收请求，请重试更新或手动退出"
+		})
+	}()
 }
 
 // CancelAppUpdateRestart 取消等待，已经开始的重启不能取消。
@@ -147,6 +187,7 @@ func (a *App) CancelAppUpdateRestart() error {
 	}
 	m.waitCancel()
 	m.waitCancel = nil
+	m.app.setRequestDrain(updateDrainOwner, false)
 	m.update(func(s *AppUpdateStatus) { s.State, s.ActiveRequests = "ready", 0 })
 	return nil
 }
