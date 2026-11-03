@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 
 import { buildCustomRangePatch, buildQueryParamsFromFilters, formatFilterDateTimeInput } from './filterTime.js';
 
+test('明确无ID查询不等价于没有会话条件', () => {
+  assert.deepEqual(buildQueryParamsFromFilters({ sessionMissing: true, sessionId: '' }), { session_missing: true });
+  assert.deepEqual(buildQueryParamsFromFilters({ sessionMissing: false, sessionId: '' }), {});
+});
+
 test('会话条件下传完整 ID，空会话不收窄查询', () => {
   assert.deepEqual(buildQueryParamsFromFilters({ sessionId: 'session-12345678', model: 'gpt-test' }), {
     session_id: 'session-12345678', model: 'gpt-test'

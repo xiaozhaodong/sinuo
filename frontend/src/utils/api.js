@@ -321,6 +321,16 @@ export const fetchModelUsageStats = async (params = {}) => {
   throw new Error('当前运行环境暂不支持模型调用统计');
 };
 
+export const fetchRequestSessions = async (params = {}) => {
+  if (!isWailsEnvironment()) throw new Error('按会话查询仅支持桌面端');
+  return WailsApi.getRequestSessions(params);
+};
+
+export const fetchRequestSessionTrend = async (params, selectedID = '', page = 0) => {
+  if (!isWailsEnvironment()) throw new Error('按会话查询仅支持桌面端');
+  return WailsApi.getRequestSessionTrend(params, selectedID, page);
+};
+
 export const fetchRequests = async (params = {}) => {
   const queryInput = {
     ...params,

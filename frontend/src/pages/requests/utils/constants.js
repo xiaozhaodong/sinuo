@@ -51,6 +51,7 @@ export const SOURCE_VIEW_OPTIONS = [
 
 // 默认筛选器状态（v4.0: 移除group筛选）
 export const DEFAULT_FILTERS = {
+  sessionMissing: false,
   sessionId: '',
   status: 'all',
   model: '',

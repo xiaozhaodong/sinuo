@@ -542,6 +542,26 @@ export function GetRequestLifecycleDetail(requestID) {
 }
 
 /**
+ * GetRequestSessionTrend 获取有界走势，selectedID 为空时默认选中全范围最大输入突增。
+ * @param {$models.RequestQueryParams} params
+ * @param {string} selectedID
+ * @param {number} page
+ * @returns {$CancellablePromise<$models.RequestSessionTrend>}
+ */
+export function GetRequestSessionTrend(params, selectedID, page) {
+    return $Call.ByID(3530341371, params, selectedID, page);
+}
+
+/**
+ * GetRequestSessions 获取完整筛选集的会话排行（仅桌面端）。
+ * @param {$models.RequestSessionQueryParams} params
+ * @returns {$CancellablePromise<$models.RequestSessionResult>}
+ */
+export function GetRequestSessions(params) {
+    return $Call.ByID(2851181693, params);
+}
+
+/**
  * GetRequestTrendChart 保留旧 Wails 接口的进程内累计采样行为。
  * Deprecated: 概览请使用 GetRequestTrendData 查询真实历史分桶。
  * @param {number} minutes

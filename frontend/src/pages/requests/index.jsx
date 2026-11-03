@@ -72,6 +72,10 @@ import { prefersReducedMotion } from '@utils/motion.js';
 import { resolveErrorMessage } from '@utils/errors.js';
 import { codexBindingDisplayName, isCodexSearchBinding } from '../codex/routing/codexRoutingView.js';
 import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
+import useRequestSessions from './hooks/useRequestSessions.js';
+import SessionTable from './components/SessionTable.jsx';
+import SessionDetailPane from './components/SessionDetailPane.jsx';
+import { formatSessionCost } from './utils/sessionUsage.js';
 
 // 每页条数与筛选条显隐记在本机
 const PAGE_SIZE_STORAGE_KEY = 'requests.pageSize';
@@ -123,6 +127,9 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   const loadRequestIdRef = useRef(0);
   const loadDataIdRef = useRef(0);
   const hasLoadedOnceRef = useRef(false);
+  const auxiliaryLoadIdRef = useRef(0);
+  const catalogLoadIdRef = useRef(0);
+  const initialAuxiliaryLoadRef = useRef(null);
   // 上一批的 requestId 集合，用于 diff 出「哪些行是新到达的、各自排第几」。
   // 只在 refreshRequestData 这个 callback 里读写，不碰 render 期。
   const prevRequestIdsRef = useRef(null);
@@ -167,7 +174,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   const columnMenuItems = buildColumnMenuItems(columnConfigs, visibleColumns, toggleColumn, resetColumns);
 
   // 时间范围 Hook
-  const { activeRange, selectRange, markCustomRange } = useTimeRange((timeRange) => {
+  const { activeRange, selectRange, markCustomRange, restoreRange } = useTimeRange((timeRange) => {
     const nextState = buildTimeRangeSelectionState(filters, timeRange);
     updateFilters(nextState.filters);
     setAppliedQueryParams(nextState.appliedQueryParams);
@@ -228,8 +235,15 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // ==================== 数据加载 ====================
 
+  const sessions = useRequestSessions({ filters, query: appliedQueryParams, pageSize: pagination.pageSize,
+    activeRange, restoreTimeRange: restoreRange,
+    updateFilters, setQuery: setAppliedQueryParams, setPagination, setRequests, setSelection,
+    showDetail: detailPane.show, showNotice });
+  const { mode: viewMode, refresh: refreshSessions } = sessions;
+
   // live=true 表示本次刷新由 request:update 事件触发，此时新增的行才播入场动画。
   const refreshRequestData = useCallback(async ({ live = false } = {}) => {
+    if (viewMode === 'sessions') return refreshSessions();
     const requestId = ++loadRequestIdRef.current;
     const requestsQueryParams = {
       ...appliedQueryParams,
@@ -275,91 +289,101 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     setRequests(prev => mergeRequestRows(prev, carryLiveTiming(prev, timedRequests)));
     setPagination(prev => ({
       ...prev,
+      page: requestsData.page,
       total: requestsData.total,
       totalPages: requestsData.totalPages
     }));
     setStats(statsData?.data || statsData);
-  }, [appliedQueryParams, pagination.page, pagination.pageSize]);
+  }, [appliedQueryParams, pagination.page, pagination.pageSize, viewMode, refreshSessions]);
 
-  const loadData = useCallback(async (silent = false) => {
+  // 账号、模型和路由仅在初次进入、手动刷新或相关操作后加载。
+  // 它们独立提交，视图切换不会使正在加载的辅助数据失效。
+  const loadAuxiliaryData = useCallback(async () => {
+    const loadId = ++auxiliaryLoadIdRef.current;
+    const [modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, codexModelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
+      fetchModels(),
+      fetchEndpoints(),
+      fetchClaudeRoutingState().catch((err) => {
+        console.error('❌ 加载 Claude 路由状态失败:', err);
+        return { mode: 'auto', endpointName: '', fallbackEnabled: true };
+      }),
+      fetchModelRoutingSettings().catch((err) => {
+        console.error('❌ 加载模型路由状态失败:', err);
+        return { claude_enabled: false };
+      }),
+      fetchModelRouteBindings().catch((err) => {
+        console.error('❌ 加载模型路由映射失败:', err);
+        return [];
+      }),
+      fetchCodexModelRouteBindings().catch((err) => {
+        console.error('❌ 加载 Codex 模型路由绑定失败:', err);
+        return [];
+      }),
+      fetchUpstreamAccounts().catch((err) => {
+        console.error('❌ 加载账号池账号失败:', err);
+        showNotice('error', err?.message || '加载账号池账号失败，账号切换器暂不可用');
+        return [];
+      }),
+      fetchLatestAccountScheduleSnapshot().catch((err) => {
+        console.error('❌ 加载最近一次账号调度结果失败:', err);
+        return {
+          unsupported: true,
+          hasSnapshot: false,
+          has_snapshot: false,
+          candidates: []
+        };
+      })
+    ]);
+    if (auxiliaryLoadIdRef.current !== loadId) return;
+    setModels(Array.isArray(modelsData) ? modelsData : []);
+
+    const endpointsList = endpointsData.endpoints || endpointsData || [];
+    setEndpoints(Array.isArray(endpointsList) ? endpointsList : []);
+
+    setClaudeRoutingState(routeStateData && typeof routeStateData === 'object'
+      ? routeStateData
+      : { mode: 'auto', endpointName: '', fallbackEnabled: true });
+    setModelRoutingSettings(modelRoutingData && typeof modelRoutingData === 'object' ? modelRoutingData : { claude_enabled: false });
+    setModelRouteBindings(Array.isArray(modelBindingsData) ? modelBindingsData : []);
+    setCodexModelRouteBindings(Array.isArray(codexModelBindingsData) ? codexModelBindingsData : []);
+
+    setAccounts(Array.isArray(accountsData) ? accountsData : []);
+    setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
+      ? latestSnapshotData
+      : { hasSnapshot: false, has_snapshot: false, candidates: [] });
+  }, [showNotice]);
+
+  // 上游候选依赖筛选范围；翻页、排序和切换视图不改变范围。
+  const loadUpstreamCatalog = useCallback(async () => {
+    const loadId = ++catalogLoadIdRef.current;
+    const catalog = await fetchRequestUpstreamOptions(appliedQueryParams).catch((err) => {
+      console.error('❌ 加载上游筛选候选失败:', err);
+      return null;
+    });
+    if (catalogLoadIdRef.current === loadId) {
+      setUpstreamCatalog(Array.isArray(catalog) ? catalog : null);
+    }
+  }, [appliedQueryParams]);
+
+  const loadData = useCallback(async (silent = false, includeAuxiliary = true) => {
     const loadId = ++loadDataIdRef.current;
     const isFirstLoad = !hasLoadedOnceRef.current;
     try {
-      // 只有首次加载才把整表换成骨架；后续刷新走顶部进度条，表格保持在位。
-      if (isFirstLoad) {
-        setLoading(true);
-      } else if (!silent) {
-        setRefreshing(true);
-      }
+      if (isFirstLoad) setLoading(true);
+      else if (!silent) setRefreshing(true);
       setError(null);
 
-      // 请求明细与统计单独封装，实时事件只刷新这两组动态数据。
-      const [, upstreamCatalogData, modelsData, endpointsData, routeStateData, modelRoutingData, modelBindingsData, codexModelBindingsData, accountsData, latestSnapshotData] = await Promise.all([
+      // 初始加载共享同一份辅助请求；之后只等待当前视图的数据。
+      if (isFirstLoad && !initialAuxiliaryLoadRef.current) {
+        initialAuxiliaryLoadRef.current = loadAuxiliaryData();
+      }
+      await Promise.all([
         refreshRequestData(),
-        fetchRequestUpstreamOptions(appliedQueryParams).catch((err) => {
-          console.error('❌ 加载上游筛选候选失败:', err);
-          return null;
-        }),
-        fetchModels(),
-        fetchEndpoints(),
-        fetchClaudeRoutingState().catch((err) => {
-          console.error('❌ 加载 Claude 路由状态失败:', err);
-          return { mode: 'auto', endpointName: '', fallbackEnabled: true };
-        }),
-        fetchModelRoutingSettings().catch((err) => {
-          console.error('❌ 加载模型路由状态失败:', err);
-          return { claude_enabled: false };
-        }),
-        fetchModelRouteBindings().catch((err) => {
-          console.error('❌ 加载模型路由映射失败:', err);
-          return [];
-        }),
-        fetchCodexModelRouteBindings().catch((err) => {
-          console.error('❌ 加载 Codex 模型路由绑定失败:', err);
-          return [];
-        }),
-        fetchUpstreamAccounts().catch((err) => {
-          console.error('❌ 加载账号池账号失败:', err);
-          showNotice('error', err?.message || '加载账号池账号失败，账号切换器暂不可用');
-          return [];
-        }),
-        fetchLatestAccountScheduleSnapshot().catch((err) => {
-          console.error('❌ 加载最近一次账号调度结果失败:', err);
-          return {
-            unsupported: true,
-            hasSnapshot: false,
-            has_snapshot: false,
-            candidates: []
-          };
-        })
+        isFirstLoad ? initialAuxiliaryLoadRef.current : includeAuxiliary ? loadAuxiliaryData() : undefined,
+        includeAuxiliary ? loadUpstreamCatalog() : undefined
       ]);
-
-      if (loadDataIdRef.current !== loadId) {
-        return;
-      }
-
-      setUpstreamCatalog(Array.isArray(upstreamCatalogData) ? upstreamCatalogData : null);
-      setModels(Array.isArray(modelsData) ? modelsData : []);
-
-      const endpointsList = endpointsData.endpoints || endpointsData || [];
-      setEndpoints(Array.isArray(endpointsList) ? endpointsList : []);
-
-      setClaudeRoutingState(routeStateData && typeof routeStateData === 'object'
-        ? routeStateData
-        : { mode: 'auto', endpointName: '', fallbackEnabled: true });
-      setModelRoutingSettings(modelRoutingData && typeof modelRoutingData === 'object' ? modelRoutingData : { claude_enabled: false });
-      setModelRouteBindings(Array.isArray(modelBindingsData) ? modelBindingsData : []);
-      setCodexModelRouteBindings(Array.isArray(codexModelBindingsData) ? codexModelBindingsData : []);
-
-      setAccounts(Array.isArray(accountsData) ? accountsData : []);
-      setLatestScheduleSnapshot(latestSnapshotData && typeof latestSnapshotData === 'object'
-        ? latestSnapshotData
-        : { hasSnapshot: false, has_snapshot: false, candidates: [] });
-
     } catch (err) {
-      if (loadDataIdRef.current !== loadId) {
-        return;
-      }
+      if (loadDataIdRef.current !== loadId) return;
       setError(err.message);
     } finally {
       if (loadDataIdRef.current === loadId) {
@@ -368,7 +392,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
         setRefreshing(false);
       }
     }
-  }, [appliedQueryParams, refreshRequestData, showNotice]);
+  }, [refreshRequestData, loadAuxiliaryData, loadUpstreamCatalog]);
 
   // 请求变化由 Wails 事件触发，只刷新明细与统计；事件不可用时低频降级。
   // 包一层标记 live，使事件驱动的新行才播入场动画。
@@ -422,7 +446,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     setFilterBarVisible(true);
   }, [applyQuickFilter, setFilterBarVisible]);
 
-  const handleSessionFilter = useCallback((sessionId) => applyContextFilter({ sessionId }), [applyContextFilter]);
+  const handleSessionFilter = useCallback((sessionId) => applyContextFilter({ sessionId, sessionMissing: false }), [applyContextFilter]);
 
   // 页码变更
   const handlePageChange = (newPage) => {
@@ -650,8 +674,12 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   // ==================== 生命周期 ====================
 
   useEffect(() => {
-    loadData();
+    loadData(false, false);
   }, [loadData]);
+
+  useEffect(() => {
+    void loadUpstreamCatalog();
+  }, [loadUpstreamCatalog]);
 
   // v8:订阅 Claude 路由事件,切换/请求生效后即时同步页头状态(不依赖下一次 loadData)
   useEffect(() => {
@@ -694,6 +722,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
 
   // ⌘C：列表里有选中文字时按系统默认复制文字，否则复制选中行的请求 ID
   const handleListKeyDown = (event) => {
+    if (viewMode === 'sessions') return;
     if (isCopyShortcut(event)) {
       if (selectedRequest && !window.getSelection()?.toString()) {
         event.preventDefault();
@@ -703,6 +732,13 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     }
     handleListNavigation(event);
   };
+
+  // 定位和明确改选才滚动；后台刷新与计时补丁不抢走用户正在浏览的位置。
+  const selectedRequestId = selection?.requestId;
+  useEffect(() => {
+    if (viewMode !== 'requests' || !selectedRequestId) return;
+    listRef.current?.querySelector(`[data-row-id="${CSS.escape(selectedRequestId)}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [selectedRequestId, viewMode]);
 
   // ==================== 渲染 ====================
 
@@ -721,9 +757,12 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
   return (
     <div className="motion-page relative flex min-h-0 flex-1 flex-col bg-surface">
       {/* 工具栏：投送到窗口统一工具栏 */}
-      <PageToolbar subtitle={`共 ${Number(pagination.total || 0).toLocaleString()} 条`}>
+      <PageToolbar subtitle={viewMode === 'sessions' ? `共 ${sessions.data?.total ?? '—'} 个会话` : `共 ${Number(pagination.total || 0).toLocaleString()} 条`}>
         <div className="flex min-w-0 flex-1 justify-end">
           <Toolbar
+            viewMode={viewMode}
+            onViewModeChange={sessions.changeMode}
+            sessionsSupported={sessions.supported}
             activeTimeRange={activeRange}
             onTimeRangeChange={selectRange}
             filterBarVisible={filterBarVisible}
@@ -766,6 +805,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
         <FilterBar
           filters={filters}
           activeRange={activeRange}
+          viewMode={viewMode}
           models={models}
           upstreams={upstreamOptions}
           onChange={handleChipChange}
@@ -779,6 +819,17 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
         ref={detailPane.containerRef}
         className="flex min-h-0 flex-1 flex-col"
       >
+        {viewMode === 'sessions' && <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-inspector px-3 py-1 text-xs text-fg-muted">
+          <span>{sessions.data?.total_requests ?? '—'} 条请求 · {sessions.data?.total ?? '—'} 个会话</span>
+          <span title="包括当前范围内未归组请求的已记录成本；不重新计价">已知估算成本 <b className="font-mono font-medium text-fg-body">{formatSessionCost(sessions.data?.known_cost_usd)}</b>（含未归组）</span>
+          {sessions.data?.missing_costs > 0 && <span>另有 {sessions.data.missing_costs} 条成本缺失</span>}
+          <span className="flex-1" />
+          <button disabled={!sessions.data?.ungrouped || sessions.locating} onClick={() => sessions.navigate(true)} className="text-accent disabled:text-fg-subtle">{sessions.data?.ungrouped ?? '—'} 条未归组 · 查看无 ID 请求</button>
+        </div>}
+        {viewMode === 'requests' && sessions.returnAvailable && <div className="flex h-8 shrink-0 items-center gap-3 border-b border-line bg-inspector px-3 text-xs text-fg-muted">
+          <button onClick={() => sessions.changeMode('sessions')} className="text-accent">← 返回会话排行</button>
+          {sessions.returnDescription && <span>{sessions.returnDescription}</span>}
+        </div>}
         <div className="relative min-h-0 flex-1">
           {/* 刷新进度条：盖在表头上沿，不占布局高度 */}
           {refreshing && (
@@ -788,12 +839,12 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
           )}
           <div
             ref={listRef}
-            tabIndex={0}
+            tabIndex={viewMode === 'sessions' ? -1 : 0}
             onKeyDown={handleListKeyDown}
-            aria-label="请求列表"
+            aria-label={viewMode === 'sessions' ? '会话列表区域' : '请求列表'}
             className="absolute inset-0 overflow-auto focus:outline-none"
           >
-            <RequestsTable
+            {viewMode === 'sessions' ? <SessionTable sessions={{ ...sessions, openDetail: detailPane.show }} /> : <RequestsTable
               requests={requests}
               loading={loading}
               enterAnimations={rowEnterAnimations}
@@ -804,7 +855,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
               onOpen={handleRowOpen}
               onRowContextMenu={handleRowContextMenu}
               onHeaderContextMenu={(event) => openContextMenu(event, columnMenuItems)}
-            />
+            />}
           </div>
         </div>
 
@@ -817,23 +868,24 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
               className="flex max-h-[calc(100vh-198px)] shrink-0 flex-col bg-inspector"
               style={{ height: detailPane.height }}
             >
-              <RequestDetailPane request={selectedRequest} onClose={detailPane.hide} onFilterSession={handleSessionFilter} />
+              {viewMode === 'sessions' ? <SessionDetailPane sessions={sessions} onClose={detailPane.hide} /> : <RequestDetailPane request={selectedRequest} onClose={detailPane.hide} onFilterSession={handleSessionFilter} />}
             </div>
           </>
         )}
       </div>
 
       <StatusBar>
-        <StatsOverview stats={stats} />
+        {viewMode !== 'sessions' && <StatsOverview stats={stats} />}
         <StatusSpacer />
         <RequestRefreshStatus mode={autoRefresh.mode} fallbackInterval={autoRefresh.fallbackInterval} />
         <StatusPager
-          currentPage={pagination.page}
-          pageSize={pagination.pageSize}
+          currentPage={viewMode === 'sessions' ? sessions.page : pagination.page}
+          pageSize={viewMode === 'sessions' ? sessions.size : pagination.pageSize}
           pageSizeOptions={PAGINATION_CONFIG.PAGE_SIZE_OPTIONS}
-          total={pagination.total}
-          onPageChange={handlePageChange}
-          onPageSizeChange={handlePageSizeChange}
+          total={viewMode === 'sessions' ? sessions.data?.total || 0 : pagination.total}
+          unit={viewMode === 'sessions' ? '个会话' : '条'}
+          onPageChange={viewMode === 'sessions' ? sessions.changePage : handlePageChange}
+          onPageSizeChange={viewMode === 'sessions' ? sessions.changeSize : handlePageSizeChange}
           onOpenMenu={openMenuAt}
         />
       </StatusBar>

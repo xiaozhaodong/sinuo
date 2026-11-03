@@ -67,3 +67,37 @@ func TestTotalTokens_GoAndSQLAgree(t *testing.T) {
 		})
 	}
 }
+
+func TestFullInput_KnownZeroNullAndProtocol(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	query := `SELECT ` + FullInputSQL + ` FROM (SELECT ? AS request_family, ? AS path, ? AS input_tokens,
+		? AS cache_creation_tokens, 100 AS cache_creation_5m_tokens, 200 AS cache_creation_1h_tokens, ? AS cache_read_tokens)`
+	for _, tc := range []struct {
+		family, path          string
+		input, creation, read interface{}
+		want                  sql.NullInt64
+	}{
+		{"claude", "/v1/messages", 100, 300, 600, sql.NullInt64{Int64: 1000, Valid: true}},
+		{"claude", "/v1/messages", 100, nil, 600, sql.NullInt64{Int64: 1000, Valid: true}},
+		{"codex", "/v1/responses", 1000, 300, 900, sql.NullInt64{Int64: 1000, Valid: true}},
+		{"other", "/backend-api/codex/responses/compact", 1000, 300, 900, sql.NullInt64{Int64: 1000, Valid: true}},
+		{"codex", "/v1/responses", 0, nil, nil, sql.NullInt64{Valid: true}},
+		{"claude", "/v1/messages", 100, 300, nil, sql.NullInt64{}},
+		{"codex", "/v1/responses", nil, 0, 0, sql.NullInt64{}},
+	} {
+		var got sql.NullInt64
+		if err := db.QueryRow(query, tc.family, tc.path, tc.input, tc.creation, tc.read).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("%+v: got %+v", tc, got)
+		}
+	}
+	if TotalTokens("claude", "/v1/messages", 100, 0, 300, 600) != 1000 || TotalTokens("codex", "/v1/responses", 1000, 0, 300, 900) != 1000 {
+		t.Fatal("Go 完整输入与 SQL 口径不一致")
+	}
+}

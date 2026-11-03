@@ -33,7 +33,9 @@ export const useTimeRange = (onRangeChange, initialRange = 'today') => {
   return {
     activeRange,
     selectRange,
-    markCustomRange
+    markCustomRange,
+    // 返回工作台时恢复预设标识；精确时间边界与筛选快照由调用方一起恢复。
+    restoreRange: setActiveRange
   };
 };
 

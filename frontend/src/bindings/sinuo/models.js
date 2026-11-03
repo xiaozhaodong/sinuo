@@ -969,6 +969,8 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * RequestQueryParams 请求查询参数
  * @typedef {Object} RequestQueryParams
+ * @property {boolean} session_missing
+ * @property {string} target_request_id
  * @property {string} session_id
  * @property {number} page
  * @property {number} page_size
@@ -1037,6 +1039,72 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} [response_model] - 仅由响应解析写入
  * @property {string} [request_reasoning] - 请求思考配置（归一化串）
  * @property {string} [response_reasoning] - 响应思考信息（归一化串）
+ */
+
+/**
+ * @typedef {Object} RequestSessionPoint
+ * @property {string} request_id
+ * @property {string} start_time
+ * @property {number | null} full_input
+ * @property {number | null} cache_read
+ * @property {number | null} cost
+ * @property {number | null} previous
+ * @property {number} ordinal
+ */
+
+/**
+ * RequestSessionQueryParams 复用正式请求页的全部筛选；会话分页独立保存。
+ * @typedef {Object} RequestSessionQueryParams
+ * @property {boolean} session_missing
+ * @property {string} target_request_id
+ * @property {string} session_id
+ * @property {number} page
+ * @property {number} page_size
+ * @property {string} start_date - 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
+ * @property {string} end_date - 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
+ * @property {string} status - 可选：completed, failed, pending 等
+ * @property {string} model - 可选：模型名称
+ * @property {string} request_family
+ * @property {string} upstream_name
+ * @property {string} source_view - 可选：endpoint/account/subscription/all，默认 endpoint
+ * @property {boolean | null} include_compaction - IncludeCompaction 可选：显式 false 时列表只保留生成口径（legacy + generation）。 概览的次数指标是生成口径，跳转时收窄列表避免行数对不上；缺省承载全部落库记录。
+ * @property {string} sort_by
+ * @property {string} sort_order
+ */
+
+/**
+ * @typedef {Object} RequestSessionResult
+ * @property {RequestSessionRow[] | null} rows
+ * @property {number} total
+ * @property {number} total_requests
+ * @property {number} ungrouped
+ * @property {number} known_cost_usd
+ * @property {number} missing_costs
+ * @property {number} page
+ * @property {number} page_size
+ */
+
+/**
+ * 以下 DTO 隔离桌面绑定与存储层，不把内部 tracking 类型暴露到前端。
+ * @typedef {Object} RequestSessionRow
+ * @property {string} request_family
+ * @property {string} session_id
+ * @property {number} request_count
+ * @property {number | null} total_cost_usd
+ * @property {number} missing_costs
+ * @property {number | null} cache_ratio
+ * @property {number} missing_cache_usage
+ * @property {string} last_activity
+ */
+
+/**
+ * @typedef {Object} RequestSessionTrend
+ * @property {RequestSessionPoint[] | null} points
+ * @property {number} total
+ * @property {number} page
+ * @property {number} page_size
+ * @property {string} selected_id
+ * @property {boolean} selected_missing
  */
 
 /**
@@ -1290,6 +1358,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * UsageStatsQueryParams 使用统计查询参数
  * @typedef {Object} UsageStatsQueryParams
+ * @property {boolean} session_missing
  * @property {string} session_id
  * @property {string} period - 时间周期: "1h", "1d", "7d", "30d", "90d"
  * @property {string} start_date - 开始时间（优先于 period）

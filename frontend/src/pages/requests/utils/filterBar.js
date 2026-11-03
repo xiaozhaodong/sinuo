@@ -7,11 +7,12 @@
 
 import { DEFAULT_FILTERS, PAGINATION_CONFIG } from './constants.js';
 
-export const FILTER_CHIP_KEYS = ['requestFamily', 'sourceView', 'status', 'model', 'upstreamName', 'sessionId', 'includeCompaction'];
+export const FILTER_CHIP_KEYS = ['requestFamily', 'sourceView', 'status', 'model', 'upstreamName', 'sessionId', 'sessionMissing', 'includeCompaction'];
 
 export const isChipActive = (filters = {}, key) => {
   const value = filters[key];
   if (key === 'includeCompaction') return value === false;
+  if (key === 'sessionMissing') return value === true;
   return value !== undefined && value !== null && value !== '' && value !== 'all' && value !== DEFAULT_FILTERS[key];
 };
 
@@ -20,6 +21,8 @@ export const countActiveChips = (filters = {}) => FILTER_CHIP_KEYS.filter((key) 
 // 选中某个条件得到的筛选补丁；空值回到默认。
 // 类型 / 来源变了，上游候选随之变化，原来选的上游清掉（与旧筛选面板一致）
 export const buildChipPatch = (key, value) => {
+  if (key === 'sessionId') return { sessionId: value || '', sessionMissing: false };
+  if (key === 'sessionMissing') return { sessionMissing: value === true, sessionId: '' };
   const next = value === undefined || value === null || value === '' ? DEFAULT_FILTERS[key] : value;
   if (key === 'requestFamily' || key === 'sourceView') {
     return { [key]: next, upstreamName: DEFAULT_FILTERS.upstreamName };
@@ -51,10 +54,18 @@ export const describeTimeChip = (activeRange, startWall, endWall) => {
   return `${start || '起'} – ${end || '今'}`;
 };
 
-// 自定义区间能否应用：两端都填时开始必须早于结束（同为墙上时间字符串，可直接比较）
-export const isValidCustomRange = (startWall, endWall) => {
-  if (!startWall || !endWall) return Boolean(startWall || endWall);
-  return startWall < endWall;
+// 输入框均为业务墙上时间；缺失端使用与后端一致的业务今日边界。
+export const isValidCustomRange = (startWall, endWall, defaults = {}) => {
+  if (!startWall && !endWall) return false;
+  const start = startWall || defaults.startDate;
+  const end = endWall || defaults.endDate;
+  if (!start || !end) return false;
+  // 统一秒和小数精度，隐含零点与显式零秒必须视为同一时刻。
+  const normalize = (wall) => {
+    const full = wall.length === 16 ? `${wall}:00` : wall;
+    return full.includes('.') ? full.padEnd(29, '0') : `${full}.000000000`;
+  };
+  return normalize(start) < normalize(end);
 };
 
 export const resolveStoredPageSize = (raw, options = PAGINATION_CONFIG.PAGE_SIZE_OPTIONS, fallback = PAGINATION_CONFIG.DEFAULT_PAGE_SIZE) => {

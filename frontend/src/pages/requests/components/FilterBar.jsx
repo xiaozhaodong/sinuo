@@ -12,7 +12,7 @@ import useContextMenu from '@components/desktop/useContextMenu.jsx';
 import useAnchoredPanel from '@hooks/useAnchoredPanel.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { SOURCE_VIEW_OPTIONS, STATUS_SELECT_OPTIONS } from '../utils/constants.js';
-import { buildCustomRangePatch, formatFilterDateTimeInput } from '../utils/filterTime.js';
+import { buildCustomRangePatch, formatFilterDateTimeInput, getTodayTimeRange } from '../utils/filterTime.js';
 import { countActiveChips, describeTimeChip, isChipActive, isValidCustomRange } from '../utils/filterBar.js';
 
 const FAMILY_OPTIONS = [
@@ -59,7 +59,7 @@ const TimeRangeChip = ({ label, active, startDate, endDate, onApply }) => {
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: 280 });
-  const valid = isValidCustomRange(draft.start, draft.end);
+  const valid = isValidCustomRange(draft.start, draft.end, getTodayTimeRange(timezone));
 
   const toggle = () => {
     if (!open) {
@@ -92,7 +92,9 @@ const TimeRangeChip = ({ label, active, startDate, endDate, onApply }) => {
             <span>到</span>
             <input type="datetime-local" step="any" aria-label="结束时间" value={draft.end} onChange={(event) => setDraft((prev) => ({ ...prev, end: event.target.value }))} className="desk-field w-full text-xs" />
           </div>
-          {!valid && draft.start && draft.end && <div className="mt-1.5 text-[11px] text-danger">开始时间需要早于结束时间</div>}
+          {!valid && (draft.start || draft.end) && <div role="alert" className="mt-1.5 text-[11px] text-danger">
+            开始时间需要早于结束时间{!draft.start ? '（未填开始时按业务今天零点）' : !draft.end ? '（未填结束时按业务次日零点）' : ''}
+          </div>}
           <div className="mt-3 flex justify-end gap-1.5">
             <Button size="sm" variant="secondary" onClick={() => setOpen(false)}>取消</Button>
             <Button size="sm" disabled={!valid} onClick={() => { onApply?.(buildCustomRangePatch({ startDate, endDate }, draft, timezone)); setOpen(false); }}>应用</Button>
@@ -114,7 +116,7 @@ const TimeRangeChip = ({ label, active, startDate, endDate, onApply }) => {
  * @param {Function} props.onClear - 清除全部条件（不含时间）
  * @param {Function} props.onApplyCustomRange - ({ startDate, endDate }) => void
  */
-const FilterBar = ({ filters, activeRange, models = [], upstreams = [], onChange, onClear, onApplyCustomRange }) => {
+const FilterBar = ({ filters, activeRange, models = [], upstreams = [], viewMode = 'requests', onChange, onClear, onApplyCustomRange }) => {
   const { timezone } = useTimezone();
   const { contextMenu, openMenuAt } = useContextMenu();
 
@@ -166,6 +168,9 @@ const FilterBar = ({ filters, activeRange, models = [], upstreams = [], onChange
       {isChipActive(filters, 'sessionId') && (
         <FilterChip label="会话" valueLabel={filters.sessionId.slice(0, 8)} title={filters.sessionId} active onClear={() => onChange?.('sessionId', '')} />
       )}
+      {filters.sessionMissing === true && (
+        <FilterChip label="会话" valueLabel="无 ID" active onClear={() => onChange?.('sessionMissing', false)} />
+      )}
       <TimeRangeChip
         label={describeTimeChip(activeRange, formatFilterDateTimeInput(filters.startDate, timezone), formatFilterDateTimeInput(filters.endDate, timezone))}
         active={activeRange === 'custom'}
@@ -176,7 +181,7 @@ const FilterBar = ({ filters, activeRange, models = [], upstreams = [], onChange
       <span className="min-w-4 flex-1" aria-hidden="true" />
       {activeCount > 0
         ? <button type="button" onClick={onClear} className="shrink-0 text-xs text-accent hover:text-accent-fg">清除筛选</button>
-        : <span className="shrink-0 truncate text-xs text-fg-subtle">单击选中 · 右键更多操作 · ↑↓ 切换</span>}
+        : <span className="shrink-0 truncate text-xs text-fg-subtle">{viewMode === 'sessions' ? '单击选中 · ↑↓ 切换' : '单击选中 · 右键更多操作 · ↑↓ 切换'}</span>}
       {contextMenu}
     </div>
   );
