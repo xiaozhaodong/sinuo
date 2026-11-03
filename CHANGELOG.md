@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 🐛 修复 (Bug Fixes)
+
+- **Codex 订阅代理转发大消息时 WS 断线**：断线重连后 Codex 会整段重发历史（含图片时可达十几 MB），上行较慢时原先整条作为单帧写出会一直持有连接写锁，上游 Ping 的 Pong 发不出去，约 25 秒后连接被关闭，Codex 反复重试后回退 HTTP。大消息改为 64KB 分片写出，控制帧可插在分片之间；超过 1MB 的消息按 32KB/s 的最低速率放宽单条写入超时，上限 10 分钟。
+
 ## [6.3.3] - 2026-11-02
 
 ### 🐛 修复 (Bug Fixes)
