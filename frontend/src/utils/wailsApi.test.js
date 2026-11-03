@@ -9,6 +9,7 @@ import { visibleRetryCount } from '../pages/requests/utils/retryTiming.js';
 
 import {
   buildEndpointRecordPayload,
+  buildSessionQueryParams,
   buildUpstreamAccountPayload,
   isWailsEnvironment,
   mapEndpointRecord,
@@ -19,6 +20,17 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
+
+test('会话排行与走势适配保留完整筛选和显式false，不截断会话ID', () => {
+  const params = buildSessionQueryParams({ start_date:'2026-11-02T16:00:00Z',end_date:'2026-11-03T16:00:00Z',request_family:'codex',source_view:'subscription',upstream_name:'synthetic',model:'m',status:'failed',session_id:'full-session-id',session_missing:false,include_compaction:false,page:3,pageSize:20,sort_by:'cache',sort_order:'asc' });
+  assert.equal(params.session_id,'full-session-id'); assert.equal(params.session_missing,false);
+  assert.equal(params.include_compaction,false); assert.equal(params.source_view,'subscription');
+  assert.equal(params.page,3); assert.equal(params.page_size,20); assert.equal(params.sort_order,'asc');
+  assert.equal(params.upstream_name,'synthetic'); assert.equal(params.status,'failed');
+  assert.equal(buildSessionQueryParams({session_missing:true}).session_missing,true);
+  assert.equal(buildSessionQueryParams().sort_by,'recent');
+  assert.equal(buildSessionQueryParams().sort_order,'desc');
+});
 
 // 保留真实适配层，只替换桌面绑定与运行时，不依赖运行中的 App。
 const loadRequestMappingBindings = async (requests = [22, 0, undefined].map((first, index) => ({

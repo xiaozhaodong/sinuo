@@ -361,7 +361,7 @@ import * as $models from "./models.js";
 
 /**
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
- * 除首次取连接偏移同时供列表判定重试口径，其余分段字段只在本接口返回。
+ * 内容计时与首次取连接偏移同时供列表使用；思考信号与上游请求ID仅详情返回。
  * @typedef {$models.RequestLifecycleDetail} RequestLifecycleDetail
  */
 
@@ -378,6 +378,28 @@ import * as $models from "./models.js";
 /**
  * RequestRecord 请求记录
  * @typedef {$models.RequestRecord} RequestRecord
+ */
+
+/**
+ * @typedef {$models.RequestSessionPoint} RequestSessionPoint
+ */
+
+/**
+ * RequestSessionQueryParams 复用正式请求页的全部筛选；会话分页独立保存。
+ * @typedef {$models.RequestSessionQueryParams} RequestSessionQueryParams
+ */
+
+/**
+ * @typedef {$models.RequestSessionResult} RequestSessionResult
+ */
+
+/**
+ * 以下 DTO 隔离桌面绑定与存储层，不把内部 tracking 类型暴露到前端。
+ * @typedef {$models.RequestSessionRow} RequestSessionRow
+ */
+
+/**
+ * @typedef {$models.RequestSessionTrend} RequestSessionTrend
  */
 
 /**

@@ -2419,7 +2419,8 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	results := make([]RequestDetail, 0, limit)
 
 	// 1. 从热池获取所有符合过滤条件的活跃请求（用于计算总数和分页）
-	allHotPoolRequests := ut.getFilteredHotPoolRequests(opts)
+	hotSnapshot := ut.requestHotPoolSnapshot()
+	allHotPoolRequests := ut.filterHotPoolRequests(hotSnapshot, opts)
 	hotPoolCount := len(allHotPoolRequests)
 
 	// 2. 获取数据库总数（用于分页计算）
@@ -2431,6 +2432,9 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	// 3. 热池数据按开始时间倒序排列（最新的在前）
 	if hotPoolCount > 0 {
 		sort.Slice(allHotPoolRequests, func(i, j int) bool {
+			if allHotPoolRequests[i].StartTime.Equal(allHotPoolRequests[j].StartTime) {
+				return allHotPoolRequests[i].RequestID > allHotPoolRequests[j].RequestID
+			}
 			return allHotPoolRequests[i].StartTime.After(allHotPoolRequests[j].StartTime)
 		})
 	}
@@ -2438,7 +2442,8 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	// 创建热池请求ID集合用于去重
 	hotPoolIDs := make(map[string]struct{}, hotPoolCount)
 	hotPoolRequestIDs := make([]string, 0, hotPoolCount)
-	for _, req := range allHotPoolRequests {
+	// 即使热池新状态不匹配筛选，也要排除数据库中的旧状态。
+	for _, req := range hotSnapshot {
 		if _, exists := hotPoolIDs[req.RequestID]; exists {
 			continue
 		}
@@ -2566,11 +2571,29 @@ func requestStatusMatchesFilter(statusFilter string, requestStatus string) bool 
 
 // getFilteredHotPoolRequests 获取过滤后的热池请求
 func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []RequestDetail {
+	return ut.filterHotPoolRequests(ut.requestHotPoolSnapshot(), opts)
+}
+
+// requestHotPoolSnapshot 在应用筛选前按请求 ID 去重，活跃版本优先于归档快照。
+// 正式请求分页、定位与会话聚合共用，避免归档交接或重复 ID 影响计数。
+func (ut *UsageTracker) requestHotPoolSnapshot() []*ActiveRequest {
 	if ut.hotPool == nil {
 		return nil
 	}
+	rows := ut.hotPool.GetActive()
+	seen := make(map[string]struct{}, len(rows))
+	unique := rows[:0]
+	for _, row := range rows {
+		if _, ok := seen[row.RequestID]; ok {
+			continue
+		}
+		seen[row.RequestID] = struct{}{}
+		unique = append(unique, row)
+	}
+	return unique
+}
 
-	activeRequests := ut.hotPool.GetActive()
+func (ut *UsageTracker) filterHotPoolRequests(activeRequests []*ActiveRequest, opts *QueryOptions) []RequestDetail {
 	if len(activeRequests) == 0 {
 		return nil
 	}
@@ -2589,6 +2612,12 @@ func (ut *UsageTracker) getFilteredHotPoolRequests(opts *QueryOptions) []Request
 	for _, req := range activeRequests {
 		// 应用过滤条件
 		if opts != nil {
+			if opts.RequestID != "" && req.RequestID != opts.RequestID {
+				continue
+			}
+			if opts.SessionMissing && req.SessionID != "" {
+				continue
+			}
 			if len(allowedKinds) > 0 {
 				kind := req.RequestKind
 				if kind == "" {

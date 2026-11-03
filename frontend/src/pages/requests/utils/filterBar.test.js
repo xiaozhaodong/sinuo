@@ -10,16 +10,26 @@ import {
   resolveStoredPageSize
 } from './filterBar.js';
 import { DEFAULT_FILTERS, PAGINATION_CONFIG } from './constants.js';
+import { getTodayTimeRange } from './filterTime.js';
 
 test('会话标签参与计数、单项清除和清除全部条件', () => {
   const filters = { ...DEFAULT_FILTERS, sessionId: 'session-12345678', model: 'gpt-test' };
   assert.equal(isChipActive(filters, 'sessionId'), true);
   assert.equal(countActiveChips(filters), 2);
-  assert.deepEqual(buildChipPatch('sessionId', ''), { sessionId: '' });
+  assert.deepEqual(buildChipPatch('sessionId', ''), { sessionId: '', sessionMissing: false });
   assert.equal(countActiveChips({ ...filters, ...buildChipPatch('sessionId', '') }), 1);
   const cleared = { ...filters, ...buildClearChipsPatch() };
   assert.equal(cleared.sessionId, '');
   assert.equal(countActiveChips(cleared), 0);
+});
+
+test('无ID筛选有明确标签和计数，清除全部及选择具体会话时取消', () => {
+  const filters = { ...DEFAULT_FILTERS, sessionMissing: true };
+  assert.equal(countActiveChips(filters), 1);
+  assert.equal(isChipActive(filters, 'sessionMissing'), true);
+  assert.equal(buildClearChipsPatch().sessionMissing, false);
+  assert.deepEqual(buildChipPatch('sessionId', 'full-id'), { sessionId: 'full-id', sessionMissing: false });
+  assert.deepEqual(buildChipPatch('sessionMissing', true), { sessionId: '', sessionMissing: true });
 });
 
 test('默认筛选没有生效条件', () => {
@@ -64,8 +74,26 @@ test('自定义区间开始必须早于结束', () => {
   assert.equal(isValidCustomRange('2026-10-06T00:00', '2026-10-07T00:00'), true);
   assert.equal(isValidCustomRange('2026-10-07T00:00', '2026-10-06T00:00'), false);
   assert.equal(isValidCustomRange('2026-10-07T00:00', '2026-10-07T00:00'), false);
-  assert.equal(isValidCustomRange('2026-10-07T00:00', ''), true);
+  assert.equal(isValidCustomRange('2026-10-07T00:00', '', {endDate:'2026-10-08T00:00'}), true);
   assert.equal(isValidCustomRange('', ''), false);
+});
+
+test('单端时间按业务今日隐含边界校验，等于边界也不可提交', () => {
+  const defaults=getTodayTimeRange('Asia/Shanghai',new Date('2026-11-02T17:00:00Z'));
+  assert.deepEqual(defaults,{startDate:'2026-11-03T00:00',endDate:'2026-11-04T00:00'});
+  for(const [start,end,want] of [
+    ['', '2026-11-02T12:00',false],
+    ['', '2026-11-03T00:00',false],
+    ['', '2026-11-03T00:00:00.000',false],
+    ['', '2026-11-03T12:00',true],
+    ['2026-11-04T12:00','',false],
+    ['2026-11-04T00:00','',false],
+    ['2026-11-04T00:00:00.000000','',false],
+    ['2026-11-03T12:00','',true],
+    ['2026-11-02T00:00','2026-11-02T12:00',true],
+    ['2026-11-03T12:00:00','2026-11-03T12:00:00.000',false],
+    ['2026-11-03T12:00:00.000001','2026-11-03T12:00:00.000002',true]
+  ]) assert.equal(isValidCustomRange(start,end,defaults),want,`${start} → ${end}`);
 });
 
 test('每页条数只认可选项，默认 30', () => {

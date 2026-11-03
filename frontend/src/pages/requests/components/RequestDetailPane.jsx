@@ -17,6 +17,7 @@ import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { formatRouteMode, getRequestPresentation } from '../utils/requestPresentation.js';
+import { fullInputTokens, requestInputIncludesCache } from '../utils/requestInputUsage.js';
 import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 
@@ -147,11 +148,8 @@ const TokenSection = ({ request }) => {
   const outputTokens = request.outputTokens || 0;
   const cacheReadTokens = request.cacheReadTokens || 0;
   const cacheCreationTokens = request.cacheCreationTokens || 0;
-  const family = String(request.requestFamily || '').trim().toLowerCase();
-  const path = String(request.path || '').trim().toLowerCase();
-  const inputIncludesCache = family === 'codex'
-    || (family !== 'claude' && /\/responses(?:\/compact)?$/.test(path));
-  const totalTokens = inputTokens + outputTokens + (inputIncludesCache ? 0 : cacheReadTokens + cacheCreationTokens);
+  const inputIncludesCache = requestInputIncludesCache(request.requestFamily, request.path);
+  const fullInput = fullInputTokens(inputIncludesCache, inputTokens, cacheCreationTokens, cacheReadTokens);
   const billableInput = inputIncludesCache ? Math.max(inputTokens - cacheReadTokens, 0) : inputTokens;
   const billableHint = inputIncludesCache
     ? '输入 − 缓存读取；缓存写入已包含在内，继续按输入单价计算'
@@ -179,7 +177,7 @@ const TokenSection = ({ request }) => {
       {reasoningTokens !== undefined && (
         <TokenFigure label="推理" value={(Number(reasoningTokens) || 0).toLocaleString()} title="推理 Token，含在输出 Token 内" tone="text-fg" />
       )}
-      <TokenFigure label="合计" value={formatUsage(totalTokens)} title={totalHint} tone={usageTone} />
+      <TokenFigure label="合计" value={fullInput === null ? '—' : formatUsage(fullInput + outputTokens)} title={totalHint} tone={usageTone} />
       <TokenFigure label="计费输入" value={formatUsage(billableInput)} title={billableHint} tone={usageTone} />
       <TokenFigure label="成本" value={costKnown ? formatCost(request.cost) : '—'} tone={costKnown ? 'font-medium text-warn' : 'text-fg-subtle'} />
     </div>

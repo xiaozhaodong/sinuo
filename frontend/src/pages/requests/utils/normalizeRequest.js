@@ -9,6 +9,7 @@
 // ============================================
 
 import { isCodexSearchRequest, normalizeRequestSource } from './requestSource.js';
+import { normalizeInputUsage } from './requestInputUsage.js';
 
 const pick = (request, keys, fallback) => {
   for (const key of keys) {
@@ -72,12 +73,8 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   firstTokenStartAt: pick(request, ['first_token_start_at', 'firstTokenStartAt'], ''),
   firstTokenAt: pick(request, ['first_token_at', 'firstTokenAt'], ''),
   completionMs: pick(request, ['completion_ms', 'completionMs'], null),
-  inputTokens: pick(request, ['input_tokens', 'inputTokens'], 0),
+  ...normalizeInputUsage(request),
   outputTokens: pick(request, ['output_tokens', 'outputTokens'], 0),
-  cacheCreationTokens: pick(request, ['cache_creation_tokens', 'cacheCreationTokens'], 0),
-  cacheCreation5mTokens: pick(request, ['cache_creation_5m_tokens', 'cacheCreation5mTokens'], 0),
-  cacheCreation1hTokens: pick(request, ['cache_creation_1h_tokens', 'cacheCreation1hTokens'], 0),
-  cacheReadTokens: pick(request, ['cache_read_tokens', 'cacheReadTokens'], 0),
   cost: pick(request, ['total_cost_usd', 'cost'], 0),
   isStreaming: pick(request, ['is_streaming', 'isStreaming'], false),
   routeMode: pick(request, ['route_mode', 'routeMode'], 'auto'),

@@ -1196,6 +1196,7 @@ export const getUsageStats = async (params = {}) => {
     end_date: params.end_date || '',
     status: params.status || '',
     session_id: params.session_id || params.sessionId || '',
+    session_missing: params.session_missing === true,
     model: params.model || '',
     request_family: params.request_family || params.requestFamily || '',
     upstream_name: params.upstream_name || params.upstreamName || '',
@@ -1336,6 +1337,8 @@ export const getRequests = async (params = {}) => {
     ...buildRequestScopeParams(params),
     status: params.status || '',
     session_id: params.session_id || params.sessionId || '',
+    session_missing: params.session_missing === true,
+    target_request_id: params.target_request_id || '',
     model: params.model || '',
     upstream_name: params.upstream_name || params.upstreamName || ''
   };
@@ -1420,6 +1423,32 @@ export const getRequests = async (params = {}) => {
     pageSize: result.page_size,
     totalPages: Math.ceil(result.total / result.page_size)
   };
+};
+
+// 会话入口只在桌面端显示，参数与正式请求表共用。
+export const buildSessionQueryParams = (params = {}) => ({
+  ...buildRequestScopeParams(params),
+  page: params.page ?? 1,
+  page_size: params.pageSize ?? params.page_size ?? 30,
+  session_id: params.session_id || '',
+  session_missing: params.session_missing === true,
+  model: params.model || '',
+  status: params.status || '',
+  upstream_name: params.upstream_name || '',
+  sort_by: params.sort_by || 'recent',
+  sort_order: params.sort_order || 'desc'
+});
+
+export const getRequestSessions = async (params) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return WailsApp.GetRequestSessions(buildSessionQueryParams(params));
+};
+
+export const getRequestSessionTrend = async (params, selectedID = '', page = 0) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+  return WailsApp.GetRequestSessionTrend(buildSessionQueryParams(params), selectedID, page);
 };
 
 /**

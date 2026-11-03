@@ -35,6 +35,9 @@ import CodexAccessSwitcher from './CodexAccessSwitcher.jsx';
  * @param {Function} props.onDetailPaneToggle - 显示 / 隐藏详情面板
  */
 const Toolbar = ({
+  viewMode = 'requests',
+  onViewModeChange,
+  sessionsSupported = false,
   activeTimeRange = 'today',
   onTimeRangeChange,
   filterBarVisible = true,
@@ -70,9 +73,11 @@ const Toolbar = ({
   onDetailPaneToggle
 }) => {
   return (
-    <div className="flex flex-nowrap items-center justify-end gap-1.5 min-w-0">
+    <div className="flex flex-nowrap items-center justify-start gap-1.5 min-w-0 overflow-x-auto max-[1100px]:gap-1">
+      {sessionsSupported && <><SegmentedControl ariaLabel="聚合方式" value={viewMode} onChange={onViewModeChange}
+        options={[{ value: 'requests', label: '按请求' }, { value: 'sessions', label: '按会话' }]} /><ToolbarSeparator /></>}
       {/* Claude 接入与端点策略快捷切换（入口未启用时即端点切换器） */}
-      <ClaudeAccessSwitcher
+      <div className="shrink-0 max-[1100px]:[&_button]:max-w-[130px]"><ClaudeAccessSwitcher
         endpoints={endpoints}
         routingState={claudeRoutingState}
         modelRoutingEnabled={modelRoutingEnabled}
@@ -84,9 +89,9 @@ const Toolbar = ({
         onClearRouteCache={onClearRouteCache}
         onOpenModelRouting={onOpenClaudeModelRouting}
         loading={routeSwitching}
-      />
+      /></div>
 
-      <CodexAccessSwitcher
+      <div className="shrink-0 max-[1100px]:[&_button]:max-w-[130px]"><CodexAccessSwitcher
         codexModelRoutingEnabled={codexModelRoutingEnabled}
         bindings={codexModelRouteBindings}
         accounts={accounts}
@@ -99,7 +104,7 @@ const Toolbar = ({
         accountSwitching={accountSwitching}
         onOpenModelRouting={onOpenCodexModelRouting}
         onNavigateToCodexAccess={onNavigateToCodexAccess}
-      />
+      /></div>
 
       <ToolbarSeparator />
 

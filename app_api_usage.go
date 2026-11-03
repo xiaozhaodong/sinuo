@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -305,16 +306,18 @@ type RequestListResult struct {
 
 // RequestQueryParams 请求查询参数
 type RequestQueryParams struct {
-	SessionID     string `json:"session_id"`
-	Page          int    `json:"page"`
-	PageSize      int    `json:"page_size"`
-	StartDate     string `json:"start_date"` // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
-	EndDate       string `json:"end_date"`   // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
-	Status        string `json:"status"`     // 可选：completed, failed, pending 等
-	Model         string `json:"model"`      // 可选：模型名称
-	RequestFamily string `json:"request_family"`
-	UpstreamName  string `json:"upstream_name"`
-	SourceView    string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
+	SessionMissing  bool   `json:"session_missing"`
+	TargetRequestID string `json:"target_request_id"`
+	SessionID       string `json:"session_id"`
+	Page            int    `json:"page"`
+	PageSize        int    `json:"page_size"`
+	StartDate       string `json:"start_date"` // 格式：2025-12-05T00:00 或 2025-12-05T00:00:00+08:00
+	EndDate         string `json:"end_date"`   // 格式：2025-12-05T23:59 或 2025-12-05T23:59:59+08:00
+	Status          string `json:"status"`     // 可选：completed, failed, pending 等
+	Model           string `json:"model"`      // 可选：模型名称
+	RequestFamily   string `json:"request_family"`
+	UpstreamName    string `json:"upstream_name"`
+	SourceView      string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
 	// IncludeCompaction 可选：显式 false 时列表只保留生成口径（legacy + generation）。
 	// 概览的次数指标是生成口径，跳转时收窄列表避免行数对不上；缺省承载全部落库记录。
 	IncludeCompaction *bool `json:"include_compaction"`
@@ -353,6 +356,13 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 	}
 	opts.Limit = pageSize
 	opts.Offset = offset
+	if params.TargetRequestID != "" {
+		page, err = a.usageTracker.LocateRequestPage(ctx, opts, params.TargetRequestID, pageSize)
+		if err != nil {
+			return RequestListResult{}, err
+		}
+		opts.Offset = (page - 1) * pageSize
+	}
 
 	// 使用热池+数据库双源查询（与 HTTP API 一致）
 	requests, total, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
@@ -377,6 +387,9 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 // resolveRequestQueryOptions 请求列表与上游筛选候选共用的查询条件（不含分页）。
 // 未传开始时间时查今天，未传结束时间时截至今天结束；include_compaction 显式 false 时只保留生成口径。
 func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQueryParams) (*tracking.QueryOptions, error) {
+	if params.SessionMissing && params.SessionID != "" {
+		return nil, fmt.Errorf("无会话 ID 筛选不能与会话 ID 同时使用")
+	}
 	var startTime, endTime time.Time
 	var err error
 
@@ -390,27 +403,33 @@ func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQue
 			return nil, err
 		}
 	}
-	if startTime.IsZero() {
-		if startTime, endTime, err = policy.DayRange(policy.BusinessDate(time.Now())); err != nil {
+	if startTime.IsZero() || endTime.IsZero() {
+		dayStart, dayEnd, err := policy.DayRange(policy.BusinessDate(time.Now()))
+		if err != nil {
 			return nil, err
+		}
+		if startTime.IsZero() {
+			startTime = dayStart
+		}
+		if endTime.IsZero() {
+			endTime = dayEnd
 		}
 	}
-	if endTime.IsZero() {
-		if _, endTime, err = policy.DayRange(policy.BusinessDate(time.Now())); err != nil {
-			return nil, err
-		}
+	if !endTime.After(startTime) {
+		return nil, fmt.Errorf("开始时间需要早于结束时间")
 	}
 
 	opts := &tracking.QueryOptions{
-		SessionID:     params.SessionID,
-		StartDate:     &startTime,
-		EndDate:       &endTime,
-		ModelName:     params.Model,
-		RequestFamily: params.RequestFamily,
-		UpstreamName:  params.UpstreamName,
-		UpstreamType:  sourceViewToUpstreamType(params.SourceView),
-		Status:        params.Status,
-		RequestKinds:  tracking.UsageMetricRequestKinds(),
+		SessionMissing: params.SessionMissing,
+		SessionID:      params.SessionID,
+		StartDate:      &startTime,
+		EndDate:        &endTime,
+		ModelName:      params.Model,
+		RequestFamily:  params.RequestFamily,
+		UpstreamName:   params.UpstreamName,
+		UpstreamType:   sourceViewToUpstreamType(params.SourceView),
+		Status:         params.Status,
+		RequestKinds:   tracking.UsageMetricRequestKinds(),
 	}
 	if params.IncludeCompaction != nil && !*params.IncludeCompaction {
 		opts.RequestKinds = tracking.GenerationMetricRequestKinds()
@@ -560,15 +579,16 @@ type UsageStatsData struct {
 
 // UsageStatsQueryParams 使用统计查询参数
 type UsageStatsQueryParams struct {
-	SessionID     string `json:"session_id"`
-	Period        string `json:"period"`     // 时间周期: "1h", "1d", "7d", "30d", "90d"
-	StartDate     string `json:"start_date"` // 开始时间（优先于 period）
-	EndDate       string `json:"end_date"`   // 结束时间（优先于 period）
-	Status        string `json:"status"`     // 可选：状态筛选
-	Model         string `json:"model"`      // 可选：模型筛选
-	RequestFamily string `json:"request_family"`
-	UpstreamName  string `json:"upstream_name"`
-	SourceView    string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
+	SessionMissing bool   `json:"session_missing"`
+	SessionID      string `json:"session_id"`
+	Period         string `json:"period"`     // 时间周期: "1h", "1d", "7d", "30d", "90d"
+	StartDate      string `json:"start_date"` // 开始时间（优先于 period）
+	EndDate        string `json:"end_date"`   // 结束时间（优先于 period）
+	Status         string `json:"status"`     // 可选：状态筛选
+	Model          string `json:"model"`      // 可选：模型筛选
+	RequestFamily  string `json:"request_family"`
+	UpstreamName   string `json:"upstream_name"`
+	SourceView     string `json:"source_view"` // 可选：endpoint/account/subscription/all，默认 endpoint
 	// IncludeCompaction 可选：请求页把列表口径一起带进来，显式传值时次数与用量两项
 	// 指标使用同一种范围（true=含独立压缩，false=仅生成），保证顶部汇总与列表一致；
 	// 缺省（概览快照）才按指标分别取口径。
@@ -579,26 +599,13 @@ type UsageStatsQueryParams struct {
 // 未知 period 回退到 30 天，与 GetUsageStats 的既有口径一致。
 func resolveUsageStatsRange(policy *timezonepolicy.Policy, period, startDateStr, endDateStr string) (time.Time, time.Time, string, error) {
 	var startTime, endTime time.Time
-	var useCustomRange bool
-
-	if startDateStr != "" {
-		parsed, err := policy.ParseInput(startDateStr)
+	if startDateStr != "" || endDateStr != "" {
+		// 自定义区间与请求列表共用缺省边界和校验，不能把缺失的一端变成零时刻。
+		opts, err := resolveRequestQueryOptions(policy, RequestQueryParams{StartDate: startDateStr, EndDate: endDateStr})
 		if err != nil {
 			return startTime, endTime, period, err
 		}
-		startTime = parsed
-		useCustomRange = true
-	}
-	if endDateStr != "" {
-		parsed, err := policy.ParseInput(endDateStr)
-		if err != nil {
-			return startTime, endTime, period, err
-		}
-		endTime = parsed
-		useCustomRange = true
-	}
-	if useCustomRange {
-		return startTime, endTime, period, nil
+		return *opts.StartDate, *opts.EndDate, period, nil
 	}
 
 	endTime = time.Now()
@@ -642,9 +649,21 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 	}
 
 	// 优先使用自定义时间范围，否则按 period 计算
-	startTime, endTime, normalizedPeriod, err := resolveUsageStatsRange(policy, period, params.StartDate, params.EndDate)
-	if err != nil {
-		return result, err
+	var startTime, endTime time.Time
+	normalizedPeriod := period
+	if params.IncludeCompaction != nil && params.StartDate == "" && params.EndDate == "" {
+		// 请求页显式指定列表种类口径；完全缺省日期时也与列表一起查今天。
+		// 概览未指定此标志，继续使用上面的 period 区间。
+		opts, err := resolveRequestQueryOptions(policy, RequestQueryParams{})
+		if err != nil {
+			return result, err
+		}
+		startTime, endTime = *opts.StartDate, *opts.EndDate
+	} else {
+		startTime, endTime, normalizedPeriod, err = resolveUsageStatsRange(policy, period, params.StartDate, params.EndDate)
+		if err != nil {
+			return result, err
+		}
 	}
 	result.Period = normalizedPeriod
 
@@ -657,14 +676,15 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		defer cancel()
 
 		baseOpts := &tracking.QueryOptions{
-			SessionID:     params.SessionID,
-			StartDate:     &startTime,
-			EndDate:       &endTime,
-			ModelName:     params.Model,
-			RequestFamily: params.RequestFamily,
-			UpstreamName:  params.UpstreamName,
-			UpstreamType:  sourceViewToUpstreamType(normalizedSourceView),
-			Status:        params.Status,
+			SessionMissing: params.SessionMissing,
+			SessionID:      params.SessionID,
+			StartDate:      &startTime,
+			EndDate:        &endTime,
+			ModelName:      params.Model,
+			RequestFamily:  params.RequestFamily,
+			UpstreamName:   params.UpstreamName,
+			UpstreamType:   sourceViewToUpstreamType(normalizedSourceView),
+			Status:         params.Status,
 		}
 		generationKinds := tracking.GenerationMetricRequestKinds()
 		usageKinds := tracking.UsageMetricRequestKinds()

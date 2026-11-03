@@ -3,6 +3,7 @@ package tracking
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -86,6 +87,8 @@ func appendUpstreamTypeFilter(query string, args []interface{}, upstreamType str
 
 // FailedRequestStatusesSQLList 是历史兼容失败状态的统一 SQL 列表，不包含独立统计的 cancelled。
 const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout'"
+
+const requestDetailsOrderBy = "start_time DESC, request_id DESC"
 
 const requestDetailsSelectBase = `SELECT id, request_id,
 	COALESCE(client_ip, '') as client_ip,
@@ -187,6 +190,9 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 	if opts.SessionID != "" {
 		query += " AND session_id = ?"
 		args = append(args, opts.SessionID)
+	}
+	if opts.SessionMissing {
+		query += " AND COALESCE(session_id, '') = ''"
 	}
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
@@ -356,7 +362,7 @@ func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *Q
 	query := requestDetailsBaseSelectForSource(source)
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
-	query += " ORDER BY start_time DESC"
+	query += " ORDER BY " + requestDetailsOrderBy
 
 	if opts != nil {
 		if opts.Limit > 0 {
@@ -426,19 +432,20 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
-	SessionID     string
-	RequestID     string
-	StartDate     *time.Time
-	EndDate       *time.Time
-	ModelName     string
-	RequestFamily string
-	EndpointName  string
-	UpstreamName  string
-	UpstreamType  string
-	Status        string
-	RequestKinds  []string
-	Limit         int
-	Offset        int
+	SessionMissing bool
+	SessionID      string
+	RequestID      string
+	StartDate      *time.Time
+	EndDate        *time.Time
+	ModelName      string
+	RequestFamily  string
+	EndpointName   string
+	UpstreamName   string
+	UpstreamType   string
+	Status         string
+	RequestKinds   []string
+	Limit          int
+	Offset         int
 }
 
 // UsageSummary represents a summary of usage data
@@ -576,10 +583,6 @@ const aggregatedRequestStatsSelectBase = `SELECT
 	COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
 	FROM request_logs WHERE 1=1`
 
-func aggregatedRequestStatsBaseQueryForSource(source requestQuerySource) string {
-	return aggregatedRequestStatsSelectBase
-}
-
 func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
 	stats.TotalRequests += other.TotalRequests
 	stats.SuccessRequests += other.SuccessRequests
@@ -589,42 +592,6 @@ func (stats *AggregatedRequestStats) add(other AggregatedRequestStats) {
 	stats.TotalCostUSD += other.TotalCostUSD
 	stats.TotalDurationMs += other.TotalDurationMs
 	stats.DurationCount += other.DurationCount
-}
-
-func (stats *AggregatedRequestStats) subtract(other AggregatedRequestStats) {
-	stats.TotalRequests -= other.TotalRequests
-	stats.SuccessRequests -= other.SuccessRequests
-	stats.FailedRequests -= other.FailedRequests
-	stats.InterruptedRequests -= other.InterruptedRequests
-	stats.TotalTokens -= other.TotalTokens
-	stats.TotalCostUSD -= other.TotalCostUSD
-	stats.TotalDurationMs -= other.TotalDurationMs
-	stats.DurationCount -= other.DurationCount
-
-	if stats.TotalRequests < 0 {
-		stats.TotalRequests = 0
-	}
-	if stats.SuccessRequests < 0 {
-		stats.SuccessRequests = 0
-	}
-	if stats.FailedRequests < 0 {
-		stats.FailedRequests = 0
-	}
-	if stats.InterruptedRequests < 0 {
-		stats.InterruptedRequests = 0
-	}
-	if stats.TotalTokens < 0 {
-		stats.TotalTokens = 0
-	}
-	if stats.TotalCostUSD < 0 {
-		stats.TotalCostUSD = 0
-	}
-	if stats.TotalDurationMs < 0 {
-		stats.TotalDurationMs = 0
-	}
-	if stats.DurationCount < 0 {
-		stats.DurationCount = 0
-	}
 }
 
 func aggregatedStatsFromRequestDetails(details []RequestDetail) AggregatedRequestStats {
@@ -650,10 +617,18 @@ func aggregatedStatsFromRequestDetails(details []RequestDetail) AggregatedReques
 	return stats
 }
 
-func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (*AggregatedRequestStats, error) {
-	query := aggregatedRequestStatsBaseQueryForSource(source)
+func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource, excludedRequestIDs []string) (*AggregatedRequestStats, error) {
+	query := aggregatedRequestStatsSelectBase
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
+	if len(excludedRequestIDs) > 0 {
+		encoded, err := json.Marshal(excludedRequestIDs)
+		if err != nil {
+			return nil, fmt.Errorf("encode excluded request IDs: %w", err)
+		}
+		query += " AND request_id NOT IN (SELECT value FROM json_each(?))"
+		args = append(args, string(encoded))
+	}
 
 	var stats AggregatedRequestStats
 	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
@@ -672,33 +647,6 @@ func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context,
 	return &stats, nil
 }
 
-func (ut *UsageTracker) queryAggregatedRequestStatsBySourceAndRequestIDs(ctx context.Context, opts *QueryOptions, source requestQuerySource, requestIDs []string) (*AggregatedRequestStats, error) {
-	if len(requestIDs) == 0 {
-		return &AggregatedRequestStats{}, nil
-	}
-
-	query := aggregatedRequestStatsBaseQueryForSource(source)
-	args := make([]interface{}, 0, 16+len(requestIDs))
-	query, args = appendRequestQueryFilters(query, args, opts, source)
-	query, args = appendRequestIDInFilter(query, args, requestIDs)
-
-	var stats AggregatedRequestStats
-	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
-		&stats.TotalRequests,
-		&stats.SuccessRequests,
-		&stats.FailedRequests,
-		&stats.InterruptedRequests,
-		&stats.TotalTokens,
-		&stats.TotalCostUSD,
-		&stats.TotalDurationMs,
-		&stats.DurationCount,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query aggregated request stats by request IDs: %w", err)
-	}
-	return &stats, nil
-}
-
 // QueryAggregatedRequestStatsWithHotPool 查询带筛选条件的请求聚合统计（数据库 + 热池）。
 func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Context, opts *QueryOptions) (*AggregatedRequestStats, error) {
 	if ut.readDB == nil {
@@ -712,59 +660,21 @@ func (ut *UsageTracker) QueryAggregatedRequestStatsWithHotPool(ctx context.Conte
 	}
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
-	var stats AggregatedRequestStats
-
-	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
-		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, source)
-		if err != nil {
-			return nil, err
-		}
-		stats.add(*sourceStats)
-	default:
-		sourceStats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, requestQuerySourceRaw)
-		if err != nil {
-			return nil, err
-		}
-		stats.add(*sourceStats)
-	}
-
-	hotPoolRequests := ut.getFilteredHotPoolRequests(opts)
-	if len(hotPoolRequests) == 0 {
-		return &stats, nil
-	}
-
-	hotPoolIDs := make(map[string]struct{}, len(hotPoolRequests))
-	uniqueHotPoolRequests := make([]RequestDetail, 0, len(hotPoolRequests))
-	hotPoolRequestIDs := make([]string, 0, len(hotPoolRequests))
-	for _, req := range hotPoolRequests {
-		if _, exists := hotPoolIDs[req.RequestID]; exists {
-			continue
-		}
-		hotPoolIDs[req.RequestID] = struct{}{}
-		uniqueHotPoolRequests = append(uniqueHotPoolRequests, req)
+	// 与正式请求表及会话排行一致：先捕获全部热池 ID，再过滤。
+	// 不匹配当前条件的新版本也必须替换数据库里仍匹配条件的旧版本。
+	hotSnapshot := ut.requestHotPoolSnapshot()
+	hotPoolRequestIDs := make([]string, 0, len(hotSnapshot))
+	for _, req := range hotSnapshot {
 		hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
 	}
-
-	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
-		overlapStats, err := ut.queryAggregatedRequestStatsBySourceAndRequestIDs(ctx, opts, source, hotPoolRequestIDs)
-		if err != nil {
-			return nil, err
-		}
-		stats.subtract(*overlapStats)
-	default:
-		overlapStats, err := ut.queryAggregatedRequestStatsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, hotPoolRequestIDs)
-		if err != nil {
-			return nil, err
-		}
-		stats.subtract(*overlapStats)
+	stats, err := ut.queryAggregatedRequestStatsBySource(ctx, opts, source, hotPoolRequestIDs)
+	if err != nil {
+		return nil, err
 	}
-
-	hotPoolStats := aggregatedStatsFromRequestDetails(uniqueHotPoolRequests)
+	hotPoolStats := aggregatedStatsFromRequestDetails(ut.filterHotPoolRequests(hotSnapshot, opts))
 	stats.add(hotPoolStats)
 
-	return &stats, nil
+	return stats, nil
 }
 
 // EndpointCostSummary represents cost summary data for an endpoint
