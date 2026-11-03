@@ -19,6 +19,16 @@ const (
 	DefaultReadLimit = 64 << 20
 	// DefaultWriteTimeout 单次写入超时。
 	DefaultWriteTimeout = 30 * time.Second
+	// writeTimeoutGraceBytes 以内的消息只用基础写入超时。
+	writeTimeoutGraceBytes = 1 << 20
+	// writeTimeoutMinRate 超出部分按该最低速率（字节/秒）放宽写入超时：
+	// 断线重连后的整段历史可达数 MB，慢上行下 30 秒写不完会连同整条连接一起被关闭。
+	writeTimeoutMinRate = 32 << 10
+	// maxWriteTimeout 放宽后的单次写入超时上限。
+	maxWriteTimeout = 10 * time.Minute
+	// writeFragmentBytes 大消息按该大小分片写出。整条消息作为单帧写出时会一直持有帧写锁，
+	// 对端的 Ping 收不到 Pong（库内控制帧写入只等 5 秒），连接会在大消息写完前被关闭。
+	writeFragmentBytes = 64 << 10
 	// DefaultMaxQueueMessages 每方向排队条数上限。
 	DefaultMaxQueueMessages = 64
 	// DefaultMaxQueueBytes 每方向排队字节上限。
@@ -358,6 +368,35 @@ func closeQuietly(conn *websocket.Conn) {
 	_ = conn.CloseNow()
 }
 
+// messageWriteTimeout 单条消息的写入超时：宽限字节以内用基础超时，超出部分按最低速率放宽，
+// 封顶 maxWriteTimeout；基础超时本身更大时不缩短。
+func messageWriteTimeout(base time.Duration, size int) time.Duration {
+	if size <= writeTimeoutGraceBytes {
+		return base
+	}
+	extra := time.Duration(size-writeTimeoutGraceBytes) * time.Second / writeTimeoutMinRate
+	return max(base, min(base+extra, maxWriteTimeout))
+}
+
+// writeMessage 写出一条完整消息；超过 writeFragmentBytes 时分片写出，让控制帧能插在分片之间。
+func writeMessage(ctx context.Context, dst *websocket.Conn, typ websocket.MessageType, data []byte) error {
+	if len(data) <= writeFragmentBytes {
+		return dst.Write(ctx, typ, data)
+	}
+	w, err := dst.Writer(ctx, typ)
+	if err != nil {
+		return err
+	}
+	for len(data) > 0 {
+		n := min(len(data), writeFragmentBytes)
+		if _, err := w.Write(data[:n]); err != nil {
+			return err
+		}
+		data = data[n:]
+	}
+	return w.Close()
+}
+
 // writeLane 串行写出队列内容，保持同方向的提交顺序。
 func writeLane(ctx context.Context, onWriteError func(), queue *messageQueue, dst *websocket.Conn, direction Direction, opts Options) writerResult {
 	var result writerResult
@@ -370,8 +409,8 @@ func writeLane(ctx context.Context, onWriteError func(), queue *messageQueue, ds
 			}
 			return result
 		}
-		writeCtx, cancelWrite := context.WithTimeout(ctx, opts.WriteTimeout)
-		err = dst.Write(writeCtx, msg.typ, msg.data)
+		writeCtx, cancelWrite := context.WithTimeout(ctx, messageWriteTimeout(opts.WriteTimeout, len(msg.data)))
+		err = writeMessage(writeCtx, dst, msg.typ, msg.data)
 		cancelWrite()
 		if err != nil {
 			result.err = err
