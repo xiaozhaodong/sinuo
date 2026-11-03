@@ -36,6 +36,7 @@ const TABLE_FIELDS = [
   'outputTokens',
   'cacheCreationTokens',
   'cacheReadTokens',
+  'cacheRatio',
   'cost',
   // 表格用它们决定 token / 成本列显示数字还是占位符
   'usageKnown',

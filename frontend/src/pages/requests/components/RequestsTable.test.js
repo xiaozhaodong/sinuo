@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { normalizeRequest } from '../utils/normalizeRequest.js';
+import { TABLE_COLUMNS } from '../utils/constants.js';
 
 // 编译真实表格与计时组件；仅替换时区配置和费用API，避免启动桌面运行时。
 const require = createRequire(import.meta.url);
@@ -33,6 +35,27 @@ const compiled = await build({
   }]
 });
 const { default: RequestsTable } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+test('缓存率使用完整输入，可区分零命中、未知用量与在途请求', () => {
+  const markup = (raw, visible = true) => renderToStaticMarkup(createElement(RequestsTable, {
+    requests: [normalizeRequest({ request_id: 'cache', status: 'completed', ...raw })],
+    visibleColumns: visible ? ['cacheRatio'] : [], columnConfigs: TABLE_COLUMNS
+  }));
+  const codex = { request_family: 'codex', input_tokens: 1000, cache_read_tokens: 900, cache_creation_tokens: 25, output_tokens: 200 };
+  const claude = { request_family: 'claude', input_tokens: 100, cache_read_tokens: 600, cache_creation_tokens: 300 };
+  assert.doesNotMatch(markup(codex, false), /缓存率|90\.0%/);
+  assert.match(markup(codex), />90\.0%</);
+  assert.match(markup(claude), />60\.0%</);
+  assert.match(markup({ ...claude, cache_creation_tokens: null, cache_creation_5m_tokens: 100, cache_creation_1h_tokens: 200 }), />60\.0%</);
+  assert.match(markup({ ...codex, request_family: 'other', path: '/v1/responses/compact' }), />90\.0%</);
+  assert.match(markup({ ...codex, cache_read_tokens: 0 }), />0\.0%</);
+  assert.match(markup({ ...codex, cache_read_tokens: 1000 }), />100\.0%</);
+  for (const raw of [
+    { ...codex, input_tokens: 0, cache_read_tokens: 0 }, { ...codex, cache_read_tokens: null },
+    { ...claude, cache_creation_tokens: null }, { ...codex, usage_known: false },
+    { ...codex, status: 'processing' }, { ...codex, path: '/v1/alpha/search' }
+  ]) assert.match(markup(raw), />—</);
+});
+
 const render = (fields) => renderToStaticMarkup(createElement(RequestsTable, {
   requests: [{ requestId: 'retry-row', duration: 1000, status: 'completed', firstTokenMs: 100, completionMs: 900, ...fields }],
   visibleColumns: ['duration'], columnConfigs: [{ id: 'duration', label: '耗时' }]

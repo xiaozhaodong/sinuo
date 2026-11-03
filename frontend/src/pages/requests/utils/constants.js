@@ -82,6 +82,7 @@ export const TABLE_COLUMNS = [
   { id: 'outputTokens', label: '输出', alwaysVisible: false, width: 'auto', align: 'right' },
   { id: 'cacheCreationTokens', label: '缓存创建', alwaysVisible: false, width: 'auto', align: 'right' },
   { id: 'cacheReadTokens', label: '缓存读取', alwaysVisible: false, width: 'auto', align: 'right' },
+  { id: 'cacheRatio', label: '缓存率', alwaysVisible: false, defaultHidden: true, width: 'auto', align: 'right' },
   { id: 'cost', label: '成本', alwaysVisible: false, width: 'auto', align: 'right' }
 ];
 

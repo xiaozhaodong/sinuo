@@ -15,6 +15,7 @@ import RequestTimingCell from './RequestTimingCell.jsx';
 import ModelTag from './ModelTag.jsx';
 import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
+import { formatSessionRatio } from '../utils/sessionUsage.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 
@@ -94,13 +95,15 @@ const renderCell = (columnId, request, formatTime) => {
     case 'duration':
       return <RequestTimingCell request={request} />;
     case 'inputTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-body" title={usageHint}>{request.inputTokens}</ValueCell>;
+      return <ValueCell pending={usagePending || request.inputTokens == null} tone="text-fg-body" title={usageHint}>{request.inputTokens}</ValueCell>;
     case 'outputTokens':
       return <ValueCell pending={usagePending} tone="text-fg-body" title={usageHint}>{request.outputTokens}</ValueCell>;
     case 'cacheCreationTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-muted" title={usageHint}>{request.cacheCreationTokens}</ValueCell>;
+      return <ValueCell pending={usagePending || request.cacheCreationTokens == null} tone="text-fg-muted" title={usageHint}>{request.cacheCreationTokens}</ValueCell>;
     case 'cacheReadTokens':
-      return <ValueCell pending={usagePending} tone="text-fg-muted" title={usageHint}>{request.cacheReadTokens}</ValueCell>;
+      return <ValueCell pending={usagePending || request.cacheReadTokens == null} tone="text-fg-muted" title={usageHint}>{request.cacheReadTokens}</ValueCell>;
+    case 'cacheRatio':
+      return <ValueCell pending={usagePending || request.cacheRatio == null} tone="text-fg-body" title={usageHint || '按本行记录的 Token 计算：缓存读取 ÷ 完整输入'}>{formatSessionRatio(request.cacheRatio)}</ValueCell>;
     case 'cost':
       return <ValueCell pending={costPending} tone="text-warn font-medium" title={usageHint}>{formatCost(request.cost)}</ValueCell>;
     default:
