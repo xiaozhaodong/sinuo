@@ -318,6 +318,7 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	eventType := subscriptionWSClientEventType(payload)
 	eventLogType := subscriptionWSEventLogType(eventType)
 	submission, isCreate := i.submissions.beginCreate(payload)
+	// interrupt 不产生新工作，排空期间仍须转发，让已受理响应可以及时收尾。
 	steerDraining := eventType == "response.steer" && i.submissions.activity != nil && !i.submissions.activity.AcceptAuxiliary()
 	if (isCreate && submission == nil) || steerDraining {
 		streamID := "" // steering 不携带 stream_id，由目标 response 决定 lane。
@@ -343,14 +344,14 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	req := (&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": []string{"application/json"}}}).WithContext(requestContext)
 	filtered, err := applySubscriptionPrivacy(i.filter, req, "/v1/responses", payload)
 	if err == nil {
-		if !isCreate && eventType != "response.steer" {
+		if !isCreate && !subscriptionWSControlEvent(eventType) {
 			i.submissions.warn("unsupported_client_event")
 			i.warn(subscriptionUnsupportedWSEventCode, "event_type", eventLogType)
 			return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusBadRequest,
 				subscriptionUnsupportedWSEventCode, "unsupported WebSocket client event")}, nil
 		}
 		i.writeMu.Lock()
-		// steering 不新建生成请求，但仍占一个写回调位置，避免后续 create 的字节归属错位。
+		// 控制事件不新建生成请求，但仍占一个写回调位置，避免后续 create 的字节归属错位。
 		i.pendingWrites = append(i.pendingWrites, submission)
 		i.writeMu.Unlock()
 		return subscriptionws.InterceptResult{Forward: filtered}, nil

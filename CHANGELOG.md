@@ -5,11 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 🐛 修复 (Bug Fixes)
+
+- **Codex 订阅直通仍报不支持 WebSocket 事件**：补齐当前 Codex 实际发送的 `response.interrupt`。运行中追加指令、子代理消息抢占与停止生成所需的中断帧可原样转发，退出排空期间也允许中断已有响应；控制回执不会新建或提前结束生成请求。
+- **主动中断误记为上游故障**：`response.incomplete` 的 `interrupted` 终态按取消结算并保留尾部用量与实际结束原因；中断回执不计入生成输出，后续请求继续复用原连接。
+
 ## [6.4.1] - 2026-11-04
 
 ### 🐛 修复 (Bug Fixes)
 
-- **Codex 订阅直通的运行中追加输入**：兼容 `response.steer`，修复运行中补充指令、主子代理传递消息时被本地拒绝并报 `unsupported WebSocket client event` 的问题。追加输入沿用隐私检测与脱敏，控制回执不计为生成请求；拒绝日志补充有界事件类型，方便定位协议差异。
+- **Codex 订阅直通的追加输入协议**：支持公开 Responses 协议的 `response.steer`，追加输入沿用隐私检测与脱敏，控制回执不计为生成请求；拒绝日志补充有界事件类型。此版未覆盖当前 Codex 使用的 `response.interrupt`，运行中补充指令与子代理消息的兼容缺口见后续修复。
 
 ## [6.4.0] - 2026-11-03
 

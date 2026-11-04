@@ -132,8 +132,8 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 // handleUpstreamForForward 只解析一次上游事件，返回对应消息成功写出后的收尾回调。
 func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (*ParseResult, func(), error) {
 	eventType := responsesEventType(payload)
-	// steering 回执不属于生成输出：只透传，避免误记首响、响应字节或结算已有请求。
-	if eventType == "" || strings.HasPrefix(eventType, "response.steer.") {
+	// 控制回执不属于生成输出：只透传，避免误记首响、响应字节或结算已有请求。
+	if eventType == "" || subscriptionWSControlReceipt(eventType) {
 		return nil, nil, nil
 	}
 	result := ParseResponsesEventJSON(eventType, payload)

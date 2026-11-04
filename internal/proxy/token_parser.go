@@ -643,9 +643,16 @@ func parseResponsesEventPayload(eventType string, payload map[string]interface{}
 			result.TokenUsage = tokenUsageFromResponsesUsageMap(usageMap)
 			result.HasTokenUsage = responsesUsageReported(usageMap)
 		}
-		if eventType == "response.incomplete" && responsesIncompleteReason(payload) == "steered" {
-			result.Status = "steered"
-			return result
+		if eventType == "response.incomplete" {
+			switch responsesIncompleteReason(payload) {
+			case "steered":
+				result.Status = "steered"
+				return result
+			case "interrupted":
+				// Codex 的主动中断仍携带尾部用量；沿用取消语义，不能记成上游故障。
+				result.IsCancelled, result.Status = true, "cancelled"
+				return result
+			}
 		}
 		result.ErrorInfo = normalizeErrorInfo(extractResponsesErrorInfo(payload), "response_failed", "responses stream failed")
 		return result
