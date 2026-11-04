@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 🐛 修复 (Bug Fixes)
+
+- **Codex 订阅直通的运行中追加输入**：兼容 `response.steer`，修复运行中补充指令、主子代理传递消息时被本地拒绝并报 `unsupported WebSocket client event` 的问题。追加输入沿用隐私检测与脱敏，控制回执不计为生成请求；拒绝日志补充有界事件类型，方便定位协议差异。
+
 ## [6.4.0] - 2026-11-03
 
 ### ✨ 新功能 (Features)

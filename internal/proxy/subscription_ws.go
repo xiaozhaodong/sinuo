@@ -315,12 +315,19 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 			"request contains invalid or ambiguous JSON")}, nil
 	}
 
+	eventType := subscriptionWSClientEventType(payload)
+	eventLogType := subscriptionWSEventLogType(eventType)
 	submission, isCreate := i.submissions.beginCreate(payload)
-	if isCreate && submission == nil {
-		create, _ := parseSubscriptionCreate(payload) // isCreate 已确认正文是合法 create。
-		i.warn("codex_subscription_proxy_draining", create.StreamID)
+	steerDraining := eventType == "response.steer" && i.submissions.activity != nil && !i.submissions.activity.AcceptAuxiliary()
+	if (isCreate && submission == nil) || steerDraining {
+		streamID := "" // steering 不携带 stream_id，由目标 response 决定 lane。
+		if isCreate {
+			create, _ := parseSubscriptionCreate(payload)
+			streamID = create.StreamID
+		}
+		i.warn("codex_subscription_proxy_draining", "event_type", eventLogType, "stream_id", streamID)
 		return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusServiceUnavailable,
-			"codex_subscription_proxy_draining", "proxy is shutting down", create.StreamID)}, nil
+			"codex_subscription_proxy_draining", "proxy is shutting down", streamID)}, nil
 	}
 	requestID := monitor.NewConnectionID()
 	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
@@ -336,13 +343,14 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	req := (&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": []string{"application/json"}}}).WithContext(requestContext)
 	filtered, err := applySubscriptionPrivacy(i.filter, req, "/v1/responses", payload)
 	if err == nil {
-		if !isCreate {
+		if !isCreate && eventType != "response.steer" {
 			i.submissions.warn("unsupported_client_event")
-			i.warn(subscriptionUnsupportedWSEventCode)
+			i.warn(subscriptionUnsupportedWSEventCode, "event_type", eventLogType)
 			return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusBadRequest,
 				subscriptionUnsupportedWSEventCode, "unsupported WebSocket client event")}, nil
 		}
 		i.writeMu.Lock()
+		// steering 不新建生成请求，但仍占一个写回调位置，避免后续 create 的字节归属错位。
 		i.pendingWrites = append(i.pendingWrites, submission)
 		i.writeMu.Unlock()
 		return subscriptionws.InterceptResult{Forward: filtered}, nil
@@ -358,7 +366,7 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	} else {
 		i.submissions.warn("non_create_privacy_rejected")
 	}
-	i.warn(policyErr.Code)
+	i.warn(policyErr.Code, "event_type", eventLogType)
 	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message), ReplyForwarded: replyForwarded}, nil
 }
 
@@ -383,7 +391,7 @@ func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction
 	}
 }
 
-func (i *subscriptionWSInterceptor) warn(code string, streamIDs ...string) {
+func (i *subscriptionWSInterceptor) warn(code string, attributes ...any) {
 	if i == nil || i.logger == nil {
 		return
 	}
@@ -391,11 +399,8 @@ func (i *subscriptionWSInterceptor) warn(code string, streamIDs ...string) {
 	if i.submissions != nil {
 		connectionID = i.submissions.connectionID
 	}
-	attributes := []any{"conn_id", connectionID, "code", code}
-	if len(streamIDs) != 0 {
-		attributes = append(attributes, "stream_id", streamIDs[0])
-	}
-	i.logger.Warn("⚠️ [Codex 订阅代理] WS 提交被本地拒绝", attributes...)
+	fields := append([]any{"conn_id", connectionID, "code", code}, attributes...)
+	i.logger.Warn("⚠️ [Codex 订阅代理] WS 提交被本地拒绝", fields...)
 }
 
 func subscriptionWSErrorReply(status int, code, message string, streamIDs ...string) []byte {
