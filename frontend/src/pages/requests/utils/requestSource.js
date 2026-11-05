@@ -81,10 +81,12 @@ export const normalizeRequestSource = (request = {}) => ({
 export const resolveUpstreamFilterOption = (request = {}, { withFamily = true } = {}) => {
   const normalized = normalizeRequestSource(request);
   if (isSubscriptionRequest(request)) {
-    const value = SUBSCRIPTION_UPSTREAM_NAMES[normalized.requestFamily];
+    // 订阅图片与 Codex 文本共用 ChatGPT 上游，筛选值和标签保持一致。
+    const upstreamFamily = normalized.requestFamily === 'image' ? 'codex' : normalized.requestFamily;
+    const value = SUBSCRIPTION_UPSTREAM_NAMES[upstreamFamily];
     if (!value) return null;
     const label = withFamily
-      ? `${SUBSCRIPTION_UPSTREAM_LABEL} · ${getRequestFamilyMeta(normalized.requestFamily).label}`
+      ? `${SUBSCRIPTION_UPSTREAM_LABEL} · ${getRequestFamilyMeta(upstreamFamily).label}`
       : SUBSCRIPTION_UPSTREAM_LABEL;
     return { value, label };
   }

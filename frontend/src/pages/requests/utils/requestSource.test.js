@@ -71,6 +71,21 @@ test('Codex 与 Claude Code 的订阅直通各有一个筛选候选，不限请�
   );
 });
 
+test('订阅图片可筛选，和 Codex 文本共用一个稳定的上游选项', () => {
+  const image = { request_family: 'image', upstream_type: 'subscription', upstream_name: 'chatgpt-subscription' };
+  const codex = { ...image, request_family: 'codex' };
+  assert.equal(resolveRequestUpstream(image), '订阅直通');
+  assert.deepEqual(resolveUpstreamFilterOption(image), { value: 'chatgpt-subscription', label: '订阅直通 · Codex' });
+  assert.deepEqual(filterUpstreamOptionsByFamily([codex, image], 'image'), [
+    { value: 'chatgpt-subscription', label: '订阅直通' }
+  ]);
+  for (const requests of [[codex, image], [image, codex]]) {
+    assert.deepEqual(buildUpstreamFilterOptions({ requests }), [
+      { value: 'chatgpt-subscription', label: '订阅直通 · Codex' }
+    ]);
+  }
+});
+
 test('空上游按终态码归类：候选为空显示「无可用上游」而非「未知上游」', () => {
   assert.equal(
     resolveRequestUpstream({ failure_reason: 'no_endpoints_available: no routable endpoint candidates' }),

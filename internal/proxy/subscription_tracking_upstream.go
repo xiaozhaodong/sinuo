@@ -112,7 +112,7 @@ func (t *subscriptionRequestTracking) publishSettlement(n subscriptionSettlement
 		changeType = "request_failed"
 	}
 	t.observer.publish(events.EventRequestUpdated, priority, map[string]interface{}{
-		"request_id": n.requestID, "request_family": tracking.RequestFamilyCodex,
+		"request_id": n.requestID, "request_family": t.requestFamily,
 		"request_source": tracking.RequestSourceCodexSubscriptionProxy,
 		"upstream_type":  "subscription", "upstream_name": subscriptionTrackingUpstreamName,
 		"status": n.status, "model_name": n.model, "failure_reason": n.failureCode, "retry_count": n.retryCount,

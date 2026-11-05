@@ -66,16 +66,10 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	if p.proxy != nil {
 		observer = newSubscriptionTrackingObserver(p.proxy.usageTracker, p.proxy.eventBus)
 	}
-	kind := ""
-	switch route.Kind {
-	case subscriptionRouteResponses:
-		kind = tracking.RequestKindGeneration
-	case subscriptionRouteResponsesCompact:
-		kind = tracking.RequestKindCompaction
-	}
+	kind, family, toolRequest := subscriptionHTTPTrackingKind(route.Kind)
 	track := observer.StartHTTP(SubscriptionHTTPStart{
 		RequestID: requestID, StartedAt: time.Now(), Method: r.Method, Path: route.InternalPath,
-		RequestKind: kind, IsStreaming: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
+		RequestKind: kind, RequestFamily: family, IsStreaming: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
 		SessionID: clientSessionID(r),
 	})
 	defer track.Complete(nil, "")
@@ -97,10 +91,17 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	}
 	// v6.3：请求模型与思考串在 start 之后才可得，补写进同一行；stream 标记与之前一致
 	requestModel, requestReasoning := reasoning.ParseRequest(route.InternalPath, body.normalizedBody)
+	if route.Kind == subscriptionRouteImagesEdits {
+		requestModel = imageEditRequestModel(body.normalizedBody, r.Header.Get("Content-Type"), requestModel)
+	}
 	track.SetModel(requestModel)
 	track.SetRequestProfile(requestModel, requestReasoning)
 	// 先看 Accept：命中就不必为 stream 再扫一遍正文
-	track.SetStreaming(strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool())
+	if family == tracking.RequestFamilyImage {
+		track.SetStreaming(imageAPIRequestStreamEnabled(r, body.normalizedBody))
+	} else {
+		track.SetStreaming(strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool())
+	}
 	privacyState := newSubscriptionPrivacyRequestState(requestID, func(_ string, result privacy.ApplyResult, policyErr *privacy.PolicyError) {
 		track.RecordPrivacy(result, policyErr)
 	})
@@ -156,6 +157,7 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		track.SetStreaming(true)
 	}
 	var capture *subscriptionResponseCapture
+	var toolResponse *subscriptionToolResponse
 	var responseBytes int64
 	if kind != "" && resp.Body != nil {
 		capture = &subscriptionResponseCapture{
@@ -164,8 +166,23 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 			phaseObserver: track.ObserveStreamResult,
 			onOutput:      func(at time.Time) { track.MarkFirstOutput(responseBytes, at) },
 			onWarning: func(code string) {
-				p.logger.Warn("⚠️ [Codex 订阅代理] 响应用量解析受限", "conn_id", requestID, "code", code)
+				level, message := slog.LevelWarn, "⚠️ [Codex 订阅代理] 响应用量解析受限"
+				if toolRequest {
+					message = "[Codex 订阅代理] 响应元数据观察受限"
+					// 正常图片 JSON 可能超过观察上限；格式、编码和流事件异常仍保留告警。
+					if code == "subscription_response_capture_limit" {
+						level = slog.LevelDebug
+					}
+				}
+				p.logger.Log(r.Context(), level, message, "conn_id", requestID, "code", code)
 			},
+		}
+		if toolRequest {
+			toolResponse = &subscriptionToolResponse{path: route.InternalPath, track: track}
+			capture.parsePayload = toolResponse.parsePayload
+			capture.onResult = toolResponse.observe
+			capture.onOversizedEvent = func(event string) { toolResponse.observe(toolResponse.parseEvent(event)) }
+			capture.phaseObserver = nil
 		}
 		if encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding")); encoding != "" && encoding != "identity" {
 			capture.mode = "opaque"
@@ -185,6 +202,10 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	copyErr := p.writeResponse(w, resp)
 	if capture != nil {
 		capture.Finish()
+	}
+	if toolResponse != nil {
+		toolResponse.finish(resp.StatusCode, capture.mode, copyErr, r.Context().Err())
+		return
 	}
 	if copyErr != nil {
 		track.Complete(&resp.StatusCode, "subscription_response_interrupted")
@@ -358,22 +379,25 @@ func (f subscriptionFlushingWriter) Write(data []byte) (int, error) {
 }
 
 // subscriptionResponseCapture 只暂存有界事件/JSON，不保留整段流，也不改动转发正文。
-// SSE 仅在此分行，终态和用量仍由共享 TokenParser/ParseResponsesEventJSON 解释。
+// SSE 仅在此分帧，终态和元数据交给 Responses 或工具解析器解释。
 type subscriptionResponseCapture struct {
-	mode           string
-	pending        []byte
-	parser         *TokenParser
-	eventBytes     int
-	skipEvent      bool
-	discardLine    bool
-	eventType      string
-	compaction     bool
-	httpStatus     int
-	onResult       func(*ParseResult)
-	onOutput       func(time.Time)
-	onWarning      func(string)
-	phaseObserver  func(*ParseResult, int, time.Time)
-	phaseReadBytes int // 模式识别前的空白也计入流速总读取上限
+	mode             string
+	pending          []byte
+	parser           *TokenParser
+	eventBytes       int
+	skipEvent        bool
+	discardLine      bool
+	eventType        string
+	compaction       bool
+	httpStatus       int
+	onResult         func(*ParseResult)
+	onOutput         func(time.Time)
+	onWarning        func(string)
+	phaseObserver    func(*ParseResult, int, time.Time)
+	phaseReadBytes   int                               // 模式识别前的空白也计入流速总读取上限
+	parsePayload     func(string, []byte) *ParseResult // 工具接口仅观察元数据，复用有界 JSON/SSE 分帧
+	eventData        []byte
+	onOversizedEvent func(string) // 超大工具事件只观察明确的类型与事件边界
 }
 
 const subscriptionCaptureLimit = 16 << 20
@@ -418,6 +442,11 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 		c.pending = append(c.pending, data...)
 	}
 	if c.mode == "json" {
+		// 工具 JSON 首响按首段正文到达计时，不依赖整段解析或有界缓存能否容纳图片。
+		if c.parsePayload != nil && c.onOutput != nil {
+			c.onOutput(time.Now())
+			c.onOutput = nil
+		}
 		if len(c.pending) > subscriptionCaptureLimit {
 			c.mode, c.pending = "opaque", nil
 			c.warn("subscription_response_capture_limit")
@@ -437,6 +466,19 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 		if c.eventBytes+len(c.pending)+len(part) > subscriptionCaptureLimit {
 			if !c.skipEvent {
 				c.warn("subscription_response_event_limit")
+				if c.onOversizedEvent != nil && c.eventType == "" {
+					// data-only 图片事件的 type 常在大图字段之前；丢弃正文前保留已读到的完整类型。
+					prefix := bytes.TrimSpace(c.pending)
+					if len(prefix) == 0 {
+						prefix = bytes.TrimSpace(part)
+					}
+					if bytes.HasPrefix(prefix, []byte("data:")) {
+						value := gjson.GetBytes(bytes.TrimSpace(prefix[5:]), "type")
+						if value.Type == gjson.String && json.Valid([]byte(value.Raw)) {
+							c.eventType = value.String()
+						}
+					}
+				}
 			}
 			c.skipEvent = true
 			c.discardLine = true
@@ -453,7 +495,12 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 		if c.skipEvent {
 			// 超大事件之后必须跳过到空行，不能把截断片段喂给解析器。
 			if !c.discardLine && len(bytes.TrimSpace(part)) == 0 {
+				// 只有到达完整事件边界才观察类型，截断的大图事件不能据此判定完成。
+				if c.onOversizedEvent != nil {
+					c.onOversizedEvent(c.eventType)
+				}
 				c.skipEvent, c.eventBytes, c.parser = false, 0, nil
+				c.eventData = nil
 				c.eventType = ""
 			}
 			c.discardLine = false
@@ -467,7 +514,7 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 }
 
 func (c *subscriptionResponseCapture) line(line string) {
-	if c.parser == nil {
+	if c.parser == nil && c.parsePayload == nil {
 		c.parser = NewTokenParser()
 	}
 	c.eventBytes += len(line)
@@ -477,7 +524,18 @@ func (c *subscriptionResponseCapture) line(line string) {
 	} else if strings.HasPrefix(trimmed, "data:") && c.eventType == "" {
 		c.eventType = responsesEventType([]byte(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))))
 	}
-	result := c.parser.ParseSSELineV2(line)
+	var result *ParseResult
+	if c.parsePayload != nil {
+		if strings.HasPrefix(trimmed, "data:") {
+			c.eventData = append(c.eventData, strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))...)
+			c.eventData = append(c.eventData, '\n')
+		} else if trimmed == "" {
+			result = c.parsePayload(c.eventType, c.eventData)
+			c.eventData = nil
+		}
+	} else {
+		result = c.parser.ParseSSELineV2(line)
+	}
 	if isFirstResponseDataLine(line) && c.onOutput != nil {
 		c.onOutput(time.Now())
 		c.onOutput = nil
@@ -494,7 +552,7 @@ func (c *subscriptionResponseCapture) line(line string) {
 }
 
 func (c *subscriptionResponseCapture) Finish() {
-	defer func() { c.pending, c.parser = nil, nil }()
+	defer func() { c.pending, c.parser, c.eventData = nil, nil, nil }()
 	if c.mode == "sse" {
 		if c.skipEvent {
 			return
@@ -506,6 +564,12 @@ func (c *subscriptionResponseCapture) Finish() {
 		return
 	}
 	if c.mode != "json" || !json.Valid(c.pending) {
+		return
+	}
+	if c.parsePayload != nil {
+		if c.onResult != nil {
+			c.onResult(c.parsePayload("", c.pending))
+		}
 		return
 	}
 	var envelope struct {

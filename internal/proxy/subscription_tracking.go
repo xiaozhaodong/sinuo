@@ -20,16 +20,17 @@ const (
 
 // SubscriptionHTTPStart 是订阅 HTTP 入口与追踪器之间的正文无关契约。
 type SubscriptionHTTPStart struct {
-	RequestID    string
-	SessionID    string
-	ConnectionID string
-	StartedAt    time.Time
-	ClientIP     string
-	UserAgent    string
-	Method       string
-	Path         string
-	RequestKind  string
-	IsStreaming  bool
+	RequestID     string
+	SessionID     string
+	ConnectionID  string
+	StartedAt     time.Time
+	ClientIP      string
+	UserAgent     string
+	Method        string
+	Path          string
+	RequestKind   string
+	RequestFamily string
+	IsStreaming   bool
 	// v6.3 请求侧模型与思考串，随 start 事件原子写入
 	RequestModel     string
 	RequestReasoning string
@@ -50,7 +51,7 @@ func newSubscriptionTrackingObserver(tracker *tracking.UsageTracker, eventBus ev
 	}
 }
 
-// StartHTTP 只为 generation/compaction 建记录；空 kind 是合法辅助请求。
+// StartHTTP 为业务调用/压缩建记录；空 kind 是不需登记的辅助请求。
 func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *subscriptionRequestTracking {
 	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, connectionID: start.ConnectionID, startedAt: start.StartedAt, path: start.Path}
 	if start.RequestKind == "" || o == nil || o.tracker == nil || start.RequestID == "" {
@@ -63,9 +64,14 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 	if handle.startedAt.IsZero() {
 		handle.startedAt = time.Now()
 	}
+	family := start.RequestFamily
+	if family == "" {
+		family = tracking.RequestFamilyCodex
+	}
+	handle.requestFamily = family
 	err := o.tracker.RecordRequestStartAtWithDimensions(
 		start.RequestID, start.ClientIP, start.UserAgent, start.Method, start.Path,
-		tracking.RequestFamilyCodex, start.IsStreaming, handle.startedAt,
+		family, start.IsStreaming, handle.startedAt,
 		tracking.RequestDimensions{
 			RequestSource:      tracking.RequestSourceCodexSubscriptionProxy,
 			RequestKind:        start.RequestKind,
@@ -86,7 +92,7 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 	handle.active = true
 	o.publish(events.EventRequestStarted, events.PriorityNormal, map[string]interface{}{
 		"request_id": start.RequestID, "method": start.Method, "path": start.Path,
-		"request_family": tracking.RequestFamilyCodex,
+		"request_family": family,
 		"request_source": tracking.RequestSourceCodexSubscriptionProxy,
 		"request_kind":   start.RequestKind, "is_streaming": start.IsStreaming,
 		"upstream_type": "subscription", "upstream_source_name": subscriptionTrackingUpstreamName,
@@ -118,6 +124,7 @@ type subscriptionRequestTracking struct {
 	connectionID  string
 	startedAt     time.Time
 	path          string
+	requestFamily string
 	model         string
 	responseModel string                  // v6.3 仅由响应解析写入
 	responseState reasoning.ResponseState // v6.3 响应思考按字段累计（created 的 effort + completed 的 reasoning_tokens）

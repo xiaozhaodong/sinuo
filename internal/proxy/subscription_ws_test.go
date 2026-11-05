@@ -503,7 +503,7 @@ func TestSubscriptionHTTPTrackingEntryIntegration(t *testing.T) {
 		{"generation", "responses", "event: response.completed\ndata: {\"response\":{\"id\":\"r\",\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n", "generation", false, false},
 		{"compact", "responses/compact", `{"object":"response.compaction","output":[],"usage":{"input_tokens":3,"output_tokens":2}}`, "compaction", false, false},
 		{"unknown usage", "responses", `{"status":"completed","output":[]}`, "generation", false, false},
-		{"search", "alpha/search", `{"ok":true}`, "", false, false},
+		{"history", "alpha/history/v2/list_items", `{"ok":true}`, "", false, false},
 		{"privacy rejection", "responses", `{"ok":true}`, "generation", true, false},
 		{"upstream error", "responses", `{"error":{"type":"SYNTHETIC-SECRET","code":"SYNTHETIC-SECRET","message":"SYNTHETIC-SECRET"}}`, "generation", false, true},
 	} {
