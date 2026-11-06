@@ -35,6 +35,7 @@ func newSubscriptionRuntime(t *testing.T, upstreamBaseURL string) *CodexSubscrip
 	t.Helper()
 	var runtime *CodexSubscriptionProxyRuntime
 	handler := NewCodexSubscriptionProxyHandler(SubscriptionProxyHandlerOptions{
+		NewRequestID:      nextTestSubscriptionID,
 		Proxy:             NewHandler(nil, &config.Config{}),
 		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		UpstreamBaseURL:   upstreamBaseURL,

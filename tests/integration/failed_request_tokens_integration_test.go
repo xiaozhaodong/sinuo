@@ -188,6 +188,8 @@ func TestFailedRequestTokensConcurrency(t *testing.T) {
 			defer wg.Done()
 			rlm := proxy.NewRequestLifecycleManager(tracker, monitoringMiddleware,
 				"req-concurrent-"+string(rune('A'+managerID)), nil)
+			// 先进热池，与生产顺序一致；否则写入降级进旧事件队列，关闭时空转重试拖慢测试
+			rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 
 			rlm.SetEndpoint("concurrent-endpoint-" + string(rune('0'+managerID)))
 

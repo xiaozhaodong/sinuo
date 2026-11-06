@@ -4,7 +4,7 @@ import "testing"
 
 func TestTokenUsage_MixedProtocolsKeepRawCountsAndDeduplicateTotals(t *testing.T) {
 	m := NewMetrics()
-	codexID := m.RecordRequest("upstream", "127.0.0.1", "synthetic", "POST", "/v1/responses")
+	codexID := m.RecordRequest(testMonitorRequestID(), "upstream", "127.0.0.1", "synthetic", "POST", "/v1/responses")
 	codex := &TokenUsage{InputTokens: 272077, OutputTokens: 1671, CacheCreationTokens: 2000, CacheReadTokens: 265159}
 	codex.SetProtocol("codex", "/v1/responses")
 	codex.SetProtocol("codex", "/v1/responses")

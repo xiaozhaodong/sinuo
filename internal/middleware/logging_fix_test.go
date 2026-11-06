@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ func TestLoggingMiddleware_NoDuplicateLogs(t *testing.T) {
 
 	// 创建日志中间件
 	middleware := NewLoggingMiddleware(logger)
+	middleware.SetRequestIDGenerator(func(context.Context) (string, error) { return "req-00000001", nil })
 
 	// 创建测试处理器
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

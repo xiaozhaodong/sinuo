@@ -72,7 +72,7 @@ func TestSubscriptionWSSteerPrivacy(t *testing.T) {
 func TestSubscriptionWSSteerDrainAndResume(t *testing.T) {
 	state, activity := activitySubmissionState()
 	defer state.close("done")
-	state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
 	interceptor := &subscriptionWSInterceptor{submissions: state}
 	body := []byte(`{"type":"response.steer","previous_response_id":"parent","input":"update"}`)
 	activity.BeginDrain("quit")
@@ -90,7 +90,7 @@ func TestSubscriptionWSSteerDrainAndResume(t *testing.T) {
 func TestSubscriptionWSSteerIndependentPrivacyState(t *testing.T) {
 	state, activity := activitySubmissionState()
 	defer state.close("done")
-	active, _ := state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
+	active, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"parent"}}`))
 	filter := &p2aPrivacyFilter{version: 1, err: &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed}}
 	interceptor := &subscriptionWSInterceptor{submissions: state, filter: filter}
@@ -126,7 +126,7 @@ func (o *steerOutboundObserver) SubmissionOutbound(s *subscriptionSubmission, si
 
 func TestSubscriptionWSSteerPreservesWriteAccounting(t *testing.T) {
 	observer := &steerOutboundObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws", observer)
 	defer state.close("done")
 	interceptor := &subscriptionWSInterceptor{submissions: state}
 	bodies := []string{
@@ -159,7 +159,7 @@ func TestSubscriptionWSSteerReceiptsDoNotSettleGeneration(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
 	state.observer = observer
 	interceptor := &subscriptionWSInterceptor{submissions: state}
-	active, _ := state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
+	active, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"parent"}}`))
 	beforeBytes := active.responseBytes
 	for _, body := range []string{
@@ -187,7 +187,7 @@ func TestSubscriptionWSSteerReceiptsDoNotSettleGeneration(t *testing.T) {
 }
 
 func TestSubscriptionWSSteerRejectsAmbiguousJSON(t *testing.T) {
-	state := newSubscriptionSubmissionState(context.Background(), "ws", nil)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws", nil)
 	filter := &p2aPrivacyFilter{version: 1}
 	interceptor := &subscriptionWSInterceptor{submissions: state, filter: filter}
 	for _, body := range []string{
@@ -216,7 +216,7 @@ func TestSubscriptionWSSteerUnknownEventDiagnostics(t *testing.T) {
 		t.Run(tc.logged, func(t *testing.T) {
 			var logs bytes.Buffer
 			interceptor := &subscriptionWSInterceptor{
-				submissions: newSubscriptionSubmissionState(context.Background(), "ws", nil),
+				submissions: newTestSubscriptionSubmissionState(context.Background(), "ws", nil),
 				logger:      slog.New(slog.NewJSONHandler(&logs, nil)),
 			}
 			body, _ := json.Marshal(map[string]string{"type": tc.eventType, "input": "SYNTHETIC-SECRET"})

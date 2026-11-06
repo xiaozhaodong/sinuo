@@ -1,10 +1,13 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -14,6 +17,8 @@ func TestLoggingActivity_WaitsForHandlerAndRestoresAdmission(t *testing.T) {
 	activity := monitoring.GetMetrics().RequestActivity()
 	logging := NewLoggingMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	logging.SetMonitoringMiddleware(monitoring)
+	var ids atomic.Uint32
+	logging.SetRequestIDGenerator(func(context.Context) (string, error) { return fmt.Sprintf("req-%08x", ids.Add(1)), nil })
 	started, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	handler := logging.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(started)

@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ type subscriptionSubmissionState struct {
 	recentIDs    map[string]struct{}
 	recentOrder  []string
 	activity     *monitor.RequestActivity
+	requestIDs   monitor.RequestIDGenerator
 	inFlight     map[*subscriptionSubmission]*monitor.RequestLease
 }
 
@@ -79,25 +81,30 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 	}
 	if info := subscriptionRequestInfoFromContext(ctx); info != nil {
 		state.activity = info.activity
+		state.requestIDs = info.requestIDs
 	}
 	return state
 }
 
 // beginCreate 在隐私扫描前登记提交；generate 缺省为 true。
-func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscriptionSubmission, bool) {
+func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscriptionSubmission, bool, error) {
 	create, ok := parseSubscriptionCreate(payload)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		s.warn("submission_after_close")
-		return nil, true
+		return nil, true, nil
+	}
+	requestID, err := s.requestIDs.Next(s.baseContext)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, true, err
 	}
 	s.sequence++
-	requestID := monitor.NewConnectionID()
 	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
 	ctx := context.WithValue(s.baseContext, "conn_id", requestID) //nolint:staticcheck // 与旧入口请求 ID key 一致
 	ctx = handlers.WithPrivacyRequestState(ctx, privacyState)
@@ -117,7 +124,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	}
 	if !s.admitActivityLocked(submission) {
 		s.mu.Unlock()
-		return nil, true
+		return nil, true, nil
 	}
 	s.pending = append(s.pending, submission)
 	s.active = append(s.active, submission)
@@ -126,7 +133,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	if s.observer != nil {
 		s.observer.SubmissionStarted(submission)
 	}
-	return submission, true
+	return submission, true, nil
 }
 
 // handleUpstreamForForward 只解析一次上游事件，返回对应消息成功写出后的收尾回调。
@@ -140,8 +147,8 @@ func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (
 	responseID := responsesEventID(payload)
 
 	if eventType == "response.created" {
-		if !s.bindCreated(responseID, result) {
-			return result, nil, errSubscriptionDraining
+		if err := s.bindCreated(responseID, result); err != nil {
+			return result, nil, err
 		}
 		s.responseProgress(responseID, result, int64(len(payload)))
 		return result, nil, nil
@@ -211,24 +218,24 @@ func (s *subscriptionSubmissionState) responseProgress(responseID string, result
 	}
 }
 
-func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) bool {
+func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) error {
 	var submission *subscriptionSubmission
 	var started bool
 	if responseID == "" {
 		s.warn("response_created_without_id")
-		return true
+		return nil
 	}
 
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return false
+		return errSubscriptionDraining
 	}
 	// 判重必须发生在消费 pending 或创建 successor 之前。
 	if _, duplicate := s.recentIDs[responseID]; duplicate {
 		s.mu.Unlock()
 		s.warn("duplicate_response_id")
-		return true
+		return nil
 	}
 	for len(s.pending) > 0 {
 		candidate := s.pending[0]
@@ -240,8 +247,12 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 	}
 	if submission == nil {
 		// 服务端 steering successor 没有下游 create，仍需独立生命周期。
+		requestID, err := s.requestIDs.Next(s.baseContext)
+		if err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("allocate successor request ID: %w", err)
+		}
 		s.sequence++
-		requestID := monitor.NewConnectionID()
 		submission = &subscriptionSubmission{
 			RequestID:       requestID,
 			SessionID:       s.sessionID,
@@ -257,7 +268,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		}
 		if !s.admitActivityLocked(submission) {
 			s.mu.Unlock()
-			return false
+			return errSubscriptionDraining
 		}
 		s.active = append(s.active, submission)
 		started = true
@@ -273,7 +284,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		}
 		s.observer.SubmissionBound(submission, result)
 	}
-	return true
+	return nil
 }
 
 func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType string, result *ParseResult) func() {

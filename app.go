@@ -945,6 +945,7 @@ func (a *App) setupProxyHandler() {
 
 	// 创建中间件
 	a.loggingMiddleware = middleware.NewLoggingMiddleware(a.logger)
+	a.loggingMiddleware.SetRequestIDGenerator(a.coreDatabase.NewRequestID)
 	a.monitoringMiddleware = middleware.NewMonitoringMiddleware(a.endpointManager)
 	a.attachTrayMetrics(a.monitoringMiddleware.GetMetrics())
 	a.authMiddleware = middleware.NewAuthMiddleware(a.config.Auth)

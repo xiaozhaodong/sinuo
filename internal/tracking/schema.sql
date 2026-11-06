@@ -10,7 +10,7 @@
 -- 请求记录主表：统一使用 request_family + upstream 维度。
 CREATE TABLE IF NOT EXISTS request_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id TEXT UNIQUE NOT NULL,        -- req-xxxxxxxx
+    request_id TEXT UNIQUE NOT NULL,        -- req-xxxxxxxx，入口占号后全链路保持不变
     
     -- 请求基本信息
     client_ip TEXT,                         -- 客户端IP

@@ -294,7 +294,7 @@ func TestSubscriptionWSInterceptorPolicyErrorZeroForwardAndSubmissionClasses(t *
 	policyErr := &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed, Message: "internal detail must not escape"}
 	filter := &p2aPrivacyFilter{version: 1, err: policyErr}
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-policy", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-policy", observer)
 	interceptor := &subscriptionWSInterceptor{
 		filter: filter, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), submissions: state,
 	}
@@ -331,7 +331,7 @@ func TestSubscriptionWSInterceptorPolicyErrorZeroForwardAndSubmissionClasses(t *
 }
 
 func TestSubscriptionWSInterceptorUnknownSuccessIsCompatibilityError(t *testing.T) {
-	state := newSubscriptionSubmissionState(context.Background(), "ws-unknown", &recordingSubmissionObserver{})
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-unknown", &recordingSubmissionObserver{})
 	interceptor := &subscriptionWSInterceptor{
 		filter: &p2aPrivacyFilter{version: 1}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), submissions: state,
 	}
@@ -344,7 +344,7 @@ func TestSubscriptionWSInterceptorUnknownSuccessIsCompatibilityError(t *testing.
 
 func TestSubscriptionWSInterceptorDuplicateGenerateDoesNotStartSubmission(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-duplicate", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-duplicate", observer)
 	interceptor := &subscriptionWSInterceptor{
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), submissions: state,
 	}
@@ -360,7 +360,7 @@ func TestSubscriptionWSInterceptorDuplicateGenerateDoesNotStartSubmission(t *tes
 
 func TestSubscriptionWSInterceptorUsesIndependentPrivacyStatePerCreate(t *testing.T) {
 	filter := &p2aPrivacyFilter{version: 1}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-cache", nil)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-cache", nil)
 	interceptor := &subscriptionWSInterceptor{
 		filter: filter, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), submissions: state,
 	}
@@ -622,6 +622,8 @@ func TestSubscriptionWSTrackingEntryWarmupAndGeneration(t *testing.T) {
 	env.handler.proxy.SetUsageTracker(tracker)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	core := requestIDTestCore(t)
+	env.handler.requestIDs = core.NewRequestID
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(env.server.URL, "http")+"/subscription/"+subscriptionTestSecret+"/backend-api/codex/responses", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": []string{"Bearer synthetic-client-token"}}})
 	if err != nil {
 		t.Fatal(err)

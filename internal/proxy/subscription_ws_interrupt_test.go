@@ -17,7 +17,7 @@ func TestSubscriptionWSInterruptForwardAndDrain(t *testing.T) {
 	for _, drain := range []bool{false, true} {
 		state, activity := activitySubmissionState()
 		defer state.close("done")
-		active, _ := state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
+		active, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
 		state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"parent"}}`))
 		filter := &p2aPrivacyFilter{version: 1}
 		interceptor := &subscriptionWSInterceptor{submissions: state, filter: filter}
@@ -38,9 +38,9 @@ func TestSubscriptionWSInterruptForwardAndDrain(t *testing.T) {
 }
 
 func TestSubscriptionWSInterruptPrivacyAndJSONRejection(t *testing.T) {
-	state := newSubscriptionSubmissionState(context.Background(), "ws", nil)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws", nil)
 	defer state.close("done")
-	active, _ := state.beginCreate([]byte(`{"type":"response.create"}`))
+	active, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	filter := &p2aPrivacyFilter{version: 1, err: &privacy.PolicyError{StatusCode: 422, Code: privacy.CodeScanFailed}}
 	interceptor := &subscriptionWSInterceptor{submissions: state, filter: filter}
 	for _, body := range []string{
@@ -64,7 +64,7 @@ func TestSubscriptionWSInterruptPrivacyAndJSONRejection(t *testing.T) {
 
 func TestSubscriptionWSInterruptPreservesWriteAccounting(t *testing.T) {
 	observer := &steerOutboundObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws", observer)
 	defer state.close("done")
 	interceptor := &subscriptionWSInterceptor{submissions: state}
 	bodies := []string{
@@ -95,9 +95,9 @@ func TestSubscriptionWSInterruptReceiptsAndItemBoundary(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
 	state.observer = observer
 	interceptor := &subscriptionWSInterceptor{submissions: state}
-	first, _ := state.beginCreate([]byte(`{"type":"response.create"}`))
+	first, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"parent"}}`))
-	second, _ := state.beginCreate([]byte(`{"type":"response.create"}`))
+	second, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"other"}}`))
 	beforeFirst, beforeSecond := first.responseBytes, second.responseBytes
 	for _, body := range []string{
@@ -154,9 +154,9 @@ func TestSubscriptionWSInterruptTerminalWaitsForDelivery(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
 	state.observer = observer
 	defer state.close("done")
-	state.beginCreate([]byte(`{"type":"response.create"}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"parent"}}`))
-	state.beginCreate([]byte(`{"type":"response.create"}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"other"}}`))
 	body := []byte(`{"type":"response.incomplete","response":{"id":"parent","incomplete_details":{"reason":"interrupted"}}}`)
 	result, forwarded, err := state.handleUpstreamForForward(body)

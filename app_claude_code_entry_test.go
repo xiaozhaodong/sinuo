@@ -47,6 +47,7 @@ func newClaudeCodeEntryTestApp(t *testing.T) *App {
 		proxyHandler:      proxy.NewHandler(manager, cfg),
 		loggingMiddleware: middleware.NewLoggingMiddleware(logger),
 	}
+	app.loggingMiddleware.SetRequestIDGenerator(func(context.Context) (string, error) { return testMonitorRequestID(), nil })
 	t.Cleanup(func() {
 		if app.claudeCodeEntryRuntime != nil {
 			_ = app.claudeCodeEntryRuntime.Stop(context.Background())

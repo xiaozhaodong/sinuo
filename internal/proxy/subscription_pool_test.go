@@ -94,9 +94,10 @@ func newSubscriptionPoolTestEnv(t *testing.T, accounts []*store.UpstreamAccountR
 		AccessHash:    svc.HashCodexSubscriptionProxyAccessSecret(poolTestSecret),
 	}
 	handler := NewCodexSubscriptionProxyHandler(SubscriptionProxyHandlerOptions{
-		Proxy:    proxyHandler,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Snapshot: func() *SubscriptionProxySnapshot { return snapshot },
+		NewRequestID: nextTestSubscriptionID,
+		Proxy:        proxyHandler,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Snapshot:     func() *SubscriptionProxySnapshot { return snapshot },
 	})
 	return &poolTestEnv{handler: handler, transport: transport, pool: pool}
 }

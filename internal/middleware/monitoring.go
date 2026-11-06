@@ -223,8 +223,8 @@ func (mm *MonitoringMiddleware) GetMetrics() *monitor.Metrics {
 }
 
 // RecordRequest records a new request in metrics
-func (mm *MonitoringMiddleware) RecordRequest(endpoint, clientIP, userAgent, method, path string) string {
-	return mm.metrics.RecordRequest(endpoint, clientIP, userAgent, method, path)
+func (mm *MonitoringMiddleware) RecordRequest(connID, endpoint, clientIP, userAgent, method, path string) string {
+	return mm.metrics.RecordRequest(connID, endpoint, clientIP, userAgent, method, path)
 }
 
 // RecordResponse 记录响应数据 - 纯数据收集，不发布事件

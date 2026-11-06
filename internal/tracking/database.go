@@ -53,6 +53,7 @@ func (ut *UsageTracker) processEvents() {
 			slog.Debug("Processing remaining events before shutdown", "count", len(batch))
 			if len(batch) > 0 {
 				ut.flushBatch(batch)
+				batch = batch[:0] // 必须清空，否则下面排空通道时会把同一批再写一遍
 			}
 
 			// 处理通道中剩余的事件
@@ -154,27 +155,17 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 			EventType: event.Type,
 		}
 
-		// 通过队列发送写操作
-		select {
-		case ut.writeQueue <- writeReq:
-			var err error
-			select {
-			case err = <-writeReq.Response:
-			case <-ut.ctx.Done():
-				return ut.ctx.Err()
-			}
-			if err != nil {
-				slog.Error("Write operation failed",
-					"error", err,
-					"event_type", event.Type,
-					"request_id", event.RequestID)
-				continue
-			}
-			successCount++
-
-		case <-ut.ctx.Done():
-			return ut.ctx.Err()
+		// 通过队列发送写操作。processBatch 只由 processEvents（及测试）调用，
+		// Close 先等它退出再停写处理器，所以这里无需监听 ctx：关闭阶段的最后一批也要写完。
+		ut.writeQueue <- writeReq
+		if err := <-writeReq.Response; err != nil {
+			slog.Error("Write operation failed",
+				"error", err,
+				"event_type", event.Type,
+				"request_id", event.RequestID)
+			continue
 		}
+		successCount++
 	}
 
 	if successCount < len(events) {

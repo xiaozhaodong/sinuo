@@ -23,7 +23,7 @@ import (
 func activitySubmissionState() (*subscriptionSubmissionState, *monitor.RequestActivity) {
 	activity := &monitor.RequestActivity{}
 	ctx := withSubscriptionRequestInfo(context.Background(), &subscriptionRequestInfo{activity: activity})
-	return newSubscriptionSubmissionState(ctx, "ws", nil), activity
+	return newTestSubscriptionSubmissionState(ctx, "ws", nil), activity
 }
 
 // handleUpstream 供不含传输层的协议单测使用，同步确认消息；生产路径由桥接确认写出。
@@ -42,13 +42,13 @@ func TestSubscriptionActivity_WarmupAndTerminalForwarding(t *testing.T) {
 	state, activity := activitySubmissionState()
 	defer state.close("connection_closed")
 	interceptor := &subscriptionWSInterceptor{submissions: state}
-	state.beginCreate([]byte(`{"type":"response.create","generate":false}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","generate":false}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"warmup"}}`))
 	state.handleUpstream([]byte(`{"type":"response.completed","response":{"id":"warmup"}}`))
 	if activity.Count() != 0 {
 		t.Fatal("预热被算作生成请求")
 	}
-	state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"generation"}}`))
 	result, err := interceptor.Intercept(context.Background(), subscriptionws.DirectionUpstreamToDownstream,
 		[]byte(`{"type":"response.completed","response":{"id":"generation"}}`))
@@ -76,15 +76,15 @@ func TestSubscriptionActivity_WarmupAndTerminalForwarding(t *testing.T) {
 		t.Fatal("成功写出后未归零")
 	}
 	activity.CancelDrain("quit")
-	if submission, _ := state.beginCreate([]byte(`{"type":"response.create","input":[]}`)); submission == nil || activity.Count() != 1 {
+	if submission, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`)); submission == nil || activity.Count() != 1 {
 		t.Fatal("取消排空后不能在原连接继续生成")
 	}
 }
 
 func TestSubscriptionActivity_CloseReleasesUnwrittenAndPending(t *testing.T) {
 	state, activity := activitySubmissionState()
-	state.beginCreate([]byte(`{"type":"response.create"}`))
-	state.beginCreate([]byte(`{"type":"response.create"}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
+	beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"one"}}`))
 	_, forwarded, err := state.handleUpstreamForForward([]byte(`{"type":"response.completed","response":{"id":"one"}}`))
 	if err != nil || forwarded == nil || activity.Count() != 2 {
@@ -101,7 +101,7 @@ func TestSubscriptionActivity_CloseReleasesUnwrittenAndPending(t *testing.T) {
 func TestSubscriptionActivity_LocalRejectionWaitsForReply(t *testing.T) {
 	state, activity := activitySubmissionState()
 	defer state.close("connection_closed")
-	submission, _ := state.beginCreate([]byte(`{"type":"response.create"}`))
+	submission, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create"}`))
 	forwarded := state.reject(submission, &privacy.PolicyError{StatusCode: http.StatusUnprocessableEntity, Code: privacy.CodeScanFailed})
 	if forwarded == nil || activity.Count() != 1 {
 		t.Fatal("本地错误响应写出前释放了请求")

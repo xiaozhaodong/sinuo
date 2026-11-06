@@ -26,9 +26,10 @@ func (a *App) setupCodexSubscriptionProxy(ctx context.Context) {
 
 	var subscriptionRuntime *proxy.CodexSubscriptionProxyRuntime
 	handler := proxy.NewCodexSubscriptionProxyHandler(proxy.SubscriptionProxyHandlerOptions{
-		Proxy:      a.proxyHandler,
-		Monitoring: a.monitoringMiddleware,
-		Logger:     a.logger,
+		Proxy:        a.proxyHandler,
+		Monitoring:   a.monitoringMiddleware,
+		Logger:       a.logger,
+		NewRequestID: a.coreDatabase.NewRequestID,
 		Snapshot: func() *proxy.SubscriptionProxySnapshot {
 			if subscriptionRuntime == nil {
 				return nil

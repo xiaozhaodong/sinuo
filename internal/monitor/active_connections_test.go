@@ -11,7 +11,7 @@ func TestActiveConnections_NotifyAddFinishAndTimeout(t *testing.T) {
 	changes, cancel := m.SubscribeActiveConnections()
 	defer cancel()
 	<-changes
-	id := m.RecordRequest("test", "", "", "POST", "/v1/messages")
+	id := m.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/messages")
 	<-changes
 	if m.ActiveConnectionCount() != 1 {
 		t.Fatal("新增请求计数错误")
@@ -21,7 +21,7 @@ func TestActiveConnections_NotifyAddFinishAndTimeout(t *testing.T) {
 	if m.ActiveConnectionCount() != 0 {
 		t.Fatal("完成请求计数错误")
 	}
-	id = m.RecordRequest("test", "", "", "POST", "/v1/responses")
+	id = m.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/responses")
 	<-changes
 	m.RecordRequestSuspended(id)
 	m.RecordRequestSuspendTimeout(id)
@@ -40,7 +40,7 @@ func TestActiveConnections_CoalesceAndConcurrentUnsubscribe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 50 {
-				id := m.RecordRequest("test", "", "", "POST", "/v1/responses")
+				id := m.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/responses")
 				m.RecordResponse(id, 200, time.Millisecond, 0, "test")
 			}
 		}()

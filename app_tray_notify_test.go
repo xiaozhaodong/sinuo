@@ -80,7 +80,7 @@ func TestTray_RequestEndSettlesEvenWithoutAnimation(t *testing.T) {
 	tc.metrics.Store(metrics)
 	start := time.Date(2026, 10, 6, 1, 0, 0, 0, time.UTC)
 
-	id := metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	id := metrics.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/messages")
 	lease, _ := metrics.RequestActivity().TryStart()
 	tc.stepIcon(start)
 	metrics.RecordResponse(id, 200, time.Millisecond, 0, "test")
@@ -104,7 +104,7 @@ func TestTray_RequestEndSettlesEvenWithoutAnimation(t *testing.T) {
 	}
 
 	settled := ended.Add(traySettleDelay)
-	id = metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	id = metrics.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/messages")
 	lease, _ = metrics.RequestActivity().TryStart()
 	tc.stepIcon(settled.Add(time.Second))
 	metrics.RecordResponse(id, 200, time.Millisecond, 0, "test")

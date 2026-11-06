@@ -73,6 +73,7 @@ type subscriptionRequestInfo struct {
 	Revision      int64
 	Association   subscriptionClientAssociation
 	activity      *monitor.RequestActivity
+	requestIDs    monitor.RequestIDGenerator
 	handshakeDone func()
 }
 
@@ -92,9 +93,10 @@ func subscriptionRequestInfoFromContext(ctx context.Context) *subscriptionReques
 
 // SubscriptionProxyHandlerOptions 构造参数。
 type SubscriptionProxyHandlerOptions struct {
-	Proxy      *Handler
-	Monitoring *middleware.MonitoringMiddleware
-	Logger     *slog.Logger
+	Proxy        *Handler
+	Monitoring   *middleware.MonitoringMiddleware
+	Logger       *slog.Logger
+	NewRequestID monitor.RequestIDGenerator
 	// Snapshot 返回当前运行态快照；返回 nil 表示入口未运行。
 	Snapshot func() *SubscriptionProxySnapshot
 	// UpstreamBaseURL / UpstreamWSBaseURL 仅供测试注入；为空时固定为 ChatGPT Codex 后端。
@@ -114,6 +116,7 @@ type CodexSubscriptionProxyHandler struct {
 	wsRegistry     *subscriptionWSRegistry
 	activeRequests atomic.Int64
 	activity       *monitor.RequestActivity
+	requestIDs     monitor.RequestIDGenerator
 }
 
 // NewCodexSubscriptionProxyHandler 创建处理器；WS 与池分支由 subscription_ws.go / subscription_pool.go 装配。
@@ -137,6 +140,7 @@ func NewCodexSubscriptionProxyHandler(opts SubscriptionProxyHandlerOptions) *Cod
 		monitoring: opts.Monitoring,
 		logger:     logger,
 		snapshot:   snapshot,
+		requestIDs: opts.NewRequestID,
 	}
 	if opts.Monitoring != nil {
 		h.activity = opts.Monitoring.GetMetrics().RequestActivity()
@@ -235,7 +239,15 @@ func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *htt
 	start := time.Now()
 	clientIP := subscriptionRemoteIP(r.RemoteAddr)
 	userAgent := truncateSubscriptionText(r.UserAgent(), 50)
-	requestID := h.newRequestID(clientIP, userAgent, r.Method, route.InternalPath)
+	requestID, err := h.requestIDs.Next(r.Context())
+	if err != nil {
+		h.logger.Error("请求 ID 占号失败", "error", err)
+		writeAccountPipelineError(w, http.StatusServiceUnavailable, "request_id_allocation_failed", "unable to allocate request ID")
+		return
+	}
+	if h.monitoring != nil {
+		h.monitoring.RecordRequest(requestID, "unknown", clientIP, userAgent, r.Method, route.InternalPath)
+	}
 
 	info := &subscriptionRequestInfo{
 		RequestID:     requestID,
@@ -244,6 +256,7 @@ func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *htt
 		Revision:      snap.Revision,
 		Association:   extractSubscriptionClientAssociation(r.Header),
 		activity:      h.activity,
+		requestIDs:    h.requestIDs,
 		handshakeDone: lease.End,
 	}
 	ctx := context.WithValue(r.Context(), "conn_id", requestID) //nolint:staticcheck // 与旧入口 LoggingMiddleware 使用同一 key
@@ -273,14 +286,6 @@ func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *htt
 	h.recordResponse(requestID, rw.status(), duration, rw.bytesWritten(), rw.hijacked)
 	h.logger.Debug(fmt.Sprintf("📤 [Codex 订阅代理] [%s] %s %s → %d (%s)", requestID, r.Method, route.InternalPath, rw.status(), duration.Round(time.Millisecond)),
 		"conn_id", requestID, "kind", string(route.Kind), "status_code", rw.status(), "bytes_written", rw.bytesWritten())
-}
-
-// newRequestID 复用旧入口的 ID 生成：有监控中间件时登记一次连接，否则只生成同格式 ID。
-func (h *CodexSubscriptionProxyHandler) newRequestID(clientIP, userAgent, method, path string) string {
-	if h.monitoring != nil {
-		return h.monitoring.RecordRequest("unknown", clientIP, userAgent, method, path)
-	}
-	return monitor.NewConnectionID()
 }
 
 // recordResponse 收尾监控连接。101 是协议切换确认而不是失败，

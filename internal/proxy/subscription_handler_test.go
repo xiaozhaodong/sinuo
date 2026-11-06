@@ -88,6 +88,7 @@ func newSubscriptionTestEnv(t *testing.T, upstream http.HandlerFunc, mode string
 
 	logger := slog.New(slog.NewTextHandler(env.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handler := NewCodexSubscriptionProxyHandler(SubscriptionProxyHandlerOptions{
+		NewRequestID:      nextTestSubscriptionID,
 		Proxy:             NewHandler(nil, &config.Config{}),
 		Logger:            logger,
 		UpstreamBaseURL:   env.upstream.URL + subscriptionDefaultPath,

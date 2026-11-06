@@ -146,10 +146,10 @@ func waitSubscriptionDetail(t *testing.T, tracker *tracking.UsageTracker, reques
 func TestSubscriptionTrackingMergesReasoningAcrossCreatedAndCompleted(t *testing.T) {
 	tracker := newSubscriptionUnitTracker(t)
 	observer := newSubscriptionTrackingObserver(tracker, nil)
-	state := newSubscriptionSubmissionState(context.Background(), "ws-reasoning", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-reasoning", observer)
 
 	// 场景 1：created 回显 effort，completed 只带 reasoning_tokens → 两者合并
-	merged, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"high"},"input":"x"}`))
+	merged, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"high"},"input":"x"}`))
 	if !ok {
 		t.Fatal("beginCreate failed")
 	}
@@ -167,7 +167,7 @@ func TestSubscriptionTrackingMergesReasoningAcrossCreatedAndCompleted(t *testing
 	}
 
 	// 场景 2：created 未回显 effort → 只有 reasoning_tokens，前端判「上游未回显」
-	noEcho, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"low"},"input":"y"}`))
+	noEcho, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"low"},"input":"y"}`))
 	if !ok {
 		t.Fatal("beginCreate failed")
 	}
@@ -205,7 +205,7 @@ func TestSubscriptionTrackingMergeResponseFieldsKeepsEarlierEffort(t *testing.T)
 func TestSubscriptionTrackingServerInitiatedKeepsRequestModelUnknown(t *testing.T) {
 	tracker := newSubscriptionUnitTracker(t)
 	observer := newSubscriptionTrackingObserver(tracker, nil)
-	state := newSubscriptionSubmissionState(context.Background(), "ws-successor", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-successor", observer)
 
 	// 没有 pending 的 create，created 直接触发 successor
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-s","model":"gpt-5.4","reasoning":{"effort":"high"}}}`))
@@ -239,9 +239,9 @@ func TestSubscriptionTrackingServerInitiatedKeepsRequestModelUnknown(t *testing.
 func TestSubscriptionTrackingMergesReasoningFromInProgressEvent(t *testing.T) {
 	tracker := newSubscriptionUnitTracker(t)
 	observer := newSubscriptionTrackingObserver(tracker, nil)
-	state := newSubscriptionSubmissionState(context.Background(), "ws-in-progress", observer)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-in-progress", observer)
 
-	submission, ok := state.beginCreate([]byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"xhigh"},"input":"x"}`))
+	submission, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"gpt-5.4","reasoning":{"effort":"xhigh"},"input":"x"}`))
 	if !ok {
 		t.Fatal("beginCreate failed")
 	}

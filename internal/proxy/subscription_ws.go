@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"sinuo/config"
-	"sinuo/internal/monitor"
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/subscriptionws"
@@ -304,6 +303,9 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 	if direction == subscriptionws.DirectionUpstreamToDownstream {
 		if i.submissions != nil {
 			_, forwarded, err := i.submissions.handleUpstreamForForward(payload)
+			if err != nil {
+				i.warn("subscription_upstream_tracking_failed", "error", err)
+			}
 			return subscriptionws.InterceptResult{Forward: payload, Forwarded: forwarded}, err
 		}
 		return subscriptionws.InterceptResult{Forward: payload}, nil
@@ -317,7 +319,13 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 
 	eventType := subscriptionWSClientEventType(payload)
 	eventLogType := subscriptionWSEventLogType(eventType)
-	submission, isCreate := i.submissions.beginCreate(payload)
+	submission, isCreate, allocationErr := i.submissions.beginCreate(payload)
+	if allocationErr != nil {
+		create, _ := parseSubscriptionCreate(payload)
+		i.warn("request_id_allocation_failed", "error", allocationErr)
+		return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusServiceUnavailable,
+			"request_id_allocation_failed", "unable to allocate request ID", create.StreamID)}, nil
+	}
 	// interrupt 不产生新工作，排空期间仍须转发，让已受理响应可以及时收尾。
 	steerDraining := eventType == "response.steer" && i.submissions.activity != nil && !i.submissions.activity.AcceptAuxiliary()
 	if (isCreate && submission == nil) || steerDraining {
@@ -330,14 +338,22 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 		return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusServiceUnavailable,
 			"codex_subscription_proxy_draining", "proxy is shutting down", streamID)}, nil
 	}
-	requestID := monitor.NewConnectionID()
-	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
+	var requestID string
+	var privacyState *handlers.PrivacyRequestState
 	requestContext := ctx
 	if submission != nil {
 		requestID = submission.RequestID
 		privacyState = submission.PrivacyState
 		requestContext = submission.Context
 	} else {
+		var err error
+		requestID, err = i.submissions.requestIDs.Next(ctx)
+		if err != nil {
+			i.warn("request_id_allocation_failed", "error", err)
+			return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(http.StatusServiceUnavailable,
+				"request_id_allocation_failed", "unable to allocate request ID")}, nil
+		}
+		privacyState = newSubscriptionPrivacyRequestState(requestID, nil)
 		requestContext = context.WithValue(ctx, "conn_id", requestID) //nolint:staticcheck
 		requestContext = handlers.WithPrivacyRequestState(requestContext, privacyState)
 	}

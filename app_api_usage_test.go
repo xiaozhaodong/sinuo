@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,7 +107,7 @@ func newUsageStatsTestApp(t *testing.T) *App {
 }
 
 func recordRuntimeStats(app *App, tokens *monitor.TokenUsage) {
-	connID := app.monitoringMiddleware.RecordRequest("endpoint-a", "127.0.0.1", "codex-cli", "POST", "/v1/messages")
+	connID := app.monitoringMiddleware.RecordRequest(testMonitorRequestID(), "endpoint-a", "127.0.0.1", "codex-cli", "POST", "/v1/messages")
 	app.monitoringMiddleware.RecordResponse(connID, 200, 250*time.Millisecond, 128, "endpoint-a")
 	if tokens != nil {
 		app.monitoringMiddleware.GetMetrics().RecordTokenUsage(connID, "endpoint-a", tokens)
@@ -689,4 +691,10 @@ func TestStreamPhases_APIListMapping(t *testing.T) {
 	if legacy.FirstContentMs != nil || legacy.FirstTextMs != nil || legacy.StreamFlowMs != nil || legacy.StopReason != nil || legacy.FirstContentAt != "" {
 		t.Fatal("缺失值不能伪造为0")
 	}
+}
+
+var monitorTestID atomic.Uint32
+
+func testMonitorRequestID() string {
+	return fmt.Sprintf("req-%08x", monitorTestID.Add(1))
 }

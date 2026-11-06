@@ -4,7 +4,8 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default [
-  { ignores: ['dist'] },
+  // Wails 绑定由生成器维护，其中的 TypeScript 规则指令不适用于业务 JS 检查。
+  { ignores: ['dist', 'src/bindings/**'] },
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {

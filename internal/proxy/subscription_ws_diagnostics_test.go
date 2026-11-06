@@ -62,8 +62,8 @@ func TestSubscriptionWSClientInterruptionPresentation(t *testing.T) {
 			}
 			bus := &subscriptionPresentationEventBus{}
 			observer := newSubscriptionTrackingObserver(tracker, bus)
-			state := newSubscriptionSubmissionState(context.Background(), "conn-"+tc.name, observer)
-			submission, _ := state.beginCreate([]byte(`{"type":"response.create","model":"synthetic-model"}`))
+			state := newTestSubscriptionSubmissionState(context.Background(), "conn-"+tc.name, observer)
+			submission, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"synthetic-model"}`))
 			state.close(subscriptionWSInterruptionReason(stats, tc.stopping))
 			row := waitSubscriptionDetail(t, tracker, submission.RequestID)
 			wantStatus, wantReason, wantChange := "failed", "subscription_interrupted", "request_failed"
@@ -91,8 +91,8 @@ func TestSubscriptionWSClientClosePreservesTerminalResult(t *testing.T) {
 	for _, terminal := range []string{"completed", "failed", "cancelled"} {
 		t.Run(terminal, func(t *testing.T) {
 			observer := newSubscriptionTrackingObserver(tracker, nil)
-			state := newSubscriptionSubmissionState(context.Background(), "terminal-"+terminal, observer)
-			submission, _ := state.beginCreate([]byte(`{"type":"response.create","model":"synthetic-model"}`))
+			state := newTestSubscriptionSubmissionState(context.Background(), "terminal-"+terminal, observer)
+			submission, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"synthetic-model"}`))
 			state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-synthetic"}}`))
 			state.handleUpstream([]byte(fmt.Sprintf(`{"type":"response.%s","response":{"id":"resp-synthetic","usage":{"input_tokens":2,"output_tokens":1}}}`, terminal)))
 			state.close(tracking.SubscriptionClientDisconnected)
@@ -130,8 +130,8 @@ func TestSubscriptionWSFailureLogsCorrelateRequestAndConnection(t *testing.T) {
 	slog.SetDefault(logger)
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	observer := newSubscriptionTrackingObserver(tracker, nil)
-	state := newSubscriptionSubmissionState(context.Background(), "connection-test", observer)
-	submission, ok := state.beginCreate([]byte(`{"type":"response.create","model":"synthetic-model"}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "connection-test", observer)
+	submission, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"synthetic-model"}`))
 	if !ok || submission == nil {
 		t.Fatal("未建立逻辑请求")
 	}

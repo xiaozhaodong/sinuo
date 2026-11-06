@@ -111,7 +111,7 @@ func TestAppUpdate_SharedRequestDrain(t *testing.T) {
 	metrics := app.monitoringMiddleware.GetMetrics()
 	activity := metrics.RequestActivity()
 	manager.activeRequests = app.activeRequestCount
-	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	metrics.RecordRequest(testMonitorRequestID(), "subscription", "", "", "GET", "/v1/responses")
 	lease, _ := activity.TryStart()
 	result, err := app.RestartToUpdate("")
 	if err != nil || !result.NeedsConfirm || result.ActiveRequests != 1 {

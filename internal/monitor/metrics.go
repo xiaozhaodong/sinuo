@@ -1,8 +1,6 @@
 package monitor
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -168,8 +166,8 @@ func NewMetrics() *Metrics {
 	}
 }
 
-// RecordRequest records a new request
-func (m *Metrics) RecordRequest(endpoint, clientIP, userAgent, method, path string) string {
+// RecordRequest 使用入口已完成占号的 ID 登记请求，不再自行生成 ID。
+func (m *Metrics) RecordRequest(connID, endpoint, clientIP, userAgent, method, path string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -185,9 +183,6 @@ func (m *Metrics) RecordRequest(endpoint, clientIP, userAgent, method, path stri
 	}
 	m.EndpointStats[endpoint].TotalRequests++
 	m.EndpointStats[endpoint].LastUsed = time.Now()
-
-	// Generate connection ID
-	connID := generateConnectionID()
 
 	// Create connection info
 	conn := &ConnectionInfo{
@@ -846,20 +841,6 @@ func (m *Metrics) GetEndpointHealthDistribution() map[string]int {
 	}
 
 	return distribution
-}
-
-// NewConnectionID 对外暴露与 RecordRequest 相同格式（req-xxxxxxxx）的 ID 生成，
-// 供不登记监控连接的入口（如 Codex 订阅代理的 WS 逐提交派生 ID）复用同一格式。
-func NewConnectionID() string {
-	return generateConnectionID()
-}
-
-// generateConnectionID generates a unique connection ID in format req-xxxxxxxx
-func generateConnectionID() string {
-	// Generate 4 random bytes for 8 hex characters
-	bytes := make([]byte, 4)
-	rand.Read(bytes)
-	return "req-" + hex.EncodeToString(bytes)
 }
 
 // RecordRequestSuspended records a request being suspended

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"sinuo/internal/monitor"
 	"sinuo/internal/tracking"
 )
 
@@ -16,6 +17,7 @@ type LoggingMiddleware struct {
 	logger               *slog.Logger
 	monitoringMiddleware *MonitoringMiddleware
 	usageTracker         *tracking.UsageTracker
+	requestIDs           monitor.RequestIDGenerator
 }
 
 // NewLoggingMiddleware creates a new logging middleware
@@ -33,6 +35,11 @@ func (lm *LoggingMiddleware) SetMonitoringMiddleware(mm *MonitoringMiddleware) {
 // SetUsageTracker sets the usage tracker reference
 func (lm *LoggingMiddleware) SetUsageTracker(ut *tracking.UsageTracker) {
 	lm.usageTracker = ut
+}
+
+// SetRequestIDGenerator 在启动监听前注入应用共用的持久化分配器。
+func (lm *LoggingMiddleware) SetRequestIDGenerator(generate monitor.RequestIDGenerator) {
+	lm.requestIDs = generate
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written
@@ -88,9 +95,14 @@ func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 		userAgent := truncateString(r.UserAgent(), 50)
 
 		// Record request start in metrics - we'll update the endpoint later
-		var connID string
+		connID, err := lm.requestIDs.Next(r.Context())
+		if err != nil {
+			lm.logger.Error("请求 ID 占号失败", "error", err)
+			http.Error(w, "request_id_allocation_failed: unable to allocate request ID", http.StatusServiceUnavailable)
+			return
+		}
 		if lm.monitoringMiddleware != nil {
-			connID = lm.monitoringMiddleware.RecordRequest("unknown", clientIP, userAgent, r.Method, r.URL.Path)
+			lm.monitoringMiddleware.RecordRequest(connID, "unknown", clientIP, userAgent, r.Method, r.URL.Path)
 		}
 
 		// Store connection ID in request context for use by proxy handler

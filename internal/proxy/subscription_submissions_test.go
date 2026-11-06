@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"sinuo/internal/privacy"
@@ -72,12 +73,12 @@ func (o *recordingSubmissionObserver) count(kind string) int {
 
 func TestSubscriptionSubmissionsBindsFIFOAndResponseID(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-1", observer)
-	first, ok := state.beginCreate([]byte(`{"type":"response.create","model":"m1","input":"one"}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-1", observer)
+	first, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"m1","input":"one"}`))
 	if !ok || first == nil {
 		t.Fatal("first create not recognized")
 	}
-	second, ok := state.beginCreate([]byte(`{"type":"response.create","model":"m2","input":"two"}`))
+	second, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"m2","input":"two"}`))
 	if !ok || second == nil {
 		t.Fatal("second create not recognized")
 	}
@@ -99,9 +100,9 @@ func TestSubscriptionSubmissionsBindsFIFOAndResponseID(t *testing.T) {
 
 func TestSubscriptionSubmissionsDuplicateCreatedDoesNotConsumePendingOrCreateSuccessor(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-dup", observer)
-	first, _ := state.beginCreate([]byte(`{"type":"response.create","input":"one"}`))
-	second, _ := state.beginCreate([]byte(`{"type":"response.create","input":"two"}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-dup", observer)
+	first, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"one"}`))
+	second, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"two"}`))
 	created := []byte(`{"type":"response.created","response":{"id":"resp-dup"}}`)
 	state.handleUpstream(created)
 	state.handleUpstream(created)
@@ -120,9 +121,9 @@ func TestSubscriptionSubmissionsDuplicateCreatedDoesNotConsumePendingOrCreateSuc
 
 func TestSubscriptionSubmissionsCloseAndDuplicateTerminalSettleOnce(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-close", observer)
-	first, _ := state.beginCreate([]byte(`{"type":"response.create","input":"one"}`))
-	second, _ := state.beginCreate([]byte(`{"type":"response.create","input":"two"}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-close", observer)
+	first, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"one"}`))
+	second, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"two"}`))
 	state.handleUpstream([]byte(`{"type":"response.created","response":{"id":"resp-one"}}`))
 	terminal := []byte(`{"type":"response.completed","response":{"id":"resp-one","usage":{"input_tokens":1,"output_tokens":1}}}`)
 	state.handleUpstream(terminal)
@@ -143,9 +144,9 @@ func TestSubscriptionSubmissionsCloseAndDuplicateTerminalSettleOnce(t *testing.T
 
 func TestSubscriptionSubmissionsWrappedErrorBeforeCreatedTerminatesPendingFIFO(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-error", observer)
-	first, _ := state.beginCreate([]byte(`{"type":"response.create","input":"one"}`))
-	second, _ := state.beginCreate([]byte(`{"type":"response.create","input":"two"}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-error", observer)
+	first, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"one"}`))
+	second, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":"two"}`))
 	state.handleUpstream([]byte(`{"type":"error","status":429,"error":{"type":"rate_limit_error","message":"synthetic"}}`))
 	if observer.count("terminal") != 1 || !first.settled || second.settled {
 		t.Fatalf("wrapped error did not settle oldest pending once: terminals=%d first=%t second=%t", observer.count("terminal"), first.settled, second.settled)
@@ -158,8 +159,8 @@ func TestSubscriptionSubmissionsWrappedErrorBeforeCreatedTerminatesPendingFIFO(t
 
 func TestSubscriptionSubmissionsWarmupAndServerSuccessorStayDistinct(t *testing.T) {
 	observer := &recordingSubmissionObserver{}
-	state := newSubscriptionSubmissionState(context.Background(), "ws-steer", observer)
-	warmup, _ := state.beginCreate([]byte(`{"type":"response.create","generate":false,"input":[]}`))
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-steer", observer)
+	warmup, _ := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","generate":false,"input":[]}`))
 	if warmup.Generate {
 		t.Fatal("generate=false must be preserved")
 	}
@@ -180,9 +181,9 @@ func TestSubscriptionSubmissionsWarmupAndServerSuccessorStayDistinct(t *testing.
 }
 
 func TestSubscriptionSubmissionsReleaseHistoryAndBoundRecentIDs(t *testing.T) {
-	state := newSubscriptionSubmissionState(context.Background(), "ws-many", nil)
+	state := newTestSubscriptionSubmissionState(context.Background(), "ws-many", nil)
 	for n := 0; n < subscriptionRecentResponseIDLimit+40; n++ {
-		submission, _ := state.beginCreate([]byte(fmt.Sprintf(`{"type":"response.create","input":"secret-%d"}`, n)))
+		submission, _ := beginTestSubscriptionCreate(t, state, []byte(fmt.Sprintf(`{"type":"response.create","input":"secret-%d"}`, n)))
 		id := fmt.Sprintf("resp-%d", n)
 		state.handleUpstream([]byte(fmt.Sprintf(`{"type":"response.created","response":{"id":%q}}`, id)))
 		state.handleUpstream([]byte(fmt.Sprintf(`{"type":"response.completed","response":{"id":%q}}`, id)))
@@ -196,4 +197,25 @@ func TestSubscriptionSubmissionsReleaseHistoryAndBoundRecentIDs(t *testing.T) {
 	if len(state.recentIDs) != subscriptionRecentResponseIDLimit || len(state.recentOrder) != subscriptionRecentResponseIDLimit {
 		t.Fatalf("recent id memory is not bounded: ids=%d order=%d", len(state.recentIDs), len(state.recentOrder))
 	}
+}
+
+var subscriptionTestID atomic.Uint32
+
+func nextTestSubscriptionID(context.Context) (string, error) {
+	return fmt.Sprintf("req-%08x", subscriptionTestID.Add(1)), nil
+}
+
+func newTestSubscriptionSubmissionState(ctx context.Context, connectionID string, observer subscriptionSubmissionObserver) *subscriptionSubmissionState {
+	state := newSubscriptionSubmissionState(ctx, connectionID, observer)
+	state.requestIDs = nextTestSubscriptionID
+	return state
+}
+
+func beginTestSubscriptionCreate(t *testing.T, state *subscriptionSubmissionState, payload []byte) (*subscriptionSubmission, bool) {
+	t.Helper()
+	submission, ok, err := state.beginCreate(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return submission, ok
 }

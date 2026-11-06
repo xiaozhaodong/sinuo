@@ -58,7 +58,11 @@ func (s *SQLiteAdapter) Open() error {
 		}
 	}
 
-	db := sql.OpenDB(newSQLiteConnector(dbPath + sqliteDSNParams))
+	dsn := dbPath + sqliteDSNParams
+	if strings.Contains(dbPath, "?") {
+		dsn = dbPath + "&" + strings.TrimPrefix(sqliteDSNParams, "?")
+	}
+	db := sql.OpenDB(newSQLiteConnector(dsn))
 
 	// 设置连接池参数（SQLite建议少量连接）
 	db.SetMaxOpenConns(1) // SQLite写操作需要单一连接

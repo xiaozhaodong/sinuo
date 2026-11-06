@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -478,6 +479,7 @@ type UsageTracker struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
+	closeMu       sync.Mutex // 串行执行关闭流程，并发调用必须等待清理完成
 	mu            sync.RWMutex
 	errorHandler  *ErrorHandler
 	retentionDays atomic.Int64
@@ -494,6 +496,9 @@ type UsageTracker struct {
 	writeQueue chan WriteRequest // 写操作队列
 	writeMu    sync.Mutex        // 写操作保护锁
 	writeWg    sync.WaitGroup    // 写处理器等待组
+	// writerStop 由 Close 在事件处理器退出后关闭，写处理器据此排空队列再退出。
+	// 写处理器不跟随 ctx 退出，保证关闭阶段 processEvents 的最后一批仍能写入。
+	writerStop chan struct{}
 
 	summaryMu            sync.RWMutex
 	summaryReadyTimezone string
@@ -648,6 +653,7 @@ func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*
 		readDB:     readDB,
 		writeDB:    writeDB,
 		writeQueue: make(chan WriteRequest, config.BufferSize), // 与事件队列容量一致
+		writerStop: make(chan struct{}),
 	}
 
 	ut.SetRetentionDays(config.RetentionDays)
@@ -681,10 +687,8 @@ func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*
 	// 🔥 v4.1 初始化热池架构
 	ut.initHotPool()
 	if err := ut.rebuildRecentUsageSummary(context.Background(), 7); err != nil {
-		cancel()
-		_ = ut.archiveManager.Close()
-		_ = adapter.Close()
-		return nil, fmt.Errorf("initialize usage summary cache: %w", err)
+		// 复用正常关闭顺序，确保生产者、写处理器和热池都退出后再关闭数据库。
+		return nil, errors.Join(fmt.Errorf("initialize usage summary cache: %w", err), ut.Close())
 	}
 
 	slog.Info("✅ 使用跟踪器初始化完成",
@@ -818,22 +822,22 @@ func (ut *UsageTracker) Close() error {
 		return nil
 	}
 
-	// 先检查是否已经关闭
-	ut.mu.RLock()
+	// 独立于数据锁，避免等待后台协程时阻塞它们访问 tracker。
+	ut.closeMu.Lock()
+	defer ut.closeMu.Unlock()
 	if ut.cancel == nil {
-		ut.mu.RUnlock()
 		return nil // 已经关闭过
 	}
-	ut.mu.RUnlock()
 
 	slog.Info("Shutting down usage tracker...")
 
 	// 取消上下文（不需要持有锁）
 	ut.cancel()
 
-	// 等待所有协程完成（包括写处理器）
+	// 等待所有协程完成；写处理器最后停，事件处理器关闭阶段的刷写要经由它落库
 	ut.wg.Wait()
-	ut.writeWg.Wait() // 等待写处理器完成
+	close(ut.writerStop)
+	ut.writeWg.Wait()
 	ut.summaryWg.Wait()
 
 	// 现在可以安全地持有写锁进行清理
@@ -2015,28 +2019,27 @@ func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime tim
 	return jsonBytes, nil
 }
 
-// processWriteQueue 启动写操作队列处理器（简化版，确保稳定性）
+// processWriteQueue 写操作队列处理器。
+// 收到 writerStop 后排空已入队的写操作再退出；Response 均为容量 1 的缓冲通道，回执不会阻塞。
 func (ut *UsageTracker) processWriteQueue() {
 	defer ut.writeWg.Done()
 	slog.Debug("Write processor started")
 
 	for {
 		select {
-		case writeReq, ok := <-ut.writeQueue:
-			if !ok {
-				slog.Debug("Write queue closed, write processor stopped")
-				return
-			}
-			err := ut.executeWriteSimple(writeReq)
-			select {
-			case writeReq.Response <- err:
-			case <-ut.ctx.Done():
-				return
-			}
+		case writeReq := <-ut.writeQueue:
+			writeReq.Response <- ut.executeWriteSimple(writeReq)
 
-		case <-ut.ctx.Done():
-			slog.Debug("Write processor stopped")
-			return
+		case <-ut.writerStop:
+			for {
+				select {
+				case writeReq := <-ut.writeQueue:
+					writeReq.Response <- ut.executeWriteSimple(writeReq)
+				default:
+					slog.Debug("Write processor stopped")
+					return
+				}
+			}
 		}
 	}
 }

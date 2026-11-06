@@ -140,7 +140,7 @@ func TestTray_AutomaticQuitRechecksNewRequest(t *testing.T) {
 	a.tray.metrics.Store(m)
 	a.tray.quit.Choose(tray.QuitWait, 1)
 	a.tray.autoQuit.Store(true)
-	id := m.RecordRequest("test", "", "", "POST", "/v1/responses")
+	id := m.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/responses")
 	lease, _ := m.RequestActivity().TryStart()
 	if a.shouldQuit() {
 		t.Fatal("归零通知后新请求到达，应继续等待")
@@ -156,8 +156,8 @@ func TestTray_QuitCountsBusinessRequestsAndResumesAdmission(t *testing.T) {
 	metrics := monitor.NewMetrics()
 	activity := metrics.RequestActivity()
 	// 保留两条空闲 WS，只影响连接统计。
-	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
-	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	metrics.RecordRequest(testMonitorRequestID(), "subscription", "", "", "GET", "/v1/responses")
+	metrics.RecordRequest(testMonitorRequestID(), "subscription", "", "", "GET", "/v1/responses")
 	instance := &appTray{app: NewApp()}
 	instance.metrics.Store(metrics)
 	lease, _ := activity.TryStart()
@@ -198,7 +198,7 @@ func TestTray_QuitCountsBusinessRequestsAndResumesAdmission(t *testing.T) {
 
 func TestTray_IdleWebSocketsAllowImmediateQuit(t *testing.T) {
 	metrics := monitor.NewMetrics()
-	metrics.RecordRequest("subscription", "", "", "GET", "/v1/responses")
+	metrics.RecordRequest(testMonitorRequestID(), "subscription", "", "", "GET", "/v1/responses")
 	instance := &appTray{app: NewApp()}
 	instance.metrics.Store(metrics)
 	allow, prompt, active := instance.requestQuit(false)
@@ -287,7 +287,7 @@ func TestTray_RebuildTriggersExcludeStatusAndRequestChanges(t *testing.T) {
 
 func TestTray_RequestChangesRefreshOnlyDuringQuitWait(t *testing.T) {
 	metrics := monitor.NewMetrics()
-	connID := metrics.RecordRequest("test", "", "", "POST", "/v1/responses")
+	connID := metrics.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/responses")
 	lease, _ := metrics.RequestActivity().TryStart()
 	defer lease.End()
 	a := NewApp()
@@ -333,7 +333,7 @@ func TestTray_IconAnimatesDuringRequestsAndRefreshesHealthAfter(t *testing.T) {
 	tc.metrics.Store(metrics)
 	start := time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC)
 
-	connID := metrics.RecordRequest("test", "", "", "POST", "/v1/messages")
+	connID := metrics.RecordRequest(testMonitorRequestID(), "test", "", "", "POST", "/v1/messages")
 	lease, _ := metrics.RequestActivity().TryStart()
 	if wait := tc.stepIcon(start); wait != tray.StartDelay || len(setter.frames) != 1 {
 		t.Fatalf("请求刚开始应保持静态并等待起播: wait=%v frames=%d", wait, len(setter.frames))

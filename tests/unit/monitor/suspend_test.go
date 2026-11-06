@@ -3,6 +3,7 @@ package monitor_test
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ func TestMetrics_RecordRequestSuspended(t *testing.T) {
 	m := monitor.NewMetrics()
 
 	// Record initial request to create connection
-	connID := m.RecordRequest("test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
+	connID := m.RecordRequest(testMonitorRequestID(), "test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
 
 	// Test initial state
 	if m.SuspendedRequests != 0 {
@@ -56,7 +57,7 @@ func TestMetrics_RecordRequestResumed(t *testing.T) {
 	m := monitor.NewMetrics()
 
 	// Record initial request and suspend it
-	connID := m.RecordRequest("test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
+	connID := m.RecordRequest(testMonitorRequestID(), "test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
 	m.RecordRequestSuspended(connID)
 
 	// Small delay to ensure time difference
@@ -111,7 +112,7 @@ func TestMetrics_RecordRequestSuspendTimeout(t *testing.T) {
 	m := monitor.NewMetrics()
 
 	// Record initial request and suspend it
-	connID := m.RecordRequest("test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
+	connID := m.RecordRequest(testMonitorRequestID(), "test-endpoint", "192.168.1.1", "test-agent", "POST", "/api/test")
 	m.RecordRequestSuspended(connID)
 
 	// Small delay to ensure time difference
@@ -173,9 +174,9 @@ func TestMetrics_GetSuspendedRequestStats(t *testing.T) {
 	}
 
 	// Test with some suspended requests
-	connID1 := m.RecordRequest("endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
-	connID2 := m.RecordRequest("endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
-	connID3 := m.RecordRequest("endpoint3", "192.168.1.3", "agent3", "PUT", "/api/3")
+	connID1 := m.RecordRequest(testMonitorRequestID(), "endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
+	connID2 := m.RecordRequest(testMonitorRequestID(), "endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
+	connID3 := m.RecordRequest(testMonitorRequestID(), "endpoint3", "192.168.1.3", "agent3", "PUT", "/api/3")
 
 	// Suspend all requests
 	m.RecordRequestSuspended(connID1)
@@ -223,9 +224,9 @@ func TestMetrics_GetActiveSuspendedConnections(t *testing.T) {
 	}
 
 	// Create some connections
-	connID1 := m.RecordRequest("endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
-	connID2 := m.RecordRequest("endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
-	connID3 := m.RecordRequest("endpoint3", "192.168.1.3", "agent3", "PUT", "/api/3")
+	connID1 := m.RecordRequest(testMonitorRequestID(), "endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
+	connID2 := m.RecordRequest(testMonitorRequestID(), "endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
+	connID3 := m.RecordRequest(testMonitorRequestID(), "endpoint3", "192.168.1.3", "agent3", "PUT", "/api/3")
 
 	// Suspend some connections
 	m.RecordRequestSuspended(connID1)
@@ -285,20 +286,20 @@ func TestMetrics_SuspendedRequestHistory(t *testing.T) {
 
 	// Create some actual suspended requests to build history naturally
 	for i := 0; i < 5; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 	}
 
 	// Resume some and timeout others
 	for i := 0; i < 3; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-resume-%d", i), "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-resume-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 		time.Sleep(1 * time.Millisecond) // Small delay for suspended time
 		m.RecordRequestResumed(connID)
 	}
 
 	for i := 0; i < 2; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-timeout-%d", i), "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-timeout-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 		time.Sleep(1 * time.Millisecond) // Small delay for suspended time
 		m.RecordRequestSuspendTimeout(connID)
@@ -332,7 +333,7 @@ func TestMetrics_GetChartDataForSuspendedRequests(t *testing.T) {
 
 	// Create some suspended requests and build history naturally
 	for i := 0; i < 3; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 		time.Sleep(1 * time.Millisecond)
 		if i < 2 {
@@ -366,7 +367,7 @@ func TestMetrics_ConcurrentSuspendOperations(t *testing.T) {
 	numConnections := 100
 	connIDs := make([]string, numConnections)
 	for i := 0; i < numConnections; i++ {
-		connIDs[i] = m.RecordRequest(fmt.Sprintf("endpoint-%d", i), fmt.Sprintf("192.168.1.%d", i%255), fmt.Sprintf("agent-%d", i), "POST", fmt.Sprintf("/api/%d", i))
+		connIDs[i] = m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), fmt.Sprintf("192.168.1.%d", i%255), fmt.Sprintf("agent-%d", i), "POST", fmt.Sprintf("/api/%d", i))
 	}
 
 	var wg sync.WaitGroup
@@ -438,8 +439,8 @@ func TestMetrics_SuspendedTimeCalculations(t *testing.T) {
 	}
 
 	// Create and suspend some connections
-	connID1 := m.RecordRequest("endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
-	connID2 := m.RecordRequest("endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
+	connID1 := m.RecordRequest(testMonitorRequestID(), "endpoint1", "192.168.1.1", "agent1", "POST", "/api/1")
+	connID2 := m.RecordRequest(testMonitorRequestID(), "endpoint2", "192.168.1.2", "agent2", "GET", "/api/2")
 
 	m.RecordRequestSuspended(connID1)
 	m.RecordRequestSuspended(connID2)
@@ -486,7 +487,7 @@ func BenchmarkMetrics_RecordRequestSuspended(b *testing.B) {
 	// Pre-create connections
 	connIDs := make([]string, b.N)
 	for i := 0; i < b.N; i++ {
-		connIDs[i] = m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
+		connIDs[i] = m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
 	}
 
 	b.ResetTimer()
@@ -501,7 +502,7 @@ func BenchmarkMetrics_RecordRequestResumed(b *testing.B) {
 	// Pre-create and suspend connections
 	connIDs := make([]string, b.N)
 	for i := 0; i < b.N; i++ {
-		connIDs[i] = m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
+		connIDs[i] = m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
 		m.RecordRequestSuspended(connIDs[i])
 	}
 
@@ -516,7 +517,7 @@ func BenchmarkMetrics_GetSuspendedRequestStats(b *testing.B) {
 
 	// Create some test data
 	for i := 0; i < 100; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
 		m.RecordRequestSuspended(connID)
 		if i%2 == 0 {
 			m.RecordRequestResumed(connID)
@@ -536,7 +537,7 @@ func BenchmarkMetrics_GetActiveSuspendedConnections(b *testing.B) {
 
 	// Create some suspended connections
 	for i := 0; i < 50; i++ {
-		connID := m.RecordRequest(fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
+		connID := m.RecordRequest(testMonitorRequestID(), fmt.Sprintf("endpoint-%d", i), "192.168.1.1", "test-agent", "POST", "/api/test")
 		m.RecordRequestSuspended(connID)
 	}
 
@@ -562,7 +563,7 @@ func TestMetrics_EdgeCases(t *testing.T) {
 
 	t.Run("Resume non-suspended connection", func(t *testing.T) {
 		m := monitor.NewMetrics()
-		connID := m.RecordRequest("endpoint", "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), "endpoint", "192.168.1.1", "agent", "POST", "/api")
 		// Try to resume without suspending first
 		m.RecordRequestResumed(connID)
 		// Current implementation increments SuccessfulSuspendedRequests regardless
@@ -574,7 +575,7 @@ func TestMetrics_EdgeCases(t *testing.T) {
 
 	t.Run("Double suspend same connection", func(t *testing.T) {
 		m := monitor.NewMetrics()
-		connID := m.RecordRequest("endpoint", "192.168.1.1", "agent", "POST", "/api")
+		connID := m.RecordRequest(testMonitorRequestID(), "endpoint", "192.168.1.1", "agent", "POST", "/api")
 		m.RecordRequestSuspended(connID)
 		initialCount := m.SuspendedRequests
 		// Suspend again
@@ -584,4 +585,10 @@ func TestMetrics_EdgeCases(t *testing.T) {
 			t.Errorf("Expected SuspendedRequests to be %d, got %d", initialCount+1, m.SuspendedRequests)
 		}
 	})
+}
+
+var monitorTestID atomic.Uint32
+
+func testMonitorRequestID() string {
+	return fmt.Sprintf("req-%08x", monitorTestID.Add(1))
 }
