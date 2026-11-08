@@ -18,6 +18,9 @@ import * as logging$0 from "./internal/logging/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as migration$0 from "./internal/migration/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as privacy$0 from "./internal/privacy/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -106,6 +109,14 @@ export function ClearNegativeHitCache(endpointName) {
  */
 export function ClearPrivacyExactSecrets(confirmText) {
     return $Call.ByID(3271697894, confirmText);
+}
+
+/**
+ * ClearPrivacyRestoreDictionary 清空后续请求使用的内存回填字典。
+ * @returns {$CancellablePromise<void>}
+ */
+export function ClearPrivacyRestoreDictionary() {
+    return $Call.ByID(3953549836);
 }
 
 /**
@@ -767,6 +778,16 @@ export function ListPrivacyPresets() {
 }
 
 /**
+ * ListPrivacyRestoreDictionary 分页读取当前进程的占位符、掩码和实际交付次数。
+ * @param {number} offset
+ * @param {number} limit
+ * @returns {$CancellablePromise<privacy$0.RestoreDictionaryPage>}
+ */
+export function ListPrivacyRestoreDictionary(offset, limit) {
+    return $Call.ByID(3874638371, offset, limit);
+}
+
+/**
  * ListPrivacyRules 列出全部规则
  * @returns {$CancellablePromise<$models.PrivacyRuleInfo[] | null>}
  */
@@ -865,6 +886,16 @@ export function RestartToUpdate(mode) {
  */
 export function RetryStartupMigration() {
     return $Call.ByID(1084370054);
+}
+
+/**
+ * RevealPrivacyRestoreValue 按占位符和本次驻留标识读取单项原值。
+ * @param {string} token
+ * @param {string} entryID
+ * @returns {$CancellablePromise<string>}
+ */
+export function RevealPrivacyRestoreValue(token, entryID) {
+    return $Call.ByID(1289435667, token, entryID);
 }
 
 /**

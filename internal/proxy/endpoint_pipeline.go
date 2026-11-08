@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -14,6 +15,7 @@ import (
 	"sinuo/internal/endpoint"
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/response"
+	"sinuo/internal/proxy/restorestream"
 )
 
 // 端点侧扁平转发管线（方案 §4.4）：单层候选循环替代旧 streaming/regular 双循环壳。
@@ -527,6 +529,10 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 	slog.Info(fmt.Sprintf("🚀 [开始流式处理] [%s] 端点: %s", connID, endpointName))
 	finalTokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
 	applyStreamResponseDiagnostics(lifecycleManager, processor)
+	if errors.Is(err, restorestream.ErrDelivery) {
+		failRestoreDelivery(w, flusher, lifecycleManager, finalTokenUsage, false)
+		return ProcessOutcomeFailedAfterCommit, "privacy_restore_failed"
+	}
 	if err != nil {
 		if streamErr, ok := err.(handlers.StreamIncompleteErrorInterface); ok {
 			// 流不完整但请求已完成：按完成记账并标记 failure_reason（不计失败、不迁移 active）
@@ -621,8 +627,12 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
 	defer resp.Body.Close()
 
-	responseBytes, err := h.responseProcessor.ProcessResponseBody(resp)
+	responseBytes, err := h.readRegularResponse(resp, connID)
 	if err != nil {
+		if errors.Is(err, restorestream.ErrDelivery) {
+			failRegularRestore(w, resp, lifecycleManager, nil)
+			return ProcessOutcomeFailedAfterCommit, "privacy_restore_failed"
+		}
 		lifecycleManager.FailRequest("response_read_error", err.Error(), http.StatusBadGateway)
 		http.Error(w, "Failed to read upstream response", http.StatusBadGateway)
 		return ProcessOutcomeFailedAfterCommit, err.Error()
@@ -645,9 +655,13 @@ func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.
 		applyResponseAnalysisDiagnostics(lifecycleManager, analysis, "常规响应解析")
 	}
 
-	h.responseProcessor.CopyResponseHeaders(resp, w)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := w.Write(responseBytes); err != nil {
+	if err := h.writeRegularResponse(w, resp, lifecycleManager, responseBytes, analysis.TokenUsage); err != nil {
+		if _, view := handlers.ResponseRestore(resp); view != nil && errors.Is(err, context.Canceled) {
+			return ProcessOutcomeCancelled, "客户端中断响应交付"
+		}
+		if errors.Is(err, restorestream.ErrDelivery) {
+			return ProcessOutcomeFailedAfterCommit, "privacy_restore_failed"
+		}
 		// 不再经过 HandleError：断连错误会被分类为客户端取消并先落 cancelled，
 		// 与随后的 FailRequest 形成双终态竞争；与账号池管线对齐，只落一次 failed。
 		slog.Error("Failed to write response to client", "request_id", connID, "error", err)

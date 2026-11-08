@@ -28,6 +28,7 @@ import PrivacyRuleDrawer from './components/PrivacyRuleDrawer.jsx';
 import PrivacyRuleTestDrawer from './components/PrivacyRuleTestDrawer.jsx';
 import PrivacyPresetDialog from './components/PrivacyPresetDialog.jsx';
 import PrivacyExactSecretsPanel from './components/PrivacyExactSecretsPanel.jsx';
+import PrivacyRestoreDictionaryPanel from './components/PrivacyRestoreDictionaryPanel.jsx';
 import PrivacyBuiltinRulesPanel from './components/PrivacyBuiltinRulesPanel.jsx';
 import {
   PRIVACY_MODE_OPTIONS,
@@ -71,11 +72,12 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
 // 扫描参数（点击保存生效，避免误触）：范围条右侧一组 24px 控件
 // 注意：调用方通过 key 在 settings 变化时重挂载本组件，初始 state 直接取自 settings
 const ScanSettingsBar = ({ settings, busy, onSave }) => {
+  const [restore, setRestore] = useState(settings.response_restore_enabled);
   const [scanMaxBytes, setScanMaxBytes] = useState(settings.scan_max_bytes);
   const [overLimitAction, setOverLimitAction] = useState(settings.over_limit_action);
   const [onError, setOnError] = useState(settings.on_error);
 
-  const dirty = Number(scanMaxBytes) !== settings.scan_max_bytes
+  const dirty = restore !== settings.response_restore_enabled || Number(scanMaxBytes) !== settings.scan_max_bytes
     || overLimitAction !== settings.over_limit_action
     || onError !== settings.on_error;
 
@@ -100,12 +102,17 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
         出错
         <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-24" />
       </span>
+      <label className="flex items-center gap-2 text-xs" title="脱敏模式支持 Claude 普通端点和 Codex 账号池的流式 SSE 及非流式 JSON 回填。范围和重启后的处理见内存回填字典。">
+        <input type="checkbox" className="app-checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
+        响应回填
+      </label>
       <Button
         size="sm"
         variant="secondary"
         icon={Save}
         disabled={!dirty || busy}
         onClick={() => onSave({
+          response_restore_enabled: restore,
           scan_max_bytes: Number(scanMaxBytes),
           over_limit_action: overLimitAction,
           on_error: onError
@@ -139,7 +146,8 @@ const PrivacyStatusBar = ({ settings, stats }) => {
 const PRIVACY_TABS = [
   { id: 'exact', label: '本地敏感值' },
   { id: 'builtin', label: '内置规则' },
-  { id: 'advanced', label: '高级预设' }
+  { id: 'advanced', label: '高级预设' },
+  { id: 'restore', label: '内存回填字典' }
 ];
 
 const PrivacyProtectionPage = () => {
@@ -256,7 +264,7 @@ const PrivacyProtectionPage = () => {
 
   return (
     <div className="motion-page flex min-h-0 flex-1 flex-col bg-surface">
-      <PageToolbar subtitle="出站请求保护：转发前按规则检测 / 脱敏请求内容">
+      <PageToolbar subtitle="出站请求检测、脱敏与响应回填">
         <ModeSegmentedControl mode={settings.mode} busy={busy} onChange={handleModeChange} />
         <ToolbarSpacer />
         <ToolbarButton variant="bordered" icon={FlaskConical} label="规则测试" onClick={() => setTestDrawerOpen(true)} />
@@ -271,10 +279,10 @@ const PrivacyProtectionPage = () => {
 
       {/* 范围条：规则分类页签 + 扫描参数 */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line bg-inspector px-3 py-1.5">
-        <PageTabs tabs={PRIVACY_TABS} activeTab={activeTab} onChange={setActiveTab} idPrefix="privacy" ariaLabel="隐私规则分类" />
+        <PageTabs tabs={PRIVACY_TABS} activeTab={activeTab} onChange={setActiveTab} idPrefix="privacy" ariaLabel="隐私保护" />
         <span className="flex-1" aria-hidden="true" />
         <ScanSettingsBar
-          key={`${settings.scan_max_bytes}|${settings.over_limit_action}|${settings.on_error}|${settings.version}`}
+          key={`${settings.response_restore_enabled}|${settings.scan_max_bytes}|${settings.over_limit_action}|${settings.on_error}|${settings.version}`}
           settings={settings}
           busy={busy}
           onSave={handleScanSettingsSave}
@@ -298,6 +306,9 @@ const PrivacyProtectionPage = () => {
         aria-labelledby={`privacy-tab-${activeTab}`}
         className="flex min-h-0 flex-1 flex-col"
       >
+        {activeTab === 'restore' && (
+          <PrivacyRestoreDictionaryPanel key={`${settings.mode}|${settings.response_restore_enabled}`} />
+        )}
         {activeTab === 'exact' && (
           <PrivacyExactSecretsPanel
             secrets={exactSecrets}

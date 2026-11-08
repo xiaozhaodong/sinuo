@@ -10,13 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tidwall/gjson"
+
 	"sinuo/config"
 	"sinuo/internal/accountauth"
 	"sinuo/internal/codexidentity"
 	"sinuo/internal/endpoint"
 	"sinuo/internal/events"
 	"sinuo/internal/middleware"
-	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/response"
 	"sinuo/internal/reasoning"
@@ -126,13 +127,12 @@ func (h *Handler) SetMonitoringMiddleware(mm *middleware.MonitoringMiddleware) {
 	// 同时更新tokenAnalyzer的monitoringMiddleware
 	if h.tokenAnalyzer != nil {
 		provider := &TokenParserProviderImpl{}
-		h.tokenAnalyzer = response.NewTokenAnalyzer(h.usageTracker, mm, provider)
+		h.tokenAnalyzer = response.NewTokenAnalyzer(h.usageTracker, h.tokenUsageMonitor(), provider)
 	}
 }
 
-// monitoringMiddlewareForAnalyzer 返回用于 TokenAnalyzer 的监控中间件。
-// 未设置时返回纯 nil interface，避免 typed-nil 指针通过类型断言后被调用。
-func (h *Handler) monitoringMiddlewareForAnalyzer() any {
+// tokenUsageMonitor 未设置时返回 nil 接口，成功和失败请求都可省略监控。
+func (h *Handler) tokenUsageMonitor() MonitoringMiddlewareInterface {
 	if h.monitoringMiddleware == nil {
 		return nil
 	}
@@ -144,7 +144,7 @@ func (h *Handler) SetUsageTracker(ut *tracking.UsageTracker) {
 	h.usageTracker = ut
 
 	provider := &TokenParserProviderImpl{}
-	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.monitoringMiddlewareForAnalyzer(), provider)
+	h.tokenAnalyzer = response.NewTokenAnalyzer(ut, h.tokenUsageMonitor(), provider)
 }
 
 // SetEventBus 设置EventBus事件总线
@@ -247,7 +247,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startTrackedRequest := func(bool) {}
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
-		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.monitoringMiddleware, connID, h.eventBus)
+		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.tokenUsageMonitor(), connID, h.eventBus)
 		lifecycleManager.SetClientSession(clientSessionID(r))
 		if hasPoolMetadata {
 			lifecycleManager.SetStartTime(poolMetadata.ReceivedAt)
@@ -308,6 +308,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 这样同一请求在多个支持端点之间尝试时能复用过滤结果，并传递 requestID。
 		if h.privacyFilter != nil {
 			privacyState := handlers.NewPrivacyRequestState(connID)
+			privacyState.SessionID = clientSessionID(r)
+			defer privacyState.ReleaseRestore()
 			*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
 			ctx = r.Context()
 		}
@@ -321,18 +323,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.privacyFilter != nil {
 		reqID := lifecycleManager.GetRequestID()
 		privacyState := handlers.NewPrivacyRequestState(reqID)
-		// B4：只在主链路挂持久化 recorder。scanMu 串行化计数与对应持久化写，
-		// 保证并发通知时 scan_count 与 last-write-wins 落库顺序一致。
-		var scanMu sync.Mutex
-		var scanCount int
-		privacyState.SetResultRecorder(func(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
-			if h.usageTracker == nil || reqID == "" {
-				return
-			}
-			scanMu.Lock()
-			defer scanMu.Unlock()
-			scanCount++
-			if payload := handlers.BuildPrivacyScanJSON(result, policyErr, scanCount); payload != "" {
+		privacyState.SessionID = clientSessionID(r)
+		defer privacyState.ReleaseRestore()
+		privacyState.SetSummaryRecorder(func(payload string) {
+			if h.usageTracker != nil && reqID != "" {
 				h.usageTracker.RecordRequestUpdate(reqID, tracking.UpdateOptions{PrivacyScanJSON: &payload})
 			}
 		})
@@ -713,7 +707,7 @@ func (h *Handler) handleUnavailableAccountPipeline(w http.ResponseWriter, lifecy
 func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 	// Codex standalone search 是同步 JSON 接口，且 input 会携带最近对话文本。
 	// 必须先短路，避免对话内容中的 `"stream": true` 或 SSE 头被通用启发式检测误判为流式请求。
-	if r != nil && r.URL.Path == codexStandaloneSearchPath {
+	if r != nil && (r.URL.Path == codexStandaloneSearchPath || r.URL.Path == "/v1/responses/compact" || r.URL.Path == "/v1/messages/count_tokens") {
 		return false
 	}
 	if r != nil && r.URL != nil && isImageAPIPath(r.URL.Path) {
@@ -735,7 +729,11 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 		return true
 	}
 
-	// 3. 请求体包含stream参数为true（Anthropic/OpenAI常见格式）
+	// 生成端点只认顶层字段，工具 schema 的 stream 或历史文本不能改变本次传输。
+	if r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/responses" {
+		return gjson.GetBytes(bodyBytes, "stream").Type == gjson.True
+	}
+	// 其他兼容入口延用原检测。
 	bodyStr := string(bodyBytes)
 	if strings.Contains(bodyStr, `"stream":true`) || strings.Contains(bodyStr, `"stream": true`) {
 		return true

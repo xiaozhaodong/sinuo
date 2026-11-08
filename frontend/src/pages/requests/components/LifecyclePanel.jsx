@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Property, PropertyList } from '@components/desktop/Inspector.jsx';
-import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors } from '../utils/lifecycle.js';
+import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors, requestPrivacySummary, responsePrivacySummary } from '../utils/lifecycle.js';
 import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
@@ -165,16 +165,14 @@ const ScheduleValue = ({ request, snapshot, isAccountRequest }) => {
 };
 
 const PrivacyValue = ({ privacyScan }) => {
-  const actionLabel = { redact: '已脱敏', detect: '仅检测', blocked: '已拦截' }[privacyScan?.action];
-  if (!privacyScan || !actionLabel) return <DashText />;
+  const scan = requestPrivacySummary(privacyScan);
+  const restore = responsePrivacySummary(privacyScan?.restore);
+  if (!scan && !restore) return <DashText />;
   return (
-    <>
-      <span className={privacyScan.action === 'blocked' ? 'text-danger' : 'text-success'}>
-        {actionLabel} · {privacyScan.hit_count ?? 0} 规则命中
-      </span>
-      {Number(privacyScan.scan_count) > 1 && <span className="ml-1 text-xs text-fg-subtle">共扫描 {privacyScan.scan_count} 次</span>}
-      {privacyScan.blocked_code && <div className="text-xs text-danger">{privacyScan.blocked_code}</div>}
-    </>
+    <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 gap-y-0.5">
+      {scan && <><dt className="text-xs text-fg-muted">请求</dt><dd className={scan.tone}>{scan.text}</dd></>}
+      {restore && <><dt className="text-xs text-fg-muted">响应</dt><dd className={restore.tone}>{restore.text}</dd></>}
+    </dl>
   );
 };
 

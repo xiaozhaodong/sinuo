@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -11,11 +12,13 @@ import (
 
 // PrivacySettingsRecord 隐私保护全局设置（单行，id=1）
 type PrivacySettingsRecord struct {
-	Mode            string    `json:"mode"`
-	ScanMaxBytes    int64     `json:"scan_max_bytes"`
-	OverLimitAction string    `json:"over_limit_action"`
-	OnError         string    `json:"on_error"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ResponseRestoreEnabled bool      `json:"response_restore_enabled"`
+	RestoreKey             []byte    `json:"-"`
+	Mode                   string    `json:"mode"`
+	ScanMaxBytes           int64     `json:"scan_max_bytes"`
+	OverLimitAction        string    `json:"over_limit_action"`
+	OnError                string    `json:"on_error"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // PrivacyRuleRecord 隐私规则记录
@@ -97,6 +100,8 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 			`CREATE TABLE IF NOT EXISTS privacy_settings (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
 				mode TEXT NOT NULL DEFAULT 'disabled',
+				response_restore_enabled INTEGER NOT NULL DEFAULT 0,
+				restore_key BLOB,
 				scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,
 				over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix',
 				on_error TEXT NOT NULL DEFAULT 'fail_open',
@@ -152,8 +157,33 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				return
 			}
 		}
+		s.schemaError = s.ensureRestoreColumns(ctx)
 	})
 	return s.schemaError
+}
+
+// ensureRestoreColumns 为已有单行设置表补列；新旧列同时生效。
+func (s *SQLitePrivacyStore) ensureRestoreColumns(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, col := range []struct{ name, ddl string }{
+		{"response_restore_enabled", "ALTER TABLE privacy_settings ADD COLUMN response_restore_enabled INTEGER NOT NULL DEFAULT 0"},
+		{"restore_key", "ALTER TABLE privacy_settings ADD COLUMN restore_key BLOB"},
+	} {
+		var exists bool
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pragma_table_info('privacy_settings') WHERE name=?)", col.name).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			if _, err = tx.ExecContext(ctx, col.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // GetSettings 读取全局设置（保证默认行存在）
@@ -162,12 +192,12 @@ func (s *SQLitePrivacyStore) GetSettings(ctx context.Context) (*PrivacySettingsR
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT mode, scan_max_bytes, over_limit_action, on_error, COALESCE(CAST(updated_at AS TEXT), '')
+		SELECT mode, scan_max_bytes, over_limit_action, on_error, response_restore_enabled, restore_key, COALESCE(CAST(updated_at AS TEXT), '')
 		FROM privacy_settings WHERE id = 1
 	`)
 	record := &PrivacySettingsRecord{}
 	var updatedAt string
-	if err := row.Scan(&record.Mode, &record.ScanMaxBytes, &record.OverLimitAction, &record.OnError, &updatedAt); err != nil {
+	if err := row.Scan(&record.Mode, &record.ScanMaxBytes, &record.OverLimitAction, &record.OnError, &record.ResponseRestoreEnabled, &record.RestoreKey, &updatedAt); err != nil {
 		return nil, fmt.Errorf("read privacy settings failed: %w", err)
 	}
 	var err error
@@ -185,12 +215,20 @@ func (s *SQLitePrivacyStore) UpdateSettings(ctx context.Context, record *Privacy
 	if err := s.ensureSchema(ctx); err != nil {
 		return err
 	}
+	var key []byte
+	if record.ResponseRestoreEnabled {
+		key = make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return fmt.Errorf("generate privacy restore key: %w", err)
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE privacy_settings
-		SET mode = ?, scan_max_bytes = ?, over_limit_action = ?, on_error = ?,
+		SET response_restore_enabled = ?, restore_key = COALESCE(restore_key, ?),
+            mode = ?, scan_max_bytes = ?, over_limit_action = ?, on_error = ?,
 		    updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')
 		WHERE id = 1
-	`, record.Mode, record.ScanMaxBytes, record.OverLimitAction, record.OnError)
+	`, record.ResponseRestoreEnabled, key, record.Mode, record.ScanMaxBytes, record.OverLimitAction, record.OnError)
 	if err != nil {
 		return fmt.Errorf("update privacy settings failed: %w", err)
 	}

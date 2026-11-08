@@ -23,6 +23,7 @@ import (
 	"sinuo/internal/modelrewrite"
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/restorestream"
 	svc "sinuo/internal/service"
 	"sinuo/internal/store"
 	"sinuo/internal/tracking"
@@ -443,6 +444,13 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 		releaseUpstream()
 		if processErr != nil {
+			if errors.Is(processErr, restorestream.ErrDelivery) {
+				if modelRouted {
+					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomePrivacyBlocked)
+				}
+				_ = h.completeAccountScheduleSnapshot(ctx, requestID, acc.ID, accountName, svc.AccountScheduleOutcomePrivacyBlocked, "privacy_restore_failed")
+				return
+			}
 			if isCancelledAccountStreamError(processErr) {
 				if modelRouted {
 					h.codexModelRouter.Settle(codexScope, acc.ID, svc.AccountScheduleOutcomeCancelled)
@@ -699,6 +707,9 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 		lifecycleManager.SetUpstreamModel(upstreamModel)
 	}
 
+	if h.privacyFilter != nil {
+		r = handlers.WithPrivacyAttempt(r, isSSE)
+	}
 	bodyBytes, authHeaders, prepared, err := h.prepareAccountIdentity(ctx, r, bodyBytes, acc, targetURL)
 	if err != nil {
 		return nil, nil, nil, err
@@ -771,7 +782,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if prepared.IdentityEnabled {
 		client = identityBoundClient(client)
 	}
-	resp, err := client.Do(req)
+	resp, err := handlers.SendPrivacyRequest(client, r, req)
 	if err != nil {
 		if release != nil {
 			release()
@@ -1103,8 +1114,11 @@ func resolveAccountTargetURL(acc *store.UpstreamAccountRecord, path, rawQuery st
 func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *http.Response, lifecycleManager *RequestLifecycleManager, endpointName string, r *http.Request) error {
 	defer resp.Body.Close()
 
-	responseBytes, err := h.responseProcessor.ProcessResponseBody(resp)
+	responseBytes, err := h.readRegularResponse(resp, lifecycleManager.GetRequestID())
 	if err != nil {
+		if errors.Is(err, restorestream.ErrDelivery) {
+			return failRegularRestore(w, resp, lifecycleManager, nil)
+		}
 		lifecycleManager.FailRequest("account_response_read_error", err.Error(), http.StatusBadGateway)
 		return fmt.Errorf("failed to read upstream response: %w", err)
 	}
@@ -1119,9 +1133,10 @@ func (h *Handler) processAccountRegularResponse(w http.ResponseWriter, resp *htt
 	analysis := h.tokenAnalyzer.AnalyzeResponseUnified(responseBytes, lifecycleManager.GetRequestID(), endpointName)
 	applyResponseAnalysisDiagnostics(lifecycleManager, analysis, "账号常规响应解析")
 
-	h.responseProcessor.CopyResponseHeaders(resp, w)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := w.Write(responseBytes); err != nil {
+	if err := h.writeRegularResponse(w, resp, lifecycleManager, responseBytes, analysis.TokenUsage); err != nil {
+		if _, view := handlers.ResponseRestore(resp); view != nil && (errors.Is(err, restorestream.ErrDelivery) || errors.Is(err, context.Canceled)) {
+			return err
+		}
 		lifecycleManager.FailRequest("account_response_write_error", err.Error(), resp.StatusCode)
 		return fmt.Errorf("failed to write response: %w", err)
 	}
@@ -1162,6 +1177,9 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 			w.Header().Add(key, value)
 		}
 	}
+	if _, view := handlers.ResponseRestore(resp); view != nil {
+		w.Header().Set("Content-Type", "text/event-stream")
+	}
 	w.WriteHeader(resp.StatusCode)
 	flusher.Flush()
 
@@ -1175,6 +1193,10 @@ func (h *Handler) processAccountStreamingResponse(ctx context.Context, w http.Re
 
 	tokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
 	applyStreamResponseDiagnostics(lifecycleManager, processor)
+	if errors.Is(err, restorestream.ErrDelivery) {
+		failRestoreDelivery(w, flusher, lifecycleManager, tokenUsage, true)
+		return err
+	}
 	if modelName != "" && modelName != "unknown" {
 		lifecycleManager.SetModelWithComparison(modelName, "账号流式响应解析")
 	}
@@ -1361,6 +1383,9 @@ func parseAccountStreamUsageLimitWindow(err error) (accountUsageLimitWindow, boo
 }
 
 func isCancelledAccountStreamError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
 	status, _ := parseAccountStreamStatusError(err)
 	return status == "cancelled"
 }

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   buildLifecycleSegments,
   countAccountSwitches,
+  requestPrivacySummary,
+  responsePrivacySummary,
   resolveConnectMs,
   resolveQueueMs,
   resolveRawQueueMs,
@@ -21,6 +23,34 @@ const base = {
   isStreaming: true,
   status: 'completed'
 };
+
+test('请求隐私摘要区分实际改写、完整扫描及旧记录', () => {
+  assert.equal(requestPrivacySummary({ restore: { status: 'disabled' } }), null);
+  assert.equal(requestPrivacySummary({ action: 'redact' }).text, '脱敏模式');
+  assert.equal(requestPrivacySummary({ action: 'redact', hit_count: 2 }).text, '脱敏模式 · 2 次规则命中');
+  assert.equal(requestPrivacySummary({ action: 'redact', changed: false, hit_count: 0 }).text, '已扫描 · 0 次规则命中');
+  assert.equal(requestPrivacySummary({ action: 'redact', changed: true, hit_count: 0, scan_count: 2 }).text,
+    '已脱敏 · 0 次规则命中 · 共扫描 2 次');
+  assert.equal(requestPrivacySummary({ action: 'detect', truncated: true }).text, '仅检测 · 扫描截断');
+  assert.equal(requestPrivacySummary({ action: 'redact', skipped_reason: 'skipped_empty_body' }).text, '跳过扫描（空请求体）');
+  assert.equal(requestPrivacySummary({ action: 'blocked', blocked_code: 'privacy_scan_failed' }).text, '已拦截 · privacy_scan_failed');
+});
+
+test('响应摘要只显示实际交付的计数，未还原保留来源', () => {
+  assert.equal(responsePrivacySummary(), null);
+  assert.equal(responsePrivacySummary({ status: 'completed' }).text, '无需回填');
+  assert.equal(responsePrivacySummary({ status: 'completed', text: 2, unknown_tool: 1 }).text,
+    '已回填 2 处 · 未还原 1 处（工具参数）');
+  assert.equal(responsePrivacySummary({ status: 'completed', unknown_text: 2, unknown_tool: 1 }).text,
+    '未还原 3 处（正文 2，工具参数 1） · 已原样交付');
+  assert.equal(responsePrivacySummary({ status: 'failed', tool: 1 }).text, '回填失败 · 已回填 1 处（工具参数）');
+  assert.equal(responsePrivacySummary({ status: 'interrupted', text: 1 }).text, '传输中断 · 已回填 1 处');
+  for (const [status, label] of Object.entries({
+    pending: '回填处理中', upstream_error: '上游错误', disabled: '回填未开启', not_applicable: '不适用'
+  })) {
+    assert.equal(responsePrivacySummary({ status }).text, label);
+  }
+});
 
 test('全量：UTC 微秒 ISO 绝对时刻差 + 本地处理/连接拆分', () => {
   const request = {
@@ -312,7 +342,8 @@ const BACKEND_FAILURE_REASONS = {
   client_cancelled: '已取消',
   // handlers/privacy.go
   privacy_blocked: '隐私拦截',
-  privacy_scan_failed: '隐私扫描失败'
+  privacy_scan_failed: '隐私扫描失败',
+  privacy_restore_failed: '回填失败'
 };
 
 test('后端真实 failureReason 全量归类，无一落到裸码兜底', () => {

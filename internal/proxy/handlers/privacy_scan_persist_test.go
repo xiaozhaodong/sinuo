@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tidwall/gjson"
 
 	"sinuo/internal/privacy"
 )
@@ -55,6 +58,49 @@ func TestBuildPrivacyScanJSON_Actions(t *testing.T) {
 	}
 	if payload := BuildPrivacyScanJSON(result, nil, 0); payload != "" {
 		t.Fatalf("expected empty payload for scanCount 0, got %q", payload)
+	}
+}
+
+func TestPrivacySummaryRescanAndDelivery(t *testing.T) {
+	state := NewPrivacyRequestState("summary-rescan")
+	var last string
+	state.SetSummaryRecorder(func(payload string) { last = payload })
+	secret := "synthetic-private-match"
+	state.notifyResult(privacy.ApplyResult{Action: privacy.ModeRedact, RestoreStatus: "pending"}, nil)
+	state.notifyResult(privacy.ApplyResult{
+		Action: privacy.ModeRedact, Changed: true, HitCount: 2, Truncated: true,
+		ScanDuration: 3 * time.Millisecond, SkippedReason: privacy.SkippedScanTruncated,
+		RuleHits: []privacy.RuleHit{{RuleName: "字段规则", Count: 2, Matches: []string{secret}}},
+		Body:     []byte(secret), RestoreStatus: "pending",
+	}, nil)
+	if gjson.Get(last, "restore.status").Str != "pending" {
+		t.Fatal("完整扫描后、交付前应保留在途状态")
+	}
+	state.recordRestore(RestoreSummary{Status: "completed", Text: 2, UnknownTool: 1})
+	data := gjson.Parse(last)
+	if !data.Get("changed").Bool() || data.Get("hit_count").Int() != 2 || data.Get("scan_count").Int() != 2 ||
+		data.Get("rules.0.name").Str != "字段规则" || data.Get("rules.0.count").Int() != 2 ||
+		data.Get("scan_ms").Int() != 3 || !data.Get("truncated").Bool() || data.Get("skipped_reason").Str != privacy.SkippedScanTruncated {
+		t.Fatalf("交付覆盖了真实扫描字段 %s", last)
+	}
+	if data.Get("restore.status").Str != "completed" || data.Get("restore.text").Int() != 2 ||
+		data.Get("restore.unknown_tool").Int() != 1 || strings.Contains(last, secret) {
+		t.Fatalf("交付摘要不符合白名单 %s", last)
+	}
+	// 扫描器错误原文可能带匹配值，必须降为固定原因。
+	state.notifyResult(privacy.ApplyResult{Action: privacy.ModeDetect, SkippedReason: "scan_error: " + secret}, nil)
+	if strings.Contains(last, secret) || gjson.Get(last, "skipped_reason").Str != privacy.CodeScanFailed {
+		t.Fatal("扫描错误原文进入详情")
+	}
+}
+
+func TestPrivacySummaryResponseOnly(t *testing.T) {
+	for _, result := range []privacy.ApplyResult{{}, {Action: privacy.ModeDisabled, RestoreStatus: "disabled"}} {
+		payload := BuildPrivacyScanJSON(result, nil, 0, RestoreSummary{Status: "disabled"})
+		fields := gjson.Parse(payload).Map()
+		if len(fields) != 1 || fields["restore"].Get("status").Str != "disabled" {
+			t.Fatalf("仅响应摘要补造了扫描记录 %s", payload)
+		}
 	}
 }
 

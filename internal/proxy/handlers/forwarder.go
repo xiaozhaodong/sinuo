@@ -51,6 +51,9 @@ func NewForwarder(cfg *config.Config, endpointManager *endpoint.Manager) *Forwar
 
 // ForwardRequestToEndpoint 转发请求到指定端点
 func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, ep *endpoint.Endpoint) (*http.Response, error) {
+	if f.privacyFilter != nil {
+		r = WithPrivacyAttempt(r, false)
+	}
 	bodyBytes, _ = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
 	// 🛡️ 出站隐私过滤（PolicyError 由调用方短路，不进入 retry/failover）
@@ -86,7 +89,7 @@ func (f *Forwarder) ForwardRequestToEndpoint(ctx context.Context, r *http.Reques
 	}
 
 	// 执行请求
-	resp, err := client.Do(req)
+	resp, err := SendPrivacyRequest(client, r, req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -115,6 +118,9 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 			},
 		}
 		upstreamCtx = httptrace.WithClientTrace(upstreamCtx, trace)
+	}
+	if f.privacyFilter != nil {
+		r = WithPrivacyAttempt(r, true)
 	}
 	bodyBytes, _ = prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
@@ -151,7 +157,7 @@ func (f *Forwarder) ForwardStreamingRequestToEndpoint(r *http.Request, bodyBytes
 		Transport: httpTransport,
 	}
 
-	resp, err := client.Do(req)
+	resp, err := SendPrivacyRequest(client, r, req)
 	if err != nil {
 		release()
 		return nil, nil, fmt.Errorf("request failed: %w", err)
@@ -380,6 +386,9 @@ func ensureBetaFlag(header http.Header, flag string) {
 func (f *Forwarder) ForwardForPipeline(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, isSSE, detachUpstream bool, recorder UpstreamTraceRecorder) (*http.Response, context.CancelFunc, *UpstreamTraceState, error) {
 	// Config 返回 admission 快照的独立副本；后续 helper 继续复用既有逻辑，
 	// 但不会再读取 Manager 持有的可变 Endpoint 或动态凭据状态。
+	if f.privacyFilter != nil {
+		r = WithPrivacyAttempt(r, isSSE)
+	}
 	ep := &endpoint.Endpoint{Config: target.Config()}
 	bodyBytes, upstreamModel := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 
@@ -449,7 +458,7 @@ func (f *Forwarder) sendUpstream(ctx context.Context, r *http.Request, bodyBytes
 		Transport: httpTransport,
 	}
 
-	resp, err := client.Do(req)
+	resp, err := SendPrivacyRequest(client, r, req)
 	if err != nil {
 		return fail(fmt.Errorf("request failed: %w", err))
 	}

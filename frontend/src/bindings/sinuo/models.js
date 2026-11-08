@@ -911,6 +911,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * PrivacySettingsInfo 隐私保护全局设置
  * @typedef {Object} PrivacySettingsInfo
+ * @property {boolean} response_restore_enabled
  * @property {string} mode
  * @property {number} scan_max_bytes
  * @property {string} over_limit_action
@@ -925,6 +926,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * PrivacySettingsInput 更新全局设置输入
  * @typedef {Object} PrivacySettingsInput
+ * @property {boolean} response_restore_enabled
  * @property {string} mode
  * @property {number} scan_max_bytes
  * @property {string} over_limit_action

@@ -69,6 +69,7 @@ const REASON_LABEL_RULES = [
   // privacy_scan / privacy_filter_error 是扫描引擎自身故障，须排在 privacy 前，
   // 与 privacy_blocked 的规则命中拦截区分开。
   [/privacy_scan|privacy_filter_error/, '隐私扫描失败'],
+  [/^privacy_restore_failed$/, '回填失败'],
   [/privacy/, '隐私拦截'],
   // timeout 须排在 connection 前，保证 connection_timeout 归入「超时」。
   [/timeout/, '超时'],
@@ -102,6 +103,71 @@ const REASON_LABEL_RULES = [
   // endpoint_pipeline.go 流式失败的兜底 status 字面量，无附加语义，等同自由文本回退。
   [/^error$/, '失败']
 ];
+
+// 详情独立读取请求和响应摘要。历史数据缺少的字段保持未展示。
+const privacySkipLabels = {
+  skipped_non_text_body: '非文本内容',
+  skipped_unsupported_path: '不支持的路径',
+  skipped_empty_body: '空请求体',
+  privacy_scan_failed: '扫描失败',
+  privacy_scan_failed_fail_open: '扫描失败后放行'
+};
+
+export const requestPrivacySummary = (scan) => {
+  if (!scan) return null;
+  const parts = [];
+  const blocked = scan.action === 'blocked';
+  const truncated = scan.truncated || scan.skipped_reason === 'scan_truncated';
+  const skipped = !truncated && Boolean(scan.skipped_reason);
+  if (blocked) parts.push('已拦截');
+  else if (scan.action === 'disabled') parts.push('扫描未开启');
+  else if (scan.action === 'detect') parts.push('仅检测');
+  else if (scan.action === 'redact') {
+    if (scan.changed === true) parts.push('已脱敏');
+    else if (!truncated && !skipped) parts.push(scan.changed === false ? '已扫描' : '脱敏模式');
+  }
+  if (truncated) parts.push('扫描截断');
+  if (skipped) {
+    const reason = privacySkipLabels[scan.skipped_reason];
+    parts.push(reason ? `跳过扫描（${reason}）` : '跳过扫描');
+  }
+  if (!parts.length) return null;
+  if (Number.isInteger(scan.hit_count)) parts.push(`${scan.hit_count} 次规则命中`);
+  if (scan.scan_count > 1) parts.push(`共扫描 ${scan.scan_count} 次`);
+  if (blocked && scan.blocked_code) parts.push(scan.blocked_code);
+  return { text: parts.join(' · '), tone: blocked ? 'text-danger' : truncated || skipped ? 'text-warn' : 'text-fg' };
+};
+
+const restoreStatusLabels = {
+  failed: '回填失败', interrupted: '传输中断', upstream_error: '上游错误',
+  disabled: '回填未开启', not_applicable: '不适用', pending: '回填处理中'
+};
+
+const deliveryFields = (text, tool) => {
+  if (text && tool) return `（正文 ${text}，工具参数 ${tool}）`;
+  return tool ? '（工具参数）' : '（正文）';
+};
+
+export const responsePrivacySummary = (restore) => {
+  if (!restore) return null;
+  const { status, text = 0, tool = 0, unknown_text: unknownText = 0, unknown_tool: unknownTool = 0 } = restore;
+  const parts = [];
+  if (status !== 'completed') {
+    if (!Object.hasOwn(restoreStatusLabels, status)) return null;
+    parts.push(restoreStatusLabels[status]);
+  }
+  const restored = text + tool;
+  const unknown = unknownText + unknownTool;
+  if (restored) parts.push(`已回填 ${restored} 处${tool ? deliveryFields(text, tool) : ''}`);
+  if (unknown) {
+    parts.push(`未还原 ${unknown} 处${deliveryFields(unknownText, unknownTool)}`);
+    if (!restored && status === 'completed') parts.push('已原样交付');
+  }
+  if (!parts.length) parts.push('无需回填');
+  const failed = status === 'failed' || status === 'upstream_error';
+  const tone = failed ? 'text-danger' : unknown || status === 'interrupted' ? 'text-warn' : restored ? 'text-success' : 'text-fg-muted';
+  return { text: parts.join(' · '), tone };
+};
 
 // resolveTerminalReasonLabel 解析终态码并归类，返回不带 status 后缀的纯标签。
 // 存储格式（tracker.RecordRequestFinalFailure）：`code: detail`。只对 code 做规则匹配，

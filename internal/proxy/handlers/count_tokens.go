@@ -207,6 +207,9 @@ func (h *CountTokensHandler) handleManualFixed(ctx context.Context, w http.Respo
 
 // attemptEndpoint 单端点一次尝试；失败时按 §10 记录 count_tokens scoped 软失败或负缓存
 func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Request, bodyBytes []byte, target *endpoint.EndpointAttemptTarget, profile endpoint.RouteRequestProfile, connID string) ([]byte, countTokensAttemptOutcome, error) {
+	if h.forwarder.privacyFilter != nil {
+		r = WithPrivacyAttempt(r, false)
+	}
 	ep := &endpoint.Endpoint{Config: target.Config()}
 	endpointBody, _ := prepareBodyForEndpoint(r.URL.Path, bodyBytes, ep)
 	// 🛡️ 出站隐私过滤；策略拒绝直返，不降级估算、不计失败
@@ -232,8 +235,11 @@ func (h *CountTokensHandler) attemptEndpoint(ctx context.Context, r *http.Reques
 	}
 	client := &http.Client{Timeout: ep.Config.Timeout, Transport: httpTransport}
 
-	resp, err := client.Do(req)
+	resp, err := SendPrivacyRequest(client, r, req)
 	if err != nil {
+		if AsPrivacyPolicyError(err) != nil {
+			return nil, countTokensAttemptPrivacyBlocked, err
+		}
 		slog.Debug(fmt.Sprintf("❌ [转发失败] [%s] 端点: %s, 错误: %v", connID, ep.Config.Name, err))
 		h.recordScopedSoftFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), endpoint.SoftFailureCategoryConnection, 0)
 		return nil, countTokensAttemptRetryNext, err

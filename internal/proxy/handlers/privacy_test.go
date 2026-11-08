@@ -239,3 +239,19 @@ func TestWritePrivacyPolicyErrorResponse(t *testing.T) {
 		t.Errorf("body missing code: %s", rec.Body.String())
 	}
 }
+
+func TestEmptyRestoreAttemptsDoNotConsumeDictionaryCapacity(t *testing.T) {
+	d := privacy.NewRestoreDict()
+	state := NewPrivacyRequestState("many")
+	defer state.ReleaseRestore()
+	for range 48 {
+		v, err := d.Prepare()
+		if err != nil {
+			t.Fatal(err)
+		}
+		state.views[v] = struct{}{}
+		if err := v.Publish(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -1179,15 +1179,19 @@ func (tp *TokenParser) parseMessageDeltaV2() (result *ParseResult) {
 
 	// 解析JSON数据
 	var messageDelta MessageDelta
-	defer func() {
-		result = attachClaudeDeltaPhase(result, eventType, messageDelta.Delta, len(jsonData))
-	}()
 	if err := json.Unmarshal([]byte(jsonData), &messageDelta); err != nil {
 		if eventType == "content_block_delta" {
 			tp.markContentBlockProtocolError("content_block_delta 事件不是有效 JSON")
 		}
-		return nil
+		return attachClaudeDeltaPhase(nil, eventType, messageDelta.Delta, len(jsonData))
 	}
+	return tp.applyMessageDeltaV2(eventType, &messageDelta, len(jsonData))
+}
+
+func (tp *TokenParser) applyMessageDeltaV2(eventType string, messageDelta *MessageDelta, size int) (result *ParseResult) {
+	defer func() {
+		result = attachClaudeDeltaPhase(result, eventType, messageDelta.Delta, size)
+	}()
 	if eventType == "content_block_delta" {
 		tp.trackContentBlockDelta(messageDelta.Index)
 	} else {

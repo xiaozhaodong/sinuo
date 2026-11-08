@@ -448,6 +448,8 @@ END;
 CREATE TABLE IF NOT EXISTS privacy_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     mode TEXT NOT NULL DEFAULT 'disabled',          -- disabled / detect / redact
+    response_restore_enabled INTEGER NOT NULL DEFAULT 0,
+    restore_key BLOB,
     scan_max_bytes INTEGER NOT NULL DEFAULT 4194304,-- 单请求累计扫描文本字节上限
     over_limit_action TEXT NOT NULL DEFAULT 'scan_prefix', -- scan_prefix / fail_closed
     on_error TEXT NOT NULL DEFAULT 'fail_open',     -- fail_open / fail_closed

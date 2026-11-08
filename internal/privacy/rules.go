@@ -88,10 +88,11 @@ type Rule struct {
 
 // Settings 引擎运行配置（来自 privacy_settings 表）
 type Settings struct {
-	Mode            string `json:"mode"`
-	ScanMaxBytes    int64  `json:"scan_max_bytes"`
-	OverLimitAction string `json:"over_limit_action"`
-	OnError         string `json:"on_error"`
+	ResponseRestoreEnabled bool   `json:"response_restore_enabled"`
+	Mode                   string `json:"mode"`
+	ScanMaxBytes           int64  `json:"scan_max_bytes"`
+	OverLimitAction        string `json:"over_limit_action"`
+	OnError                string `json:"on_error"`
 }
 
 // DefaultSettings 返回默认引擎配置（默认关闭）

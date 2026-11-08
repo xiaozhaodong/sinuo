@@ -15,8 +15,9 @@ type matchSpan struct {
 // segmentOutcome 一段文本的扫描结果，只含偏移与规则下标（可安全缓存，不含原文）。
 // hits 按优先级去重，用于命中统计；regions 为脱敏区域，互不重叠且按起点升序。
 type segmentOutcome struct {
-	hits    []matchSpan
-	regions []matchSpan
+	discovered []matchSpan
+	hits       []matchSpan
+	regions    []matchSpan
 }
 
 type rankedSpan struct {
@@ -40,6 +41,9 @@ func (s *Snapshot) scanText(candidates []int, text string) segmentOutcome {
 			span := matchSpan{start: loc[0], end: loc[1], ruleIdx: ruleIdx}
 			outcome.hits = insertNonOverlapping(outcome.hits, span)
 			if rule.Action == ActionRedact {
+				if s.Settings.ResponseRestoreEnabled && rule.MatchType != MatchTypeLiteral {
+					outcome.discovered = append(outcome.discovered, span)
+				}
 				redact = append(redact, rankedSpan{matchSpan: span, rank: rank})
 			}
 		}

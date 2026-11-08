@@ -180,6 +180,7 @@ func sanitizeSubscriptionPrivacyResult(result privacy.ApplyResult) privacy.Apply
 func subscriptionPrivacySummary(result privacy.ApplyResult) privacy.ApplyResult {
 	result = sanitizeSubscriptionPrivacyResult(result)
 	result.Body = nil
+	result.Restore = nil
 	return result
 }
 
@@ -195,10 +196,11 @@ func sanitizeSubscriptionPolicyError(policyErr *privacy.PolicyError) *privacy.Po
 	case privacy.CodeScanFailed:
 		message = "privacy scan failed and the request was rejected"
 	}
-	return &privacy.PolicyError{
-		StatusCode: policyErr.StatusCode,
-		Code:       policyErr.Code,
-		Message:    message,
-		Result:     result,
+	if reason := policyErr.SafeRestoreMessage(); reason != "" {
+		message = reason
 	}
+	safe := *policyErr
+	safe.Message = message
+	safe.Result = result
+	return &safe
 }

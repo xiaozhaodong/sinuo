@@ -197,13 +197,19 @@ func TestRecordRequestUpdateAfterArchiveLandsInDB(t *testing.T) {
 	tracker.RecordRequestStart(requestID, "127.0.0.1", "agent", "POST", "/v1/responses", true)
 
 	draft := `{"request_id":"req-lifecycle-post-archive","final_outcome":"pending"}`
-	tracker.RecordRequestUpdate(requestID, UpdateOptions{ScheduleSnapshotJSON: &draft})
+	pendingPrivacy := `{"action":"redact","changed":true,"hit_count":0,"restore":{"status":"pending"}}`
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{ScheduleSnapshotJSON: &draft, PrivacyScanJSON: &pendingPrivacy})
+	inFlight, err := tracker.GetRequestLifecycleData(ctx, requestID)
+	if err != nil || inFlight == nil || inFlight.Source != "hot_pool" || inFlight.PrivacyScanJSON != pendingPrivacy {
+		t.Fatalf("流中扫描摘要丢失：%+v %v", inFlight, err)
+	}
 
 	// 响应处理内部先 CompleteRequest（CompleteAndArchive），成功快照随后才写。
 	tracker.RecordRequestSuccess(requestID, "claude-sonnet-4-20250514", nil, 30*time.Millisecond)
 
 	final := `{"request_id":"req-lifecycle-post-archive","final_outcome":"success"}`
-	tracker.RecordRequestUpdate(requestID, UpdateOptions{ScheduleSnapshotJSON: &final})
+	finalPrivacy := `{"action":"redact","changed":true,"hit_count":0,"restore":{"status":"completed","text":2,"unknown_tool":1}}`
+	tracker.RecordRequestUpdate(requestID, UpdateOptions{ScheduleSnapshotJSON: &final, PrivacyScanJSON: &finalPrivacy})
 
 	// 立即读取：archiving 副本已携带终态快照。
 	data, err := tracker.GetRequestLifecycleData(ctx, requestID)
@@ -216,6 +222,9 @@ func TestRecordRequestUpdateAfterArchiveLandsInDB(t *testing.T) {
 	if data.ScheduleSnapshotJSON != final {
 		t.Fatalf("expected final snapshot visible immediately, got %q", data.ScheduleSnapshotJSON)
 	}
+	if data.PrivacyScanJSON != finalPrivacy {
+		t.Fatalf("归档窗口缺少最终隐私摘要 %q", data.PrivacyScanJSON)
+	}
 
 	// 落库后仍是终态，不退回 draft。
 	deadline := time.Now().Add(5 * time.Second)
@@ -227,6 +236,9 @@ func TestRecordRequestUpdateAfterArchiveLandsInDB(t *testing.T) {
 		if data != nil && data.Source == "database" {
 			if data.ScheduleSnapshotJSON != final {
 				t.Fatalf("expected final snapshot persisted, got %q", data.ScheduleSnapshotJSON)
+			}
+			if data.PrivacyScanJSON != finalPrivacy {
+				t.Fatalf("重新读取数据库时隐私摘要退回在途版本 %q", data.PrivacyScanJSON)
 			}
 			break
 		}

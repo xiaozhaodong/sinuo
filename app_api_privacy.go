@@ -14,23 +14,25 @@ import (
 
 // PrivacySettingsInfo 隐私保护全局设置
 type PrivacySettingsInfo struct {
-	Mode            string `json:"mode"`
-	ScanMaxBytes    int64  `json:"scan_max_bytes"`
-	OverLimitAction string `json:"over_limit_action"`
-	OnError         string `json:"on_error"`
-	Version         int64  `json:"version"`
-	Status          string `json:"status"`
-	CompileError    string `json:"compile_error"`
-	EnabledRules    int    `json:"enabled_rules"`
-	UpdatedAt       string `json:"updated_at"`
+	ResponseRestoreEnabled bool   `json:"response_restore_enabled"`
+	Mode                   string `json:"mode"`
+	ScanMaxBytes           int64  `json:"scan_max_bytes"`
+	OverLimitAction        string `json:"over_limit_action"`
+	OnError                string `json:"on_error"`
+	Version                int64  `json:"version"`
+	Status                 string `json:"status"`
+	CompileError           string `json:"compile_error"`
+	EnabledRules           int    `json:"enabled_rules"`
+	UpdatedAt              string `json:"updated_at"`
 }
 
 // PrivacySettingsInput 更新全局设置输入
 type PrivacySettingsInput struct {
-	Mode            string `json:"mode"`
-	ScanMaxBytes    int64  `json:"scan_max_bytes"`
-	OverLimitAction string `json:"over_limit_action"`
-	OnError         string `json:"on_error"`
+	ResponseRestoreEnabled bool   `json:"response_restore_enabled"`
+	Mode                   string `json:"mode"`
+	ScanMaxBytes           int64  `json:"scan_max_bytes"`
+	OverLimitAction        string `json:"over_limit_action"`
+	OnError                string `json:"on_error"`
 }
 
 // PrivacyRuleInfo 隐私规则
@@ -164,10 +166,11 @@ func (a *App) UpdatePrivacySettings(input PrivacySettingsInput) (PrivacySettings
 	ctx, cancel := privacyAPIContext()
 	defer cancel()
 	updated, err := svc.UpdateSettings(ctx, &store.PrivacySettingsRecord{
-		Mode:            strings.TrimSpace(strings.ToLower(input.Mode)),
-		ScanMaxBytes:    input.ScanMaxBytes,
-		OverLimitAction: strings.TrimSpace(strings.ToLower(input.OverLimitAction)),
-		OnError:         strings.TrimSpace(strings.ToLower(input.OnError)),
+		ResponseRestoreEnabled: input.ResponseRestoreEnabled,
+		Mode:                   strings.TrimSpace(strings.ToLower(input.Mode)),
+		ScanMaxBytes:           input.ScanMaxBytes,
+		OverLimitAction:        strings.TrimSpace(strings.ToLower(input.OverLimitAction)),
+		OnError:                strings.TrimSpace(strings.ToLower(input.OnError)),
 	})
 	if err != nil {
 		return PrivacySettingsInfo{}, err
@@ -396,6 +399,7 @@ func (a *App) buildPrivacySettingsInfo(svc *service.PrivacyService, settings *st
 		Status: svc.Status(),
 	}
 	if settings != nil {
+		info.ResponseRestoreEnabled = settings.ResponseRestoreEnabled
 		info.Mode = settings.Mode
 		info.ScanMaxBytes = settings.ScanMaxBytes
 		info.OverLimitAction = settings.OverLimitAction

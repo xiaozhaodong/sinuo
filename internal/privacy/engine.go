@@ -26,6 +26,8 @@ type CompiledRule struct {
 
 // Snapshot 编译后的规则快照，热路径只读。
 type Snapshot struct {
+	Dict         *RestoreDict `json:"-"`
+	RestoreKey   []byte       `json:"-"`
 	Version      int64
 	Settings     Settings
 	Rules        []CompiledRule
@@ -124,13 +126,35 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 		return result, nil
 	}
 	result.SnapshotVersion = s.Version
+	switch {
+	case req.Path == "/v1/messages/count_tokens" || req.Path == "/v1/responses/compact":
+		result.RestoreStatus = "not_applicable"
+	case req.UpstreamType == UpstreamTypeEndpoint && req.Path == "/v1/messages" || req.UpstreamType == UpstreamTypeAccount && req.Path == "/v1/responses":
+		result.RestoreStatus = "disabled"
+	}
 	if s.Settings.Mode == ModeDisabled || s.Settings.Mode == "" {
 		return result, nil
 	}
 	result.Action = s.Settings.Mode
 
 	started := time.Now()
+	reversible := s.reversible(req)
 	candidates := s.candidateRules(req)
+	if reversible {
+		err := s.processRestoreRequest(req, body, &result, candidates)
+		result.ScanDuration = time.Since(started)
+		if err != nil {
+			result.RestoreStatus = "not_applicable"
+			if req.UpstreamType == UpstreamTypeAccount {
+				err.StatusCode = http.StatusBadRequest
+			} else {
+				err.StatusCode = http.StatusUnprocessableEntity
+			}
+			err.Result = result
+			return result, err
+		}
+		return result, nil
+	}
 	if len(candidates) == 0 {
 		result.ScanDuration = time.Since(started)
 		return result, nil

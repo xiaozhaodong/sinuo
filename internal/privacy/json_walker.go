@@ -19,6 +19,7 @@ type textSegment struct {
 	Value  string
 	IsJSON bool       // true 表示区间是 JSON 字符串 token，替换时需要重新 escape
 	Path   []pathElem // JSON 路径；非 JSON 文本为空
+	sealed bool       // 推理历史内的可读文本只检查，不修改供应商封装的原始对象。
 }
 
 // pathElem JSON 路径元素：Key 为对象键；Index >= 0 时为数组下标。
@@ -231,10 +232,15 @@ func matchCodexToolSchemaTextPath(path []pathElem) bool {
 // 只记录字符串 token 的原始字节区间，不重编码整个 JSON，
 // 保证未命中字段 byte-identical。
 func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, error) {
+	return walkJSONText(body, match, nil)
+}
+
+func walkJSONText(body []byte, match segmentMatcher, replay *restoreInput) ([]textSegment, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 
 	type frame struct {
+		keys      map[string]struct{}
 		isObject  bool
 		expectKey bool
 		key       string
@@ -278,7 +284,7 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 		token, err := decoder.Token()
 		if err == io.EOF {
 			// 截断的 JSON（容器未闭合）Token() 也可能返回干净 EOF，这里显式校验
-			if len(stack) != 0 {
+			if len(stack) != 0 || replay != nil && prevOffset == 0 {
 				return nil, fmt.Errorf("invalid json body: unexpected end of input")
 			}
 			break
@@ -287,6 +293,20 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 			return nil, fmt.Errorf("invalid json body: %w", err)
 		}
 		offset := decoder.InputOffset()
+		if replay != nil {
+			if len(stack) == 0 && (prevOffset != 0 || token != json.Delim('{')) || len(stack) > 257 {
+				return nil, fmt.Errorf("invalid request object")
+			}
+			key := len(stack) > 0 && stack[len(stack)-1].isObject && stack[len(stack)-1].expectKey
+			if delim, ok := token.(json.Delim); (!ok || delim != '}' && delim != ']') && !key {
+				if len(stack) > 256 {
+					return nil, fmt.Errorf("request exceeds depth limit")
+				}
+				if err := replay.observe(currentPath(), token); err != nil {
+					return nil, err
+				}
+			}
+		}
 
 		switch tok := token.(type) {
 		case json.Delim:
@@ -305,6 +325,15 @@ func collectJSONTextSegments(body []byte, match segmentMatcher) ([]textSegment, 
 				top = &stack[len(stack)-1]
 			}
 			if top != nil && top.isObject && top.expectKey {
+				if replay != nil {
+					if top.keys == nil {
+						top.keys = make(map[string]struct{})
+					}
+					if _, exists := top.keys[tok]; exists {
+						return nil, fmt.Errorf("duplicate object key")
+					}
+					top.keys[tok] = struct{}{}
+				}
 				top.key = tok
 				top.expectKey = false
 				prevOffset = offset

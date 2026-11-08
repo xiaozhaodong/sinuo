@@ -7,14 +7,17 @@ import (
 
 // Request 描述一次出站请求的过滤上下文
 type Request struct {
-	RequestID    string `json:"request_id"`
-	Path         string `json:"path"`
-	Method       string `json:"method"`
-	UpstreamType string `json:"upstream_type"` // endpoint/account
-	EndpointName string `json:"endpoint_name"`
-	AccountID    int64  `json:"account_id"`
-	ProviderType string `json:"provider_type"`
-	ContentType  string `json:"content_type"`
+	// StreamingHTTP 仅由实际选择 HTTP SSE 的转发入口设置。
+	SessionID     string `json:"-"`
+	StreamingHTTP bool   `json:"-"`
+	RequestID     string `json:"request_id"`
+	Path          string `json:"path"`
+	Method        string `json:"method"`
+	UpstreamType  string `json:"upstream_type"` // endpoint/account
+	EndpointName  string `json:"endpoint_name"`
+	AccountID     int64  `json:"account_id"`
+	ProviderType  string `json:"provider_type"`
+	ContentType   string `json:"content_type"`
 }
 
 // RuleHit 单条规则的命中统计。
@@ -39,6 +42,10 @@ const (
 // ApplyResult 一次过滤的结果。Body 始终可直接转发：
 // 零命中 / 仅检测 / 关闭时与输入 byte-identical。
 type ApplyResult struct {
+	RemaskDuration  time.Duration `json:"-"`
+	RemaskMatches   int           `json:"-"`
+	RestoreStatus   string        `json:"-"`
+	Restore         *RestoreView  `json:"-"`
 	Body            []byte        `json:"-"`
 	Changed         bool          `json:"changed"`
 	HitCount        int           `json:"hit_count"`
@@ -53,10 +60,11 @@ type ApplyResult struct {
 // PolicyError 本地隐私策略拒绝。调用方必须用 errors.As 识别并短路返回，
 // 不允许进入端点重试、端点故障转移、账号池 failover 或账号冷却。
 type PolicyError struct {
-	StatusCode int
-	Code       string
-	Message    string
-	Result     ApplyResult
+	StatusCode    int
+	Code          string
+	Message       string
+	Result        ApplyResult
+	restoreReason restoreRejection
 }
 
 func (e *PolicyError) Error() string {

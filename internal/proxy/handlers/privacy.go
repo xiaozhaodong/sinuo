@@ -47,11 +47,15 @@ type PrivacyRequestState struct {
 	RequestID string
 	mu        sync.Mutex
 	cache     map[string]*privacyCacheEntry
+	SessionID string
+	views     map[*privacy.RestoreView]struct{}
+	summary   *privacySummaryRecorder
 	// resultRecorder 仅在真实 Apply 后触发（cache hit / 关闭 / 跳过不触发）。
 	resultRecorder func(privacy.ApplyResult, *privacy.PolicyError)
 }
 
 type privacyCacheEntry struct {
+	view *privacy.RestoreView
 	body []byte
 	err  error
 }
@@ -60,6 +64,7 @@ type privacyCacheEntry struct {
 func NewPrivacyRequestState(requestID string) *PrivacyRequestState {
 	return &PrivacyRequestState{
 		RequestID: requestID,
+		views:     make(map[*privacy.RestoreView]struct{}),
 		cache:     make(map[string]*privacyCacheEntry),
 	}
 }
@@ -91,13 +96,13 @@ func (s *PrivacyRequestState) lookup(fingerprint string) (*privacyCacheEntry, bo
 	return entry, ok
 }
 
-func (s *PrivacyRequestState) store(fingerprint string, body []byte, err error) {
+func (s *PrivacyRequestState) store(fingerprint string, body []byte, view *privacy.RestoreView, err error) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache[fingerprint] = &privacyCacheEntry{body: body, err: err}
+	s.cache[fingerprint] = &privacyCacheEntry{body: body, view: view, err: err}
 }
 
 // SetResultRecorder 挂载真实扫描结果的持久化回调（加锁设置）。
@@ -139,7 +144,7 @@ func privacyScopeFingerprint(filter PrivacyFilter, req privacy.Request, snapshot
 		base = fingerprinter.PrivacyScopeFingerprint(req, snapshotVersion)
 	}
 	sum := sha256.Sum256(body)
-	return base + "|body=" + hex.EncodeToString(sum[:])
+	return base + "|upstream=" + req.UpstreamType + "|http_sse=" + strconv.FormatBool(req.StreamingHTTP) + "|body=" + hex.EncodeToString(sum[:])
 }
 
 // ApplyPrivacyFilter 统一过滤入口：带 attempt cache 与命中摘要日志。
@@ -153,14 +158,23 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 	if r != nil {
 		state = PrivacyRequestStateFromContext(r.Context())
 	}
-	if state != nil && req.RequestID == "" {
-		req.RequestID = state.RequestID
+	if state != nil {
+		req.SessionID = state.SessionID
+		if req.RequestID == "" {
+			req.RequestID = state.RequestID
+		}
 	}
 
-	fingerprint := privacyScopeFingerprint(filter, req, filter.SnapshotVersion(), body)
-	if entry, ok := state.lookup(fingerprint); ok {
+	attempt := privacyAttemptFrom(r)
+	req.StreamingHTTP = attempt != nil && attempt.sse
+	version := filter.SnapshotVersion()
+	fingerprint := privacyScopeFingerprint(filter, req, version, body)
+	if entry, ok := state.lookup(fingerprint); ok && (entry.view == nil || entry.view.Reusable()) {
 		if entry.err != nil {
 			return nil, entry.err
+		}
+		if attempt != nil {
+			attempt.view = entry.view
 		}
 		return entry.body, nil
 	}
@@ -170,16 +184,31 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 		ctx = r.Context()
 	}
 	result, err := filter.Apply(ctx, req, body)
+	cacheable := result.SnapshotVersion == 0 || result.SnapshotVersion == version
 	logPrivacyApplyResult(req, result, err)
 	// 真实 Apply 后通知持久化（cache hit 不经过这里，天然不重复计）。
 	if err != nil {
 		policyErr := AsPrivacyPolicyError(err)
 		state.notifyResult(result, policyErr)
-		state.store(fingerprint, nil, err)
+		if cacheable {
+			state.store(fingerprint, nil, nil, err)
+		}
 		return nil, err
 	}
+	view := result.Restore
+	result.Restore = nil
+	if state != nil && view != nil {
+		state.mu.Lock()
+		state.views[view] = struct{}{}
+		state.mu.Unlock()
+	}
+	if attempt != nil {
+		attempt.view = view
+	}
 	state.notifyResult(result, nil)
-	state.store(fingerprint, result.Body, nil)
+	if cacheable {
+		state.store(fingerprint, result.Body, view, nil)
+	}
 	return result.Body, nil
 }
 
@@ -244,7 +273,7 @@ func logPrivacyApplyResult(req privacy.Request, result privacy.ApplyResult, err 
 	if result.Action == privacy.ModeDisabled {
 		return
 	}
-	if result.HitCount > 0 || result.Truncated || result.SkippedReason != "" {
+	if result.Changed || result.HitCount > 0 || result.Truncated || result.SkippedReason != "" {
 		names := make([]string, 0, len(result.RuleHits))
 		for _, hit := range result.RuleHits {
 			names = append(names, fmt.Sprintf("%s(%d)", hit.RuleName, hit.Count))
@@ -256,7 +285,7 @@ func logPrivacyApplyResult(req privacy.Request, result privacy.ApplyResult, err 
 		slog.Info(fmt.Sprintf("🛡️ [隐私保护] [%s] action=%s hits=%d rules=[%s] changed=%t truncated=%t skipped=%q duration=%s path=%s upstream=%s/%s%s",
 			req.RequestID, result.Action, result.HitCount, strings.Join(names, ","),
 			result.Changed, result.Truncated, result.SkippedReason, result.ScanDuration,
-			req.Path, req.UpstreamType, req.EndpointName, debugMatches))
+			req.Path, req.UpstreamType, req.EndpointName, debugMatches), "remask_matches", result.RemaskMatches, "remask_us", result.RemaskDuration.Microseconds())
 	}
 }
 
@@ -277,31 +306,52 @@ type privacyScanRuleJSON struct {
 }
 
 // BuildPrivacyScanJSON 按白名单构造隐私扫描摘要 JSON。
-// 语义为「最后一次真实扫描的结果」；action=disabled / 模式关闭时返回空串，调用方跳过写入。
+// 请求侧记录最后一次真实扫描，未扫描时只写已经确认的响应状态。
 // PolicyError 短路时同样写入（action=blocked + blocked_code，取实际 PolicyError.Code）。
-func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyError, scanCount int) string {
-	if scanCount <= 0 {
-		return ""
+func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyError, scanCount int, restore ...RestoreSummary) string {
+	var delivery *RestoreSummary
+	if len(restore) > 0 && restore[0].Status != "" {
+		delivery = &restore[0]
+	} else if result.RestoreStatus != "" {
+		delivery = &RestoreSummary{Status: result.RestoreStatus}
 	}
-	if policyErr == nil && (result.Action == "" || result.Action == privacy.ModeDisabled) {
-		return ""
+	if scanCount <= 0 || policyErr == nil && (result.Action == "" || result.Action == privacy.ModeDisabled) {
+		if delivery == nil {
+			return ""
+		}
+		payload, _ := json.Marshal(struct {
+			Restore *RestoreSummary `json:"restore"`
+		}{delivery})
+		return string(payload)
 	}
 
 	summary := struct {
-		Action      string                `json:"action"`
-		HitCount    int                   `json:"hit_count"`
-		Rules       []privacyScanRuleJSON `json:"rules"`
-		Truncated   bool                  `json:"truncated"`
-		ScanMs      int64                 `json:"scan_ms"`
-		ScanCount   int                   `json:"scan_count"`
-		BlockedCode string                `json:"blocked_code,omitempty"`
+		Action        string                `json:"action"`
+		HitCount      int                   `json:"hit_count"`
+		Rules         []privacyScanRuleJSON `json:"rules"`
+		Truncated     bool                  `json:"truncated"`
+		ScanMs        int64                 `json:"scan_ms"`
+		ScanCount     int                   `json:"scan_count"`
+		BlockedCode   string                `json:"blocked_code,omitempty"`
+		Changed       bool                  `json:"changed"`
+		SkippedReason string                `json:"skipped_reason,omitempty"`
+		Restore       *RestoreSummary       `json:"restore,omitempty"`
 	}{
+		Changed:   result.Changed,
 		Action:    result.Action,
 		HitCount:  result.HitCount,
 		Rules:     make([]privacyScanRuleJSON, 0, len(result.RuleHits)),
 		Truncated: result.Truncated,
 		ScanMs:    result.ScanDuration.Milliseconds(),
 		ScanCount: scanCount,
+	}
+	summary.Restore = delivery
+	switch result.SkippedReason {
+	case privacy.SkippedNonTextBody, privacy.SkippedUnsupportedPath, privacy.SkippedScanTruncated, privacy.SkippedEmptyBody:
+		summary.SkippedReason = result.SkippedReason
+	case "":
+	default:
+		summary.SkippedReason = privacy.CodeScanFailed
 	}
 	if policyErr != nil {
 		summary.Action = "blocked"

@@ -45,11 +45,12 @@ type PrivacyRuntimeStats struct {
 
 // PrivacyService 隐私保护服务
 type PrivacyService struct {
-	store    store.PrivacyStore
-	mu       sync.Mutex // 串行化所有写操作（保存->编译->热替换）
-	snapshot atomic.Pointer[privacy.Snapshot]
-	version  atomic.Int64
-	status   atomic.Value // string
+	restoreCapacity privacy.RestoreCapacity
+	store           store.PrivacyStore
+	mu              sync.Mutex // 串行化所有写操作（保存->编译->热替换）
+	snapshot        atomic.Pointer[privacy.Snapshot]
+	version         atomic.Int64
+	status          atomic.Value // string
 
 	statsMu       sync.Mutex
 	scanCount     int64
@@ -500,10 +501,11 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 		return err
 	}
 	settings := privacy.Settings{
-		Mode:            settingsRecord.Mode,
-		ScanMaxBytes:    settingsRecord.ScanMaxBytes,
-		OverLimitAction: settingsRecord.OverLimitAction,
-		OnError:         settingsRecord.OnError,
+		ResponseRestoreEnabled: settingsRecord.ResponseRestoreEnabled,
+		Mode:                   settingsRecord.Mode,
+		ScanMaxBytes:           settingsRecord.ScanMaxBytes,
+		OverLimitAction:        settingsRecord.OverLimitAction,
+		OnError:                settingsRecord.OnError,
 	}
 	if err := privacy.ValidateSettings(settings); err != nil {
 		// 历史脏数据回退默认（disabled），不阻塞启动
@@ -571,6 +573,7 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 	}
 
 	snapshot := &privacy.Snapshot{
+		RestoreKey:   settingsRecord.RestoreKey,
 		Version:      s.version.Add(1),
 		Settings:     settings,
 		Rules:        compiled,
@@ -579,6 +582,7 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 		// 缓存随快照替换整体失效：规则、设置变化后旧的扫描结果不再适用
 		Cache: privacy.NewSegmentCache(privacy.DefaultSegmentCacheCapacity),
 	}
+	snapshot.Dict = s.restoreDictionaryForSnapshot(s.CurrentSnapshot(), snapshot)
 	s.snapshot.Store(snapshot)
 	if degradedActive {
 		s.status.Store(PrivacyStatusDegraded)

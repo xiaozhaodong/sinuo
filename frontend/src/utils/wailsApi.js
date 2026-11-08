@@ -2284,6 +2284,7 @@ export const encodePrivacyScope = (scope = {}) => {
 
 export const normalizePrivacySettings = (settings = {}) => ({
   mode: settings.mode ?? settings.Mode ?? 'disabled',
+  response_restore_enabled: Boolean(settings.response_restore_enabled ?? settings.ResponseRestoreEnabled ?? false),
   scan_max_bytes: Number(settings.scan_max_bytes ?? settings.ScanMaxBytes ?? 4194304),
   over_limit_action: settings.over_limit_action ?? settings.OverLimitAction ?? 'scan_prefix',
   on_error: settings.on_error ?? settings.OnError ?? 'fail_open',
@@ -2383,6 +2384,7 @@ export const updatePrivacySettings = async (input = {}) => {
   const method = getWailsMethod('UpdatePrivacySettings');
   const result = await method({
     mode: String(input.mode ?? 'disabled'),
+    response_restore_enabled: Boolean(input.response_restore_enabled ?? input.responseRestoreEnabled ?? false),
     scan_max_bytes: Number(input.scan_max_bytes ?? input.scanMaxBytes ?? 4194304),
     over_limit_action: String(input.over_limit_action ?? input.overLimitAction ?? 'scan_prefix'),
     on_error: String(input.on_error ?? input.onError ?? 'fail_open')
@@ -2406,6 +2408,24 @@ export const listPrivacyExactSecrets = async () => {
   const method = getWailsMethod('ListPrivacyExactSecrets');
   const result = await method();
   return (Array.isArray(result) ? result : []).map(normalizePrivacyExactSecret);
+};
+
+export const listPrivacyRestoreDictionary = async (offset, limit) => {
+  await initWails();
+  if (!WailsApp) throw new Error('请在 Sinuo 桌面端查看内存回填字典');
+  return getWailsMethod('ListPrivacyRestoreDictionary')(offset, limit);
+};
+
+export const clearPrivacyRestoreDictionary = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('请在 Sinuo 桌面端清空内存回填字典');
+  return getWailsMethod('ClearPrivacyRestoreDictionary')();
+};
+
+export const revealPrivacyRestoreValue = async (token, entryID) => {
+  await initWails();
+  if (!WailsApp) throw new Error('请在 Sinuo 桌面端查看内存回填字典');
+  return getWailsMethod('RevealPrivacyRestoreValue')(token, entryID);
 };
 
 export const createPrivacyExactSecret = async (input) => {

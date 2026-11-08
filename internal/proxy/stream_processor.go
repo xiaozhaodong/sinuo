@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/response"
+	"sinuo/internal/proxy/restorestream"
 	"sinuo/internal/tracking"
 	"sinuo/internal/utils"
 )
@@ -49,8 +52,9 @@ type StreamProcessor struct {
 	partialData    []byte    // 部分数据缓冲区，用于错误恢复
 
 	// 并发控制
-	parseWg    sync.WaitGroup // 等待组，确保后台解析完成
-	parseMutex sync.Mutex     // 解析互斥锁，保护共享状态
+	parseWg          sync.WaitGroup // 等待组，确保后台解析完成
+	parseMutex       sync.Mutex     // 解析互斥锁，保护共享状态
+	deltaObservation deltaObservation
 
 	// 错误处理
 	parseErrors    []error // 解析过程中的错误集合
@@ -178,10 +182,37 @@ func (sp *StreamProcessor) finalizeTerminalAfterDisconnect(trigger error) (*trac
 
 // ProcessStream 实现边接收边转发的8KB缓冲区流式处理
 // 这是核心方法，实现真正的流式处理机制
-func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, error) {
+func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Response) (usage *tracking.TokenUsage, streamErr error) {
 	defer resp.Body.Close()
 	defer sp.waitForBackgroundParsing() // 确保所有后台解析完成
 	defer sp.stopDownstreamTailDrain()
+	var restore *restorestream.Writer
+	var deliveryErr error
+	var probeResponses bool
+	if path, view := handlers.ResponseRestore(resp); view != nil {
+		media := restoreMediaType(resp.Header)
+		probeResponses = path == "/v1/responses" && media == "missing"
+		if media != "text/event-stream" && !probeResponses {
+			sp.logRestoreDelivery(resp, path, media, nil, restorestream.ErrResponseFormat)
+			if media == "application/json" {
+				return sp.unexpectedRegularUsage(resp, path), restorestream.ErrResponseFormat
+			}
+			return nil, restorestream.ErrResponseFormat
+		}
+		restore = restorestream.New(sp.responseWriter, path, view)
+		orig := sp.responseWriter
+		sp.responseWriter = restore
+		defer func() {
+			sp.responseWriter = orig
+			defer restore.Release()
+			if deliveryErr != nil {
+				streamErr = deliveryErr
+			} else if streamErr == nil && !sp.downstreamDisconnected {
+				streamErr = restore.Finish()
+			}
+			sp.logRestoreDelivery(resp, path, media, restore, streamErr)
+		}()
+	}
 
 	// 🔧 [解压缩修复] 创建响应处理器并获取解压缩的流式读取器
 	processor := response.NewProcessor()
@@ -199,7 +230,14 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 
 	// 初始化8KB缓冲区，使用解压缩后的读取器
 	buffer := make([]byte, StreamBufferSize)
-	reader := bufio.NewReader(decompressedReader)
+	buffered := bufio.NewReader(decompressedReader)
+	var reader io.Reader = buffered
+	if probeResponses {
+		reader, err = restorestream.OpenUntypedResponses(ctx, buffered)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// 记录流处理开始
 	slog.Info(fmt.Sprintf("🌊 [流式处理] [%s] 开始流式处理，端点: %s", sp.requestID, sp.endpoint))
@@ -237,6 +275,13 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			// 2. 立即转发到客户端 - 这是关键！不等待完整响应
 			if !sp.downstreamDisconnected {
 				if writeErr := sp.forwardToClient(chunk); writeErr != nil {
+					if errors.Is(writeErr, restorestream.ErrDelivery) {
+						deliveryErr = writeErr
+						if !sp.enableDownstreamTailDrain {
+							sp.parseTokensFromChunk(chunk)
+							return sp.getFinalTokenUsage(), writeErr
+						}
+					}
 					if sp.enableDownstreamTailDrain {
 						sp.beginDownstreamTailDrain(writeErr.Error())
 					} else {
@@ -255,7 +300,7 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			// 4. 更新处理状态
 			sp.bytesProcessed += int64(n)
 
-			if sp.tokenParser.HasTerminalEvent() {
+			if sp.tokenParser.HasTerminalEvent() && (restore == nil || restore.Terminal() || sp.downstreamDisconnected) {
 				if sp.downstreamDisconnected {
 					return sp.finalizeTerminalAfterDisconnect(context.Canceled)
 				}
@@ -283,6 +328,11 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 			if sp.downstreamDisconnected && sp.tokenParser.HasTerminalEvent() {
 				return sp.finalizeTerminalAfterDisconnect(err)
 			}
+			if restore != nil && !sp.downstreamDisconnected {
+				if delivery := restore.Finish(); delivery != nil && !errors.Is(delivery, restorestream.ErrTruncated) {
+					return sp.getFinalTokenUsage(), delivery
+				}
+			}
 			// 网络中断或其他错误，尝试部分数据处理
 			return sp.handlePartialStreamV2(err)
 		}
@@ -305,13 +355,16 @@ func (sp *StreamProcessor) forwardToClient(data []byte) error {
 // parseTokensFromChunk 同步解析当前数据块中的 SSE 行。
 // 这里不启动后台 goroutine，仅在当前读循环内增量更新解析状态。
 func (sp *StreamProcessor) parseTokensFromChunk(data []byte) {
-	parseBuffer := make([]byte, len(data))
-	copy(parseBuffer, data)
-
 	sp.parseMutex.Lock()
 	defer sp.parseMutex.Unlock()
 
-	for _, b := range parseBuffer {
+	if w, ok := sp.responseWriter.(*restorestream.Writer); ok {
+		if hint := w.TakeOriginalDeltaEvent(); hint != nil && !sp.downstreamDisconnected && len(sp.lineBuffer) == 0 && sp.observeOriginalDelta(hint, data) {
+			return
+		}
+	}
+	// 解析与 Read 串行完成，lineBuffer 自行复制跨块字节。
+	for _, b := range data {
 		sp.lineBuffer = append(sp.lineBuffer, b)
 
 		if b == '\n' {
@@ -334,6 +387,10 @@ func (sp *StreamProcessor) processSSELine(line string) {
 
 	// ✅ 使用V2架构进行解析
 	result := sp.tokenParser.ParseSSELineV2(line)
+	sp.observeParseResult(result)
+}
+
+func (sp *StreamProcessor) observeParseResult(result *ParseResult) {
 	if sp.phaseObserver != nil {
 		sp.phaseObserver(result, 0, time.Now())
 	}
@@ -524,8 +581,12 @@ func (sp *StreamProcessor) handlePartialStream(err error) error {
 func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error) {
 	// 执行流式处理（单次调用，不重试）
 	finalTokenUsage, err := sp.ProcessStream(ctx, resp)
+	if errors.Is(err, restorestream.ErrDelivery) {
+		return finalTokenUsage, sp.tokenParser.GetModelName(), err
+	}
 
-	if err == nil {
+	missingTerminal := errors.Is(err, restorestream.ErrTruncated)
+	if err == nil || missingTerminal {
 		// ✅ 检查是否在处理过程中遇到了API错误（如SSE错误事件）
 		if sp.lastAPIError != nil {
 			modelName := sp.tokenParser.GetModelName()
@@ -557,6 +618,10 @@ func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *htt
 		// 🆕 [流完整性检测] 2025-12-11
 		// 检查流是否完整，即使 err == nil 也可能是不完整的流
 		completeness := sp.tokenParser.GetStreamCompleteness()
+		if missingTerminal && completeness.IsComplete {
+			// 原始 usage 可在 EOF 刷出，但半帧终态没有完整交付给客户端。
+			completeness = StreamCompleteness{FailureReason: "stream_truncated", Reason: "上游终态事件未收全"}
+		}
 		modelName := sp.tokenParser.GetModelName()
 		// 🔧 [模型语义修复] 2025-12-26: 使用 "unknown" 而非 "default"
 		// 当没有收到 message_start 事件时，模型应该标记为 "unknown"

@@ -251,3 +251,43 @@ func TestPrivacyStoreExactSecretCRUDAndUniqueness(t *testing.T) {
 		t.Fatal("exact secret still exists after delete")
 	}
 }
+
+func TestPrivacyRestoreUpgradeAndKeyPersistence(t *testing.T) {
+	s := newTestPrivacyStore(t)
+	ctx := context.Background()
+	_, err := s.db.Exec(`CREATE TABLE privacy_settings (id INTEGER PRIMARY KEY, mode TEXT DEFAULT 'disabled',scan_max_bytes INTEGER DEFAULT 4194304,over_limit_action TEXT DEFAULT 'scan_prefix',on_error TEXT DEFAULT 'fail_open',updated_at TEXT DEFAULT '2026-11-07T00:00:00.000000Z')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.GetSettings(ctx)
+	if err != nil || r.ResponseRestoreEnabled || len(r.RestoreKey) != 0 {
+		t.Fatal("旧库迁移失败", err)
+	}
+	r.ResponseRestoreEnabled = true
+	if err = s.UpdateSettings(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.GetSettings(ctx)
+	if err != nil || len(r.RestoreKey) != 32 {
+		t.Fatal("本地密钥未生成", err)
+	}
+	first := string(r.RestoreKey)
+	if _, err = s.db.Exec(`UPDATE privacy_settings SET mode='redact' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	s = NewSQLitePrivacyStore(s.db)
+	r, err = s.GetSettings(ctx)
+	if err != nil || !r.ResponseRestoreEnabled || string(r.RestoreKey) != first || r.Mode != "redact" {
+		t.Fatal("旧版写入或重启丢失配置", err)
+	}
+	for _, enabled := range []bool{false, true} {
+		r.ResponseRestoreEnabled = enabled
+		if err = s.UpdateSettings(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		r, err = s.GetSettings(ctx)
+		if err != nil || r.ResponseRestoreEnabled != enabled || string(r.RestoreKey) != first {
+			t.Fatal("切换开关重置了映射密钥", err)
+		}
+	}
+}

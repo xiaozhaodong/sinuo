@@ -587,3 +587,153 @@ func TestPrivacyServiceUpdateSettingsValidation(t *testing.T) {
 		t.Fatal("invalid mode must be rejected")
 	}
 }
+
+func TestPrivacyServiceRestoreDictionaryGenerationAndInspection(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestPrivacyService(t)
+	settings, err := svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Mode = privacy.ModeRedact
+	settings.ResponseRestoreEnabled = true
+	if _, err = svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.CreateRule(ctx, newOpenAIKeyRuleRecord()); err != nil {
+		t.Fatal(err)
+	}
+	const fake = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+	result, err := svc.Apply(ctx, privacy.Request{Path: "/v1/messages", UpstreamType: "endpoint", StreamingHTTP: true}, []byte(`{"stream":true,"messages":[{"role":"user","content":"`+fake+`"}]}`))
+	if err != nil || result.Restore == nil {
+		t.Fatalf("未准备映射 %v", err)
+	}
+	if e := result.Restore.Publish(); e != nil {
+		t.Fatal(e)
+	}
+	defer result.Restore.Release()
+	dict := svc.CurrentSnapshot().Dict
+	page, err := svc.ListRestoreDictionary(0, 10)
+	if err != nil || !page.Enabled || page.Total != 1 || len(page.Entries) != 1 {
+		t.Fatalf("字典分页异常 %+v %v", page, err)
+	}
+	row := page.Entries[0]
+	if row.MaskedValue != MaskPrivacySecretValue(fake, "") || row.TextCount != 0 || row.ToolCount != 0 || !bytes.Contains(result.Body, []byte(row.Token)) {
+		t.Fatal("分页泄漏原文或返回错误状态")
+	}
+	if raw, readErr := svc.RevealRestoreValue(row.Token, row.EntryID); readErr != nil || raw != fake {
+		t.Fatal("单项值不符")
+	}
+	if _, err = svc.UpdateSettings(ctx, settings); err != nil || svc.CurrentSnapshot().Dict != dict {
+		t.Fatal("普通热更新丢失字典")
+	}
+	draft, e := dict.Prepare()
+	if e != nil {
+		t.Fatal(e)
+	}
+	settings.ResponseRestoreEnabled = false
+	if _, err = svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	page, err = svc.ListRestoreDictionary(0, 10)
+	if err != nil || page.Enabled || page.Total != 0 {
+		t.Fatal("关停后仍可读取字典")
+	}
+	if e := draft.Publish(); e == nil {
+		t.Fatal("停用后不应发布旧草稿")
+	}
+	settings.ResponseRestoreEnabled = true
+	if _, err = svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if svc.CurrentSnapshot().Dict == dict {
+		t.Fatal("重新开启须进入空代际")
+	}
+	if _, err = svc.RevealRestoreValue(row.Token, row.EntryID); err == nil {
+		t.Fatal("旧页面仍能揭示旧值")
+	}
+	if _, ok := result.Restore.Lookup(row.Token); !ok {
+		t.Fatal("已出站旧流无法收尾")
+	}
+	result.Restore.RecordDelivery(row.Token, true, 1)
+	page, err = svc.ListRestoreDictionary(0, 10)
+	if err != nil || !page.Enabled || page.Total != 0 {
+		t.Fatal("旧流写入了新代际")
+	}
+	restart := NewPrivacyService(svc.store)
+	if err = restart.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	page, err = restart.ListRestoreDictionary(0, 10)
+	if err != nil || !page.Enabled || page.Total != 0 {
+		t.Fatal("同一数据库重启后字典应为空")
+	}
+}
+
+func TestPrivacyServiceClearRestoreDictionaryAfterRuleDeletion(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestPrivacyService(t)
+	settings, err := svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Mode = privacy.ModeRedact
+	settings.ResponseRestoreEnabled = true
+	if _, err = svc.UpdateSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	rule := newOpenAIKeyRuleRecord()
+	rule.Pattern = `password=(?P<redact>[a-z0-9]+)`
+	created, err := svc.CreateRule(ctx, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := privacy.Request{Path: "/v1/messages", UpstreamType: privacy.UpstreamTypeEndpoint}
+	raw := []byte(`{"messages":[{"role":"user","content":"password=123456"}]}`)
+	original, err := svc.Apply(ctx, req, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := original.Restore.Publish(); err != nil {
+		t.Fatal(err)
+	}
+	defer original.Restore.Release()
+	if err = svc.DeleteRule(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := svc.Apply(ctx, req, raw)
+	if err != nil || !draft.Changed || draft.HitCount != 0 {
+		t.Fatal("删规则后应仍有历史映射", err)
+	}
+	defer draft.Restore.Release()
+	page, err := svc.ListRestoreDictionary(0, 10)
+	if err != nil || page.Total != 1 {
+		t.Fatal("缺少待清空的映射", err)
+	}
+	row := page.Entries[0]
+	version := svc.SnapshotVersion()
+	if err = svc.ClearRestoreDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	if original.Restore.Reusable() || svc.SnapshotVersion() <= version {
+		t.Fatal("已清空的尝试正文仍可重用")
+	}
+	if err := draft.Restore.Publish(); err == nil {
+		t.Fatal("旧请求草稿回写新字典")
+	}
+	if raw, ok := original.Restore.Lookup(row.Token); !ok || raw != "123456" {
+		t.Fatal("在途回填丢失旧映射")
+	}
+	if _, err = svc.RevealRestoreValue(row.Token, row.EntryID); err == nil {
+		t.Fatal("清空后页面仍可揭示旧值")
+	}
+	page, err = svc.ListRestoreDictionary(0, 10)
+	if err != nil || !page.Enabled || page.Total != 0 {
+		t.Fatal("清空后无有效空字典", err)
+	}
+	fresh, err := svc.Apply(ctx, req, raw)
+	if err != nil || fresh.Changed || !bytes.Equal(fresh.Body, raw) {
+		t.Fatal("清空后仍沿用误报规则的映射", err)
+	}
+	defer fresh.Restore.Release()
+}
