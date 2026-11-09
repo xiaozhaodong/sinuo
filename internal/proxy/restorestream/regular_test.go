@@ -19,6 +19,33 @@ type recordingDictionary struct {
 	lookupErr       error
 }
 
+func TestValidatedWebSocketMessageBoundary(t *testing.T) {
+	for _, raw := range [][]byte{
+		[]byte(`{"type":"response.created","extra":{"id":1,"\u0069d":2}}`),
+		[]byte(`{"type":"response.created"} {}`),
+		[]byte(`[]`),
+		append([]byte(`{"type":"`), 0xff, '"', '}'),
+		[]byte(`{"deep":` + strings.Repeat("[", 257) + "0" + strings.Repeat("]", 257) + "}"),
+	} {
+		if _, err := ValidateMessage(raw); !errors.Is(err, ErrDelivery) {
+			t.Fatalf("无效帧未拒绝: %v", err)
+		}
+	}
+	w := New(nil, "/v1/responses", nil)
+	defer w.Release()
+	neverSend := func([]byte) error { t.Fatal("意外交付"); return nil }
+	if err := w.WriteValidatedMessage(ValidatedMessage{}, neverSend); !errors.Is(err, ErrDelivery) {
+		t.Fatal("零值不应授权交付", err)
+	}
+	large, err := ValidateMessage([]byte(`{"type":"response.output_text.delta","delta":"` + strings.Repeat("a", maxBytes) + `"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteValidatedMessage(large, neverSend); !errors.Is(err, ErrDelivery) {
+		t.Fatal("通过结构校验不能越过回填交付上限", err)
+	}
+}
+
 func (d *recordingDictionary) Lookup(token string) (string, bool) {
 	return d.original, token == d.token
 }

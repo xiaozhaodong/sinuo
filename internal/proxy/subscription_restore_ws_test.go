@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +23,31 @@ import (
 )
 
 func (f liveRestoreFilter) CurrentSnapshot() *privacy.Snapshot { return f.Snapshot }
+
+// 同一帧不论是否回填，读侧必须看到相同的归属、用量、思考和内容阶段。
+func TestSubscriptionWSReadMatchesOriginalObservation(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"response.output_text.delta","response_id":"r","delta":"visible"}`,
+		`{"type":"response.function_call_arguments.delta","delta":"{\"path\":\"a\\\\b\"}"}`,
+		`{"type":"response.completed","response_id":"outer","response":{"id":"inner","model":"synthetic","usage":{"input_tokens":0,"output_tokens":42,"output_tokens_details":{"reasoning_tokens":12}}}}`,
+		`{"type":"response.incomplete","response":{"id":"r","incomplete_details":{"reason":"interrupted"}}}`,
+		`{"type":"error","error":{"type":"upstream_error","message":"synthetic"}}`,
+		`{"type":"response.steer.accepted","stream_id":"a"}`,
+		`{"type":"codex.metadata","extra":{"nested":[1,2]}}`,
+		`{"type":"response.completed","response_id":"outer","response":{"id":null}}`,
+		`{"type":"response.completed","response_id":42,"response":{"id":"inner"}}`,
+		`{"type":"response.created","Type":"response.completed","response":{"Id":"one","id":"two"}}`,
+		`{"type":"response.completed","response_id":"first","RESPONSE_ID":"last"}`,
+		`{"type":"response.completed","Response":{"ID":"upper"},"response":{}}`,
+		`{"type":"response.completed","response":["untyped"]}`,
+		`{"type":"response.completed","response":{"id":"r"},"untracked":1e400}`,
+	} {
+		on, off := readSubscriptionWSEvent([]byte(raw), true), readSubscriptionWSEvent([]byte(raw), false)
+		if !reflect.DeepEqual(on, off) {
+			t.Fatalf("读侧观测不一致: %s\n开 %+v %+v\n关 %+v %+v", raw, on, on.result, off, off.result)
+		}
+	}
+}
 
 // 跟踪单测没有网络写队列，由调用方决定何时确认交付。
 func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (*ParseResult, func(), error) {

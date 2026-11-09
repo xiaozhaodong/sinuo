@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
 
@@ -277,9 +276,14 @@ func (i *subscriptionWSInterceptor) shouldRestoreMessages() bool {
 func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptionws.InterceptResult, error) {
 	res := subscriptionws.InterceptResult{Forward: payload}
 	restoring := i.shouldRestoreMessages()
-	if restoring && (!utf8.Valid(payload) || validateSubscriptionJSON(payload) != nil) {
-		res.Deliver = rejectRestoreMessage
-		return res, nil
+	var msg restorestream.ValidatedMessage
+	if restoring {
+		var err error
+		msg, err = restorestream.ValidateMessage(payload)
+		if err != nil {
+			res.Deliver = rejectRestoreMessage
+			return res, nil
+		}
 	}
 	ev, err := i.submissions.observeUpstream(payload, restoring)
 	if errors.Is(err, restorestream.ErrDelivery) {
@@ -293,7 +297,13 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 		return subscriptionws.InterceptResult{}, nil
 	}
 	if ev.errorFrame != nil {
+		// 清洗后的错误是新帧，不能沿用原始错误的校验结果。
 		payload, res.Forward = ev.errorFrame, ev.errorFrame
+		msg, err = restorestream.ValidateMessage(payload)
+		if err != nil {
+			res.Deliver = rejectRestoreMessage
+			return res, nil
+		}
 		if ev.connectionExpired {
 			res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
 				if err := send(payload); err != nil {
@@ -339,7 +349,7 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 	}
 	if sub.restore != nil {
 		res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
-			err := sub.restore.WriteMessage(payload, send)
+			err := sub.restore.WriteValidatedMessage(msg, send)
 			if errors.Is(err, restorestream.ErrDelivery) {
 				sub.reportRestore("failed", "privacy_restore_failed")
 				return rejectRestoreMessage(send, nil)

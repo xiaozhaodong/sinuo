@@ -12,10 +12,37 @@ import (
 	"sinuo/internal/codexidentity"
 )
 
-// WriteMessage 处理一条完整的原生 Responses 消息。字段状态、工具 JSON 与终态快照
-// 共用 SSE 的协议实现，每次 send 完成后才确认对应的交付计数。
+// ValidatedMessage 绑定通过严格校验的原生 WS 帧。调用方交出字节的写权限，
+// 直至交付结束；队列只持有这份原文，不持有解码后的对象。
+type ValidatedMessage struct{ raw []byte }
+
+// ValidateMessage 在读侧关联前校验 UTF-8、单个 JSON 对象、深度和各层重复键。
+// 控制回执与元数据也要校验，但不属于回填写入器的 4 MiB 交付预算。
+func ValidateMessage(raw []byte) (ValidatedMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(raw) || codexidentity.ValidateJSON(raw) != nil {
+		return ValidatedMessage{}, ErrDelivery
+	}
+	return ValidatedMessage{raw: raw}, nil
+}
+
+// WriteMessage 用于尚未校验的独立帧。
 func (w *Writer) WriteMessage(payload []byte, send func([]byte) error) error {
-	if w.terminal || len(payload) > maxBytes || !utf8.Valid(payload) || codexidentity.ValidateJSON(payload) != nil {
+	if w.terminal || len(payload) > maxBytes {
+		return ErrDelivery
+	}
+	msg, err := ValidateMessage(payload)
+	if err != nil {
+		return err
+	}
+	return w.WriteValidatedMessage(msg, send)
+}
+
+// WriteValidatedMessage 在串行写侧检查响应归属、预算与协议状态。每次 send
+// 成功才确认对应的交付计数；零值不能作为已校验帧使用。
+func (w *Writer) WriteValidatedMessage(msg ValidatedMessage, send func([]byte) error) error {
+	payload := msg.raw
+	if payload == nil || w.terminal || len(payload) > maxBytes {
 		return ErrDelivery
 	}
 	if err := w.checkIdentity(payload); err != nil {

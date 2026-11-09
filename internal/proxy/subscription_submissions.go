@@ -169,13 +169,10 @@ type subscriptionResponseEvent struct {
 }
 
 func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring bool) (subscriptionResponseEvent, error) {
-	ev := subscriptionResponseEvent{typ: responsesEventType(payload)}
-	ev.controlReceipt = subscriptionWSControlReceipt(ev.typ)
-	ev.metadata = ev.typ == "responsesapi.websocket_timing" || strings.HasPrefix(ev.typ, "codex.")
-	if ev.typ == "" || ev.controlReceipt || ev.metadata {
+	ev := readSubscriptionWSEvent(payload, restoring)
+	if ev.result == nil {
 		return ev, nil
 	}
-	ev.result = ParseResponsesEventJSON(ev.typ, payload)
 	pendingOnly := false
 	if restoring && ev.typ == "error" {
 		frame, err := restoreWSErrorFrame(payload)
@@ -193,7 +190,6 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring 
 		// 结算仍采用原始用量，但错误详情不能持久化上游回显的输入。
 		ev.result.ErrorInfo = ParseResponsesEventJSON("error", frame).ErrorInfo
 	}
-	ev.responseID = responsesEventID(payload)
 	streamID := gjson.GetBytes(payload, "stream_id").Str
 	if ev.typ == "response.created" {
 		if err := s.bindCreated(ev.responseID, streamID, ev.result, restoring); err != nil {
@@ -215,6 +211,77 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring 
 		s.mergeIntermediateDiagnostics(ev.submission, ev.result)
 	}
 	return ev, nil
+}
+
+// 回填数据帧在读侧只解码一次；仅把归属和观测结果交给队列。回执、元数据
+// 仍然只读事件类型，不把它们可能很大的扩展字段展开成对象。
+func readSubscriptionWSEvent(raw []byte, restoring bool) subscriptionResponseEvent {
+	var ev subscriptionResponseEvent
+	var decoded map[string]any
+	if restoring {
+		// 提示只用于决定是否值得解码，不能用来决定归属或跳过严格校验。
+		hint := gjson.GetBytes(raw, "type").Str
+		if hint == "error" || strings.HasPrefix(hint, "response.") && !subscriptionWSControlReceipt(hint) {
+			if json.Unmarshal(raw, &decoded) == nil && canonicalWSRouting(decoded) {
+				ev.typ, _ = decoded["type"].(string)
+				ev.typ = strings.TrimSpace(ev.typ)
+				response, _ := decoded["response"].(map[string]any)
+				ev.responseID, _ = response["id"].(string)
+				if ev.responseID == "" {
+					ev.responseID, _ = decoded["response_id"].(string)
+				}
+			} else {
+				decoded = nil
+			}
+		}
+	}
+	if decoded == nil {
+		ev.typ = responsesEventType(raw)
+	}
+	ev.controlReceipt = subscriptionWSControlReceipt(ev.typ)
+	ev.metadata = ev.typ == "responsesapi.websocket_timing" || strings.HasPrefix(ev.typ, "codex.")
+	if ev.typ == "" || ev.controlReceipt || ev.metadata {
+		return ev
+	}
+	if decoded != nil {
+		ev.result = observeDecodedResponsesEvent(ev.typ, decoded, len(raw))
+	} else {
+		ev.responseID = responsesEventID(raw)
+		ev.result = ParseResponsesEventJSON(ev.typ, raw)
+	}
+	return ev
+}
+
+// 原结构体解码允许大小写别名，遇到类型错误则不返回 ID。map 不保留键顺序；
+// 非规范路由字段继续由原解码器解释，不能从 map 猜选同名字段或绑定另一条流。
+func canonicalWSRouting(m map[string]any) bool {
+	for k, v := range m {
+		switch k {
+		case "type", "response_id":
+			if _, ok := v.(string); !ok && v != nil {
+				return false
+			}
+		case "response":
+			obj, ok := v.(map[string]any)
+			if !ok && v != nil {
+				return false
+			}
+			for name, value := range obj {
+				if name == "id" {
+					if _, ok := value.(string); !ok && value != nil {
+						return false
+					}
+				} else if strings.EqualFold(name, "id") {
+					return false
+				}
+			}
+		default:
+			if strings.EqualFold(k, "type") || strings.EqualFold(k, "response_id") || strings.EqualFold(k, "response") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // mergeIntermediateDiagnostics 把非 created、非终态事件携带的响应模型 / 思考字段合并进对应 submission。

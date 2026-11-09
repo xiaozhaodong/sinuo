@@ -566,8 +566,13 @@ func ParseResponsesEventJSON(eventType string, jsonData []byte) *ParseResult {
 		attachResponsesReasoning(result, reasoning.ExtractCodexFieldsFromRaw(string(jsonData)), eventType)
 		return result
 	}
+	return observeDecodedResponsesEvent(eventType, payload, len(jsonData))
+}
+
+// SSE 和 WS 从同一份上游对象提取用量、阶段与推理字段，不依赖下游回填写入。
+func observeDecodedResponsesEvent(eventType string, payload map[string]any, size int) *ParseResult {
 	result := parseResponsesEventPayload(eventType, payload)
-	result = attachStreamPhase(result, streamPhasePayload(eventType, payload, len(jsonData)))
+	result = attachStreamPhase(result, streamPhasePayload(eventType, payload, size))
 	attachResponsesReasoning(result, reasoning.ExtractCodexFields(payload), eventType)
 	return result
 }
