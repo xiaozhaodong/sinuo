@@ -12,11 +12,17 @@ import (
 // 只解码 delta 字符串，用现有增量状态机解释内层 JSON；完成事件仍校验完整参数。
 func (f *deltaFrame) fragment(ev []byte, a, b int) error {
 	p := ev[a-1 : b+1]
-	if !utf8.Valid(p) || !json.Valid(p) {
+	if !utf8.Valid(p) {
 		return ErrDelivery
 	}
+	raw, ok := decodeCommonJSONString(p)
+	if !ok {
+		if !json.Valid(p) {
+			return ErrDelivery
+		}
+		raw = gjson.ParseBytes(p).Str
+	}
 	field := f.partial
-	raw := gjson.ParseBytes(p).Str
 	if f.key.role != "arguments" {
 		if f.key.role == "text" && strings.TrimSpace(raw) == "" {
 			f.nonempty = false
