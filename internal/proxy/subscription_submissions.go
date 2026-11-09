@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sinuo/internal/monitor"
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/proxy/restorestream"
+
+	"github.com/tidwall/gjson"
 )
 
 // subscriptionSubmissionObserver 是 P2b 的同步生命周期接缝。
@@ -41,6 +46,11 @@ type subscriptionSubmission struct {
 	StartedAt          time.Time
 	PrivacyState       *handlers.PrivacyRequestState
 	Context            context.Context
+	restore            *restorestream.Writer
+	restoreStatus      string
+	terminalRead       *ParseResult
+	successorView      *privacy.RestoreView
+	dispatched         bool
 
 	settled       bool
 	responseBytes int64
@@ -48,6 +58,7 @@ type subscriptionSubmission struct {
 }
 
 type subscriptionSubmissionState struct {
+	restoring    atomic.Int64 // 已发布且尚未结束的回填响应数量
 	mu           sync.Mutex
 	connectionID string
 	sessionID    string
@@ -58,7 +69,7 @@ type subscriptionSubmissionState struct {
 	pending      []*subscriptionSubmission
 	active       []*subscriptionSubmission
 	byResponseID map[string]*subscriptionSubmission
-	recentIDs    map[string]struct{}
+	recentIDs    map[string]subscriptionCompletedResponse
 	recentOrder  []string
 	activity     *monitor.RequestActivity
 	requestIDs   monitor.RequestIDGenerator
@@ -66,6 +77,13 @@ type subscriptionSubmissionState struct {
 }
 
 const subscriptionRecentResponseIDLimit = 256
+
+// 最近终态只保留去重和迟到回执所需的数据，不持有请求或回填字典。
+type subscriptionCompletedResponse struct {
+	streamID       string
+	restored       bool
+	sequenceOffset int64
+}
 
 func newSubscriptionSubmissionState(ctx context.Context, connectionID string, observer subscriptionSubmissionObserver) *subscriptionSubmissionState {
 	if ctx == nil {
@@ -77,7 +95,7 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 		baseContext:  ctx,
 		observer:     observer,
 		byResponseID: make(map[string]*subscriptionSubmission),
-		recentIDs:    make(map[string]struct{}),
+		recentIDs:    make(map[string]subscriptionCompletedResponse),
 	}
 	if info := subscriptionRequestInfoFromContext(ctx); info != nil {
 		state.activity = info.activity
@@ -106,6 +124,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	}
 	s.sequence++
 	privacyState := newSubscriptionPrivacyRequestState(requestID, nil)
+	privacyState.SessionID = s.sessionID
 	ctx := context.WithValue(s.baseContext, "conn_id", requestID) //nolint:staticcheck // 与旧入口请求 ID key 一致
 	ctx = handlers.WithPrivacyRequestState(ctx, privacyState)
 	submission := &subscriptionSubmission{
@@ -136,44 +155,78 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 	return submission, true, nil
 }
 
-// handleUpstreamForForward 只解析一次上游事件，返回对应消息成功写出后的收尾回调。
-func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (*ParseResult, func(), error) {
-	eventType := responsesEventType(payload)
-	// 控制回执不属于生成输出：只透传，避免误记首响、响应字节或结算已有请求。
-	if eventType == "" || subscriptionWSControlReceipt(eventType) {
-		return nil, nil, nil
-	}
-	result := ParseResponsesEventJSON(eventType, payload)
-	responseID := responsesEventID(payload)
+// 观察原帧时固定归属和用量。回填路径等下游写出后才用这份收据结算。
+type subscriptionResponseEvent struct {
+	typ, responseID   string
+	submission        *subscriptionSubmission
+	result            *ParseResult
+	terminal          bool
+	metadata          bool
+	controlReceipt    bool
+	duplicate         bool
+	errorFrame        []byte
+	connectionExpired bool
+}
 
-	if eventType == "response.created" {
-		if err := s.bindCreated(responseID, result); err != nil {
-			return result, nil, err
+func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring bool) (subscriptionResponseEvent, error) {
+	ev := subscriptionResponseEvent{typ: responsesEventType(payload)}
+	ev.controlReceipt = subscriptionWSControlReceipt(ev.typ)
+	ev.metadata = ev.typ == "responsesapi.websocket_timing" || strings.HasPrefix(ev.typ, "codex.")
+	if ev.typ == "" || ev.controlReceipt || ev.metadata {
+		return ev, nil
+	}
+	ev.result = ParseResponsesEventJSON(ev.typ, payload)
+	pendingOnly := false
+	if restoring && ev.typ == "error" {
+		frame, err := restoreWSErrorFrame(payload)
+		if err != nil {
+			return ev, err
 		}
-		s.responseProgress(responseID, result, int64(len(payload)))
-		return result, nil, nil
+		ev.errorFrame = frame
+		switch gjson.GetBytes(frame, "error.code").Str {
+		case "websocket_connection_limit_reached":
+			ev.connectionExpired = true
+			return ev, nil
+		case "invalid_stream_id", "websocket_stream_limit_reached", "previous_response_not_found", "previous_response_id_not_found":
+			pendingOnly = true
+		}
+		// 结算仍采用原始用量，但错误详情不能持久化上游回显的输入。
+		ev.result.ErrorInfo = ParseResponsesEventJSON("error", frame).ErrorInfo
 	}
-	s.responseProgress(responseID, result, int64(len(payload)))
-	if result == nil || !result.IsCompleted || !isResponsesTerminalEvent(eventType) {
-		// 中间事件（如 response.in_progress）可能独立回显 reasoning.effort / model，
-		// 按 response ID 合并到已绑定 submission，否则终态只带 usage 时会丢失。
-		s.mergeIntermediateDiagnostics(responseID, result)
-		return result, nil, nil
+	ev.responseID = responsesEventID(payload)
+	streamID := gjson.GetBytes(payload, "stream_id").Str
+	if ev.typ == "response.created" {
+		if err := s.bindCreated(ev.responseID, streamID, ev.result, restoring); err != nil {
+			return ev, err
+		}
 	}
-	return result, s.finishTerminal(responseID, eventType, result), nil
+	ev.submission = s.deliveryTarget(ev.responseID, streamID, ev.typ, restoring, pendingOnly)
+	ev.terminal = ev.result != nil && ev.result.IsCompleted && isResponsesTerminalEvent(ev.typ)
+	if ev.terminal && ev.submission == nil && s.duplicateRestoreTerminal(ev.responseID, streamID, restoring) {
+		ev.duplicate = true
+		return ev, nil
+	}
+	s.responseProgress(ev.submission, ev.result, int64(len(payload)))
+	if ev.terminal && restoring && ev.submission != nil {
+		s.mu.Lock()
+		ev.submission.terminalRead = ev.result
+		s.mu.Unlock()
+	} else if ev.typ != "response.created" && !ev.terminal {
+		s.mergeIntermediateDiagnostics(ev.submission, ev.result)
+	}
+	return ev, nil
 }
 
 // mergeIntermediateDiagnostics 把非 created、非终态事件携带的响应模型 / 思考字段合并进对应 submission。
-func (s *subscriptionSubmissionState) mergeIntermediateDiagnostics(responseID string, result *ParseResult) {
-	if result == nil || s.observer == nil || responseID == "" {
+func (s *subscriptionSubmissionState) mergeIntermediateDiagnostics(submission *subscriptionSubmission, result *ParseResult) {
+	if result == nil || s.observer == nil || submission == nil {
 		return
 	}
 	if result.ResponseModel == "" && result.ResponseReasoningFields.IsEmpty() {
 		return
 	}
 	s.mu.Lock()
-	submission := s.byResponseID[responseID]
-	if submission == nil || submission.settled {
+	if submission.settled {
 		s.mu.Unlock()
 		return
 	}
@@ -182,12 +235,8 @@ func (s *subscriptionSubmissionState) mergeIntermediateDiagnostics(responseID st
 }
 
 // responseProgress 只向观察者传有界关联与字节/时序，不保存帧或逐帧推送 UI。
-func (s *subscriptionSubmissionState) responseProgress(responseID string, result *ParseResult, size int64) {
+func (s *subscriptionSubmissionState) responseProgress(submission *subscriptionSubmission, result *ParseResult, size int64) {
 	s.mu.Lock()
-	submission := s.byResponseID[responseID]
-	if responseID == "" && len(s.active) > 0 {
-		submission = s.active[0]
-	}
 	if submission == nil || submission.settled {
 		s.mu.Unlock()
 		return
@@ -218,11 +267,14 @@ func (s *subscriptionSubmissionState) responseProgress(responseID string, result
 	}
 }
 
-func (s *subscriptionSubmissionState) bindCreated(responseID string, result *ParseResult) error {
+func (s *subscriptionSubmissionState) bindCreated(responseID, streamID string, result *ParseResult, strict bool) error {
 	var submission *subscriptionSubmission
 	var started bool
 	if responseID == "" {
 		s.warn("response_created_without_id")
+		if strict {
+			return restorestream.ErrDelivery
+		}
 		return nil
 	}
 
@@ -232,18 +284,27 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		return errSubscriptionDraining
 	}
 	// 判重必须发生在消费 pending 或创建 successor 之前。
-	if _, duplicate := s.recentIDs[responseID]; duplicate {
+	if _, completed := s.recentIDs[responseID]; completed || s.byResponseID[responseID] != nil {
 		s.mu.Unlock()
 		s.warn("duplicate_response_id")
 		return nil
 	}
-	for len(s.pending) > 0 {
-		candidate := s.pending[0]
-		s.pending = s.pending[1:]
-		if !candidate.settled {
-			submission = candidate
+	selected := -1
+	for n, candidate := range s.pending {
+		if candidate.settled || candidate.terminalRead != nil || !candidate.dispatched {
+			continue
+		}
+		if streamID == "" || streamID == candidate.StreamID {
+			selected = n
 			break
 		}
+		if selected == -1 && candidate.StreamID == "" {
+			selected = n
+		}
+	}
+	if selected != -1 {
+		submission = s.pending[selected]
+		s.pending = slices.Delete(s.pending, selected, selected+1)
 	}
 	if submission == nil {
 		// 服务端 steering successor 没有下游 create，仍需独立生命周期。
@@ -260,6 +321,8 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 			Sequence:        s.sequence,
 			Generate:        true,
 			ServerInitiated: true,
+			dispatched:      true,
+			PrivacyState:    handlers.NewPrivacyRequestState(requestID),
 			StartedAt:       time.Now(),
 			Context:         context.WithValue(s.baseContext, "conn_id", requestID), //nolint:staticcheck
 		}
@@ -274,8 +337,10 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 		started = true
 	}
 	submission.ResponseID = responseID
+	if streamID != "" {
+		submission.StreamID = streamID
+	}
 	s.byResponseID[responseID] = submission
-	s.rememberResponseIDLocked(responseID)
 	s.mu.Unlock()
 
 	if s.observer != nil {
@@ -287,30 +352,16 @@ func (s *subscriptionSubmissionState) bindCreated(responseID string, result *Par
 	return nil
 }
 
-func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType string, result *ParseResult) func() {
-	var submission *subscriptionSubmission
-
-	s.mu.Lock()
-	if responseID != "" {
-		submission = s.byResponseID[responseID]
-		if submission == nil {
-			s.mu.Unlock()
-			s.warn("terminal_response_id_not_found")
-			return nil
-		}
-	} else {
-		for _, candidate := range s.active {
-			if !candidate.settled {
-				submission = candidate
-				break
-			}
-		}
-		if submission == nil {
-			s.mu.Unlock()
+func (s *subscriptionSubmissionState) finishTerminal(submission *subscriptionSubmission, responseID string, result *ParseResult) func() {
+	if submission == nil {
+		if responseID == "" {
 			s.warn("terminal_without_submission")
-			return nil
+		} else {
+			s.warn("terminal_response_id_not_found")
 		}
+		return nil
 	}
+	s.mu.Lock()
 	if submission.settled {
 		s.mu.Unlock()
 		s.warn("duplicate_terminal")
@@ -318,12 +369,12 @@ func (s *subscriptionSubmissionState) finishTerminal(responseID, eventType strin
 	}
 	submission.settled = true
 	if submission.ResponseID != "" {
+		s.rememberCompletedLocked(submission)
 		delete(s.byResponseID, submission.ResponseID)
 	}
 	s.removeSubmissionLocked(submission)
 	s.mu.Unlock()
 
-	_ = eventType
 	if s.observer != nil {
 		s.observer.SubmissionTerminal(submission, result)
 	}
@@ -363,6 +414,7 @@ func (s *subscriptionSubmissionState) close(reason string) {
 		return
 	}
 	s.closed = true
+	s.restoring.Store(0)
 	for _, submission := range s.active {
 		if submission.settled {
 			continue
@@ -375,19 +427,19 @@ func (s *subscriptionSubmissionState) close(reason string) {
 	s.byResponseID = make(map[string]*subscriptionSubmission)
 	s.mu.Unlock()
 
-	if s.observer != nil {
-		for _, submission := range interrupted {
-			s.observer.SubmissionInterrupted(submission, reason)
-			releaseSubscriptionSubmission(submission)
+	for _, sub := range interrupted {
+		sub.reportRestore("interrupted", "subscription_response_interrupted")
+		if s.observer != nil {
+			s.observer.SubmissionInterrupted(sub, reason)
 		}
-	} else {
-		for _, submission := range interrupted {
-			releaseSubscriptionSubmission(submission)
-		}
+		releaseSubscriptionSubmission(sub)
 	}
 }
 
 func (s *subscriptionSubmissionState) removeSubmissionLocked(target *subscriptionSubmission) {
+	if target.restore != nil {
+		s.restoring.Add(-1)
+	}
 	remove := func(items []*subscriptionSubmission) []*subscriptionSubmission {
 		for i, item := range items {
 			if item == target {
@@ -402,12 +454,13 @@ func (s *subscriptionSubmissionState) removeSubmissionLocked(target *subscriptio
 	s.active = remove(s.active)
 }
 
-func (s *subscriptionSubmissionState) rememberResponseIDLocked(responseID string) {
-	if responseID == "" {
-		return
+func (s *subscriptionSubmissionState) rememberCompletedLocked(sub *subscriptionSubmission) {
+	receipt := subscriptionCompletedResponse{streamID: sub.StreamID, restored: sub.restore != nil}
+	if receipt.restored {
+		receipt.sequenceOffset = sub.restore.SequenceOffset()
 	}
-	s.recentIDs[responseID] = struct{}{}
-	s.recentOrder = append(s.recentOrder, responseID)
+	s.recentIDs[sub.ResponseID] = receipt
+	s.recentOrder = append(s.recentOrder, sub.ResponseID)
 	if len(s.recentOrder) <= subscriptionRecentResponseIDLimit {
 		return
 	}
@@ -419,6 +472,18 @@ func (s *subscriptionSubmissionState) rememberResponseIDLocked(responseID string
 func releaseSubscriptionSubmission(submission *subscriptionSubmission) {
 	if submission == nil {
 		return
+	}
+	if submission.restore != nil {
+		submission.reportRestore("interrupted", "subscription_response_interrupted")
+		submission.restore.Release()
+		submission.restore = nil
+	}
+	if submission.successorView != nil {
+		submission.successorView.Release()
+		submission.successorView = nil
+	}
+	if submission.PrivacyState != nil {
+		submission.PrivacyState.ReleaseRestore()
 	}
 	submission.Context = nil
 	submission.PrivacyState = nil

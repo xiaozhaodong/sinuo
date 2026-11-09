@@ -66,9 +66,9 @@ func TestRequestIDEntrypoints_ReservedBeforeUse(t *testing.T) {
 			t.Fatal("订阅上下文 ID 不一致")
 		}
 		state := newSubscriptionSubmissionState(r.Context(), id, nil)
-		submission, ok, err := state.beginCreate([]byte(`{"type":"response.create","input":[]}`))
-		if err != nil || !ok || submission == nil {
-			t.Fatalf("WS 提交创建失败: %v", err)
+		submission, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","input":[]}`))
+		if !ok || submission == nil {
+			t.Fatal("WS 提交创建失败")
 		}
 		check(submission.RequestID)
 		if submission.Context.Value("conn_id") != submission.RequestID {

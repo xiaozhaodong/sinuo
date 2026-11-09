@@ -119,11 +119,29 @@ func (r *jsonRestore) item(item gjson.Result) error {
 			return nil
 		})
 	case "function_call":
-		return r.field(item.Get("arguments"), "arguments")
+		args := item.Get("arguments")
+		before := r.toolValues.count
+		err := r.field(args, "arguments")
+		if err == nil && r.toolValues.count != before {
+			r.rememberFunctionReplay(item.Get("call_id").Str, item.Get("name").Str, item.Get("namespace").Str, item.Get("encrypted_content").Str, args.Str)
+		}
+		return err
 	case "custom_tool_call":
 		return r.field(item.Get("input"), "custom")
 	}
 	return nil
+}
+
+// 仅记录回填过的完整函数参数；重放时必须证明重新遮蔽后的字节与上游原件一致。
+func (l *deliveryLedger) rememberFunctionReplay(call, name, namespace, cipher, args string) {
+	if cipher == "" {
+		return
+	}
+	if recorder, ok := l.toolValues.dict.(interface {
+		RememberFunctionReplay(string, string, string, string, string)
+	}); ok {
+		recorder.RememberFunctionReplay(call, name, namespace, cipher, args)
+	}
 }
 
 func (r *jsonRestore) field(v gjson.Result, role string) error {

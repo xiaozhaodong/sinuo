@@ -10,14 +10,29 @@ import (
 
 type privacyAttemptKey struct{}
 type privacyAttempt struct {
-	sse  bool
-	view *privacy.RestoreView
+	sse       bool
+	websocket bool
+	view      *privacy.RestoreView
 }
 
 // WithPrivacyAttempt 将暂存映射绑定到本次出站尝试。
 func WithPrivacyAttempt(r *http.Request, sse bool) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), privacyAttemptKey{}, &privacyAttempt{sse: sse}))
 }
+
+// WithWebSocketPrivacyAttempt 绑定单条客户端提交，下一条提交可使用不同的字典代际。
+func WithWebSocketPrivacyAttempt(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), privacyAttemptKey{}, &privacyAttempt{websocket: true}))
+}
+
+// PrivacyAttemptView 供原生 WebSocket 在发送前取得当前提交的视图。
+func PrivacyAttemptView(r *http.Request) *privacy.RestoreView {
+	if a := privacyAttemptFrom(r); a != nil {
+		return a.view
+	}
+	return nil
+}
+
 func privacyAttemptFrom(r *http.Request) *privacyAttempt {
 	if r == nil {
 		return nil
@@ -61,7 +76,7 @@ func SendPrivacyRequest(client *http.Client, r, upstream *http.Request) (*http.R
 	state := PrivacyRequestStateFromContext(r.Context())
 	if err != nil {
 		if generatedPrivacyResponse(r.URL.Path) {
-			state.recordRestore(RestoreSummary{Status: "interrupted"})
+			state.RecordRestore(RestoreSummary{Status: "interrupted"})
 		}
 		if state == nil {
 			a.view.Release()
@@ -117,12 +132,12 @@ func BindPrivacyResponse(r *http.Request, resp *http.Response) {
 	state := PrivacyRequestStateFromContext(r.Context())
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if generatedPrivacyResponse(r.URL.Path) {
-			state.recordRestore(RestoreSummary{Status: "upstream_error"})
+			state.RecordRestore(RestoreSummary{Status: "upstream_error"})
 		}
 		return
 	}
 	if generatedPrivacyResponse(r.URL.Path) {
-		state.recordRestore(RestoreSummary{Status: "pending"})
+		state.RecordRestore(RestoreSummary{Status: "pending"})
 	}
 	resp.Body = &privacyResponseBody{resp.Body, a.view, r.URL.Path, state}
 }
@@ -134,6 +149,6 @@ func ResponseRestore(resp *http.Response) (string, *privacy.RestoreView) {
 }
 func RecordRestoreDelivery(resp *http.Response, result RestoreSummary) {
 	if b, ok := resp.Body.(*privacyResponseBody); ok {
-		b.state.recordRestore(result)
+		b.state.RecordRestore(result)
 	}
 }

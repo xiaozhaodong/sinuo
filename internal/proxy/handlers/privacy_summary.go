@@ -57,7 +57,8 @@ func (r *privacySummaryRecorder) recordScan(result privacy.ApplyResult, rejectio
 	r.flushLocked()
 }
 
-func (s *PrivacyRequestState) recordRestore(delivery RestoreSummary) {
+// RecordRestore 合并实际交付的状态和计数。HTTP 与 WebSocket 共用请求详情格式。
+func (s *PrivacyRequestState) RecordRestore(delivery RestoreSummary) {
 	if s == nil || s.summary == nil {
 		return
 	}

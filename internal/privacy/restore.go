@@ -82,12 +82,29 @@ func (e *PolicyError) SafeRestoreMessage() string {
 	return string(e.restoreReason)
 }
 
-func (s *Snapshot) reversible(req Request) bool {
-	if !s.Settings.ResponseRestoreEnabled || s.Settings.Mode != ModeRedact {
-		return false
+func supportsRestore(req Request) bool {
+	if isClaudeMessagesPath(req.Path) {
+		return req.UpstreamType == UpstreamTypeEndpoint || req.UpstreamType == UpstreamTypeSubscription
 	}
-	return (req.UpstreamType == UpstreamTypeEndpoint && isClaudeMessagesPath(req.Path)) || (req.UpstreamType == UpstreamTypeAccount && (req.Path == "/v1/responses" || req.Path == "/v1/responses/compact"))
+	return (req.Path == "/v1/responses" || req.Path == "/v1/responses/compact") &&
+		(req.UpstreamType == UpstreamTypeAccount || req.UpstreamType == UpstreamTypeSubscription)
 }
+
+// OpenResponseRestoreView 为上游主动创建的后继响应固定当前字典，不制造请求扫描或命中。
+func (s *Snapshot) OpenResponseRestoreView() (*RestoreView, *PolicyError) {
+	if s == nil || !s.Settings.ResponseRestoreEnabled || s.Settings.Mode != ModeRedact {
+		return nil, nil
+	}
+	if s.Dict == nil {
+		return nil, restoreError("进程回填字典不可用")
+	}
+	v := &RestoreView{dict: s.Dict}
+	if err := v.Publish(); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
 func expandable(value string) bool {
 	n := utf8.RuneCountInString(value)
 	if n < 12 {

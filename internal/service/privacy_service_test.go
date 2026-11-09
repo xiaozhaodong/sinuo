@@ -668,6 +668,19 @@ func TestPrivacyServiceRestoreDictionaryGenerationAndInspection(t *testing.T) {
 	if err != nil || !page.Enabled || page.Total != 0 {
 		t.Fatal("同一数据库重启后字典应为空")
 	}
+	history := func(value string) string {
+		args := fmt.Sprintf(`{"key":%q}`, value)
+		return fmt.Sprintf(`{"input":[{"type":"function_call","name":"lookup","call_id":"old","arguments":%q,"encrypted_content":"original-cipher"}]}`, args)
+	}
+	req := privacy.Request{Path: "/v1/responses", UpstreamType: privacy.UpstreamTypeAccount}
+	replayed, err := restart.Apply(ctx, req, []byte(history(fake)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayed.Restore.Release()
+	if string(replayed.Body) != history(row.Token) {
+		t.Fatal("从数据库重载的规则和密钥未重建原参数，或改动了历史密文")
+	}
 }
 
 func TestPrivacyServiceClearRestoreDictionaryAfterRuleDeletion(t *testing.T) {

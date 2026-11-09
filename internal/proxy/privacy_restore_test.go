@@ -233,7 +233,9 @@ func TestNonPassthroughRestoration(t *testing.T) {
 		})
 	}
 }
-func TestSubscriptionStillUsesFixedMask(t *testing.T) {
+func TestSubscriptionUsesFixedMaskWhenRestoreDisabled(t *testing.T) {
+	filter := newRestoreTestFilter(t)
+	filter.Settings.ResponseRestoreEnabled = false
 	h, _, _ := newClaudeSubscriptionTestHandler(t, func() string {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(r.Body)
@@ -245,7 +247,7 @@ func TestSubscriptionStillUsesFixedMask(t *testing.T) {
 		t.Cleanup(srv.Close)
 		return srv.URL
 	}())
-	h.SetPrivacyFilter(newRestoreTestFilter(t))
+	h.SetPrivacyFilter(filter)
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(strings.Replace(routeBody(false), `"stream":true`, `"stream":false`, 1)))
 	req = req.WithContext(endpoint.WithClaudeCodeEntry(req.Context(), endpoint.ClaudeCodeEntryRequest{Mode: endpoint.ClaudeCodeEntryModeSubscription}))
 	req.Header.Set("Authorization", claudeSubscriptionTestToken)
@@ -256,7 +258,7 @@ func TestSubscriptionStillUsesFixedMask(t *testing.T) {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	env := newSubscriptionTestEnv(t, nil, svc.CodexSubscriptionProxyModeSubscription)
-	env.handler.passthrough.proxy.SetPrivacyFilter(newRestoreTestFilter(t))
+	env.handler.passthrough.proxy.SetPrivacyFilter(filter)
 	resp := env.request("POST", "responses", func(r *http.Request) {
 		b := strings.Replace(routeBody(true), `"stream":true`, `"previous_response_id":{"bad":"type"}`, 1)
 		r.Body = io.NopCloser(strings.NewReader(b))

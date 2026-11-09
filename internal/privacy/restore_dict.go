@@ -2,6 +2,8 @@ package privacy
 
 import (
 	"container/list"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strconv"
 	"strings"
@@ -11,8 +13,9 @@ import (
 )
 
 const (
-	dictionaryMaxEntries = 50000
-	dictionaryMaxBytes   = 32 << 20
+	dictionaryMaxEntries    = 50000
+	dictionaryMaxBytes      = 32 << 20
+	maxFunctionReplayProofs = 4096
 	// 一次响应按标识固定首次查询结果。进程内同时核算所有响应的引用槽。
 	maxResponseLookups   = 50000
 	maxActiveLookupSlots = 500000
@@ -57,6 +60,10 @@ type RestoreDict struct {
 	matchCache           *restoreMatchCache
 	index                *restoreIndex
 	revision             uint64
+	toolProofs           map[functionReplayProof]struct{}
+	toolRefs             map[[32]byte]int
+	toolOrder            []functionReplayProof
+	toolCursor           int
 }
 
 func NewRestoreDict() *RestoreDict {
@@ -78,6 +85,7 @@ func (d *RestoreDict) Retire() {
 		return
 	}
 	d.retired = true
+	d.toolProofs, d.toolRefs, d.toolOrder = nil, nil, nil
 	// 退休后只保留旧响应仍可能查找的正向字典。请求侧补遮索引不再使用。
 	d.index = nil
 	d.matchCache = nil
@@ -106,6 +114,91 @@ type RestoreView struct {
 	seen                map[string]*restoreEntry
 	published, released bool
 	lookupErr           error
+	toolScope           [32]byte
+}
+
+// BindToolReplayScope 在视图交给响应处理器之前绑定请求的路由与会话；同一会话可在 HTTP/WS 间续接。
+func (v *RestoreView) BindToolReplayScope(req Request) {
+	v.toolScope = toolDigest([32]byte{}, req.UpstreamType, strconv.FormatInt(req.AccountID, 10), req.SessionID)
+}
+
+// 每个字段加长度前缀，避免通过改变字段边界匹配另一笔调用。缓存只保存摘要。
+func toolDigest(scope [32]byte, parts ...string) [32]byte {
+	h := sha256.New()
+	h.Write(scope[:])
+	for _, p := range parts {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(p)))
+		h.Write(length[:])
+		h.Write([]byte(p))
+	}
+	var digest [32]byte
+	h.Sum(digest[:0])
+	return digest
+}
+
+// 调用 ID 在路由和会话内定位；密文可独立识别已见的调用。字典不保留参数或密文的原值。
+type functionReplayProof struct {
+	call, cipher, payload [32]byte
+}
+
+func (v *RestoreView) functionProof(call, name, namespace, cipher, args string) functionReplayProof {
+	return functionReplayProof{
+		call:    toolDigest(v.toolScope, "call", call),
+		cipher:  toolDigest([32]byte{}, "cipher", cipher),
+		payload: toolDigest([32]byte{}, name, namespace, args),
+	}
+}
+
+// RememberFunctionReplay 只从已解析的上游完整工具快照记录原参数。凭证随字典代际退休，容量固定。
+func (v *RestoreView) RememberFunctionReplay(call, name, namespace, cipher, args string) {
+	if v == nil || v.dict == nil || call == "" || name == "" || cipher == "" {
+		return
+	}
+	proof := v.functionProof(call, name, namespace, cipher, args)
+	d := v.dict
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.retired || v.released || !v.published {
+		return
+	}
+	if _, ok := d.toolProofs[proof]; ok {
+		return
+	}
+	if d.toolProofs == nil {
+		d.toolProofs = make(map[functionReplayProof]struct{})
+		d.toolRefs = make(map[[32]byte]int)
+	}
+	if len(d.toolOrder) < maxFunctionReplayProofs {
+		d.toolOrder = append(d.toolOrder, proof)
+	} else {
+		old := d.toolOrder[d.toolCursor]
+		delete(d.toolProofs, old)
+		for _, ref := range [2][32]byte{old.call, old.cipher} {
+			d.toolRefs[ref]--
+			if d.toolRefs[ref] == 0 {
+				delete(d.toolRefs, ref)
+			}
+		}
+		d.toolOrder[d.toolCursor] = proof
+		d.toolCursor = (d.toolCursor + 1) % maxFunctionReplayProofs
+	}
+	d.toolProofs[proof] = struct{}{}
+	d.toolRefs[proof.call]++
+	d.toolRefs[proof.cipher]++
+}
+
+// 重启、清空或淘汰后没有本地原件，按当前规则重新遮蔽，由上游校验保留的密文。
+func (v *RestoreView) conflictsWithFunctionReplay(call, name, namespace, cipher, args string) bool {
+	d := v.dict
+	if d == nil {
+		return false
+	}
+	proof := v.functionProof(call, name, namespace, cipher, args)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, exact := d.toolProofs[proof]
+	return !exact && (d.toolRefs[proof.call] > 0 || d.toolRefs[proof.cipher] > 0)
 }
 
 func (v *RestoreView) Bytes() int {

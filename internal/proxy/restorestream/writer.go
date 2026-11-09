@@ -29,9 +29,11 @@ type field struct {
 }
 type Writer struct {
 	http.ResponseWriter
-	fast      *deltaFrame
-	frameSlab *workSlab
-	lineHint  int
+	socketSend func([]byte) error
+	streamID   string
+	fast       *deltaFrame
+	frameSlab  *workSlab
+	lineHint   int
 	deliveryLedger
 	codex          bool
 	pending        []byte
@@ -588,11 +590,13 @@ func (w *Writer) flushTail(f *field, next object) error {
 			}
 		} else {
 			seq, ok := index(next, "sequence_number")
-			if !ok {
+			if !ok && w.socketSend == nil {
 				return ErrDelivery
 			}
-			m["sequence_number"] = int64(seq) + w.sequenceOffset
-			w.sequenceOffset++
+			if ok {
+				m["sequence_number"] = int64(seq) + w.sequenceOffset
+				w.sequenceOffset++
+			}
 		}
 		m["delta"] = v
 	} else if f.key.role == "arguments" {
@@ -600,12 +604,8 @@ func (w *Writer) flushTail(f *field, next object) error {
 	} else {
 		m["delta"] = object{"type": "text_delta", "text": v}
 	}
-	payload, e := json.Marshal(m)
-	if e != nil {
-		return ErrDelivery
-	}
-	if e = w.send([]byte("event: " + str(m, "type") + "\ndata: " + string(payload) + "\n\n")); e != nil {
-		return e
+	if err := w.sendTailDelta(m); err != nil {
+		return err
 	}
 	w.values(f.key.role).unknown += tailValues.unknown
 	if f.key.role == "text" {

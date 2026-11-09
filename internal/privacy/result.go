@@ -10,6 +10,7 @@ type Request struct {
 	// StreamingHTTP 仅由实际选择 HTTP SSE 的转发入口设置。
 	SessionID     string `json:"-"`
 	StreamingHTTP bool   `json:"-"`
+	WebSocket     bool   `json:"-"` // 原生 Responses 消息允许使用 response 包装请求。
 	RequestID     string `json:"request_id"`
 	Path          string `json:"path"`
 	Method        string `json:"method"`

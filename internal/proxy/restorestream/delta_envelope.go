@@ -181,6 +181,10 @@ func (w *Writer) writeMatchingSnapshot(wire, raw []byte, offset int, name string
 	default:
 		return false, nil
 	}
+	// 加密工具快照还要登记上游参数的指纹，交给与原生 WS 共用的完整快照处理。
+	if len(f.edits) != 0 && (gjson.GetBytes(stub, "item.encrypted_content").Str != "" || gjson.GetBytes(stub, "response.output.0.encrypted_content").Str != "") {
+		return false, nil
+	}
 	if name != "" && name != "message" && typ != name {
 		return true, ErrDelivery
 	}

@@ -4,20 +4,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
+
+	"github.com/tidwall/gjson"
 )
 
 // 切段的同时收集续接和签名字段。先暂存候选路径，等对象结束后再判定类型，字段顺序不影响决策。
 type restoreInput struct {
+	wrapped                            *restoreInput
 	claude                             bool
 	conversationObject, conversationID bool
 	items                              map[int]*restoreInputItem
+	hasEncryptedFunction               bool
 }
 type restoreInputItem struct {
-	kind, id string
-	opaque   bool
+	kind, id, role                           string
+	call, name, namespace, cipher, arguments string
+	invalidNamespace                         bool
+	hasTextInput, hasContent                 bool
 }
 
 func (r *restoreInput) observe(path []pathElem, token any) error {
+	if r.wrapped != nil && len(path) > 0 && path[0].Key == "response" {
+		if len(path) == 1 && token != json.Delim('{') {
+			return fmt.Errorf("invalid response wrapper")
+		}
+		return r.wrapped.observe(path[1:], token)
+	}
 	text, isString := token.(string)
 	if len(path) == 1 {
 		if path[0].Key == "stream" {
@@ -62,11 +74,25 @@ func (r *restoreInput) observe(path []pathElem, token any) error {
 			item.kind = text
 		case "id":
 			item.id = text
+		case "role":
+			item.role = text
+		case "content":
+			item.hasContent = isString || token == json.Delim('[')
+		case "input":
+			item.hasTextInput = isString
+		case "call_id":
+			item.call = text
+		case "name":
+			item.name = text
+		case "namespace":
+			item.namespace, item.invalidNamespace = text, !isString && token != nil
+		case "arguments":
+			item.arguments = text
 		case "encrypted_content":
 			if !isString && token != nil {
 				return fmt.Errorf("invalid encrypted content")
 			}
-			item.opaque = text != ""
+			item.cipher = text
 		case "encrypted_function_args", "encrypted_output":
 			if token != nil && (!isString || text != "") {
 				return fmt.Errorf("unsupported encrypted tool input")
@@ -78,6 +104,11 @@ func (r *restoreInput) observe(path []pathElem, token any) error {
 }
 
 func (r *restoreInput) finish() *PolicyError {
+	if r.wrapped != nil {
+		if e := r.wrapped.finish(); e != nil {
+			return e
+		}
+	}
 	if r.conversationObject && !r.conversationID {
 		return restoreError("conversation 缺少会话标识")
 	}
@@ -85,11 +116,58 @@ func (r *restoreInput) finish() *PolicyError {
 		if item.kind == "item_reference" && item.id == "" {
 			return restoreError("item_reference 缺少历史标识")
 		}
-		if item.opaque && item.kind != "reasoning" && item.kind != "compaction" {
+		if item.cipher == "" || item.kind == "reasoning" || item.kind == "compaction" {
+			continue
+		}
+		if r.claude {
+			return restoreError("无法识别加密历史项")
+		}
+		// 输出重放密文不参与文本改写；可读部分沿用各自的 Responses 扫描路径。
+		switch item.kind {
+		case "message":
+			if item.role != "assistant" || !item.hasContent {
+				return restoreError("无法识别加密历史项")
+			}
+		case "custom_tool_call":
+			if item.call == "" || item.name == "" || !item.hasTextInput || item.invalidNamespace {
+				return restoreError("加密自定义工具历史缺少有效的调用标识或文本输入")
+			}
+		case "function_call":
+			if item.call == "" || item.name == "" || item.arguments == "" || item.invalidNamespace {
+				return restoreError("加密工具历史缺少有效的调用标识或完整参数")
+			}
+			r.hasEncryptedFunction = true
+		default:
 			return restoreError("无法识别加密历史项")
 		}
 	}
 
+	return nil
+}
+
+// 参数已按普通工具规则逐个扫描内层 JSON 字符串。已知记录若与改写结果冲突，拒绝本次提交。
+func (r *restoreInput) verifyFunctionReplays(view *RestoreView, body []byte, path string) *PolicyError {
+	if r.hasEncryptedFunction {
+		var failure *PolicyError
+		gjson.GetBytes(body, path).ForEach(func(index, value gjson.Result) bool {
+			item := r.items[int(index.Int())]
+			if item == nil || item.cipher == "" || item.kind != "function_call" {
+				return true
+			}
+			args := value.Get("arguments").Str
+			if args != item.arguments && view.conflictsWithFunctionReplay(item.call, item.name, item.namespace, item.cipher, args) {
+				failure = restoreError("重新遮蔽的加密工具历史与已记录的调用不一致")
+				return false
+			}
+			return true
+		})
+		if failure != nil {
+			return failure
+		}
+	}
+	if r.wrapped != nil {
+		return r.wrapped.verifyFunctionReplays(view, body, "response.input")
+	}
 	return nil
 }
 
@@ -110,8 +188,14 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 		return restoreError("可逆脱敏需要有效 UTF-8")
 	}
 	replay := restoreInput{claude: isClaudeMessagesPath(req.Path), items: make(map[int]*restoreInputItem)}
+	if req.WebSocket {
+		replay.wrapped = &restoreInput{items: make(map[int]*restoreInputItem)}
+	}
 	match := walkerForPath(req.Path)
 	segments, err := walkJSONText(body, func(p []pathElem) bool {
+		if replay.wrapped != nil && len(p) > 0 && p[0].Key == "response" {
+			p = p[1:]
+		}
 		return match(p) || replay.claude && claudeThinking(p) || !replay.claude && reasoningText(p)
 	}, &replay)
 	if err != nil {
@@ -125,7 +209,12 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 	}
 	kept := segments[:0]
 	for _, seg := range segments {
-		seg.sealed = claudeThinking(seg.Path) || !replay.claude && reasoningText(seg.Path) && replay.items[seg.Path[1].Index].kind == "reasoning"
+		scope := &replay
+		if replay.wrapped != nil && len(seg.Path) > 0 && seg.Path[0].Key == "response" {
+			scope = replay.wrapped
+			seg.Path = seg.Path[1:]
+		}
+		seg.sealed = claudeThinking(seg.Path) || !replay.claude && reasoningText(seg.Path) && scope.items[seg.Path[1].Index].kind == "reasoning"
 		if seg.sealed || match(seg.Path) {
 			kept = append(kept, seg)
 		}
@@ -134,10 +223,18 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 	if e != nil {
 		return e
 	}
+	if !replay.claude {
+		view.BindToolReplayScope(req)
+	}
 	e = s.applyReversible(req, body, result, candidates, kept, view)
 	view.index = nil
 	if e != nil {
 		return e
+	}
+	if result.Changed {
+		if e := replay.verifyFunctionReplays(view, result.Body, "input"); e != nil {
+			return e
+		}
 	}
 	result.Restore = view
 	result.RestoreStatus = "pending"

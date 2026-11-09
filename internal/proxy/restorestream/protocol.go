@@ -280,7 +280,12 @@ func (w *Writer) item(i int, m, next object, done bool) (bool, error) {
 	}
 	switch str(m, "type") {
 	case "function_call":
-		return w.part(fieldKey{i, 0, "arguments"}, m, "arguments", next, done)
+		args := str(m, "arguments")
+		changed, err := w.part(fieldKey{i, 0, "arguments"}, m, "arguments", next, done)
+		if err == nil && changed && done {
+			w.rememberFunctionReplay(str(m, "call_id"), str(m, "name"), str(m, "namespace"), str(m, "encrypted_content"), args)
+		}
+		return changed, err
 	case "custom_tool_call":
 		return w.part(fieldKey{i, 0, "custom"}, m, "input", next, done)
 	case "message":

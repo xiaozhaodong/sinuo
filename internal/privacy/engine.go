@@ -129,7 +129,7 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 	switch {
 	case req.Path == "/v1/messages/count_tokens" || req.Path == "/v1/responses/compact":
 		result.RestoreStatus = "not_applicable"
-	case req.UpstreamType == UpstreamTypeEndpoint && req.Path == "/v1/messages" || req.UpstreamType == UpstreamTypeAccount && req.Path == "/v1/responses":
+	case supportsRestore(req):
 		result.RestoreStatus = "disabled"
 	}
 	if s.Settings.Mode == ModeDisabled || s.Settings.Mode == "" {
@@ -138,14 +138,14 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 	result.Action = s.Settings.Mode
 
 	started := time.Now()
-	reversible := s.reversible(req)
+	reversible := supportsRestore(req) && s.Settings.ResponseRestoreEnabled && s.Settings.Mode == ModeRedact
 	candidates := s.candidateRules(req)
 	if reversible {
 		err := s.processRestoreRequest(req, body, &result, candidates)
 		result.ScanDuration = time.Since(started)
 		if err != nil {
 			result.RestoreStatus = "not_applicable"
-			if req.UpstreamType == UpstreamTypeAccount {
+			if !isClaudeMessagesPath(req.Path) {
 				err.StatusCode = http.StatusBadRequest
 			} else {
 				err.StatusCode = http.StatusUnprocessableEntity

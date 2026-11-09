@@ -144,7 +144,7 @@ func privacyScopeFingerprint(filter PrivacyFilter, req privacy.Request, snapshot
 		base = fingerprinter.PrivacyScopeFingerprint(req, snapshotVersion)
 	}
 	sum := sha256.Sum256(body)
-	return base + "|upstream=" + req.UpstreamType + "|http_sse=" + strconv.FormatBool(req.StreamingHTTP) + "|body=" + hex.EncodeToString(sum[:])
+	return base + "|upstream=" + req.UpstreamType + "|http_sse=" + strconv.FormatBool(req.StreamingHTTP) + "|ws=" + strconv.FormatBool(req.WebSocket) + "|body=" + hex.EncodeToString(sum[:])
 }
 
 // ApplyPrivacyFilter 统一过滤入口：带 attempt cache 与命中摘要日志。
@@ -167,6 +167,7 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 
 	attempt := privacyAttemptFrom(r)
 	req.StreamingHTTP = attempt != nil && attempt.sse
+	req.WebSocket = attempt != nil && attempt.websocket
 	version := filter.SnapshotVersion()
 	fingerprint := privacyScopeFingerprint(filter, req, version, body)
 	if entry, ok := state.lookup(fingerprint); ok && (entry.view == nil || entry.view.Reusable()) {

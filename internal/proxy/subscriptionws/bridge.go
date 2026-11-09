@@ -53,6 +53,9 @@ const (
 type InterceptResult struct {
 	Forward []byte
 	Reply   []byte
+	// Deliver 在串行写协程内执行。send 每次写一条完整消息，reply 将本地拒绝放入反向队列。
+	// 原始消息仍按实际大小排队，发布映射和确认交付都可以贴近网络写入。
+	Deliver func(send func([]byte) error, reply func([]byte, func()) error) error
 	// 回调只在对应完整消息成功写出后执行，不把读取或入队视为转发完成。
 	Forwarded      func()
 	ReplyForwarded func()
@@ -297,7 +300,7 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 			stop("read", err)
 			break
 		}
-		var forwarded func()
+		msg := message{typ: typ, data: payload}
 		if opts.Interceptor != nil {
 			intercepted, interceptErr := opts.Interceptor.Intercept(laneCtx, direction, payload)
 			err = interceptErr
@@ -312,12 +315,19 @@ func runLane(ctx context.Context, direction Direction, src, dst *websocket.Conn,
 				}
 			}
 			payload = intercepted.Forward
-			forwarded = intercepted.Forwarded
+			msg.data, msg.forwarded = payload, intercepted.Forwarded
+			if deliver := intercepted.Deliver; deliver != nil {
+				msg.deliver = func(send func([]byte) error) error {
+					return deliver(send, func(body []byte, after func()) error {
+						return reverseQueue.push(laneCtx, message{typ: websocket.MessageText, data: body, forwarded: after})
+					})
+				}
+			}
 			if payload == nil {
 				continue
 			}
 		}
-		if err := queue.push(laneCtx, message{typ: typ, data: payload, forwarded: forwarded}); err != nil {
+		if err := queue.push(laneCtx, msg); err != nil {
 			stop("enqueue", err)
 			break
 		}
@@ -409,22 +419,32 @@ func writeLane(ctx context.Context, onWriteError func(), queue *messageQueue, ds
 			}
 			return result
 		}
-		writeCtx, cancelWrite := context.WithTimeout(ctx, messageWriteTimeout(opts.WriteTimeout, len(msg.data)))
-		err = writeMessage(writeCtx, dst, msg.typ, msg.data)
-		cancelWrite()
+		send := func(payload []byte) error {
+			writeCtx, cancelWrite := context.WithTimeout(ctx, messageWriteTimeout(opts.WriteTimeout, len(payload)))
+			defer cancelWrite()
+			if e := writeMessage(writeCtx, dst, msg.typ, payload); e != nil {
+				return e
+			}
+			result.messages++
+			result.bytes += int64(len(payload))
+			if observer, ok := opts.Interceptor.(MessageForwardObserver); ok {
+				observer.Forwarded(direction, int64(len(payload)), time.Now())
+			}
+			return nil
+		}
+		if msg.deliver != nil {
+			err = msg.deliver(send)
+		} else {
+			err = send(msg.data)
+		}
 		if err != nil {
 			result.err = err
 			result.end = opts.observeEnd(direction, "write", err)
 			onWriteError()
 			return result
 		}
-		result.messages++
-		result.bytes += int64(len(msg.data))
 		if msg.forwarded != nil {
 			msg.forwarded()
-		}
-		if observer, ok := opts.Interceptor.(MessageForwardObserver); ok {
-			observer.Forwarded(direction, int64(len(msg.data)), time.Now())
 		}
 	}
 }

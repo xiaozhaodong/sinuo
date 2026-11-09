@@ -18,6 +18,7 @@ type message struct {
 	typ       websocket.MessageType
 	data      []byte
 	forwarded func()
+	deliver   func(func([]byte) error) error
 }
 
 // messageQueue 条数 + 字节数双限、ctx 感知的消息队列。

@@ -93,7 +93,7 @@ const DictionaryPage = ({ offset, setOffset, onClear, clearing }) => {
       <details className="shrink-0 border-b border-line-soft px-4 py-1.5 text-xs text-fg-muted">
         <summary className="w-fit cursor-pointer">回填范围与重启后的处理</summary>
         <div className="mt-2 max-w-4xl space-y-1.5 leading-relaxed">
-          <p>脱敏模式下，Claude 普通端点和 Codex 账号池的流式 SSE 与非流式 JSON 均可回填正文和工具参数。独立 compact 和 count_tokens 仅处理请求，订阅直通沿用原有脱敏策略。</p>
+          <p>脱敏模式下，Claude 普通端点、Codex 账号池和两者的订阅直通均可回填正文与工具参数。HTTP 支持流式 SSE 和非流式 JSON，Codex 订阅直通也支持原生 WebSocket。独立 compact 和 count_tokens 仅处理请求。</p>
           <p>每次请求都会按当前规则和进程字典扫描，切换对话或上游也能遮蔽已知值。重启或条目淘汰后，请求照常发送，规则无法识别的裸值会原样发出。响应中未知或半截的占位符原样交付，可在请求详情查看未还原次数。</p>
           <p>规则直接命中的值始终遮蔽。少于 6 个字符的弱值只在发现它的请求内补遮。签名历史仅匹配到既往弱值时可原样重放。</p>
         </div>

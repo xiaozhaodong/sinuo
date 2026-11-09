@@ -14,14 +14,21 @@ import (
 	"sinuo/internal/tracking"
 )
 
-// readPrivacyRegularResponse 限制解压后的实际字节，避免按 Content-Length 判断压缩回包。
-func readPrivacyRegularResponse(resp *http.Response) ([]byte, error) {
+func openPrivacyResponseReader(resp *http.Response) (io.ReadCloser, error) {
+	if len(resp.Header.Values("Content-Encoding")) > 1 {
+		return nil, restorestream.ErrDelivery
+	}
 	switch strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))) {
 	case "", "identity", "gzip", "deflate", "br", "compress", "zstd":
 	default:
 		return nil, restorestream.ErrDelivery
 	}
-	reader, err := response.NewProcessor().DecompressStreamReader(resp)
+	return response.NewProcessor().DecompressStreamReader(resp)
+}
+
+// readPrivacyRegularResponse 限制解压后的实际字节，避免按 Content-Length 判断压缩回包。
+func readPrivacyRegularResponse(resp *http.Response) ([]byte, error) {
+	reader, err := openPrivacyResponseReader(resp)
 	if err != nil {
 		return nil, err
 	}

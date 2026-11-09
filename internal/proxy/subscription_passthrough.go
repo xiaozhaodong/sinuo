@@ -102,10 +102,13 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	} else {
 		track.SetStreaming(strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool())
 	}
-	privacyState := newSubscriptionPrivacyRequestState(requestID, func(_ string, result privacy.ApplyResult, policyErr *privacy.PolicyError) {
-		track.RecordPrivacy(result, policyErr)
-	})
+	privacyState := handlers.NewPrivacyRequestState(requestID)
+	privacyState.SessionID = clientSessionID(r)
+	privacyState.SetSummaryRecorder(track.recordPrivacySummary)
+	defer privacyState.ReleaseRestore()
 	r = withSubscriptionPrivacyState(r, privacyState)
+	streamRequested := route.Kind == subscriptionRouteResponses && p.proxy.detectSSERequest(r, body.normalizedBody)
+	r = handlers.WithPrivacyAttempt(r, streamRequested)
 	filteredBody, privacyErr := applySubscriptionPrivacy(p.privacyFilter(), r, route.InternalPath, body.normalizedBody)
 	if privacyErr != nil {
 		if policyErr := handlers.AsPrivacyPolicyError(privacyErr); policyErr != nil {
@@ -125,6 +128,7 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	body.normalizedBody = filteredBody
 	wireBody, outboundEncoding, bodyMode, compressionErr := p.prepareOutboundBody(route, body)
 	if compressionErr != nil {
+		privacyState.ReleaseRestore()
 		status := http.StatusInternalServerError
 		track.Complete(&status, "subscription_compression_failed")
 		writeAccountPipelineError(w, status, "subscription_compression_failed", "failed to encode request body")
@@ -139,6 +143,12 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 
 	resp, cancel, err := p.roundTrip(r, route, wireBody, outboundEncoding)
 	if err != nil {
+		privacyState.ReleaseRestore()
+		if reject := handlers.AsPrivacyPolicyError(err); reject != nil {
+			track.Complete(&reject.StatusCode, reject.Code)
+			handlers.WritePrivacyPolicyErrorResponse(w, reject)
+			return
+		}
 		status, reason := http.StatusBadGateway, "subscription_upstream_unreachable"
 		if r.Context().Err() != nil {
 			status, reason = 499, "subscription_client_closed"
@@ -183,6 +193,10 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 			capture.onResult = toolResponse.observe
 			capture.onOversizedEvent = func(event string) { toolResponse.observe(toolResponse.parseEvent(event)) }
 			capture.phaseObserver = nil
+		}
+		if path, view := handlers.ResponseRestore(resp); view != nil && route.Kind == subscriptionRouteResponses {
+			deliverSubscriptionHTTP(w, r, resp, path, view, streamRequested, capture, &responseBytes, track)
+			return
 		}
 		if encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding")); encoding != "" && encoding != "identity" {
 			capture.mode = "opaque"
@@ -266,7 +280,7 @@ func (p *subscriptionPassthrough) roundTrip(r *http.Request, route *subscription
 		cancel()
 		return nil, func() {}, err
 	}
-	resp, err := client.Do(req)
+	resp, err := handlers.SendPrivacyRequest(client, r, req)
 	if err != nil {
 		cancel()
 		return nil, func() {}, err
@@ -306,7 +320,7 @@ func (b *subscriptionObservedBody) Read(data []byte) (int, error) {
 	if b.onBytes != nil {
 		b.onBytes(*b.bytes)
 	}
-	if n > 0 {
+	if n > 0 && b.capture != nil {
 		_, _ = b.capture.Write(data[:n])
 	}
 	return n, err
@@ -387,6 +401,7 @@ type subscriptionResponseCapture struct {
 	eventBytes       int
 	skipEvent        bool
 	discardLine      bool
+	afterCR          bool // CR 已经结束当前行，紧随的 LF 属于同一分隔符，可跨读取块。
 	eventType        string
 	compaction       bool
 	httpStatus       int
@@ -458,7 +473,14 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 		c.phaseReadBytes = 0
 	}
 	for len(data) > 0 {
-		newline := bytes.IndexByte(data, '\n')
+		if c.afterCR {
+			c.afterCR = false
+			if data[0] == '\n' {
+				data = data[1:]
+				continue
+			}
+		}
+		newline := bytes.IndexAny(data, "\r\n")
 		part := data
 		if newline >= 0 {
 			part = data[:newline]
@@ -508,6 +530,7 @@ func (c *subscriptionResponseCapture) Write(data []byte) (int, error) {
 			c.line(string(c.pending))
 		}
 		c.pending = nil
+		c.afterCR = data[newline] == '\r'
 		data = data[newline+1:]
 	}
 	return size, nil

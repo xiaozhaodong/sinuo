@@ -78,6 +78,9 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 		return
 	}
 
+	if _, view := handlers.ResponseRestore(resp); view != nil {
+		stripRestoreValidators(resp.Header)
+	}
 	if !isSSE {
 		h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ClaudeSubscriptionUpstreamName)
 		return

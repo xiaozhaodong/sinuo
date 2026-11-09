@@ -76,7 +76,7 @@ func TestPrivacySummaryRescanAndDelivery(t *testing.T) {
 	if gjson.Get(last, "restore.status").Str != "pending" {
 		t.Fatal("完整扫描后、交付前应保留在途状态")
 	}
-	state.recordRestore(RestoreSummary{Status: "completed", Text: 2, UnknownTool: 1})
+	state.RecordRestore(RestoreSummary{Status: "completed", Text: 2, UnknownTool: 1})
 	data := gjson.Parse(last)
 	if !data.Get("changed").Bool() || data.Get("hit_count").Int() != 2 || data.Get("scan_count").Int() != 2 ||
 		data.Get("rules.0.name").Str != "字段规则" || data.Get("rules.0.count").Int() != 2 ||

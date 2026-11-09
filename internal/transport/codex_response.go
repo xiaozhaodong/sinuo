@@ -1,8 +1,10 @@
 package transport
 
 import (
+	"bufio"
 	"compress/flate"
 	"compress/gzip"
+	"compress/zlib"
 	"errors"
 	"fmt"
 	"io"
@@ -54,10 +56,25 @@ func newCodexResponseDecoder(resp *http.Response) (io.ReadCloser, error) {
 		}
 		return gzipReader, nil
 	case "deflate":
-		return flate.NewReader(resp.Body), nil
+		return NewHTTPDeflateReader(resp.Body)
 	case "br":
 		return io.NopCloser(brotli.NewReader(resp.Body)), nil
 	default:
 		return nil, fmt.Errorf("不支持的响应 Content-Encoding: %q", encoding)
 	}
+}
+
+// NewHTTPDeflateReader 按 RFC 1950 识别 HTTP deflate 的 zlib 包装，同时兼容旧上游的裸 DEFLATE。
+// 一旦识别为 zlib，字典、校验和或截断错误均由 zlib 解码器返回。
+func NewHTTPDeflateReader(body io.Reader) (io.ReadCloser, error) {
+	r := bufio.NewReader(body)
+	header, err := r.Peek(2)
+	if err != nil {
+		return nil, err
+	}
+	cmf, flg := header[0], header[1]
+	if cmf&0x0f == 8 && cmf>>4 <= 7 && (uint16(cmf)<<8|uint16(flg))%31 == 0 {
+		return zlib.NewReader(r)
+	}
+	return flate.NewReader(r), nil
 }

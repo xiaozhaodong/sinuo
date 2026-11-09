@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -302,11 +303,11 @@ type subscriptionWSInterceptor struct {
 func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction subscriptionws.Direction, payload []byte) (subscriptionws.InterceptResult, error) {
 	if direction == subscriptionws.DirectionUpstreamToDownstream {
 		if i.submissions != nil {
-			_, forwarded, err := i.submissions.handleUpstreamForForward(payload)
+			result, err := i.prepareUpstream(payload)
 			if err != nil {
 				i.warn("subscription_upstream_tracking_failed", "error", err)
 			}
-			return subscriptionws.InterceptResult{Forward: payload, Forwarded: forwarded}, err
+			return result, err
 		}
 		return subscriptionws.InterceptResult{Forward: payload}, nil
 	}
@@ -357,7 +358,8 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 		requestContext = context.WithValue(ctx, "conn_id", requestID) //nolint:staticcheck
 		requestContext = handlers.WithPrivacyRequestState(requestContext, privacyState)
 	}
-	req := (&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": []string{"application/json"}}}).WithContext(requestContext)
+	req := (&http.Request{Method: http.MethodPost, URL: &url.URL{Path: "/v1/responses"}, Header: http.Header{"Content-Type": []string{"application/json"}}}).WithContext(requestContext)
+	req = handlers.WithWebSocketPrivacyAttempt(req)
 	filtered, err := applySubscriptionPrivacy(i.filter, req, "/v1/responses", payload)
 	if err == nil {
 		if !isCreate && !subscriptionWSControlEvent(eventType) {
@@ -370,7 +372,24 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 		// 控制事件不新建生成请求，但仍占一个写回调位置，避免后续 create 的字节归属错位。
 		i.pendingWrites = append(i.pendingWrites, submission)
 		i.writeMu.Unlock()
-		return subscriptionws.InterceptResult{Forward: filtered}, nil
+		res := subscriptionws.InterceptResult{Forward: filtered}
+		if view := handlers.PrivacyAttemptView(req); view != nil || submission != nil {
+			res.Deliver = func(send func([]byte) error, reply func([]byte, func()) error) error {
+				// 队列可能等待很久；等轮到实际写入时才发布映射，设置切换按单条提交拒绝。
+				if submission == nil {
+					defer privacyState.ReleaseRestore()
+				}
+				if err := handlers.PublishPrivacyAttempt(req); err != nil {
+					reject := handlers.AsPrivacyPolicyError(err)
+					i.popPendingWrite()
+					after := i.submissions.reject(submission, reject)
+					return reply(subscriptionWSErrorReply(reject.StatusCode, reject.Code, reject.Message, submissionStreamID(submission)), after)
+				}
+				i.submissions.markDispatched(submission, view)
+				return send(filtered)
+			}
+		}
+		return res, nil
 	}
 	policyErr := handlers.AsPrivacyPolicyError(err)
 	if policyErr == nil {
@@ -391,14 +410,7 @@ func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction
 	if direction != subscriptionws.DirectionDownstreamToUpstream {
 		return
 	}
-	i.writeMu.Lock()
-	var submission *subscriptionSubmission
-	if len(i.pendingWrites) > 0 {
-		submission = i.pendingWrites[0]
-		i.pendingWrites[0] = nil
-		i.pendingWrites = i.pendingWrites[1:]
-	}
-	i.writeMu.Unlock()
+	submission := i.popPendingWrite()
 	if submission != nil {
 		if observer, ok := i.submissions.observer.(interface {
 			SubmissionOutbound(*subscriptionSubmission, int64, time.Time)

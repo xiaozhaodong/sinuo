@@ -217,5 +217,6 @@ func beginTestSubscriptionCreate(t *testing.T, state *subscriptionSubmissionStat
 	if err != nil {
 		t.Fatal(err)
 	}
+	state.markDispatched(submission, nil) // 无网络的状态机测试直接模拟成功出站。
 	return submission, ok
 }

@@ -74,6 +74,13 @@ func logPrivacyDelivery(id, path, media string, summary handlers.RestoreSummary)
 	log(fmt.Sprintf("🔄 [响应回填] [%s] %s，已写出 文本=%d 工具参数=%d，未还原 正文=%d 工具参数=%d", id, summary.Status, summary.Text, summary.Tool, summary.UnknownText, summary.UnknownTool), "path", path, "upstream_content_type", media, "reason", summary.Reason)
 }
 
+// 回填会改写响应表示；上游针对原文生成的校验、范围和摘要头不能随新正文交付。
+func stripRestoreValidators(header http.Header) {
+	for _, key := range []string{"Content-Range", "Accept-Ranges", "ETag", "Digest", "Content-Digest", "Repr-Digest", "Content-MD5"} {
+		header.Del(key)
+	}
+}
+
 func (h *Handler) readRegularResponse(resp *http.Response, requestID string) ([]byte, error) {
 	if path, view := handlers.ResponseRestore(resp); view != nil && path != "/v1/responses/compact" {
 		// 解码器只关闭自身，外层在交付计数确认后释放真实响应及字典视图。

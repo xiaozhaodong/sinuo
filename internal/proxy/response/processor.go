@@ -1,7 +1,6 @@
 package response
 
 import (
-	"compress/flate"
 	"compress/gzip"
 	"compress/lzw"
 	"fmt"
@@ -9,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"sinuo/internal/transport"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
@@ -46,8 +47,7 @@ func (p *Processor) DecompressStreamReader(resp *http.Response) (io.ReadCloser, 
 		return gzipReader, nil
 
 	case "deflate":
-		// deflate使用flate.NewReader，它返回io.ReadCloser
-		return flate.NewReader(resp.Body), nil
+		return transport.NewHTTPDeflateReader(resp.Body)
 
 	case "br":
 		// brotli读取器需要包装一个closer

@@ -133,7 +133,6 @@ type subscriptionRequestTracking struct {
 	firstOutputAt time.Time
 	requestBytes  int64
 	responseBytes int64
-	scanCount     int
 }
 
 func (t *subscriptionRequestTracking) SetModel(model string) {
@@ -174,16 +173,8 @@ func (t *subscriptionRequestTracking) SetRequestProfile(model, reasoning string)
 	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 }
 
-func (t *subscriptionRequestTracking) RecordPrivacy(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
-	t.mu.Lock()
-	if !t.active || t.settled {
-		t.mu.Unlock()
-		return
-	}
-	t.scanCount++
-	payload := handlers.BuildPrivacyScanJSON(subscriptionPrivacySummary(result), sanitizeSubscriptionPolicyError(policyErr), t.scanCount)
-	t.mu.Unlock()
-	if payload != "" {
+func (t *subscriptionRequestTracking) recordPrivacySummary(payload string) {
+	if t.active && payload != "" {
 		t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{PrivacyScanJSON: &payload})
 	}
 }
@@ -282,9 +273,7 @@ func (t *subscriptionRequestTracking) ApplyParseResult(result *ParseResult) {
 	if result == nil {
 		return
 	}
-	t.SetModel(result.ModelName)
-	t.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
-	t.recordStopReason(result.StopReason)
+	t.observeResponseFields(result)
 	if !result.IsCompleted {
 		return
 	}
@@ -303,6 +292,12 @@ func (t *subscriptionRequestTracking) ApplyParseResult(result *ParseResult) {
 		usage = &copy
 	}
 	t.settle(status, failureCode, usage, nil)
+}
+
+func (t *subscriptionRequestTracking) observeResponseFields(result *ParseResult) {
+	t.SetModel(result.ModelName)
+	t.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
+	t.recordStopReason(result.StopReason)
 }
 
 func (t *subscriptionRequestTracking) Complete(httpStatus *int, failureCode string) {
@@ -419,9 +414,7 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	o.submissions[submission] = handle
 	o.mu.Unlock()
 	if submission.PrivacyState != nil {
-		submission.PrivacyState.SetResultRecorder(func(result privacy.ApplyResult, policyErr *privacy.PolicyError) {
-			handle.RecordPrivacy(result, policyErr)
-		})
+		submission.PrivacyState.SetSummaryRecorder(handle.recordPrivacySummary)
 	}
 }
 
@@ -454,11 +447,22 @@ func (o *subscriptionTrackingObserver) SubmissionRejected(submission *subscripti
 
 func (o *subscriptionTrackingObserver) SubmissionInterrupted(submission *subscriptionSubmission, reason string) {
 	if handle := o.submissionHandle(submission, true); handle != nil {
-		if reason == tracking.SubscriptionClientDisconnected {
-			handle.settle("cancelled", reason, nil, nil)
+		var usage *tracking.TokenUsage
+		if result := submission.terminalRead; result != nil {
+			handle.observeResponseFields(result)
+			if result.HasTokenUsage {
+				usage = result.TokenUsage
+			}
+		}
+		if submission.restoreStatus == "failed" {
+			handle.settle("failed", "privacy_restore_failed", usage, nil)
 			return
 		}
-		handle.Complete(nil, "subscription_interrupted")
+		if reason == tracking.SubscriptionClientDisconnected {
+			handle.settle("cancelled", reason, usage, nil)
+			return
+		}
+		handle.settle("failed", "subscription_interrupted", usage, nil)
 	}
 }
 

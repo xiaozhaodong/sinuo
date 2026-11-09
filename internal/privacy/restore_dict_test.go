@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func TestFunctionReplayProofEviction(t *testing.T) {
+	d := NewRestoreDict()
+	v := prepareDictionaryTest(t, d)
+	publishDictionaryTest(t, v)
+	defer v.Release()
+	v.RememberFunctionReplay("shared-call", "tool", "", "first-cipher", "{}")
+	v.RememberFunctionReplay("shared-call", "tool", "", "second-cipher", "{}")
+	for i := 2; i <= maxFunctionReplayProofs; i++ {
+		id := fmt.Sprint(i)
+		v.RememberFunctionReplay(id, "tool", "", id, "{}")
+	}
+	if v.conflictsWithFunctionReplay("unseen", "tool", "", "first-cipher", "{}") ||
+		!v.conflictsWithFunctionReplay("shared-call", "tool", "", "new-cipher", "{}") {
+		t.Fatal("淘汰应移除旧密文的引用，并保留尚有记录的调用 ID")
+	}
+	v.RememberFunctionReplay("last-call", "tool", "", "last-cipher", "{}")
+	if v.conflictsWithFunctionReplay("shared-call", "tool", "", "second-cipher", "{}") {
+		t.Fatal("调用和密文均已淘汰，应允许由上游校验")
+	}
+}
+
 // 测试仅使用合成值，完整占位符始终由正常 HMAC 路径动态生成。
 func prepareDictionaryTest(t testing.TB, d *RestoreDict) *RestoreView {
 	t.Helper()
