@@ -176,7 +176,7 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, msg restor
 	}
 	pendingOnly := false
 	if restoring && ev.typ == "error" {
-		frame, err := restoreWSErrorFrame(payload)
+		frame, validRoute, err := restoreWSErrorFrame(payload)
 		if err != nil {
 			return ev, err
 		}
@@ -190,6 +190,9 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, msg restor
 		}
 		// 结算仍采用原始用量，但错误详情不能持久化上游回显的输入。
 		ev.result.ErrorInfo = ParseResponsesEventJSON("error", frame).ErrorInfo
+		if !validRoute || ev.responseID != gjson.GetBytes(frame, "response_id").Str {
+			return ev, nil
+		}
 	}
 	streamID := gjson.GetBytes(payload, "stream_id").Str
 	if ev.typ == "response.created" {

@@ -119,7 +119,16 @@ type RestoreView struct {
 
 // BindToolReplayScope 在视图交给响应处理器之前绑定请求的路由与会话；同一会话可在 HTTP/WS 间续接。
 func (v *RestoreView) BindToolReplayScope(req Request) {
-	v.toolScope = toolDigest([32]byte{}, req.UpstreamType, strconv.FormatInt(req.AccountID, 10), req.SessionID)
+	v.toolScope = toolReplayScope(req)
+}
+
+func toolReplayScope(req Request) [32]byte {
+	return toolDigest([32]byte{}, req.UpstreamType, strconv.FormatInt(req.AccountID, 10), req.SessionID)
+}
+
+// ReusableFor 确保重试时持有的视图可为实际出站账号记录工具证明。
+func (v *RestoreView) ReusableFor(req Request) bool {
+	return v.Reusable() && (v == nil || v.toolScope == [32]byte{} || v.toolScope == toolReplayScope(req))
 }
 
 // 每个字段加长度前缀，避免通过改变字段边界匹配另一笔调用。缓存只保存摘要。
@@ -137,16 +146,21 @@ func toolDigest(scope [32]byte, parts ...string) [32]byte {
 	return digest
 }
 
-// 调用 ID 在路由和会话内定位；密文可独立识别已见的调用。字典不保留参数或密文的原值。
+// 完整原件跨路由识别。单独的调用 ID 只在原路由和会话内判定冲突，允许其他会话复用 ID。
 type functionReplayProof struct {
-	call, cipher, payload [32]byte
+	call, cipher, exact [32]byte
+}
+
+func (p functionReplayProof) references() [3][32]byte {
+	return [3][32]byte{p.call, p.cipher, p.exact}
 }
 
 func (v *RestoreView) functionProof(call, name, namespace, cipher, args string) functionReplayProof {
+	cipherID := toolDigest([32]byte{}, "cipher", cipher)
 	return functionReplayProof{
-		call:    toolDigest(v.toolScope, "call", call),
-		cipher:  toolDigest([32]byte{}, "cipher", cipher),
-		payload: toolDigest([32]byte{}, name, namespace, args),
+		call:   toolDigest(v.toolScope, "call", call),
+		cipher: cipherID,
+		exact:  toolDigest(cipherID, "replay", call, name, namespace, args),
 	}
 }
 
@@ -174,7 +188,7 @@ func (v *RestoreView) RememberFunctionReplay(call, name, namespace, cipher, args
 	} else {
 		old := d.toolOrder[d.toolCursor]
 		delete(d.toolProofs, old)
-		for _, ref := range [2][32]byte{old.call, old.cipher} {
+		for _, ref := range old.references() {
 			d.toolRefs[ref]--
 			if d.toolRefs[ref] == 0 {
 				delete(d.toolRefs, ref)
@@ -184,8 +198,9 @@ func (v *RestoreView) RememberFunctionReplay(call, name, namespace, cipher, args
 		d.toolCursor = (d.toolCursor + 1) % maxFunctionReplayProofs
 	}
 	d.toolProofs[proof] = struct{}{}
-	d.toolRefs[proof.call]++
-	d.toolRefs[proof.cipher]++
+	for _, ref := range proof.references() {
+		d.toolRefs[ref]++
+	}
 }
 
 // 重启、清空或淘汰后没有本地原件，按当前规则重新遮蔽，由上游校验保留的密文。
@@ -197,32 +212,7 @@ func (v *RestoreView) conflictsWithFunctionReplay(call, name, namespace, cipher,
 	proof := v.functionProof(call, name, namespace, cipher, args)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	_, exact := d.toolProofs[proof]
-	return !exact && (d.toolRefs[proof.call] > 0 || d.toolRefs[proof.cipher] > 0)
-}
-
-func (v *RestoreView) Bytes() int {
-	if v == nil {
-		return 0
-	}
-	return v.size
-}
-
-// Contains 在请求侧检查原样重放的标识，不占用响应引用，不改变淘汰顺序。
-func (v *RestoreView) Contains(token string) bool {
-	if v == nil {
-		return false
-	}
-	if v.dict == nil {
-		_, ok := v.values[token]
-		return ok
-	}
-	v.dict.mu.Lock()
-	defer v.dict.mu.Unlock()
-	if _, ok := v.values[token]; ok {
-		return true
-	}
-	return v.dict.entries[token] != nil
+	return d.toolRefs[proof.exact] == 0 && (d.toolRefs[proof.call] > 0 || d.toolRefs[proof.cipher] > 0)
 }
 
 // Lookup 查询当前代际的映射；流式响应使用 RestoreView 固定同一标识的结果。

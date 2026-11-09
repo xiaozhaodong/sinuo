@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,13 +116,32 @@ func TestEncryptedFunctionReplay(t *testing.T) {
 			if !bytes.Contains(r.Body, []byte(clean)) {
 				t.Fatal("未命中工具项未按原字节发送")
 			}
-			wrong := req
-			wrong.SessionID = "session-B"
+			otherAccount, otherSession, noSession := req, req, req
+			otherAccount.AccountID++
+			otherSession.SessionID = "session-B"
+			noSession.SessionID = ""
+			for _, other := range []privacy.Request{otherAccount, otherSession, noSession} {
+				r, err := apply(other, "["+delivered+"]")
+				if err != nil {
+					t.Fatal("换号或会话变化后拒绝了原工具历史", err)
+				}
+				r.Restore.Release()
+				actual := gjson.GetBytes(r.Body, path)
+				if actual.Get("encrypted_content").Str != "opaque-A" || actual.Get("arguments").Str != arguments(token) {
+					t.Fatal("跨路由重放改变了上游原件")
+				}
+			}
+			// 另一会话可独立使用相同调用 ID 和不同密文。
+			r, e = apply(otherSession, "["+item(arguments(routeTestValue), "unseen-cipher", "call-A")+"]")
+			if e != nil {
+				t.Fatal("跨会话的独立调用发生冲突", e)
+			}
+			r.Restore.Release()
 			for _, tc := range []struct {
 				r       privacy.Request
 				history string
 			}{
-				{wrong, delivered}, {req, strings.Replace(delivered, "opaque-A", "opaque-B", 1)}, {req, strings.Replace(delivered, "call-A", "call-B", 1)},
+				{otherAccount, item(arguments(routeTestValue+"!"), "opaque-A", "call-A")}, {req, strings.Replace(delivered, "opaque-A", "opaque-B", 1)}, {req, strings.Replace(delivered, "call-A", "call-B", 1)},
 				{req, item(arguments(routeTestValue+"!"), "opaque-A", "call-A")},
 				{req, item(`{"v":`, "opaque-A", "call-A")}, {req, `{"type":"function_call","call_id":"call-A","name":"fixture","encrypted_content":"opaque-A"}`},
 				{req, strings.Replace(clean, "function_call", "custom_tool_call", 1)}, {req, strings.TrimSuffix(clean, "}") + `,"encrypted_function_args":"opaque"}`},
@@ -154,6 +174,98 @@ func TestEncryptedFunctionReplay(t *testing.T) {
 				t.Fatal("重启后未重建首轮参数或密文被改写", actual.Raw)
 			}
 		})
+	}
+}
+
+// 模拟所有账号共用相同扫描规则的尝试缓存。
+type globalToolReplayFilter struct{ liveRestoreFilter }
+
+func (globalToolReplayFilter) PrivacyScopeFingerprint(privacy.Request, int64) string { return "global" }
+
+func TestEncryptedToolReplayAccountFailover(t *testing.T) {
+	var attempts atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		token := wireToken.Find(body)
+		if err != nil || token == nil {
+			t.Error("账号请求缺少遮蔽值", err)
+			w.WriteHeader(400)
+			return
+		}
+		args := fmt.Sprintf(`{"v":%q}`, token)
+		call := "call-first"
+		w.Header().Set("Content-Type", "application/json")
+		switch attempts.Add(1) {
+		case 2:
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"error":{"code":"rate_limit_exceeded"}}`)
+			return
+		case 3:
+			item := gjson.GetBytes(body, "input.0")
+			if item.Get("call_id").Str != call || item.Get("encrypted_content").Str != "cipher-"+call || item.Get("arguments").Str != args {
+				t.Error("备选账号收到的工具历史与原件不一致")
+			}
+			call = "call-next"
+		}
+		fmt.Fprintf(w, `{"id":"r","status":"completed","output":[{"type":"function_call","call_id":%q,"name":"demo","arguments":%q,"encrypted_content":%q}]}`, call, args, "cipher-"+call)
+	}))
+	defer up.Close()
+	h, _ := phaseAccountHandler(t, up.URL, 2)
+	filter := globalToolReplayFilter{newRestoreTestFilter(t)}
+	h.SetPrivacyFilter(filter)
+	post := func(id, body string) gjson.Result {
+		t.Helper()
+		req := privacySummaryRequest("/v1/responses", body, id)
+		req.Header.Set("Session-Id", "tool-retry")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		item := gjson.Get(rec.Body.String(), "output.0")
+		if rec.Code != 200 || gjson.Get(item.Get("arguments").Str, "v").Str != routeTestValue {
+			t.Fatalf("工具历史交付失败：%d %s", rec.Code, rec.Body.String())
+		}
+		return item
+	}
+	first := post("tool-first", strings.Replace(routeBody(true), `"stream":true`, `"stream":false`, 1))
+	next := post("tool-retry", `{"model":"gpt-5","input":[`+first.Raw+"]}")
+	if attempts.Load() != 3 || next.Get("call_id").Str != "call-next" {
+		t.Fatal("没有完成 429 换号")
+	}
+	// 新证明须绑定成功的第二个账号；同一账号下篡改此次调用的密文应被拒。
+	req := privacy.Request{Path: "/v1/responses", UpstreamType: privacy.UpstreamTypeAccount, AccountID: 2, SessionID: "tool-retry"}
+	changed := strings.Replace(next.Raw, "cipher-call-next", "unrecorded", 1)
+	if _, err := filter.Snapshot.Apply(req, []byte(`{"input":[`+changed+"]}")); err == nil {
+		t.Fatal("重试复用了首个账号的回填视图")
+	}
+}
+
+func TestEncryptedToolHistoryEmptyArrays(t *testing.T) {
+	filter := newRestoreTestFilter(t).Snapshot
+	for _, field := range []string{"encrypted_function_args", "encrypted_output"} {
+		for _, ws := range []bool{false, true} {
+			req := privacy.Request{Path: "/v1/responses", UpstreamType: privacy.UpstreamTypeAccount, WebSocket: ws}
+			for _, value := range []string{"null", `""`, "[]", "[ ]", `["opaque"]`, "[null]", "[[]]", "[{}]", `"opaque"`, "{}", "0"} {
+				item := `{"type":"function_call_output","call_id":"test","output":"ok"}`
+				if field == "encrypted_function_args" {
+					item = `{"type":"function_call","call_id":"test","name":"test","arguments":"{}"}`
+				}
+				body := `{"input":[` + strings.TrimSuffix(item, "}") + `,"` + field + `":` + value + `}]}`
+				if ws {
+					body = `{"type":"response.create","response":` + body + "}"
+				}
+				result, err := filter.Apply(req, []byte(body))
+				switch value {
+				case "null", `""`, "[]", "[ ]":
+					if err != nil || string(result.Body) != body {
+						t.Fatalf("%s=%s, WS=%t: %v", field, value, ws, err)
+					}
+					result.Restore.Release()
+				default:
+					if policy, ok := err.(*privacy.PolicyError); !ok || policy.StatusCode != 400 {
+						t.Fatalf("%s=%s 应在出站前拒绝, WS=%t: %v", field, value, ws, err)
+					}
+				}
+			}
+		}
 	}
 }
 

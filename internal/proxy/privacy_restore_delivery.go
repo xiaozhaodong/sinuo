@@ -122,6 +122,9 @@ func (h *Handler) writeRegularResponse(w http.ResponseWriter, resp *http.Respons
 		body = d.Body
 	}
 	h.responseProcessor.CopyResponseHeaders(resp, w)
+	if delivery != nil {
+		stripRestoreValidators(w.Header())
+	}
 	w.WriteHeader(resp.StatusCode)
 	n, err := w.Write(body)
 	if err == nil && n != len(body) {

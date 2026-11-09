@@ -188,11 +188,14 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 	defer sp.stopDownstreamTailDrain()
 	var restore *restorestream.Writer
 	var deliveryErr error
-	var probeResponses bool
+	var probePath string
 	if path, view := handlers.ResponseRestore(resp); view != nil {
 		media := restoreMediaType(resp.Header)
-		probeResponses = path == "/v1/responses" && media == "missing"
-		if media != "text/event-stream" && !probeResponses {
+		if path == "/v1/responses" && media == "missing" ||
+			path == "/v1/messages" && (media == "missing" || media == "text/plain" || media == "application/octet-stream") {
+			probePath = path
+		}
+		if media != "text/event-stream" && probePath == "" {
 			sp.logRestoreDelivery(resp, path, media, nil, restorestream.ErrResponseFormat)
 			if media == "application/json" {
 				return sp.unexpectedRegularUsage(resp, path), restorestream.ErrResponseFormat
@@ -232,8 +235,8 @@ func (sp *StreamProcessor) ProcessStream(ctx context.Context, resp *http.Respons
 	buffer := make([]byte, StreamBufferSize)
 	buffered := bufio.NewReader(decompressedReader)
 	var reader io.Reader = buffered
-	if probeResponses {
-		reader, err = restorestream.OpenUntypedResponses(ctx, buffered)
+	if probePath != "" {
+		reader, err = restorestream.OpenUntypedSSE(ctx, probePath, buffered)
 		if err != nil {
 			return nil, err
 		}

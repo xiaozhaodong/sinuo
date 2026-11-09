@@ -104,17 +104,18 @@ func (s *subscriptionSubmissionState) deliveryTarget(id, streamID, typ string, s
 }
 
 // 上游错误可能回显请求参数。对下游和请求详情都只提供结构化诊断，保留可操作的错误码。
-func restoreWSErrorFrame(raw []byte) ([]byte, error) {
+func restoreWSErrorFrame(raw []byte) (frame []byte, validRoute bool, err error) {
 	root := gjson.ParseBytes(raw)
 	detail := root.Get("error")
-	if !detail.IsObject() {
-		return nil, restorestream.ErrDelivery
+	kind := ""
+	if detail.IsObject() {
+		kind = detail.Get("type").Str
+	} else {
+		// 扁平事件的顶层 type 是事件名，诊断信息位于同级的 code 和 message。
+		detail = root
 	}
 	code := detail.Get("code").Str
-	kind := detail.Get("type").Str
-	if !wsErrorIdentifier(code) && !wsErrorIdentifier(kind) && detail.Get("message").Type != gjson.String {
-		return nil, restorestream.ErrDelivery
-	}
+	recognized := wsErrorIdentifier(code) || wsErrorIdentifier(kind) || detail.Get("message").Type == gjson.String
 	if !wsErrorIdentifier(code) {
 		code = "upstream_error"
 	}
@@ -134,29 +135,36 @@ func restoreWSErrorFrame(raw []byte) ([]byte, error) {
 	for _, field := range []string{"status", "sequence_number"} {
 		if v := root.Get(field); v.Exists() {
 			n, err := strconv.ParseInt(v.Raw, 10, 64)
-			if err != nil || n < 0 || field == "status" && (n < 400 || n > 599) {
-				return nil, restorestream.ErrDelivery
+			if err == nil && n >= 0 && (field != "status" || n >= 400 && n <= 599) {
+				out[field] = n
 			}
-			out[field] = n
 		}
 	}
+	// 错误的归属字段可能会把错误结算给另一条在途响应。仍交付安全诊断，跳过归属。
+	response := root.Get("response")
+	validRoute = !response.Exists() || response.Type == gjson.Null || response.IsObject()
 	for _, field := range []string{"response_id", "stream_id"} {
 		if v := root.Get(field); v.Exists() {
-			if v.Type != gjson.String {
-				return nil, restorestream.ErrDelivery
-			}
-			if wsErrorIdentifier(v.Str) {
+			if !wsErrorIdentifier(v.Str) {
+				validRoute = false
+			} else {
 				out[field] = v.Str
 			}
 		}
 	}
-	if nested := root.Get("response.id"); nested.Exists() {
-		if nested.Type != gjson.String || !wsErrorIdentifier(nested.Str) || root.Get("response_id").Exists() && root.Get("response_id").Str != nested.Str {
-			return nil, restorestream.ErrDelivery
+	if nested := response.Get("id"); nested.Exists() {
+		if !wsErrorIdentifier(nested.Str) || out["response_id"] != nil && out["response_id"] != nested.Str {
+			validRoute = false
+		} else {
+			out["response_id"] = nested.Str
 		}
-		out["response_id"] = nested.Str
 	}
-	return json.Marshal(out)
+	if !validRoute {
+		delete(out, "response_id")
+		delete(out, "stream_id")
+	}
+	frame, err = json.Marshal(out)
+	return frame, validRoute && (recognized || out["response_id"] != nil || out["stream_id"] != nil), err
 }
 
 func wsErrorIdentifier(s string) bool {

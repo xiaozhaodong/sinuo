@@ -102,7 +102,7 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
         出错
         <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-24" />
       </span>
-      <label className="flex items-center gap-2 text-xs" title="脱敏模式支持 Claude 普通端点和 Codex 账号池的流式 SSE 及非流式 JSON 回填。范围和重启后的处理见内存回填字典。">
+      <label className="flex items-center gap-2 text-xs" title="脱敏模式可回填 Claude 普通端点、Codex 账号池及两者订阅直通的 SSE 和 JSON 响应。Codex 订阅直通也支持原生 WebSocket。">
         <input type="checkbox" className="app-checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
         响应回填
       </label>
@@ -307,7 +307,10 @@ const PrivacyProtectionPage = () => {
         className="flex min-h-0 flex-1 flex-col"
       >
         {activeTab === 'restore' && (
-          <PrivacyRestoreDictionaryPanel key={`${settings.mode}|${settings.response_restore_enabled}`} />
+          <PrivacyRestoreDictionaryPanel
+            key={`${settings.mode}|${settings.response_restore_enabled}`}
+            restoreUnavailableInMode={settings.response_restore_enabled && settings.mode !== 'redact'}
+          />
         )}
         {activeTab === 'exact' && (
           <PrivacyExactSecretsPanel

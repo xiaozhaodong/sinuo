@@ -16,9 +16,14 @@ import (
 
 var ErrResponseFormat = fmt.Errorf("%w: 上游响应格式与预期 SSE 不符", ErrDelivery)
 
-// OpenUntypedResponses 在已协商流式的 Codex 请求缺失响应类型时，验证首个数据事件。
-// 心跳和预读字节只在确认协议后交付。首事件可以包含较大的响应快照，沿用回填器的事件上限。
+// OpenUntypedResponses 校验订阅直通的 Responses 流。
 func OpenUntypedResponses(ctx context.Context, r *bufio.Reader) (io.Reader, error) {
+	return OpenUntypedSSE(ctx, "/v1/responses", r)
+}
+
+// OpenUntypedSSE 在上游未正确声明类型时，按请求协议验证首个数据事件。
+// 心跳和预读字节只在确认协议后交付。首事件可以包含较大的响应快照，沿用回填器的事件上限。
+func OpenUntypedSSE(ctx context.Context, path string, r *bufio.Reader) (io.Reader, error) {
 	if b, _ := r.Peek(1); len(b) > 0 && b[0] == 0xef {
 		if bom, _ := r.Peek(3); bytes.Equal(bom, []byte("\xef\xbb\xbf")) {
 			_, _ = r.Discard(3)
@@ -50,7 +55,7 @@ func OpenUntypedResponses(ctx context.Context, r *bufio.Reader) (io.Reader, erro
 				pos = next
 				break
 			}
-			hasData, frameErr := checkResponsesOpening(frame[:end])
+			hasData, frameErr := checkSSEOpening(path, frame[:end])
 			if frameErr != nil {
 				return nil, frameErr
 			}
@@ -75,8 +80,8 @@ func OpenUntypedResponses(ctx context.Context, r *bufio.Reader) (io.Reader, erro
 	}
 }
 
-// checkResponsesOpening 允许标准 SSE 元数据和多行 data，首个数据事件必须能识别为 Responses。
-func checkResponsesOpening(frame []byte) (bool, error) {
+// checkSSEOpening 支持标准 SSE 元数据和多行 data。
+func checkSSEOpening(path string, frame []byte) (bool, error) {
 	fields, err := parseSSEFields(frame, true)
 	if err != nil {
 		return false, ErrResponseFormat
@@ -92,8 +97,26 @@ func checkResponsesOpening(frame []byte) (bool, error) {
 	if fields.name != "" && fields.name != "message" && fields.name != typ {
 		return false, ErrResponseFormat
 	}
-	if !strings.HasPrefix(typ, "response.") && typ != "error" && typ != "codex.rate_limits" && typ != "codex.response.metadata" {
-		return false, ErrResponseFormat
+	switch path {
+	case "/v1/responses":
+		if strings.HasPrefix(typ, "response.") || typ == "error" || typ == "codex.rate_limits" || typ == "codex.response.metadata" {
+			return true, nil
+		}
+	case "/v1/messages":
+		switch typ {
+		case "ping":
+			return false, nil // 暂存心跳，直到识别出 Messages 数据。
+		case "message_start":
+			if gjson.GetBytes(raw, "message").IsObject() {
+				return true, nil
+			}
+		case "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop":
+			return true, nil // 具体块结构由同一个 Claude 回填器校验。
+		case "error":
+			if gjson.GetBytes(raw, "error").IsObject() {
+				return true, nil
+			}
+		}
 	}
-	return true, nil
+	return false, ErrResponseFormat
 }

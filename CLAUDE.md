@@ -93,6 +93,8 @@
   - 端点模式的入口请求转发第三方时删除客户端带来的 `anthropic-beta` 中 `oauth-` 前缀值（端点自定义头显式配置的以配置为准），并与订阅直通共用来源头名单，剔除 Cookie / Proxy-Authorization / Forwarded / X-Forwarded-* / Origin / Referer；主端口请求永远只走端点，来源头保持原样透传
 - 出站隐私保护（v6.1）：
   - 单一模式字段 `关闭 / 仅检测 / 脱敏转发`，默认关闭
+  - 脱敏转发可选「响应回填」。Claude 普通端点、Codex 账号池及两者的订阅直通支持 HTTP SSE 和整包 JSON，Codex 订阅直通还支持原生 WebSocket。`count_tokens` 和独立 `compact` 仅处理请求。
+  - 进程内字典跨请求和账号还原正文与工具参数，重启后清空。加密工具历史会重新遮蔽可读参数，保留密文供上游校验。响应按实际交付记录回填次数，用量按上游原始响应结算。
   - 规则存 SQLite（`privacy_settings` / `privacy_rules`），保存先编译后落库，原子热替换不重启
   - 按 JSON 文本字段扫描（含 Claude `tool_result`、`tool_use.input` 下任意深度的字符串值，Codex `function_call_output.output` 与回放的 `arguments` / `input`），offset-aware 替换保证零命中 byte-identical
   - 命中重叠：命中统计仍按优先级先占位；脱敏区域取全部 redact 命中的并集、占位符用区域内优先级最高的 redact 规则（detect 规则不会挡住重叠的 redact 规则）

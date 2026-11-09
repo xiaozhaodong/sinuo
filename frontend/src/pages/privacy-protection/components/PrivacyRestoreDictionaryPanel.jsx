@@ -26,7 +26,7 @@ const RevealedValue = ({ token, entryID }) => {
   return <div className="selectable max-h-32 overflow-auto whitespace-pre-wrap break-all py-1 font-mono text-xs">{value ?? '读取中…'}</div>;
 };
 
-const DictionaryPage = ({ offset, setOffset, onClear, clearing }) => {
+const DictionaryPage = ({ offset, setOffset, onClear, clearing, restoreUnavailableInMode }) => {
   const { formatTimestamp } = useTimezone();
   const [page, setPage] = useState(null);
   const [error, setError] = useState('');
@@ -82,6 +82,7 @@ const DictionaryPage = ({ offset, setOffset, onClear, clearing }) => {
     };
   }, [offset, setOffset]);
 
+  const inactiveDescription = restoreUnavailableInMode ? '当前模式不支持回填。切换到「脱敏转发」后生效。' : '响应回填未开启。';
   return (
     <>
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-line-soft px-4 py-1.5">
@@ -101,7 +102,7 @@ const DictionaryPage = ({ offset, setOffset, onClear, clearing }) => {
       <div className="min-h-0 flex-1 overflow-auto">
         {error ? <div role="alert" className="px-4 py-3 text-sm text-danger">{error}</div>
           : !page ? <ListEmpty title="正在读取内存回填字典…" />
-          : !page.total ? <ListEmpty icon={BookOpen} title="当前内存中暂无映射" description={page.enabled ? '下一次请求生成的占位符会显示在这里。' : '响应回填未开启。'} />
+          : !page.total ? <ListEmpty icon={BookOpen} title="当前内存中暂无映射" description={page.enabled ? '下一次请求生成的占位符会显示在这里。' : inactiveDescription} />
           : (
             <table className="desk-table">
               <thead><tr><th>占位符</th><th>对应隐私值</th><th>实际回填</th><th>最近回填</th></tr></thead>
@@ -139,7 +140,7 @@ const DictionaryPage = ({ offset, setOffset, onClear, clearing }) => {
   );
 };
 
-export default function PrivacyRestoreDictionaryPanel() {
+export default function PrivacyRestoreDictionaryPanel({ restoreUnavailableInMode }) {
   const [offset, setOffset] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [clearing, setClearing] = useState(false);
@@ -168,7 +169,7 @@ export default function PrivacyRestoreDictionaryPanel() {
   return (
     <>
       {clearError && <div role="alert" className="px-4 py-2 text-xs text-danger">{clearError}</div>}
-      <DictionaryPage key={`${generation}-${offset}`} offset={offset} setOffset={setOffset} onClear={clear} clearing={clearing} />
+      <DictionaryPage key={`${generation}-${offset}`} offset={offset} setOffset={setOffset} onClear={clear} clearing={clearing} restoreUnavailableInMode={restoreUnavailableInMode} />
       {confirmDialog}
     </>
   );

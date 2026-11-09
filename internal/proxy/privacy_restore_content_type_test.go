@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -152,5 +153,117 @@ func TestUnexpectedClaudeRegularUsageWithCache(t *testing.T) {
 	usage := sp.unexpectedRegularUsage(resp, "/v1/messages")
 	if usage == nil || usage.InputTokens != 8 || usage.OutputTokens != 3 || usage.CacheReadTokens != 2 || usage.CacheCreationTokens != 13 || usage.CacheCreation5mTokens != 9 || usage.CacheCreation1hTokens != 4 {
 		t.Fatalf("错格式响应的 Claude 缓存用量不完整 %+v", usage)
+	}
+}
+
+func TestClaudeRestoreStreamContentType(t *testing.T) {
+	for _, tc := range []struct{ name, media, invalid string }{
+		{"缺头", "", ""}, {"纯文本", "text/plain; charset=utf-8", ""}, {"二进制", "application/octet-stream", ""},
+		{"误标 JSON", "text/plain", `{"type":"message","content":[]}`},
+		{"错误协议", "", "data: {\"type\":\"response.created\"}\n\n"},
+		{"HTML", "application/octet-stream", "<html>upstream-only</html>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.media == "" {
+					w.Header()["Content-Type"] = nil
+				} else {
+					w.Header().Set("Content-Type", tc.media)
+				}
+				body, _ := io.ReadAll(r.Body)
+				token := wireToken.Find(body)
+				if token == nil {
+					t.Error("上游未收到遮蔽参数")
+					return
+				}
+				if tc.invalid != "" {
+					io.WriteString(w, tc.invalid)
+					return
+				}
+				io.WriteString(w, routeSSE(string(token), false))
+			}))
+			defer up.Close()
+			h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("format", up.URL, 1))
+			h.SetPrivacyFilter(newRestoreTestFilter(t))
+			req := privacySummaryRequest("/v1/messages", routeBody(false), "claude-stream-format")
+			req.Header.Set("Accept", "text/event-stream")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			wire := rec.Body.String()
+			if tc.invalid != "" {
+				if !strings.Contains(wire, "privacy_restore_failed") || strings.Contains(wire, tc.invalid) {
+					t.Fatal("错格式回包未隔离", wire)
+				}
+				return
+			}
+			var content strings.Builder
+			for _, line := range strings.Split(wire, "\n") {
+				if raw, ok := strings.CutPrefix(line, "data: "); ok {
+					content.WriteString(gjson.Get(raw, "delta.text").Str)
+				}
+			}
+			if content.String() != "before "+routeTestValue+" after" || !strings.Contains(wire, "message_stop") {
+				t.Fatal("合法 Claude SSE 未完整还原", wire)
+			}
+		})
+	}
+}
+
+func TestRegularRestoreResponseValidators(t *testing.T) {
+	for _, codex := range []bool{false, true} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("codex=%t/restore=%t", codex, enabled), func(t *testing.T) {
+				keys := []string{"ETag", "Content-MD5", "Digest", "Content-Digest", "Repr-Digest", "Content-Range", "Accept-Ranges"}
+				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, _ := io.ReadAll(r.Body)
+					value := "ordinary"
+					if enabled {
+						token := wireToken.Find(body)
+						if token == nil {
+							t.Error("上游缺少占位符")
+							return
+						}
+						value = string(token)
+					}
+					for _, key := range keys {
+						w.Header().Set(key, "original")
+					}
+					w.Header().Set("X-Request-Id", "fixture")
+					w.Header().Set("Content-Type", "application/json")
+					if codex {
+						fmt.Fprintf(w, `{"id":"r","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":1,"output_tokens":1}}`, value)
+					} else {
+						fmt.Fprintf(w, `{"type":"message","role":"assistant","model":"m","content":[{"type":"text","text":%q}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`, value)
+					}
+				}))
+				defer up.Close()
+				var h *Handler
+				path, field := "/v1/messages", "content.0.text"
+				if codex {
+					h, _ = phaseAccountHandler(t, up.URL, 1)
+					path, field = "/v1/responses", "output.0.content.0.text"
+				} else {
+					h, _ = newEndpointPipelineTestHandler(t, endpointPipelineConfig("validators", up.URL, 1))
+				}
+				filter := newRestoreTestFilter(t)
+				filter.Settings.ResponseRestoreEnabled = enabled
+				h.SetPrivacyFilter(filter)
+				req := privacySummaryRequest(path, strings.Replace(routeBody(codex), `"stream":true`, `"stream":false`, 1), "regular-validator")
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				want := "ordinary"
+				if enabled {
+					want = routeTestValue
+				}
+				if rec.Code != 200 || rec.Header().Get("X-Request-Id") != "fixture" || gjson.Get(rec.Body.String(), field).Str != want {
+					t.Fatal("未完整交付 JSON", rec.Code, rec.Body.String())
+				}
+				for _, key := range keys {
+					if (rec.Header().Get(key) != "") == enabled {
+						t.Fatalf("%s 处理错误，restore=%t", key, enabled)
+					}
+				}
+			})
+		}
 	}
 }

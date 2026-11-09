@@ -17,6 +17,16 @@ import (
 
 // 真实双跳：A 暂存占位符前缀、B 同时生成，第三个 create 的错误不能丢掉 A/B 的终态。
 func TestSubscriptionWSRestoreErrorIsolation(t *testing.T) {
+	for _, tc := range []struct{ name, frame string }{
+		{"nested", `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"invalid_stream_id","param":"stream_id","message":"sensitive-echo"},"debug":"sensitive-echo"}`},
+		{"flat", `{"type":"error","status":400,"code":"invalid_stream_id","param":"stream_id","message":"sensitive-echo","debug":"sensitive-echo"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testWSRestoreErrorIsolation(t, tc.frame) })
+	}
+}
+
+func testWSRestoreErrorIsolation(t *testing.T, errorFrame string) {
+	t.Helper()
 	env := newSubscriptionTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		up, e := websocket.Accept(w, r, nil)
 		if e != nil {
@@ -50,7 +60,7 @@ func TestSubscriptionWSRestoreErrorIsolation(t *testing.T) {
 			return
 		}
 		for _, raw := range []string{
-			`{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"invalid_stream_id","param":"stream_id","message":"sensitive-echo"},"debug":"sensitive-echo"}`,
+			errorFrame,
 			fmt.Sprintf(`{"type":"response.output_text.delta","response_id":"A","output_index":0,"content_index":0,"delta":%q}`, token[7:]),
 			fmt.Sprintf(`{"type":"response.output_text.done","response_id":"A","output_index":0,"content_index":0,"text":%q}`, "prefix "+token),
 			`{"type":"response.completed","response":{"id":"A","usage":{"input_tokens":1,"output_tokens":2}}}`,
@@ -179,6 +189,17 @@ func TestSubscriptionWSRestoreErrorOwnership(t *testing.T) {
 	}
 	if out := up(frame + `,"response_id":"ra","stream_id":"wrong"}`); a.settled || gjson.Get(out, "error.code").Str != "invalid_stream_id" {
 		t.Fatal("冲突的路由标识终止了 A", out)
+	}
+	for _, raw := range []string{
+		`{"type":"error","error":{"unrecognized":"sensitive-echo"}}`,
+		`{"type":"error","response":"sensitive-echo","message":"sensitive-echo"}`,
+		`{"type":"error","status":"invalid","response_id":42,"message":"sensitive-echo"}`,
+		`{"type":"error","response":{"id":"ra"},"response_id":"other","error":"sensitive-echo"}`,
+	} {
+		out := up(raw)
+		if a.settled || strings.Contains(out, "sensitive-echo") || gjson.Get(out, "error.code").Str != "upstream_error" || gjson.Get(out, "response_id").Exists() {
+			t.Fatal("归属异常的错误应安全交付并保留 A", out)
+		}
 	}
 	if out := up(frame + `,"response_id":"ra"}`); !a.settled || gjson.Get(out, "response_id").Str != "ra" {
 		t.Fatal("明确的响应错误没有结算 A", out)

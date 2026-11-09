@@ -170,7 +170,7 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 	req.WebSocket = attempt != nil && attempt.websocket
 	version := filter.SnapshotVersion()
 	fingerprint := privacyScopeFingerprint(filter, req, version, body)
-	if entry, ok := state.lookup(fingerprint); ok && (entry.view == nil || entry.view.Reusable()) {
+	if entry, ok := state.lookup(fingerprint); ok && entry.view.ReusableFor(req) {
 		if entry.err != nil {
 			return nil, entry.err
 		}

@@ -63,6 +63,14 @@ func (r *restoreInput) observe(path []pathElem, token any) error {
 	if r.claude && path[0].Key != "messages" || !r.claude && path[0].Key != "input" {
 		return nil
 	}
+	switch path[2].Key {
+	case "encrypted_function_args", "encrypted_output":
+		// 空数组只出现起始符；非空数组还会报告元素路径，包括值为 null 的元素。
+		if len(path) > 3 || token != nil && token != "" && token != json.Delim('[') {
+			return fmt.Errorf("unsupported encrypted tool input")
+		}
+		return nil
+	}
 	index := path[1].Index
 	if r.items[index] == nil {
 		r.items[index] = &restoreInputItem{}
@@ -93,10 +101,6 @@ func (r *restoreInput) observe(path []pathElem, token any) error {
 				return fmt.Errorf("invalid encrypted content")
 			}
 			item.cipher = text
-		case "encrypted_function_args", "encrypted_output":
-			if token != nil && (!isString || text != "") {
-				return fmt.Errorf("unsupported encrypted tool input")
-			}
 		}
 	}
 

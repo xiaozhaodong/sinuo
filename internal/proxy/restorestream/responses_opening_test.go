@@ -65,3 +65,26 @@ func TestUntypedResponsesLargeOpeningPreservesReadAhead(t *testing.T) {
 		t.Fatal("跨缓冲的大首帧或后续事件被丢失或重复", err)
 	}
 }
+
+func TestUntypedClaudeOpening(t *testing.T) {
+	const ping = "event: ping\ndata: {\"type\":\"ping\"}\n\n"
+	const start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"content\":[]}}\n\n"
+	wire := ping + start
+	r, err := OpenUntypedSSE(context.Background(), "/v1/messages", bufio.NewReader(iotest.OneByteReader(strings.NewReader(wire))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil || string(b) != wire {
+		t.Fatalf("预读改变了首帧: %q %v", b, err)
+	}
+	for _, bad := range []string{
+		ping, ping + "<html>", "data: {\"type\":\"response.created\"}\n\n",
+		"event: message_start\ndata: {\"type\":\"message_stop\"}\n\n",
+		"data: {\"type\":\"message_start\"}\n\n",
+	} {
+		if _, err := OpenUntypedSSE(context.Background(), "/v1/messages", bufio.NewReader(strings.NewReader(bad))); !errors.Is(err, ErrResponseFormat) {
+			t.Fatal("未拒绝不完整或错误协议的首帧", err)
+		}
+	}
+}
