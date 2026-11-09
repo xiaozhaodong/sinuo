@@ -35,7 +35,7 @@ func restoreMediaType(header http.Header) string {
 	}
 }
 
-// 每条参与回填的流只记一次。计数写进消息正文，以便在系统日志中搜索、复制。
+// 按流汇总最终交付状态和计数，供请求详情和系统日志使用。
 func (sp *StreamProcessor) logRestoreDelivery(resp *http.Response, path, media string, writer *restorestream.Writer, err error) {
 	var counts restorestream.DeliveryCounts
 	if writer != nil {
@@ -60,11 +60,18 @@ func (sp *StreamProcessor) logRestoreDelivery(resp *http.Response, path, media s
 func reportPrivacyDelivery(resp *http.Response, id, path, media, status, reason string, counts restorestream.DeliveryCounts) {
 	summary := handlers.RestoreSummary{Status: status, Reason: reason, Text: counts.Text, Tool: counts.Tool, UnknownText: counts.UnknownText, UnknownTool: counts.UnknownTool}
 	handlers.RecordRestoreDelivery(resp, summary)
+	logPrivacyDelivery(id, path, media, summary)
+}
+
+func logPrivacyDelivery(id, path, media string, summary handlers.RestoreSummary) {
+	if summary.Text == 0 && summary.Tool == 0 {
+		return
+	}
 	log := slog.Info
-	if status != "completed" {
+	if summary.Status != "completed" {
 		log = slog.Warn
 	}
-	log(fmt.Sprintf("[响应回填] [%s] %s，已写出 文本=%d 工具参数=%d，未还原 正文=%d 工具参数=%d", id, status, counts.Text, counts.Tool, counts.UnknownText, counts.UnknownTool), "path", path, "upstream_content_type", media, "reason", reason)
+	log(fmt.Sprintf("🔄 [响应回填] [%s] %s，已写出 文本=%d 工具参数=%d，未还原 正文=%d 工具参数=%d", id, summary.Status, summary.Text, summary.Tool, summary.UnknownText, summary.UnknownTool), "path", path, "upstream_content_type", media, "reason", summary.Reason)
 }
 
 func (h *Handler) readRegularResponse(resp *http.Response, requestID string) ([]byte, error) {

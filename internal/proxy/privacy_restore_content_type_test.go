@@ -78,8 +78,8 @@ func TestPrivacyRestoreCodexOAuthResponseFormat(t *testing.T) {
 			}
 			if tc.invalidBody != "" {
 				if !strings.Contains(body, "privacy_restore_failed") || strings.Contains(body, "upstream-only") || strings.Contains(logs.String(), "upstream-only") ||
-					!strings.Contains(logs.String(), "reason=unexpected_response_format") {
-					t.Fatal("格式错误应在本地终止并记录原因，避免输出上游内容", body)
+					strings.Contains(logs.String(), "[响应回填]") {
+					t.Fatal("格式错误应在本地终止，零回填时不应打印回填日志或输出上游内容", body)
 				}
 				return
 			}
@@ -128,6 +128,9 @@ func TestPrivacyExpectedStreamBillsUnexpectedRegularJSON(t *testing.T) {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
 			data := timingLifecycleData(t, tracker, reqID)
+			if reason := gjson.Get(data.PrivacyScanJSON, "restore.reason").Str; reason != "unexpected_response_format" {
+				t.Fatalf("请求详情应记录响应格式错误，实际原因 %q", reason)
+			}
 			if contacts.Load() != 1 || !strings.Contains(w.Body.String(), "privacy_restore_failed") || strings.Contains(w.Body.String(), "upstream-only") || data.Detail.Status != "failed" {
 				t.Fatal("错格式成功响应未在本地终止", data.Detail.Status, w.Body.String())
 			}

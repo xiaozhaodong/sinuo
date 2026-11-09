@@ -78,8 +78,15 @@ func routeSSE(id string, codex bool) string {
 var wireToken = regexp.MustCompile(`\{\{SNU_[0-9a-f]{32}\}\}`)
 
 func TestRestoreLogsConfirmWrittenValues(t *testing.T) {
-	for _, echo := range []bool{false, true} {
-		t.Run(fmt.Sprintf("echo=%t", echo), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		hit, echo  bool
+	}{
+		{"出站无命中", `{"model":"claude-test","messages":[{"role":"user","content":"hello"}],"stream":true}`, false, false},
+		{"出站命中但响应无占位符", routeBody(false), true, false},
+		{"响应写出回填文本", routeBody(false), true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			logs := &syncBuffer{}
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
@@ -87,12 +94,12 @@ func TestRestoreLogsConfirmWrittenValues(t *testing.T) {
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
 				id := wireToken.Find(body)
-				if err != nil || id == nil {
-					t.Error("出站未产生占位符")
+				if err != nil || (id != nil) != tc.hit {
+					t.Error("出站占位符与预期不符")
 					http.Error(w, "fixture", 400)
 					return
 				}
-				if !echo {
+				if !tc.echo {
 					id = []byte("plain")
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -101,26 +108,51 @@ func TestRestoreLogsConfirmWrittenValues(t *testing.T) {
 			t.Cleanup(up.Close)
 			h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("logs", up.URL, 1))
 			h.SetPrivacyFilter(newRestoreTestFilter(t))
-			r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(routeBody(false)))
-			r.Header.Set("Content-Type", "application/json")
+			r := privacySummaryRequest("/v1/messages", tc.body, "req-log-test")
 			r.Header.Set("Accept", "text/event-stream")
-			r = r.WithContext(context.WithValue(r.Context(), "conn_id", "req-log-test"))
-			h.ServeHTTP(httptest.NewRecorder(), r)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "message_stop") {
+				t.Fatal("响应未成功交付")
+			}
 			output := logs.String()
 			prefix := "[响应回填] [req-log-test]"
-			if !strings.Contains(output, "changed=true") || strings.Count(output, prefix) != 1 {
+			if strings.Contains(output, "changed=true") != tc.hit {
+				t.Fatal("出站日志与实际命中不符")
+			}
+			if !tc.echo {
+				if strings.Contains(output, prefix) {
+					t.Fatal("正常完成且回填计数全零时不应打印系统日志")
+				}
+				return
+			}
+			if strings.Count(output, prefix) != 1 || !strings.Contains(output, "🔄 "+prefix) {
 				t.Fatalf("应能按请求关联出站和回填日志: %s", output)
 			}
 			start := strings.Index(output, prefix)
 			line, _, _ := strings.Cut(output[start:], "\n")
-			n := 0
-			if echo {
-				n = 1
-			}
-			if !strings.Contains(line, fmt.Sprintf("文本=%d 工具参数=0", n)) || strings.Contains(line, "private-quote") || strings.Contains(line, "{{SNU_") {
+			if !strings.Contains(line, "文本=1 工具参数=0") || strings.Contains(line, "private-quote") || strings.Contains(line, "{{SNU_") {
 				t.Fatalf("回填摘要异常: %s", line)
 			}
 		})
+	}
+}
+
+func TestRestoreLogOnlyForDeliveredReplacements(t *testing.T) {
+	logs := &syncBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	logPrivacyDelivery("unknown-only", "/v1/responses", "websocket", handlers.RestoreSummary{Status: "completed", UnknownText: 1, UnknownTool: 2})
+	logPrivacyDelivery("before-write", "/v1/responses", "websocket", handlers.RestoreSummary{Status: "interrupted"})
+	if strings.Contains(logs.String(), "[响应回填]") {
+		t.Fatal("仅检测到未知占位符或写出前中断时不应打印回填日志")
+	}
+
+	logPrivacyDelivery("after-write", "/v1/responses", "websocket", handlers.RestoreSummary{Status: "interrupted", Tool: 1})
+	if !strings.Contains(logs.String(), "🔄 [响应回填] [after-write] interrupted，已写出 文本=0 工具参数=1") {
+		t.Fatal("中断前已写出的工具参数应打印回填日志")
 	}
 }
 

@@ -5,6 +5,10 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+- 系统日志仅在实际向客户端写出回填后的正文或工具参数时记录 `🔄 [响应回填]`。检测结果与失败原因仍可在请求详情中查看。
+
 ## [6.4.4] - 2026-11-06
 
 ### 🐛 修复 (Bug Fixes)
