@@ -131,7 +131,7 @@ func (a *arguments) feed(s string, d *countedValues) (string, error) {
 			}
 		}
 		if len(s) < n {
-			a.escape = s
+			a.escape = strings.Clone(s) // 跨帧只保留尚未闭合的转义。
 			break
 		}
 		literal := s[:n]

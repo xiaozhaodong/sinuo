@@ -498,7 +498,12 @@ func (w *Writer) delta(k fieldKey, parent object, attr string, envelope object) 
 				f.last["item_id"] = id
 			}
 			if c := envelope["call_id"]; c != nil {
-				f.last["call_id"] = c
+				// 解码值可能引用整帧；待补发的路由字段单独持有其 JSON 表示。
+				id, err := json.Marshal(c)
+				if err != nil {
+					return false, ErrDelivery
+				}
+				f.last["call_id"] = json.RawMessage(id)
 			}
 		}
 	} else {

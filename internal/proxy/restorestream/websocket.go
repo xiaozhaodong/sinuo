@@ -48,10 +48,8 @@ func (w *Writer) WriteValidatedMessage(msg ValidatedMessage, send func([]byte) e
 	if err := w.checkIdentity(payload); err != nil {
 		return err
 	}
-	var m object
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.UseNumber()
-	if dec.Decode(&m) != nil || str(m, "type") == "" {
+	m, err := msg.decodeObject()
+	if err != nil || str(m, "type") == "" {
 		return ErrDelivery
 	}
 	if id := str(m, "stream_id"); id != "" && id != w.streamID {
