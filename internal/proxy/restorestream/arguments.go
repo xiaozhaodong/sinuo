@@ -136,7 +136,19 @@ func (a *arguments) feed(s string, d *countedValues) (string, error) {
 		}
 		literal := s[:n]
 		s = s[n:]
-		if n == 2 && strings.ContainsRune(`"\/bfnrt`, rune(literal[1])) && (a.key || a.token.tail == "") {
+		if n == 2 && strings.ContainsRune(`"\/bfnrt`, rune(literal[1])) {
+			if !a.key && a.token.tail != "" {
+				// 常见转义都不能续接占位符，暂存的尾部只含可直接写出的标识字符。
+				tail, err := a.token.feed("", d, true)
+				if err != nil {
+					return "", err
+				}
+				out.WriteString(tail)
+				if literal[1] == '/' { // 旧路径重新编码尾部时将转义斜杠写作 /。
+					out.WriteByte('/')
+					continue
+				}
+			}
 			out.WriteString(literal)
 			continue
 		}

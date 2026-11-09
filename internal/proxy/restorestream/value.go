@@ -86,4 +86,15 @@ func (m *matcher) feed(s string, d *countedValues, final bool) (string, error) {
 	out.WriteString(s)
 	return out.String(), nil
 }
-func quoteBody(s string) string { q, _ := json.Marshal(s); return string(q[1 : len(q)-1]) }
+
+func quoteBody(s string) string {
+	// 可直接嵌入 JSON 字符串的可打印 ASCII 沿用原串，其余交给标准库。
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < ' ' || c > '~' || c == '"' || c == '\\' || c == '&' || c == '<' || c == '>' {
+			q, _ := json.Marshal(s)
+			return string(q[1 : len(q)-1])
+		}
+	}
+	return s
+}
