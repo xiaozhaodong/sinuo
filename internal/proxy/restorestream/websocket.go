@@ -16,6 +16,9 @@ import (
 // 直至交付结束；队列只持有这份原文，不持有解码后的对象。
 type ValidatedMessage struct{ raw []byte }
 
+// Valid 表示此帧已通过 ValidateMessage，零值表示未校验。
+func (msg ValidatedMessage) Valid() bool { return msg.raw != nil }
+
 // ValidateMessage 在读侧关联前校验 UTF-8、单个 JSON 对象、深度和各层重复键。
 // 控制回执与元数据也要校验，但不属于回填写入器的 4 MiB 交付预算。
 func ValidateMessage(raw []byte) (ValidatedMessage, error) {

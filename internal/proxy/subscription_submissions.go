@@ -168,8 +168,9 @@ type subscriptionResponseEvent struct {
 	connectionExpired bool
 }
 
-func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring bool) (subscriptionResponseEvent, error) {
-	ev := readSubscriptionWSEvent(payload, restoring)
+func (s *subscriptionSubmissionState) observeUpstream(payload []byte, msg restorestream.ValidatedMessage) (subscriptionResponseEvent, error) {
+	restoring := msg.Valid()
+	ev := readSubscriptionWSEvent(payload, msg)
 	if ev.result == nil {
 		return ev, nil
 	}
@@ -215,14 +216,15 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, restoring 
 
 // 回填数据帧在读侧只解码一次；仅把归属和观测结果交给队列。回执、元数据
 // 仍然只读事件类型，不把它们可能很大的扩展字段展开成对象。
-func readSubscriptionWSEvent(raw []byte, restoring bool) subscriptionResponseEvent {
+func readSubscriptionWSEvent(raw []byte, msg restorestream.ValidatedMessage) subscriptionResponseEvent {
 	var ev subscriptionResponseEvent
 	var decoded map[string]any
-	if restoring {
+	if msg.Valid() {
 		// 提示只用于决定是否值得解码，不能用来决定归属或跳过严格校验。
 		hint := gjson.GetBytes(raw, "type").Str
 		if hint == "error" || strings.HasPrefix(hint, "response.") && !subscriptionWSControlReceipt(hint) {
-			if json.Unmarshal(raw, &decoded) == nil && canonicalWSRouting(decoded) {
+			if m, err := msg.DecodeForObservation(); err == nil && canonicalWSRouting(m) {
+				decoded = m
 				ev.typ, _ = decoded["type"].(string)
 				ev.typ = strings.TrimSpace(ev.typ)
 				response, _ := decoded["response"].(map[string]any)
@@ -230,8 +232,6 @@ func readSubscriptionWSEvent(raw []byte, restoring bool) subscriptionResponseEve
 				if ev.responseID == "" {
 					ev.responseID, _ = decoded["response_id"].(string)
 				}
-			} else {
-				decoded = nil
 			}
 		}
 	}

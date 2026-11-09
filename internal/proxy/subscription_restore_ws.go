@@ -285,7 +285,7 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 			return res, nil
 		}
 	}
-	ev, err := i.submissions.observeUpstream(payload, restoring)
+	ev, err := i.submissions.observeUpstream(payload, msg)
 	if errors.Is(err, restorestream.ErrDelivery) {
 		res.Deliver = rejectRestoreMessage
 		return res, nil

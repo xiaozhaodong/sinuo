@@ -18,6 +18,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/restorestream"
 	"sinuo/internal/proxy/subscriptionws"
 	"sinuo/internal/tracking"
 )
@@ -41,17 +42,31 @@ func TestSubscriptionWSReadMatchesOriginalObservation(t *testing.T) {
 		`{"type":"response.completed","Response":{"ID":"upper"},"response":{}}`,
 		`{"type":"response.completed","response":["untyped"]}`,
 		`{"type":"response.completed","response":{"id":"r"},"untracked":1e400}`,
+		`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":1e2,"output_tokens":0,"input_tokens_details":{"cached_tokens":1e1},"output_tokens_details":{"reasoning_tokens":1.2e1}}}}`,
+		`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":9007199254740993,"output_tokens":"12.0"}}}`,
+		`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":1e400,"output_tokens":42}}}`,
+		`{"type":"error","error":{"message":"synthetic","resets_at":1e4,"resets_in_seconds":1.5}}`,
+		`{"type":"response.output_text.delta","response_id":"\ud800\u0041","delta":"中文\\x\n\""}`,
+		`{"type":"response.created","response":{"id":"r"},"deep":` + strings.Repeat("[", 12) + "0" + strings.Repeat("]", 12) + "}",
 	} {
-		on, off := readSubscriptionWSEvent([]byte(raw), true), readSubscriptionWSEvent([]byte(raw), false)
-		if !reflect.DeepEqual(on, off) {
-			t.Fatalf("读侧观测不一致: %s\n开 %+v %+v\n关 %+v %+v", raw, on, on.result, off, off.result)
+		for _, size := range []int{len(raw), 64 << 10} {
+			frame := []byte(raw + strings.Repeat(" ", size-len(raw)))
+			msg, err := restorestream.ValidateMessage(frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := readSubscriptionWSEvent(frame, msg)
+			off := readSubscriptionWSEvent(frame, restorestream.ValidatedMessage{})
+			if !reflect.DeepEqual(on, off) {
+				t.Fatalf("%d 字节帧的读侧观测不一致: %s\n开 %+v %+v\n关 %+v %+v", size, raw, on, on.result, off, off.result)
+			}
 		}
 	}
 }
 
 // 跟踪单测没有网络写队列，由调用方决定何时确认交付。
 func (s *subscriptionSubmissionState) handleUpstreamForForward(payload []byte) (*ParseResult, func(), error) {
-	ev, err := s.observeUpstream(payload, false)
+	ev, err := s.observeUpstream(payload, restorestream.ValidatedMessage{})
 	if err != nil || !ev.terminal {
 		return ev.result, nil, err
 	}
