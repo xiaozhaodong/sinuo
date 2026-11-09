@@ -48,11 +48,11 @@ func (w *Writer) WriteValidatedMessage(msg ValidatedMessage, send func([]byte) e
 	if payload == nil || w.terminal || len(payload) > maxBytes {
 		return ErrDelivery
 	}
-	if err := w.checkIdentity(payload); err != nil {
+	m, err := w.decodeWebSocketEvent(msg)
+	if err != nil {
 		return err
 	}
-	m, err := msg.decodeObject()
-	if err != nil || str(m, "type") == "" {
+	if str(m, "type") == "" {
 		return ErrDelivery
 	}
 	if id := str(m, "stream_id"); id != "" && id != w.streamID {

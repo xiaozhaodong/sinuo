@@ -23,7 +23,7 @@ func TestWebSocketDecodeMatchesStandardLibrary(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := []byte("{" + fields + "}")
-			for _, size := range []int{largeWSFrame - 1, largeWSFrame, largeWSFrame + 1} {
+			for _, size := range []int{len(body), largeWSFrame - 1, largeWSFrame, largeWSFrame + 1} {
 				raw := append(bytes.Repeat([]byte(" "), size-len(body)), body...)
 				msg, err := ValidateMessage(raw)
 				if err != nil {
@@ -39,6 +39,56 @@ func TestWebSocketDecodeMatchesStandardLibrary(t *testing.T) {
 				if err != nil || !reflect.DeepEqual(got, want) {
 					t.Fatalf("%d 字节解码不同: got=%#v want=%#v err=%v", size, got, want, err)
 				}
+			}
+		})
+	}
+}
+
+func TestWebSocketToolSnapshotMatchesFullDecode(t *testing.T) {
+	source := strings.Repeat("a\n\t/中文🙂\"\\", largeWSFrame/8)
+	quoted, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := &field{key: fieldKey{role: "arguments"}}
+	field.raw.WriteString(source)
+	w := New(nil, "/v1/responses", nil)
+	w.fields[field.key] = field
+	defer w.Release()
+
+	const done = `"type":"response.function_call_arguments.done","output_index":0`
+	const completed = `"type":"response.completed","response":{"output":`
+	args := `"arguments":` + string(quoted)
+	item := `{"type":"function_call",` + args + `}`
+	for _, tc := range []struct {
+		name, raw string
+		reuse     bool
+	}{
+		{"arguments", `{` + done + `,` + args + `}`, true},
+		{"item", `{"type":"response.output_item.done","item":` + item + `}`, true},
+		{"completed", `{` + completed + `[` + item + `],"id":"r"}}`, true},
+		{"escaped-slash", `{` + done + `,` + strings.ReplaceAll(args, "/", `\/`) + `}`, true},
+		{"different", `{` + done + `,` + strings.Replace(args, `:"a`, `:"b`, 1) + `}`, false},
+		{"unicode", `{` + done + `,` + strings.Replace(args, "中文", `\u4e2d文`, 1) + `}`, false},
+		{"decoy", `{"extra":{` + args + `},` + done + `,"arguments":"other"}`, false},
+		{"multiple-outputs", `{` + completed + `[` + item + `,{}]}}`, false},
+		{"object-output", `{` + completed + `{"#":1,"0":` + item + `}}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg, err := ValidateMessage([]byte(tc.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := w.decodeToolSnapshot(msg); (got != nil) != tc.reuse {
+				t.Fatalf("期望复用快照 %t", tc.reuse)
+			}
+			want, err := msg.decodeObject()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := w.decodeWebSocketEvent(msg)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatal("解码结果与完整帧不符", err)
 			}
 		})
 	}

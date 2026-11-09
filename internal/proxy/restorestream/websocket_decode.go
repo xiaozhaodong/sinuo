@@ -46,7 +46,7 @@ func (msg ValidatedMessage) DecodeForObservation() (map[string]any, error) {
 
 // 原文中出现 \u（含字面量 \\u）就整帧走标准库，保留键和代理项的解码语义。
 func (msg ValidatedMessage) fastObject(mode wsDecodeMode) (object, bool) {
-	if len(msg.raw) < largeWSFrame || bytes.Contains(msg.raw, []byte("\\u")) {
+	if (mode == wsObservation && len(msg.raw) < largeWSFrame) || bytes.Contains(msg.raw, []byte("\\u")) {
 		return nil, false
 	}
 	value, ok := mode.value(gjson.Parse(string(msg.raw)), 0)
