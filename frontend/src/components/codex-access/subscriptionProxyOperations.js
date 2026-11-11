@@ -116,7 +116,7 @@ export const createSubscriptionProxyController = (api) => {
           || '配置或运行态已变化';
         notice = {
           type: after.status?.state === 'failed' ? 'error' : 'info',
-          text: `模式配置已保存，但尚未确认运行态：${detail}。请刷新状态，已有 WS 在重连后生效。`,
+          text: `模式配置已保存，但尚未确认运行态：${detail}。请刷新状态。已有 WS 会话继续沿用连接建立时的模式，新模式以运行态确认后建立的连接为准。`,
           action: 'refresh'
         };
       }

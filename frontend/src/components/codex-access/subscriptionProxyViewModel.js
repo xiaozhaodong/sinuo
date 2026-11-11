@@ -71,9 +71,9 @@ export const validateSubscriptionProxyForm = ({ listenHost, listenPort } = {}) =
 const LISTEN_LOCKED_STATES = new Set(['running', 'starting', 'draining']);
 export const isListenLocked = (status) => LISTEN_LOCKED_STATES.has(status?.state);
 
-// 模式切换的生效边界：不承诺“下一轮必定切换”，已有 WS 保持到重连。
+// 模式切换只影响后续 HTTP 请求和新建的 WS 连接。
 export const MODE_EFFECT_NOTICE =
-  'HTTP 从下一请求生效，已建立的 WS 在重连后生效；其他接口继续订阅透传。';
+  'HTTP 从下一请求起按新模式处理；新建的 WS 连接按新模式处理；其他接口继续订阅透传。';
 
 // revision 冲突只提示刷新，不自动覆盖。
 export const isRevisionConflict = (message) => /已被其他写入|revision\s*=/i.test(String(message ?? ''));
@@ -170,7 +170,11 @@ export const buildSubscriptionProxyNotice = ({
   if (modeChanged && state !== 'failed' && (
     state !== 'running' || (config && (status.mode !== config.mode || status.revision !== config.revision))
   )) {
-    return { type: 'info', text: '模式配置已保存，但运行态尚未确认应用此模式；请刷新确认。已有 WS 在重连后生效。', action: 'refresh' };
+    return {
+      type: 'info',
+      text: '模式配置已保存，但运行态尚未确认应用此模式；请刷新确认。已有 WS 会话继续沿用连接建立时的模式，新模式以运行态确认后建立的连接为准。',
+      action: 'refresh'
+    };
   }
 
   const parts = [];
@@ -178,9 +182,10 @@ export const buildSubscriptionProxyNotice = ({
     parts.push(state === 'running' ? '监听地址已保存并重新监听。' : '监听地址已保存。');
   }
   if (modeChanged) {
-    parts.push(wsCount > 0
-      ? `模式已保存。${MODE_EFFECT_NOTICE}当前底层 WS 连接数为 ${wsCount}（包含上下游两侧）。`
-      : `模式已保存。${MODE_EFFECT_NOTICE}`);
+    const activeWebSocketNotice = wsCount > 0
+      ? `当前对话继续沿用已建立 WS 的原模式。Codex 可能跨轮复用连接，通常需新建对话才会按新模式连接。当前底层 WS 连接数为 ${wsCount}（包含上下游两侧）。`
+      : '';
+    parts.push(`模式已保存。${MODE_EFFECT_NOTICE}${activeWebSocketNotice}`);
   }
   if (state === 'failed') {
     return { type: 'error', text: `配置已保存，但独立入口启动失败：${lastError}` };

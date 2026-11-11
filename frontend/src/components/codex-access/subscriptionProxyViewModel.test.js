@@ -61,20 +61,29 @@ test('保存成功不等于启动成功：提示一律取自独立读回的运�
   assert.equal(notListened.type, 'info');
 });
 
-test('模式切换只说 HTTP 下一请求与 WS 重连生效，并带出仍在运行的活动 WS 数', () => {
+test('模式切换说明新建连接生效，并提示活动 WS 通常要新建对话切换', () => {
   const notice = buildSubscriptionProxyNotice({
     intent: 'save',
     modeChanged: true,
     status: { state: 'running', activeWebSockets: 3 }
   });
   assert.equal(notice.type, 'success');
-  assert.match(notice.text, /HTTP 从下一请求生效/);
-  assert.match(notice.text, /WS 在重连后生效/);
+  assert.match(notice.text, /HTTP 从下一请求起按新模式处理/);
+  assert.match(notice.text, /新建的 WS 连接按新模式处理/);
+  assert.match(notice.text, /当前对话继续沿用已建立 WS 的原模式/);
+  assert.match(notice.text, /通常需新建对话/);
   assert.match(notice.text, /WS 连接数为 3/);
   assert.match(notice.text, /上下游两侧/);
-  // 不能承诺“下一轮必定切换”
-  assert.doesNotMatch(notice.text, /下一轮必定/);
-  assert.doesNotMatch(notice.text, /立即/);
+});
+
+test('没有活动 WS 时不提示新建对话', () => {
+  const notice = buildSubscriptionProxyNotice({
+    intent: 'save',
+    modeChanged: true,
+    status: { state: 'running', activeWebSockets: 0 }
+  });
+  assert.match(notice.text, /新建的 WS 连接按新模式处理/);
+  assert.doesNotMatch(notice.text, /新建对话/);
 });
 
 test('停用意图与停用结果分开表述', () => {

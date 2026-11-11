@@ -449,7 +449,7 @@ const CodexSubscriptionProxyCard = () => {
 
       {statusRunning && (status?.activeWebSockets ?? 0) > 0 && (
         <p className="mx-1 mt-3 text-[11.5px] text-fg-muted">
-          当前底层 WS 连接数为 {status.activeWebSockets}（包含上下游两侧）；已建立连接在重连后读取新模式。
+          当前底层 WS 连接数为 {status.activeWebSockets}（包含上下游两侧）。已有对话继续沿用连接建立时的模式；Codex 可能跨轮复用 WS，切换后通常需新建对话才会按新模式连接。
         </p>
       )}
       {confirmDialog}

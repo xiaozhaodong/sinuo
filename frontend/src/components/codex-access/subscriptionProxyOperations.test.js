@@ -46,8 +46,8 @@ test('快捷切换只改模式，保留 IPv6 地址、端口、启用意图和 W
   assert.equal(expected.mode, 'subscription');
   assert.equal(expected.revision, 4);
   assert.equal(controller.getSnapshot().status.revision, 5);
-  assert.match(result.notice.text, /HTTP 从下一请求生效/);
-  assert.match(result.notice.text, /WS 在重连后生效/);
+  assert.match(result.notice.text, /HTTP 从下一请求起按新模式处理/);
+  assert.match(result.notice.text, /通常需新建对话/);
   assert.match(result.notice.text, /上下游两侧/);
 });
 
