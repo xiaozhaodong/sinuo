@@ -92,11 +92,10 @@ const DictionaryPage = ({ offset, setOffset, onClear, clearing, restoreUnavailab
         <ToolbarButton icon={Trash2} label="清空字典" disabled={!page?.total} loading={clearing} onClick={onClear} />
       </div>
       <details className="shrink-0 border-b border-line-soft px-4 py-1.5 text-xs text-fg-muted">
-        <summary className="w-fit cursor-pointer">回填范围与重启后的处理</summary>
+        <summary className="w-fit cursor-pointer">清空后会怎样</summary>
         <div className="mt-2 max-w-4xl space-y-1.5 leading-relaxed">
-          <p>脱敏模式下，Claude 普通端点、Codex 账号池和两者的订阅直通均可回填正文与工具参数。HTTP 支持流式 SSE 和非流式 JSON，Codex 订阅直通也支持原生 WebSocket。独立 compact 和 count_tokens 仅处理请求。</p>
-          <p>每次请求都会按当前规则和进程字典扫描，切换对话或上游也能遮蔽已知值。重启或条目淘汰后，请求照常发送，规则无法识别的裸值会原样发出。响应中未知或半截的占位符原样交付，可在请求详情查看未还原次数。</p>
-          <p>规则直接命中的值始终遮蔽。少于 6 个字符的弱值只在发现它的请求内补遮。签名历史仅匹配到既往弱值时可原样重放。</p>
+          <p>此前只靠字典遮蔽的值会明文发出，例如从 password=… 中识别、之后单独出现的密码。</p>
+          <p>响应里的旧占位符原样保留，直到后续请求中规则再次识别出对应的值；未还原次数见请求详情。</p>
         </div>
       </details>
       <div className="min-h-0 flex-1 overflow-auto">
@@ -149,7 +148,7 @@ export default function PrivacyRestoreDictionaryPanel({ restoreUnavailableInMode
   const clear = async () => {
     if (!(await confirm({
       title: '清空内存回填字典',
-      message: '已发出的请求仍可使用旧映射。后续请求按当前规则重新登记，未重新登记的旧标识将原样交付。',
+      message: '已发出的请求不受影响。清空后，此前只靠字典遮蔽的值会明文发出，旧占位符要等规则再次识别出原值才会换回。',
       confirmText: '清空字典',
       danger: true
     }))) return;
