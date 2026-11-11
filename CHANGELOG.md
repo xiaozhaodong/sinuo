@@ -7,6 +7,8 @@
 
 ## [未发布]
 
+- Codex 账号池自动将桌面端注入的、缺少 `call_id` 的页面上下文转换为带 external 标签的用户消息，保留上下文内容，修复上游 HTTP Responses 拒绝请求的问题。普通 API 端口和订阅端口的账号池模式共用此兼容；正常工具结果与订阅 WebSocket 直通保持原样。
+
 - Claude 普通端点和 Codex 账号池支持对流式 SSE、非流式 JSON 的正文与工具参数执行响应回填。整包回填时会移除针对原文的校验和范围响应头。
 - Codex 可在换号或更换会话后重放相同的加密工具历史，并接受空的加密工具参数及输出数组。订阅 WebSocket 支持顶层错误码，单个请求被拒时其他在途响应可继续交付。
 - Claude 上游缺少 `Content-Type`，或将 SSE 标为 `text/plain`、`application/octet-stream` 时，会校验首个数据事件后执行回填。

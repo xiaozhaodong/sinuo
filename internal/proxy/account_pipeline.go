@@ -683,6 +683,20 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	if lifecycleManager != nil {
 		requestID = lifecycleManager.GetRequestID()
 	}
+	if r.Method == http.MethodPost && isCodexResponsesAPIPath(r.URL.Path) {
+		normalized, converted, err := normalizeCodexHTTPContext(bodyBytes)
+		if err != nil {
+			return nil, nil, nil, &requestBodyError{
+				StatusCode: http.StatusBadRequest, Code: requestBodyCodeCodexContextInvalid,
+				Message: "Codex 客户端上下文兼容失败：请求 JSON 结构无效", Cause: err,
+			}
+		}
+		bodyBytes = normalized
+		if converted > 0 {
+			slog.Info(fmt.Sprintf("🔄 [Codex 客户端上下文] [%s] 已转换为 HTTP 兼容消息", requestID),
+				"path", r.URL.Path, "converted_items", converted)
+		}
+	}
 	if acc != nil && acc.StripCodexInternalMetadata && r.Method == http.MethodPost && isCodexResponsesAPIPath(r.URL.Path) {
 		filtered, stats, err := stripCodexPrivateFields(bodyBytes)
 		if err != nil {
