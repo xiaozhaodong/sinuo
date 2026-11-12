@@ -63,8 +63,7 @@ func (s *PrivacyService) ExactSecretExists(ctx context.Context, secretValue stri
 	if s == nil || s.store == nil {
 		return false, fmt.Errorf("privacy service is not initialized")
 	}
-	secretValue = strings.TrimSpace(secretValue)
-	if secretValue == "" {
+	if strings.TrimSpace(secretValue) == "" {
 		return false, nil
 	}
 	record, err := s.store.FindExactSecretByHash(ctx, HashPrivacySecretValue(secretValue))
@@ -88,6 +87,9 @@ func (s *PrivacyService) CreateExactSecret(ctx context.Context, record *store.Pr
 	defer s.mu.Unlock()
 
 	if err := s.ensureExactSecretHashAvailable(ctx, normalized.ValueHash, 0); err != nil {
+		return nil, err
+	}
+	if err := s.validateExactSecretCandidateLocked(ctx, normalized, 0); err != nil {
 		return nil, err
 	}
 	created, err := s.store.CreateExactSecret(ctx, normalized)
@@ -135,6 +137,9 @@ func (s *PrivacyService) UpdateExactSecret(ctx context.Context, id int64, input 
 	if err := s.ensureExactSecretHashAvailable(ctx, normalized.ValueHash, id); err != nil {
 		return nil, err
 	}
+	if err := s.validateExactSecretCandidateLocked(ctx, normalized, id); err != nil {
+		return nil, err
+	}
 	if err := s.store.UpdateExactSecret(ctx, normalized); err != nil {
 		return nil, mapExactSecretStoreError(err)
 	}
@@ -167,7 +172,6 @@ func (s *PrivacyService) ClearExactSecrets(ctx context.Context) error {
 func normalizeExactSecretRecord(record *store.PrivacyExactSecretRecord, requireValue bool) (*store.PrivacyExactSecretRecord, error) {
 	next := *record
 	next.Name = strings.TrimSpace(next.Name)
-	next.SecretValue = strings.TrimSpace(next.SecretValue)
 	next.Placeholder = strings.TrimSpace(next.Placeholder)
 	next.Category = normalizeExactSecretCategory(next.Category)
 	next.SourceType = normalizeExactSecretSourceType(next.SourceType)
@@ -179,10 +183,10 @@ func normalizeExactSecretRecord(record *store.PrivacyExactSecretRecord, requireV
 	if next.Placeholder == "" {
 		next.Placeholder = "[敏感值]"
 	}
-	if requireValue && next.SecretValue == "" {
+	if requireValue && strings.TrimSpace(next.SecretValue) == "" {
 		return nil, fmt.Errorf("secret_value is required")
 	}
-	if next.SecretValue == "" {
+	if strings.TrimSpace(next.SecretValue) == "" {
 		return nil, fmt.Errorf("secret_value is required")
 	}
 	if minLength := exactSecretMinLength(next.Category); len(next.SecretValue) < minLength {

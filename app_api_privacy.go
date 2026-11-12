@@ -286,6 +286,9 @@ func (a *App) TestPrivacyRules(input PrivacyRuleTestInput) (PrivacyRuleTestResul
 		ProviderType: strings.TrimSpace(input.ProviderType),
 	}
 	result := svc.TestText(req, input.Text)
+	if result.SkippedReason != "" {
+		return PrivacyRuleTestResult{}, fmt.Errorf("隐私规则测试未执行：%s", result.SkippedReason)
+	}
 
 	hits := make([]PrivacyRuleHitInfo, 0, len(result.RuleHits))
 	for _, hit := range result.RuleHits {

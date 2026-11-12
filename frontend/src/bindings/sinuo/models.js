@@ -766,6 +766,51 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  */
 
 /**
+ * 导入接口的桌面 DTO 只返回掩码和来源，原值由 service 临时持有。
+ * @typedef {Object} PrivacyConfigImportCandidate
+ * @property {string} id
+ * @property {string} name
+ * @property {string} category
+ * @property {string} masked_value
+ * @property {number} value_length
+ * @property {string[] | null} sources
+ * @property {string} reason
+ * @property {string} status
+ * @property {boolean} selectable
+ * @property {boolean} selected
+ */
+
+/**
+ * PrivacyConfigImportFile 只包含用户主动选择的文件内容，不接受后端文件路径。
+ * @typedef {Object} PrivacyConfigImportFile
+ * @property {string} name
+ * @property {string} content
+ */
+
+/**
+ * @typedef {Object} PrivacyConfigImportFileResult
+ * @property {string} name
+ * @property {string} format
+ * @property {number} scanned
+ * @property {number} found
+ * @property {string} error
+ */
+
+/**
+ * @typedef {Object} PrivacyConfigImportPreview
+ * @property {string} id
+ * @property {string} expires_at
+ * @property {PrivacyConfigImportFileResult[] | null} files
+ * @property {PrivacyConfigImportCandidate[] | null} candidates
+ */
+
+/**
+ * @typedef {Object} PrivacyConfigImportResult
+ * @property {number} added
+ * @property {number} skipped
+ */
+
+/**
  * PrivacyExactSecretInfo 本地精确敏感值列表响应；不包含 secret_value 明文。
  * @typedef {Object} PrivacyExactSecretInfo
  * @property {number} id

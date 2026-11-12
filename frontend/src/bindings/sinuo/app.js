@@ -60,6 +60,15 @@ export function CancelAppUpdateRestart() {
 }
 
 /**
+ * CancelPrivacyConfigImport 释放本次预览中的临时敏感值。
+ * @param {string} previewID
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelPrivacyConfigImport(previewID) {
+    return $Call.ByID(21146526, previewID);
+}
+
+/**
  * CheckAppUpdate 手动检查更新，返回完整状态。
  * @returns {$CancellablePromise<$models.AppUpdateStatus>}
  */
@@ -126,6 +135,16 @@ export function ClearPrivacyRestoreDictionary() {
  */
 export function ClearUpstreamAccountCooldown(id) {
     return $Call.ByID(589960691, id);
+}
+
+/**
+ * CommitPrivacyConfigImport 事务追加选中项，并发布一次运行快照。
+ * @param {string} previewID
+ * @param {string[] | null} candidateIDs
+ * @returns {$CancellablePromise<$models.PrivacyConfigImportResult>}
+ */
+export function CommitPrivacyConfigImport(previewID, candidateIDs) {
+    return $Call.ByID(620956159, previewID, candidateIDs);
 }
 
 /**
@@ -827,6 +846,15 @@ export function MoveUpstreamAccountToTier(id, targetTier) {
  */
 export function PinUpstreamAccountSelection(id) {
     return $Call.ByID(2375827318, id);
+}
+
+/**
+ * PreviewPrivacyConfigImport 本机解析配置并生成候选，不写库，不返回敏感值原文。
+ * @param {$models.PrivacyConfigImportFile[] | null} files
+ * @returns {$CancellablePromise<$models.PrivacyConfigImportPreview>}
+ */
+export function PreviewPrivacyConfigImport(files) {
+    return $Call.ByID(3097270658, files);
 }
 
 /**

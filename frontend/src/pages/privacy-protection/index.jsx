@@ -316,6 +316,7 @@ const PrivacyProtectionPage = () => {
           <PrivacyExactSecretsPanel
             secrets={exactSecrets}
             busy={busy}
+            onConfigImported={async () => { await reloadAll(); await reloadStats(); }}
             onSave={async (form) => {
               setBusy(true);
               try {

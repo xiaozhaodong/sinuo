@@ -104,10 +104,8 @@ func findRuleMatches(rule *CompiledRule, seg *segmentText) [][2]int {
 			return findRegexMatchesInLiteralLines(rule, seg)
 		}
 		return findRegexMatches(rule, seg.text)
-	case rule.literals != nil:
-		return nonOverlappingOccurrences(seg.literalOccurrences(rule.literals, rule.literalIdx), len(rule.Pattern))
 	default:
-		return findLiteralMatches(rule.Pattern, seg.text)
+		return findCompiledLiteralMatches(rule, seg)
 	}
 }
 

@@ -4,8 +4,8 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,7 +47,8 @@ type PrivacyRuntimeStats struct {
 type PrivacyService struct {
 	restoreCapacity privacy.RestoreCapacity
 	store           store.PrivacyStore
-	mu              sync.Mutex // 串行化所有写操作（保存->编译->热替换）
+	mu              sync.Mutex                  // 串行化所有写操作（保存->编译->热替换）
+	configImport    *privacyConfigImportSession // 同样由 mu 保护；取消、确认或过期后释放
 	snapshot        atomic.Pointer[privacy.Snapshot]
 	version         atomic.Int64
 	status          atomic.Value // string
@@ -458,6 +459,9 @@ func (s *PrivacyService) validateCandidateLocked(ctx context.Context, candidate 
 	} else if err := privacy.ValidateRule(candidateRule); err != nil {
 		return err
 	}
+	if !candidate.Enabled && s.CurrentSnapshot().CompileBlocked {
+		return nil // 允许停用旧库中的超预算规则以恢复服务。
+	}
 
 	existing, err := s.store.ListRules(ctx)
 	if err != nil {
@@ -476,7 +480,7 @@ func (s *PrivacyService) validateCandidateLocked(ctx context.Context, candidate 
 			// 历史规则 scope 损坏不阻塞新规则保存，启动时已降级处理
 			continue
 		}
-		if _, err := privacy.CompileRule(rule); err != nil {
+		if _, err := privacy.CompileRule(rule); err != nil && !errors.Is(err, privacy.ErrLiteralBudget) {
 			continue
 		}
 		enabledRules = append(enabledRules, rule)
@@ -484,114 +488,14 @@ func (s *PrivacyService) validateCandidateLocked(ctx context.Context, candidate 
 	if candidate.Enabled {
 		enabledRules = append(enabledRules, candidateRule)
 	}
-	if _, err := privacy.CompileRules(enabledRules); err != nil {
-		return err
-	}
-	return nil
-}
-
-// rebuildSnapshotLocked 从 store 加载并编译新快照后原子替换。
-// markCompileErrors 为 true 时（启动路径）将编译失败写回规则记录。
-func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileErrors bool) error {
-	if s.store == nil {
-		return fmt.Errorf("privacy store is nil")
-	}
-	settingsRecord, err := s.store.GetSettings(ctx)
-	if err != nil {
-		return err
-	}
-	settings := privacy.Settings{
-		ResponseRestoreEnabled: settingsRecord.ResponseRestoreEnabled,
-		Mode:                   settingsRecord.Mode,
-		ScanMaxBytes:           settingsRecord.ScanMaxBytes,
-		OverLimitAction:        settingsRecord.OverLimitAction,
-		OnError:                settingsRecord.OnError,
-	}
-	if err := privacy.ValidateSettings(settings); err != nil {
-		// 历史脏数据回退默认（disabled），不阻塞启动
-		slog.Warn(fmt.Sprintf("⚠️ [隐私保护] 设置非法，回退默认: %v", err))
-		settings = privacy.DefaultSettings()
-	}
-
-	records, err := s.store.ListRules(ctx)
-	if err != nil {
-		return err
-	}
-	if markCompileErrors {
-		if err := s.retireLegacyBuiltinRulesLocked(ctx, records); err != nil {
-			return err
-		}
-	}
-	if err := s.ensureBuiltinRulesLocked(ctx, records); err != nil {
-		return err
-	}
-	records, err = s.store.ListRules(ctx)
-	if err != nil {
-		return err
-	}
 	exactSecrets, err := s.store.ListExactSecrets(ctx)
 	if err != nil {
 		return err
 	}
-
-	var (
-		activeRules    []privacy.Rule
-		compileErrors  []string
-		degradedActive bool
-	)
-	for _, record := range records {
-		rule, parseErr := privacyRuleFromRecord(record)
-		if parseErr == nil && record.Enabled {
-			if _, compileErr := privacy.CompileRule(rule); compileErr == nil {
-				activeRules = append(activeRules, rule)
-				if record.CompileError != "" {
-					_ = s.store.SetRuleCompileError(ctx, record.ID, "")
-				}
-				continue
-			} else {
-				parseErr = compileErr
-			}
-		}
-		if parseErr != nil {
-			if record.Enabled {
-				degradedActive = true
-				compileErrors = append(compileErrors, fmt.Sprintf("%s: %v", record.Name, parseErr))
-				if markCompileErrors {
-					if err := s.store.SetRuleCompileError(ctx, record.ID, parseErr.Error()); err != nil {
-						slog.Warn(fmt.Sprintf("⚠️ [隐私保护] 写回规则 %d compile_error 失败: %v", record.ID, err))
-					}
-				}
-			}
-		}
+	enabledRules = append(enabledRules, exactSecretRules(exactSecrets)...)
+	if _, err := privacy.CompileRules(enabledRules); err != nil {
+		return err
 	}
-	activeRules = append(activeRules, exactSecretRules(exactSecrets)...)
-
-	compiled, err := privacy.CompileRules(activeRules)
-	if err != nil {
-		// activeRules 已逐条编译过，这里理论上不会失败；防御性保留当前快照
-		return fmt.Errorf("compile privacy snapshot failed: %w", err)
-	}
-
-	snapshot := &privacy.Snapshot{
-		RestoreKey:   settingsRecord.RestoreKey,
-		Version:      s.version.Add(1),
-		Settings:     settings,
-		Rules:        compiled,
-		LoadedAt:     time.Now(),
-		CompileError: strings.Join(compileErrors, "; "),
-		// 缓存随快照替换整体失效：规则、设置变化后旧的扫描结果不再适用
-		Cache: privacy.NewSegmentCache(privacy.DefaultSegmentCacheCapacity),
-	}
-	snapshot.Dict = s.restoreDictionaryForSnapshot(s.CurrentSnapshot(), snapshot)
-	s.snapshot.Store(snapshot)
-	if degradedActive {
-		s.status.Store(PrivacyStatusDegraded)
-		slog.Warn(fmt.Sprintf("⚠️ [隐私保护] 部分规则未激活: %s", snapshot.CompileError))
-	} else {
-		s.status.Store(PrivacyStatusOK)
-	}
-	slog.Info(fmt.Sprintf("🛡️ [隐私保护] 快照已更新: version=%d mode=%s rules=%d",
-		snapshot.Version, settings.Mode, len(compiled)))
 	return nil
 }
 

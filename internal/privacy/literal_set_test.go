@@ -1,11 +1,21 @@
 package privacy
 
 import (
+	"errors"
 	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func testLiteralSet(t *testing.T, patterns []string) *literalSet {
+	t.Helper()
+	set, err := newLiteralSet(patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
 
 func randomAlphabetString(r *rand.Rand, alphabet string, minLen, maxLen int) string {
 	var b strings.Builder
@@ -23,7 +33,7 @@ func TestLiteralSetMatchesSequentialIndex(t *testing.T) {
 		for i := range patterns {
 			patterns[i] = randomAlphabetString(r, "abc", 1, 5)
 		}
-		set := newLiteralSet(patterns)
+		set := testLiteralSet(t, patterns)
 		if set == nil {
 			t.Fatalf("round %d: set not built", round)
 		}
@@ -43,16 +53,79 @@ func TestLiteralSetMatchesSequentialIndex(t *testing.T) {
 	}
 }
 
-func TestLiteralSetFallsBackWhenTooFewOrTooLarge(t *testing.T) {
-	if newLiteralSet([]string{"a", "b"}) != nil {
+func TestLiteralSetUsesSparseRepresentationForLargeDictionaries(t *testing.T) {
+	if testLiteralSet(t, []string{"a", "b"}) != nil {
 		t.Fatal("too few patterns should fall back to strings.Index")
 	}
 	huge := make([]string, 8)
 	for i := range huge {
-		huge[i] = strings.Repeat(string(rune('a'+i)), maxLiteralSetTableEntries/4)
+		huge[i] = strings.Repeat(string(rune('a'+i)), maxLiteralSetTableEntries/16)
 	}
-	if newLiteralSet(huge) != nil {
-		t.Fatal("oversized table should fall back to strings.Index")
+	set := testLiteralSet(t, huge)
+	if set == nil || set.sparse == nil || len(set.trans) != 0 {
+		t.Fatal("大词典应使用紧凑自动机")
+	}
+	if starts := set.findAll("prefix " + huge[3] + " suffix"); len(starts) != len(huge) || !reflect.DeepEqual(starts[3], []int{7}) {
+		t.Fatal("大字面量匹配不完整")
+	}
+}
+
+func TestSparseLiteralSetMatchesDenseAndSequential(t *testing.T) {
+	r := rand.New(rand.NewSource(123))
+	for round := 0; round < 3000; round++ {
+		patterns := []string{"a", "aa", "aaa", "aa", "baaa", "中文", "文"}
+		for i := 0; i < 10; i++ {
+			patterns = append(patterns, randomAlphabetString(r, "abc", 1, 12))
+		}
+		text := "中文" + randomAlphabetString(r, "abcd", 0, 250) + "aaaa"
+		dense := testLiteralSet(t, patterns)
+		sparse := &literalSet{patterns: patterns}
+		total := 1
+		for _, p := range patterns {
+			total += len(p)
+		}
+		sparse.buildSparse(total)
+		got, want := sparse.findAll(text), dense.findAll(text)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("紧凑与稠密自动机不一致，round=%d", round)
+		}
+		for i, p := range patterns {
+			var matches []int
+			if got != nil {
+				matches = got[i]
+			}
+			if !reflect.DeepEqual(nonOverlappingOccurrences(matches, len(p)), findLiteralMatches(p, text)) {
+				t.Fatal("紧凑自动机与字面查找不一致", round, i)
+			}
+		}
+	}
+}
+
+func TestLiteralSetBuildBudgetAndSharedPrefixCapacity(t *testing.T) {
+	// 输入词条总长在 8 MiB 内，但没有共享前缀，节点数组超过 128 MiB。
+	patterns := make([]string, 8)
+	for i := range patterns {
+		patterns[i] = strings.Repeat(string(rune('a'+i)), 600000)
+	}
+	if set, err := newLiteralSet(patterns); !errors.Is(err, ErrLiteralBudget) || set != nil {
+		t.Fatal("构建预算超限应在分配前报错")
+	}
+	// 长公共前缀不应为每条词重复预分配状态。
+	prefix := strings.Repeat("shared-prefix-", 20000)
+	for i := range patterns {
+		patterns[i] = prefix + string(rune('a'+i))
+	}
+	set := testLiteralSet(t, patterns)
+	if set == nil || set.sparse == nil {
+		t.Fatal("长词条应使用紧凑自动机")
+	}
+	want := 1 + len(prefix) + len(patterns)
+	if len(set.sparse.nodes) != want || cap(set.sparse.nodes) != want || cap(set.sparse.edges) != want-1 {
+		t.Fatalf("未按共享后的实际容量构建: nodes=%d/%d want=%d", len(set.sparse.nodes), cap(set.sparse.nodes), want)
+	}
+	starts := set.findAll("!" + patterns[3] + "!")
+	if len(starts) != len(patterns) || !reflect.DeepEqual(starts[3], []int{1}) {
+		t.Fatal("共享前缀预算改变了匹配结果")
 	}
 }
 

@@ -20,8 +20,9 @@ type CompiledRule struct {
 	lineScoped bool
 	builtin    builtinMatcher
 	// literals 同一规则集的全部字面量共用的自动机；nil 时逐个 strings.Index
-	literals   *literalSet
-	literalIdx int
+	literals        *literalSet
+	literalPatterns []string // 原值及精确敏感值的有限编码形式；不改变规则身份
+	literalIndexes  []int    // 各形式在共享自动机中的下标
 }
 
 // Snapshot 编译后的规则快照，热路径只读。
@@ -33,6 +34,8 @@ type Snapshot struct {
 	Rules        []CompiledRule
 	LoadedAt     time.Time
 	CompileError string
+	// 启动时旧词典超预算：保留可管理的规则描述，但禁止使用未完整编译的规则。
+	CompileBlocked bool
 	// Cache 跨请求文本段缓存，只对本快照的规则集有效；nil 表示不缓存
 	Cache *SegmentCache
 }
@@ -44,6 +47,14 @@ func CompileRule(rule Rule) (CompiledRule, error) {
 	}
 	compiled := CompiledRule{Rule: rule}
 	switch rule.MatchType {
+	case MatchTypeLiteral:
+		if len(rule.Pattern) > maxLiteralPatternBytes || (rule.Source == SourceExact && len(rule.Pattern) > maxExactLiteralBytes) {
+			return CompiledRule{}, ErrLiteralBudget
+		}
+		compiled.literalPatterns = []string{rule.Pattern}
+		if rule.Source == SourceExact {
+			compiled.literalPatterns = exactLiteralPatterns(rule.Pattern)
+		}
 	case MatchTypeRegex:
 		re, err := regexp.Compile(rule.Pattern)
 		if err != nil {
@@ -78,9 +89,13 @@ func redactCaptureGroup(re *regexp.Regexp) int {
 // 任一规则编译失败立即返回错误，调用方不得替换当前有效快照。
 func CompileRules(rules []Rule) ([]CompiledRule, error) {
 	compiled := make([]CompiledRule, 0, len(rules))
+	var literals literalPatternBuilder
 	for _, rule := range rules {
 		c, err := CompileRule(rule)
 		if err != nil {
+			return nil, err
+		}
+		if err := literals.add(&c); err != nil {
 			return nil, err
 		}
 		compiled = append(compiled, c)
@@ -91,30 +106,16 @@ func CompileRules(rules []Rule) ([]CompiledRule, error) {
 		}
 		return compiled[i].ID < compiled[j].ID
 	})
-	attachLiteralSet(compiled)
-	return compiled, nil
-}
-
-// attachLiteralSet 为规则集内的全部字面量规则构建共享自动机，每段文本只扫一遍
-func attachLiteralSet(compiled []CompiledRule) {
-	var (
-		indexes  []int
-		patterns []string
-	)
+	set, err := newLiteralSet(literals.patterns)
+	if err != nil {
+		return nil, err
+	}
 	for i := range compiled {
-		if compiled[i].MatchType == MatchTypeLiteral {
-			indexes = append(indexes, i)
-			patterns = append(patterns, compiled[i].Pattern)
+		if len(compiled[i].literalIndexes) > 0 {
+			compiled[i].literals = set
 		}
 	}
-	set := newLiteralSet(patterns)
-	if set == nil {
-		return
-	}
-	for k, i := range indexes {
-		compiled[i].literals = set
-		compiled[i].literalIdx = k
-	}
+	return compiled, nil
 }
 
 // Apply 对请求 body 执行隐私过滤。
@@ -136,6 +137,10 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 		return result, nil
 	}
 	result.Action = s.Settings.Mode
+	if s.CompileBlocked {
+		result.SkippedReason = CodeScanFailed
+		return result, &PolicyError{StatusCode: http.StatusServiceUnavailable, Code: CodeScanFailed, Message: ErrLiteralBudget.Error(), Result: result}
+	}
 
 	started := time.Now()
 	reversible := supportsRestore(req) && s.Settings.ResponseRestoreEnabled && s.Settings.Mode == ModeRedact
@@ -432,6 +437,11 @@ func (s *Snapshot) ApplyToText(req Request, text string) ApplyResult {
 		return result
 	}
 	result.SnapshotVersion = s.Version
+	if s.CompileBlocked {
+		result.Body = []byte(text)
+		result.SkippedReason = ErrLiteralBudget.Error()
+		return result
+	}
 	started := time.Now()
 
 	outcome := s.scanText(s.candidateRules(req), text)

@@ -72,6 +72,7 @@ type PrivacyStore interface {
 	GetExactSecret(ctx context.Context, id int64) (*PrivacyExactSecretRecord, error)
 	FindExactSecretByHash(ctx context.Context, valueHash string) (*PrivacyExactSecretRecord, error)
 	CreateExactSecret(ctx context.Context, record *PrivacyExactSecretRecord) (*PrivacyExactSecretRecord, error)
+	ImportExactSecrets(ctx context.Context, records []*PrivacyExactSecretRecord, prepare func([]*PrivacyExactSecretRecord) error) (int, error)
 	UpdateExactSecret(ctx context.Context, record *PrivacyExactSecretRecord) error
 	DeleteExactSecret(ctx context.Context, id int64) error
 	ClearExactSecrets(ctx context.Context) error

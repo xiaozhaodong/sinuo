@@ -514,16 +514,16 @@ func TestPrivacyServiceExactSecretDetectModeCountsOnly(t *testing.T) {
 func TestPrivacyServiceExactSecretDuplicateAndMask(t *testing.T) {
 	svc := newTestPrivacyService(t)
 	ctx := context.Background()
-	secret := "short-token12"
+	secret := " short-token12 "
 	created, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
-		Enabled: true, Name: "短 Token", SecretValue: " " + secret + " ",
+		Enabled: true, Name: "短 Token", SecretValue: secret,
 		Category: "token", Placeholder: "[Token]", SourceType: "manual",
 	})
 	if err != nil {
 		t.Fatalf("create exact secret failed: %v", err)
 	}
 	if created.SecretValue != secret {
-		t.Fatalf("secret value must be trimmed, got %q", created.SecretValue)
+		t.Fatalf("secret value must preserve surrounding spaces, got %q", created.SecretValue)
 	}
 	if _, err := svc.CreateExactSecret(ctx, &store.PrivacyExactSecretRecord{
 		Enabled: true, Name: "重复 Token", SecretValue: secret,

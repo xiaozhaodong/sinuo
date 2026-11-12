@@ -6,6 +6,7 @@ import ListEmpty from '@components/desktop/ListEmpty.jsx';
 import RowMoreButton from '@components/desktop/RowMoreButton.jsx';
 import useContextMenu from '@components/desktop/useContextMenu.jsx';
 import { ExactSecretSheet, ImportCandidatesSheet, ManualImportSheet } from './PrivacyExactSecretSheets.jsx';
+import PrivacyConfigImportSheet from './PrivacyConfigImportSheet.jsx';
 import {
   PRIVACY_EXACT_SECRET_CATEGORY_OPTIONS,
   createEmptyExactSecretForm,
@@ -238,13 +239,15 @@ const PrivacyExactSecretsPanel = ({
   onDelete,
   onClear,
   onLoadCandidates,
-  onImportCandidate
+  onImportCandidate,
+  onConfigImported
 }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogSecret, setDialogSecret] = useState(null);
   const [dialogKey, setDialogKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [manualImportOpen, setManualImportOpen] = useState(false);
+  const [configImportOpen, setConfigImportOpen] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidates, setCandidates] = useState([]);
   const [filters, setFilters] = useState({});
@@ -341,6 +344,9 @@ const PrivacyExactSecretsPanel = ({
         </Button>
         <Button size="sm" variant="secondary" icon={Upload} onClick={openImport} disabled={actionBusy}>
           从账号/端点导入
+        </Button>
+        <Button size="sm" variant="secondary" icon={Upload} onClick={() => setConfigImportOpen(true)} disabled={actionBusy}>
+          从配置文件导入
         </Button>
         <Button size="sm" variant="secondary" icon={Upload} onClick={() => setManualImportOpen(true)} disabled={actionBusy}>
           粘贴导入
@@ -439,6 +445,7 @@ const PrivacyExactSecretsPanel = ({
         )}
       </div>
       {contextMenu}
+      {configImportOpen && <PrivacyConfigImportSheet onClose={() => setConfigImportOpen(false)} onImported={onConfigImported} />}
 
       {deleteTarget && (
         <DeleteExactSecretDialog

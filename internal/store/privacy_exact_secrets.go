@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -9,12 +10,24 @@ const privacyExactSecretColumns = `id, enabled, name, secret_value, value_hash, 
 	category, source_type, source_ref, description,
 	COALESCE(CAST(created_at AS TEXT), ''), COALESCE(CAST(updated_at AS TEXT), '')`
 
+const insertPrivacyExactSecret = `INSERT INTO privacy_exact_secrets (
+	enabled, name, secret_value, value_hash, placeholder, category, source_type, source_ref, description
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+type privacyExactQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 // ListExactSecrets 列出本地精确敏感值。调用方负责遮蔽 SecretValue。
 func (s *SQLitePrivacyStore) ListExactSecrets(ctx context.Context) ([]*PrivacyExactSecretRecord, error) {
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	return listPrivacyExactSecrets(ctx, s.db)
+}
+
+func listPrivacyExactSecrets(ctx context.Context, db privacyExactQueryer) ([]*PrivacyExactSecretRecord, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT `+privacyExactSecretColumns+`
 		FROM privacy_exact_secrets
 		ORDER BY created_at DESC, id DESC
@@ -84,12 +97,7 @@ func (s *SQLitePrivacyStore) CreateExactSecret(ctx context.Context, record *Priv
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO privacy_exact_secrets (
-			enabled, name, secret_value, value_hash, placeholder, category,
-			source_type, source_ref, description
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, record.Enabled, record.Name, record.SecretValue, record.ValueHash, record.Placeholder,
+	result, err := s.db.ExecContext(ctx, insertPrivacyExactSecret, record.Enabled, record.Name, record.SecretValue, record.ValueHash, record.Placeholder,
 		record.Category, record.SourceType, record.SourceRef, record.Description)
 	if err != nil {
 		return nil, fmt.Errorf("create privacy exact secret failed: %w", err)

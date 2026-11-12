@@ -285,6 +285,28 @@ import * as $models from "./models.js";
  */
 
 /**
+ * 导入接口的桌面 DTO 只返回掩码和来源，原值由 service 临时持有。
+ * @typedef {$models.PrivacyConfigImportCandidate} PrivacyConfigImportCandidate
+ */
+
+/**
+ * PrivacyConfigImportFile 只包含用户主动选择的文件内容，不接受后端文件路径。
+ * @typedef {$models.PrivacyConfigImportFile} PrivacyConfigImportFile
+ */
+
+/**
+ * @typedef {$models.PrivacyConfigImportFileResult} PrivacyConfigImportFileResult
+ */
+
+/**
+ * @typedef {$models.PrivacyConfigImportPreview} PrivacyConfigImportPreview
+ */
+
+/**
+ * @typedef {$models.PrivacyConfigImportResult} PrivacyConfigImportResult
+ */
+
+/**
  * PrivacyExactSecretInfo 本地精确敏感值列表响应；不包含 secret_value 明文。
  * @typedef {$models.PrivacyExactSecretInfo} PrivacyExactSecretInfo
  */

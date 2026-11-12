@@ -80,7 +80,7 @@ export const initWails = async () => {
   return wailsInitPromise;
 };
 
-const getWailsMethod = (methodName, { optional = false } = {}) => {
+export const getWailsMethod = (methodName, { optional = false } = {}) => {
   const method = WailsApp?.[methodName];
   if (typeof method === 'function') {
     return method;
