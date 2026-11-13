@@ -117,17 +117,23 @@ export const requestPrivacySummary = (scan) => {
   if (!scan) return null;
   const parts = [];
   const blocked = scan.action === 'blocked';
+  const failOpen = scan.fail_open === true || scan.skipped_reason === 'privacy_scan_failed_fail_open' || scan.skipped_reason === 'privacy_scan_over_limit_fail_open';
   const truncated = scan.truncated || scan.skipped_reason === 'scan_truncated';
   const skipped = !truncated && Boolean(scan.skipped_reason);
-  if (blocked) parts.push('已拦截');
+  if (blocked) parts.push(scan.blocked_code === 'privacy_invalid_request' ? '请求格式错误' : '已拦截');
+  else if (failOpen) {
+    parts.push('已原文放行', '隐私保护未完成');
+    if (scan.skipped_reason === 'privacy_scan_over_limit_fail_open') parts.push('扫描超限');
+    else parts.push(scan.failure_reason || '本地隐私处理失败');
+  }
   else if (scan.action === 'disabled') parts.push('扫描未开启');
   else if (scan.action === 'detect') parts.push('仅检测');
   else if (scan.action === 'redact') {
     if (scan.changed === true) parts.push('已脱敏');
     else if (!truncated && !skipped) parts.push(scan.changed === false ? '已扫描' : '脱敏模式');
   }
-  if (truncated) parts.push('扫描截断');
-  if (skipped) {
+  if (truncated && !failOpen) parts.push('扫描截断');
+  if (skipped && !failOpen) {
     const reason = privacySkipLabels[scan.skipped_reason];
     parts.push(reason ? `跳过扫描（${reason}）` : '跳过扫描');
   }
@@ -135,12 +141,12 @@ export const requestPrivacySummary = (scan) => {
   if (Number.isInteger(scan.hit_count)) parts.push(`${scan.hit_count} 次规则命中`);
   if (scan.scan_count > 1) parts.push(`共扫描 ${scan.scan_count} 次`);
   if (blocked && scan.blocked_code) parts.push(scan.blocked_code);
-  return { text: parts.join(' · '), tone: blocked ? 'text-danger' : truncated || skipped ? 'text-warn' : 'text-fg' };
+  return { text: parts.join(' · '), tone: blocked ? 'text-danger' : failOpen || truncated || skipped ? 'text-warn' : 'text-fg' };
 };
 
 const restoreStatusLabels = {
   failed: '回填失败', interrupted: '传输中断', upstream_error: '上游错误',
-  disabled: '回填未开启', not_applicable: '不适用', pending: '回填处理中'
+  disabled: '回填未开启', bypassed: '本轮已停用回填', not_applicable: '不适用', pending: '回填处理中'
 };
 
 const deliveryFields = (text, tool) => {

@@ -24,6 +24,20 @@ const base = {
   status: 'completed'
 };
 
+test('原文放行明确提示保护未完成，不显示已脱敏或仅截断', () => {
+  assert.match(requestPrivacySummary({ action: 'blocked', blocked_code: 'privacy_invalid_request' }).text, /^请求格式错误/);
+  for (const skipped_reason of ['privacy_scan_failed_fail_open', 'privacy_scan_over_limit_fail_open']) {
+    const summary = requestPrivacySummary({ action: 'redact', changed: false, fail_open: true,
+      truncated: skipped_reason.includes('over_limit'), skipped_reason, hit_count: 2,
+      failure_reason: '加密推理项的可见内容需要脱敏，无法原样重放' });
+    assert.equal(summary.tone, 'text-warn');
+    assert.match(summary.text, /已原文放行 · 隐私保护未完成/);
+    assert.doesNotMatch(summary.text, /已脱敏|扫描截断|跳过扫描/);
+    assert.match(summary.text, skipped_reason.includes('over_limit') ? /扫描超限/ : /加密推理项/);
+  }
+  assert.match(responsePrivacySummary({ status: 'bypassed' }).text, /本轮已停用回填/);
+});
+
 test('请求隐私摘要区分实际改写、完整扫描及旧记录', () => {
   assert.equal(requestPrivacySummary({ restore: { status: 'disabled' } }), null);
   assert.equal(requestPrivacySummary({ action: 'redact' }).text, '脱敏模式');

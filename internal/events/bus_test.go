@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+func TestPrivacyWarningBroadcastKeepsOnlySafeFields(t *testing.T) {
+	bus := NewEventBus(slog.New(slog.NewTextHandler(io.Discard, nil))).(*eventBus)
+	broadcaster := &captureBroadcaster{events: make(chan capturedFrontendEvent, 1)}
+	bus.SetSSEBroadcaster(broadcaster)
+	bus.processEvent(Event{Type: EventPrivacyWarning, Data: map[string]interface{}{
+		"request_id": "notice", "warning_codes": []string{"request_fail_open"}, "credential_raw": "SYNTHETIC-PRIVATE", "message": "SYNTHETIC-PRIVATE",
+	}})
+	select {
+	case event := <-broadcaster.events:
+		if event.eventType != "notification" || event.data["kind"] != "privacy_warning" || len(event.data) != 3 {
+			t.Fatal(event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("未广播隐私通知")
+	}
+}
+
 func TestRequestUpdateWhitelistKeepsRetryAnchors(t *testing.T) {
 	filter := NewEventBus(nil).(*eventBus).filters[EventRequestUpdated]
 	at := "2026-10-30T00:00:00.125000Z"

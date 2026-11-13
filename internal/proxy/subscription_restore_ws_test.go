@@ -25,6 +25,35 @@ import (
 
 func (f liveRestoreFilter) CurrentSnapshot() *privacy.Snapshot { return f.Snapshot }
 
+// 保留历史审核探针用于打印解析差异，生产链路已移除快速归属预判。
+func subscriptionWSRouteHint(raw []byte) subscriptionWSRoute {
+	route := subscriptionWSRoute{typ: strings.TrimSpace(gjson.GetBytes(raw, "type").Str),
+		responseID: gjson.GetBytes(raw, "response.id").Str, streamID: gjson.GetBytes(raw, "stream_id").Str}
+	if route.responseID == "" {
+		route.responseID = gjson.GetBytes(raw, "response_id").Str
+	}
+	if route.responseID == "" && subscriptionWSControlReceipt(route.typ) {
+		route.responseID = gjson.GetBytes(raw, "steer.previous_response_id").Str
+	}
+	return route
+}
+
+// 旧审核探针的只读适配器；实际交付直接使用规范路由确定的 submission，不再提前授权。
+func (s *subscriptionSubmissionState) responseBypassesRestore(raw []byte) bool {
+	route, valid := decodeSubscriptionWSRoute(raw)
+	if !valid {
+		return false
+	}
+	if subscriptionWSControlReceipt(route.typ) {
+		route.responseID = s.controlRouteID(route)
+	}
+	pendingOnly, _ := subscriptionWSErrorDisposition(raw)
+	target := s.deliveryTarget(route.responseID, route.streamID, route.typ, true, route.typ == "error" && pendingOnly)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return target != nil && target.restoreBypassed && !target.settled
+}
+
 // 同一帧不论是否回填，读侧必须看到相同的归属、用量、思考和内容阶段。
 func TestSubscriptionWSReadMatchesOriginalObservation(t *testing.T) {
 	for _, raw := range []string{
@@ -34,6 +63,8 @@ func TestSubscriptionWSReadMatchesOriginalObservation(t *testing.T) {
 		`{"type":"response.incomplete","response":{"id":"r","incomplete_details":{"reason":"interrupted"}}}`,
 		`{"type":"error","error":{"type":"upstream_error","message":"synthetic"}}`,
 		`{"type":"response.steer.accepted","stream_id":"a"}`,
+		`{"type":"response.steer.pending","steer":{"previous_response_id":"r"},"sequence_number":7}`,
+		`{"type":"response.steer.pending","response_id":"r","sequence_number":7}`,
 		`{"type":"codex.metadata","extra":{"nested":[1,2]}}`,
 		`{"type":"response.completed","response_id":"outer","response":{"id":null}}`,
 		`{"type":"response.completed","response_id":42,"response":{"id":"inner"}}`,
@@ -55,8 +86,8 @@ func TestSubscriptionWSReadMatchesOriginalObservation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			on := readSubscriptionWSEvent(frame, msg)
-			off := readSubscriptionWSEvent(frame, restorestream.ValidatedMessage{})
+			on, _ := readSubscriptionWSEvent(frame, msg)
+			off, _ := readSubscriptionWSEvent(frame, restorestream.ValidatedMessage{})
 			if !reflect.DeepEqual(on, off) {
 				t.Fatalf("%d 字节帧的读侧观测不一致: %s\n开 %+v %+v\n关 %+v %+v", size, raw, on, on.result, off, off.result)
 			}
@@ -271,6 +302,7 @@ func TestSubscriptionWSRestorePublishAndSuccessor(t *testing.T) {
 	state, _ := activitySubmissionState()
 	defer state.close("closed")
 	filter := newRestoreTestFilter(t)
+	filter.Settings.OnError = privacy.OnErrorFailClosed
 	i := &subscriptionWSInterceptor{filter: filter, submissions: state}
 	input := func(frame string) (sent, reply []byte) {
 		t.Helper()
@@ -450,5 +482,55 @@ func TestSubscriptionWSRestoreRejectsAmbiguousLane(t *testing.T) {
 	var reported []byte
 	if err := r.Deliver(func(b []byte) error { reported = b; return nil }, nil); err == nil || !bytes.Contains(reported, []byte("privacy_restore_failed")) || bytes.Contains(reported, []byte("ambiguous")) {
 		t.Fatal("上游增量归属不明仍被交付")
+	}
+}
+
+func TestSubscriptionWSFailurePolicy(t *testing.T) {
+	for _, failure := range []string{"publish", "deep"} {
+		for _, mode := range []string{privacy.OnErrorFailOpen, privacy.OnErrorFailClosed} {
+			t.Run(failure+"/"+mode, func(t *testing.T) {
+				state, _ := activitySubmissionState()
+				defer state.close("closed")
+				filter := newRestoreTestFilter(t)
+				filter.Settings.OnError = mode
+				i := &subscriptionWSInterceptor{filter: filter, submissions: state}
+				raw := []byte(fmt.Sprintf(`{"type":"response.create","model":"gpt-5","input":%q}`, routeTestValue))
+				if failure == "deep" {
+					raw = []byte(`{"type":"response.create","metadata":` + strings.Repeat("[", 300) + "0" + strings.Repeat("]", 300) + `}`)
+				}
+				result, err := i.Intercept(context.Background(), subscriptionws.DirectionDownstreamToUpstream, raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if failure == "publish" {
+					filter.Dict.Retire()
+				}
+				var sent, reply []byte
+				if result.Deliver != nil {
+					err = result.Deliver(func(b []byte) error { sent = bytes.Clone(b); return nil }, func(b []byte, after func()) error {
+						reply = bytes.Clone(b)
+						if after != nil {
+							after()
+						}
+						return nil
+					})
+				} else {
+					sent, reply = result.Forward, result.Reply
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == privacy.OnErrorFailOpen {
+					if len(reply) != 0 || !bytes.Equal(sent, raw) {
+						t.Fatal("WebSocket 未按配置完整原文放行", string(reply))
+					}
+					if state.restoring.Load() != 0 {
+						t.Fatal("原文放行后仍安装了回填器")
+					}
+				} else if len(sent) != 0 || !bytes.Contains(reply, []byte("privacy_restore_rejected")) {
+					t.Fatal("WebSocket 未按配置零出站拒绝", string(reply))
+				}
+			})
+		}
 	}
 }

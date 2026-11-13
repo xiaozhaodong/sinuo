@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { normalizePrivacyNotification } from '../pages/requests/utils/privacyWarnings.js';
+import { createPrivacyNotificationGate, enqueuePrivacyNotification } from './privacyToastQueue.js';
 
 export const MAX_VISIBLE_TOASTS = 4;
 const DEFAULT_DURATION = 6500;
@@ -13,9 +15,10 @@ export const normalizeNotification = (input) => {
   if (!candidate) return null;
 
   // useWailsEvents 会同时提供 data 和展开后的字段；优先使用展开后的完整对象。
-  const payload = candidate.kind || candidate.message || candidate.title
+  let payload = candidate.kind || candidate.message || candidate.title
     ? candidate
     : asObject(candidate.data);
+  if (payload?.kind === 'privacy_warning') payload = normalizePrivacyNotification(payload);
   if (!payload || typeof payload.message !== 'string' || payload.message.trim() === '') {
     return null;
   }
@@ -50,6 +53,7 @@ export const normalizeNotification = (input) => {
     reasonLabel: typeof payload.reason_label === 'string' ? payload.reason_label : '',
     reasonDetail: typeof payload.reason_detail === 'string' ? payload.reason_detail : '',
     attempt,
+    ...(kind === 'privacy_warning' ? { warningCodes: payload.warningCodes } : {}),
     duration: Number.isFinite(payload.duration) && payload.duration > 0
       ? payload.duration
       : kind === 'failover' ? 7500 : DEFAULT_DURATION
@@ -83,6 +87,9 @@ export const enqueueNotification = (queue, notification, now = Date.now()) => {
   const current = Array.isArray(queue) ? queue : [];
   const normalized = normalizeNotification(notification);
   if (!normalized) return current;
+  if (normalized.kind === 'privacy_warning') {
+    return activateVisibleToasts(enqueuePrivacyNotification(current, normalized, now), now);
+  }
 
   const existingIndex = current.findIndex((toast) => toast.dedupeKey === normalized.dedupeKey);
   const nextQueue = [...current];
@@ -112,6 +119,7 @@ export const dismissNotification = (queue, toastId, now = Date.now()) => {
 };
 
 const useGlobalToasts = () => {
+  const privacyGate = useRef(null);
   const [toastQueue, setToastQueue] = useState([]);
   const toasts = useMemo(
     () => toastQueue.slice(0, MAX_VISIBLE_TOASTS),
@@ -124,7 +132,9 @@ const useGlobalToasts = () => {
   }, []);
 
   const showToast = useCallback((notification) => {
-    setToastQueue((current) => enqueueNotification(current, notification));
+    if (!privacyGate.current) privacyGate.current = createPrivacyNotificationGate();
+    const accepted = privacyGate.current.accept(notification);
+    if (accepted) setToastQueue((current) => enqueueNotification(current, accepted));
   }, []);
 
   const expireToast = useCallback((toastId, expectedExpiresAt) => {

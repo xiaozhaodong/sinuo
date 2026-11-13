@@ -14,6 +14,7 @@ const TABLE_FIELDS = [
   'sessionId',
   'timestamp',
   'status',
+  'privacyWarnings',
   'model',
   'requestFamily',
   'upstreamName',
@@ -85,7 +86,9 @@ const DETAIL_ONLY_FIELDS = [
 export const COMPARED_FIELDS = Object.freeze([...TABLE_FIELDS, ...DETAIL_ONLY_FIELDS]);
 
 // hasSameData 只做浅比较；NaN 不参与（后端不会下发 NaN 数值）。
-const hasSameData = (left, right) => COMPARED_FIELDS.every((field) => left[field] === right[field]);
+const warningKey = (value) => Array.isArray(value) ? value.join('|') : value || '';
+const hasSameData = (left, right) => COMPARED_FIELDS.every((field) => field === 'privacyWarnings'
+  ? warningKey(left[field]) === warningKey(right[field]) : left[field] === right[field]);
 
 /**
  * 合并新旧两页请求行，未变化的行沿用旧引用。

@@ -40,6 +40,7 @@ func (s *subscriptionSubmissionState) markDispatched(sub *subscriptionSubmission
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub.dispatched = true
+	sub.restoreDecided = true
 	if view != nil {
 		sub.restore = restorestream.New(nil, "/v1/responses", view)
 		s.restoring.Add(1)
@@ -104,7 +105,7 @@ func (s *subscriptionSubmissionState) deliveryTarget(id, streamID, typ string, s
 }
 
 // 上游错误可能回显请求参数。对下游和请求详情都只提供结构化诊断，保留可操作的错误码。
-func restoreWSErrorFrame(raw []byte) (frame []byte, validRoute bool, err error) {
+func restoreWSErrorFrameForRoute(raw []byte, route subscriptionWSRoute, validRoute bool) (frame []byte, _ bool, err error) {
 	root := gjson.ParseBytes(raw)
 	detail := root.Get("error")
 	kind := ""
@@ -141,23 +142,11 @@ func restoreWSErrorFrame(raw []byte) (frame []byte, validRoute bool, err error) 
 		}
 	}
 	// 错误的归属字段可能会把错误结算给另一条在途响应。仍交付安全诊断，跳过归属。
-	response := root.Get("response")
-	validRoute = !response.Exists() || response.Type == gjson.Null || response.IsObject()
-	for _, field := range []string{"response_id", "stream_id"} {
-		if v := root.Get(field); v.Exists() {
-			if !wsErrorIdentifier(v.Str) {
-				validRoute = false
-			} else {
-				out[field] = v.Str
-			}
-		}
+	if validRoute && route.responseID != "" {
+		out["response_id"] = route.responseID
 	}
-	if nested := response.Get("id"); nested.Exists() {
-		if !wsErrorIdentifier(nested.Str) || out["response_id"] != nil && out["response_id"] != nested.Str {
-			validRoute = false
-		} else {
-			out["response_id"] = nested.Str
-		}
+	if validRoute && route.streamID != "" {
+		out["stream_id"] = route.streamID
 	}
 	if !validRoute {
 		delete(out, "response_id")
@@ -179,35 +168,28 @@ func wsErrorIdentifier(s string) bool {
 	return true
 }
 
-func (s *subscriptionSubmissionState) duplicateRestoreTerminal(id, streamID string, restoring bool) bool {
+func (s *subscriptionSubmissionState) duplicateRestoreTerminal(id, streamID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sub := s.byResponseID[id]; sub != nil {
 		return sub.terminalRead != nil && (streamID == "" || sub.StreamID == "" || streamID == sub.StreamID)
 	}
 	end, ok := s.recentIDs[id]
-	return ok && (restoring || end.restored) && (streamID == "" || end.streamID == "" || streamID == end.streamID)
+	return ok && (streamID == "" || end.streamID == "" || streamID == end.streamID)
 }
 
 // 控制回执可在终态前后到达。序号偏移必须在串行写协程读取，此时队列前面的补发已经完成。
-func (s *subscriptionSubmissionState) controlReceipt(payload []byte) subscriptionws.InterceptResult {
+func (s *subscriptionSubmissionState) controlReceipt(payload []byte, route subscriptionWSRoute) subscriptionws.InterceptResult {
 	res := subscriptionws.InterceptResult{Forward: payload}
 	if !gjson.GetBytes(payload, "sequence_number").Exists() {
 		return res
 	}
-	id := gjson.GetBytes(payload, "response_id").Str
-	if id == "" {
-		id = gjson.GetBytes(payload, "steer.previous_response_id").Str
-	}
-	streamID := gjson.GetBytes(payload, "stream_id").Str
-	if id == "" {
-		id = s.controlResponseID(streamID)
-	}
+	id := s.controlRouteID(route)
 	if id == "" {
 		return res
 	}
 	res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
-		out, err := restorestream.OffsetWebSocketSequence(payload, s.controlSequenceOffset(id, streamID))
+		out, err := restorestream.OffsetWebSocketSequence(payload, s.controlSequenceOffset(id, route.streamID))
 		if err != nil {
 			return rejectRestoreMessage(send, nil)
 		}
@@ -272,28 +254,17 @@ func (i *subscriptionWSInterceptor) currentSnapshot() *privacy.Snapshot {
 	return nil
 }
 
-func (i *subscriptionWSInterceptor) shouldRestoreMessages() bool {
-	if i.submissions.restoring.Load() > 0 {
-		return true
-	}
-	s := i.currentSnapshot()
-	return s != nil && s.Settings.Mode == privacy.ModeRedact && s.Settings.ResponseRestoreEnabled
-}
-
 // 队列中保留原始消息。读侧关联并计量原文，写侧逐消息回填和确认交付。
 func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptionws.InterceptResult, error) {
 	res := subscriptionws.InterceptResult{Forward: payload}
-	restoring := i.shouldRestoreMessages()
-	var msg restorestream.ValidatedMessage
-	if restoring {
-		var err error
-		msg, err = restorestream.ValidateMessage(payload)
-		if err != nil {
-			res.Deliver = rejectRestoreMessage
-			return res, nil
-		}
-	}
-	ev, err := i.submissions.observeUpstream(payload, msg)
+	snapshot := i.currentSnapshot()
+	enabled := snapshot != nil && snapshot.Settings.Mode == privacy.ModeRedact && snapshot.Settings.ResponseRestoreEnabled
+	// 结构凭证只说明本地回填是否可处理，不能按连接开关直接拒绝某条响应。
+	msg, _ := restorestream.ValidateMessage(payload)
+	ev, valid := readSubscriptionWSEvent(payload, msg)
+	protectUnowned := enabled || i.submissions.restoring.Load() > 0
+	strict := protectUnowned || i.submissions.bypassed.Load() > 0
+	ev, err := i.submissions.observeDecodedUpstream(payload, msg, ev, valid, strict, protectUnowned)
 	if errors.Is(err, restorestream.ErrDelivery) {
 		res.Deliver = rejectRestoreMessage
 		return res, nil
@@ -312,47 +283,45 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 			res.Deliver = rejectRestoreMessage
 			return res, nil
 		}
-		if ev.connectionExpired {
-			res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
-				if err := send(payload); err != nil {
-					return err
-				}
-				return errors.New("upstream WebSocket connection expired")
-			}
-			return res, nil
-		}
-		if ev.submission == nil {
+		if ev.submission == nil && !ev.connectionExpired {
 			return res, nil
 		}
 	}
+	if ev.connectionExpired {
+		res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
+			if err := send(payload); err != nil {
+				return err
+			}
+			return errors.New("upstream WebSocket connection expired")
+		}
+		return res, nil
+	}
 	if ev.controlReceipt {
-		return i.submissions.controlReceipt(payload), nil
+		return i.submissions.controlReceipt(payload, subscriptionWSRoute{ev.typ, ev.responseID, ev.streamID}), nil
 	}
 	if ev.metadata {
 		return res, nil
 	}
 	sub := ev.submission
-	if !restoring {
-		if ev.terminal {
-			res.Forwarded = i.submissions.finishTerminal(sub, ev.responseID, ev.result)
+	if sub == nil || ev.typ == "" {
+		if protectUnowned {
+			res.Deliver = rejectRestoreMessage
 		}
 		return res, nil
 	}
-	if sub == nil || ev.typ == "" {
-		res.Deliver = rejectRestoreMessage
-		return res, nil
-	}
-	if sub.ServerInitiated && ev.typ == "response.created" && sub.restore == nil {
-		// 服务端后继没有客户端 create。独立固定新响应的字典代际。
-		view, err := i.currentSnapshot().OpenResponseRestoreView()
+	if sub.ServerInitiated && !sub.restoreDecided {
+		// 只在首个 created 上决定策略；重复 created 与后来切换配置不能重新开启保护。
+		opening, err := i.prepareSuccessor(sub, snapshot, msg)
 		if err != nil {
 			res.Deliver = rejectRestoreMessage
 			return res, nil
 		}
-		if view != nil {
-			view.BindToolReplayScope(privacy.Request{UpstreamType: privacy.UpstreamTypeSubscription, SessionID: sub.SessionID})
-			sub.successorView = view
-			i.submissions.markDispatched(sub, view)
+		if opening != nil {
+			writer := sub.restore
+			res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
+				return writer.DeliverPreparedMessage(opening, send)
+			}
+			return res, nil
 		}
 	}
 	if sub.restore != nil {
@@ -378,6 +347,43 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 		}
 	}
 	return res, nil
+}
+
+// 首帧在读侧完成全部预处理，写侧只发送准备好的帧并确认交付。
+// 因而同响应后续帧即使已读入队列，也能看到唯一且固定的保护/放行状态。
+func (i *subscriptionWSInterceptor) prepareSuccessor(sub *subscriptionSubmission, snapshot *privacy.Snapshot, msg restorestream.ValidatedMessage) ([]byte, error) {
+	sub.restoreDecided = true
+	view, result, err := snapshot.OpenResponseRestoreView(msg.RestoreSupported())
+	var opening []byte
+	if view != nil {
+		view.BindToolReplayScope(privacy.Request{UpstreamType: privacy.UpstreamTypeSubscription, SessionID: sub.SessionID})
+		writer := restorestream.New(nil, "/v1/responses", view)
+		opening, err = writer.PrepareOpeningMessage(msg)
+		if err == nil {
+			// 只有全部处理成功才发布写入器；字典交付计数仍等实际发送成功。
+			i.submissions.mu.Lock()
+			sub.successorView, sub.restore = view, writer
+			i.submissions.restoring.Add(1)
+			i.submissions.mu.Unlock()
+			return opening, nil
+		}
+		writer.Release()
+		view.Release()
+		if errors.Is(err, restorestream.ErrLocalCapacity) {
+			result, err = result.ResolveResponseRestoreFailure()
+		}
+	}
+	if err != nil {
+		sub.restoreRejected = true
+		sub.PrivacyState.RecordRestore(handlers.RestoreSummary{Status: "failed", Reason: "privacy_restore_failed"})
+		return nil, err
+	}
+	if result.FailOpen {
+		i.submissions.markRestoreBypassed(sub)
+		sub.PrivacyState.RecordRestore(handlers.RestoreSummary{Status: "bypassed", Reason: result.SafeFailureMessage()})
+		i.warn("privacy_restore_bypassed", "request_id", sub.RequestID, "message", "已按配置原文放行，隐私保护未完成", "reason", result.SafeFailureMessage())
+	}
+	return nil, nil
 }
 
 func rejectRestoreMessage(send func([]byte) error, _ func([]byte, func()) error) error {

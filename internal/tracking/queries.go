@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"sinuo/internal/privacy"
 	timezonepolicy "sinuo/internal/timezone"
 	"sinuo/internal/tokenusage"
 )
@@ -125,7 +126,7 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	cache_read_tokens,
 	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
 	cache_read_cost_usd, total_cost_usd,
-	CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+	CAST(created_at AS TEXT), CAST(updated_at AS TEXT), COALESCE(privacy_scan_json, '')
 	FROM request_logs WHERE 1=1`
 
 func resolveRequestQuerySource(upstreamType string) requestQuerySource {
@@ -279,6 +280,7 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 		var endAt, routeDecisionAt timezonepolicy.NullDBTime
 		var input, output, creation, creation5m, creation1h, read sql.NullInt64
 		var inputCost, outputCost, creationCost, readCost, totalCost sql.NullFloat64
+		var privacySummary string
 		err := rows.Scan(
 			&detail.ID, &detail.RequestID,
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
@@ -299,11 +301,13 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 			&inputCost, &outputCost,
 			&creationCost, &readCost, &totalCost,
 			&createdAt, &updatedAt,
+			&privacySummary,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request detail: %w", err)
 		}
 		detail.StartTime = startAt.Time.UTC()
+		detail.PrivacyWarnings = privacy.WarningsFromSummary(privacySummary)
 		if endAt.Valid {
 			value := endAt.Time.UTC()
 			detail.EndTime = &value
@@ -477,6 +481,8 @@ type UsageSummary struct {
 
 // RequestDetail represents a detailed request record
 type RequestDetail struct {
+	PrivacyWarnings []string `json:"privacy_warnings,omitempty"`
+
 	SessionID string `json:"session_id"`
 	ID        int64  `json:"id"`
 	RequestID string `json:"request_id"`

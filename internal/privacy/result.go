@@ -43,6 +43,9 @@ const (
 // ApplyResult 一次过滤的结果。Body 始终可直接转发：
 // 零命中 / 仅检测 / 关闭时与输入 byte-identical。
 type ApplyResult struct {
+	failurePolicy   *failurePolicy
+	failureReason   restoreRejection
+	FailOpen        bool          `json:"fail_open,omitempty"`
 	RemaskDuration  time.Duration `json:"-"`
 	RemaskMatches   int           `json:"-"`
 	RestoreStatus   string        `json:"-"`

@@ -55,9 +55,10 @@ type PrivacyRequestState struct {
 }
 
 type privacyCacheEntry struct {
-	view *privacy.RestoreView
-	body []byte
-	err  error
+	view   *privacy.RestoreView
+	result privacy.ApplyResult
+	body   []byte
+	err    error
 }
 
 // NewPrivacyRequestState 创建请求级隐私状态
@@ -96,13 +97,14 @@ func (s *PrivacyRequestState) lookup(fingerprint string) (*privacyCacheEntry, bo
 	return entry, ok
 }
 
-func (s *PrivacyRequestState) store(fingerprint string, body []byte, view *privacy.RestoreView, err error) {
+func (s *PrivacyRequestState) store(fingerprint string, result privacy.ApplyResult, view *privacy.RestoreView, err error) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache[fingerprint] = &privacyCacheEntry{body: body, view: view, err: err}
+	result.Restore = nil
+	s.cache[fingerprint] = &privacyCacheEntry{body: result.Body, result: result, view: view, err: err}
 }
 
 // SetResultRecorder 挂载真实扫描结果的持久化回调（加锁设置）。
@@ -176,6 +178,7 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 		}
 		if attempt != nil {
 			attempt.view = entry.view
+			attempt.original, attempt.result, attempt.request = body, entry.result, req
 		}
 		return entry.body, nil
 	}
@@ -192,7 +195,7 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 		policyErr := AsPrivacyPolicyError(err)
 		state.notifyResult(result, policyErr)
 		if cacheable {
-			state.store(fingerprint, nil, nil, err)
+			state.store(fingerprint, privacy.ApplyResult{}, nil, err)
 		}
 		return nil, err
 	}
@@ -205,10 +208,11 @@ func ApplyPrivacyFilter(filter PrivacyFilter, r *http.Request, req privacy.Reque
 	}
 	if attempt != nil {
 		attempt.view = view
+		attempt.original, attempt.result, attempt.request = body, result, req
 	}
 	state.notifyResult(result, nil)
 	if cacheable {
-		state.store(fingerprint, result.Body, view, nil)
+		state.store(fingerprint, result, view, nil)
 	}
 	return result.Body, nil
 }
@@ -243,6 +247,9 @@ func AsPrivacyPolicyError(err error) *privacy.PolicyError {
 
 // PrivacyFailureReason 将策略错误映射为 lifecycle 失败原因
 func PrivacyFailureReason(policyErr *privacy.PolicyError) string {
+	if policyErr != nil && policyErr.Code == privacy.CodeInvalidRequest {
+		return privacy.CodeInvalidRequest
+	}
 	if policyErr != nil && policyErr.Code == privacy.CodeScanFailed {
 		return PrivacyFailureReasonScanFailed
 	}
@@ -267,11 +274,20 @@ func WritePrivacyPolicyErrorResponse(w http.ResponseWriter, policyErr *privacy.P
 // logPrivacyApplyResult 记录命中摘要：规则名、命中数、耗时、跳过原因。
 func logPrivacyApplyResult(req privacy.Request, result privacy.ApplyResult, err error) {
 	if err != nil {
+		if policy := AsPrivacyPolicyError(err); policy != nil && policy.Code == privacy.CodeInvalidRequest {
+			slog.Warn("请求格式错误", "request_id", req.RequestID, "code", policy.Code, "reason", policy.SafeRestoreMessage())
+			return
+		}
 		slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] 请求被策略拒绝: %v (path=%s upstream=%s)",
 			req.RequestID, err, req.Path, req.UpstreamType))
 		return
 	}
 	if result.Action == privacy.ModeDisabled {
+		return
+	}
+	if result.FailOpen {
+		slog.Warn("🛡️ [隐私保护] 已按配置原文放行，隐私保护未完成", "request_id", req.RequestID,
+			"reason", result.SkippedReason, "detail", result.SafeFailureMessage(), "path", req.Path)
 		return
 	}
 	if result.Changed || result.HitCount > 0 || result.Truncated || result.SkippedReason != "" {
@@ -310,6 +326,14 @@ type privacyScanRuleJSON struct {
 // 请求侧记录最后一次真实扫描，未扫描时只写已经确认的响应状态。
 // PolicyError 短路时同样写入（action=blocked + blocked_code，取实际 PolicyError.Code）。
 func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyError, scanCount int, restore ...RestoreSummary) string {
+	warnings := privacy.RequestWarnings(result, policyErr)
+	if len(restore) > 0 && !(result.FailOpen && restore[0].Status == "bypassed") {
+		warnings = privacy.MergeWarnings(warnings, privacy.ResponseWarnings(restore[0].Status))
+	}
+	return buildPrivacyScanJSON(result, policyErr, scanCount, warnings, restore...)
+}
+
+func buildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyError, scanCount int, warnings []string, restore ...RestoreSummary) string {
 	var delivery *RestoreSummary
 	if len(restore) > 0 && restore[0].Status != "" {
 		delivery = &restore[0]
@@ -317,12 +341,13 @@ func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyE
 		delivery = &RestoreSummary{Status: result.RestoreStatus}
 	}
 	if scanCount <= 0 || policyErr == nil && (result.Action == "" || result.Action == privacy.ModeDisabled) {
-		if delivery == nil {
+		if delivery == nil && len(warnings) == 0 {
 			return ""
 		}
 		payload, _ := json.Marshal(struct {
-			Restore *RestoreSummary `json:"restore"`
-		}{delivery})
+			Restore  *RestoreSummary `json:"restore"`
+			Warnings []string        `json:"warnings,omitempty"`
+		}{delivery, warnings})
 		return string(payload)
 	}
 
@@ -336,19 +361,26 @@ func BuildPrivacyScanJSON(result privacy.ApplyResult, policyErr *privacy.PolicyE
 		BlockedCode   string                `json:"blocked_code,omitempty"`
 		Changed       bool                  `json:"changed"`
 		SkippedReason string                `json:"skipped_reason,omitempty"`
+		FailOpen      bool                  `json:"fail_open,omitempty"`
+		FailureReason string                `json:"failure_reason,omitempty"`
 		Restore       *RestoreSummary       `json:"restore,omitempty"`
+		Warnings      []string              `json:"warnings,omitempty"`
 	}{
-		Changed:   result.Changed,
-		Action:    result.Action,
-		HitCount:  result.HitCount,
-		Rules:     make([]privacyScanRuleJSON, 0, len(result.RuleHits)),
-		Truncated: result.Truncated,
-		ScanMs:    result.ScanDuration.Milliseconds(),
-		ScanCount: scanCount,
+		Changed:       result.Changed,
+		Action:        result.Action,
+		HitCount:      result.HitCount,
+		Rules:         make([]privacyScanRuleJSON, 0, len(result.RuleHits)),
+		Truncated:     result.Truncated,
+		ScanMs:        result.ScanDuration.Milliseconds(),
+		ScanCount:     scanCount,
+		FailOpen:      result.FailOpen,
+		FailureReason: result.SafeFailureMessage(),
+		Warnings:      warnings,
 	}
 	summary.Restore = delivery
 	switch result.SkippedReason {
-	case privacy.SkippedNonTextBody, privacy.SkippedUnsupportedPath, privacy.SkippedScanTruncated, privacy.SkippedEmptyBody:
+	case privacy.SkippedNonTextBody, privacy.SkippedUnsupportedPath, privacy.SkippedScanTruncated, privacy.SkippedEmptyBody,
+		privacy.SkippedFailOpen, privacy.SkippedOverLimitOpen:
 		summary.SkippedReason = result.SkippedReason
 	case "":
 	default:

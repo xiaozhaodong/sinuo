@@ -13,6 +13,7 @@ import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { RequestTraceCell } from './TraceRail.jsx';
 import RequestTimingCell from './RequestTimingCell.jsx';
 import ModelTag from './ModelTag.jsx';
+import PrivacyWarningBadge from './PrivacyWarningBadge.jsx';
 import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { formatSessionRatio } from '../utils/sessionUsage.js';
@@ -82,7 +83,7 @@ const renderCell = (columnId, request, formatTime) => {
     case 'sessionId':
       return <span className="inline-block font-mono text-xs text-fg-muted" title={request.sessionId}>{request.sessionId?.slice(0, 8) || '—'}</span>;
     case 'status':
-      return <RequestTraceCell request={request} />;
+      return <span className="inline-flex items-center gap-2"><RequestTraceCell request={request} /><PrivacyWarningBadge codes={request.privacyWarnings} /></span>;
     case 'model':
       return <ModelTag model={request.model} alert={buildModelAlert(request)} compact />;
     case 'requestFamily': {

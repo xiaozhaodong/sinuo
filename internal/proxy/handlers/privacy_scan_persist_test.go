@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +16,45 @@ import (
 
 	"sinuo/internal/privacy"
 )
+
+func TestPrivacyWarningsPersistAcrossRescanAndPublish(t *testing.T) {
+	state := NewPrivacyRequestState("warning-history")
+	var last string
+	state.SetSummaryRecorder(func(payload string) { last = payload })
+	state.notifyResult(privacy.ApplyResult{Action: privacy.ModeRedact, FailOpen: true, RestoreStatus: "bypassed"}, nil)
+	if got := privacy.WarningsFromSummary(last); !reflect.DeepEqual(got, []string{privacy.WarningRequestFailOpen}) {
+		t.Fatal(got)
+	}
+	state.notifyResult(privacy.ApplyResult{Action: privacy.ModeRedact, Changed: true, RestoreStatus: "pending"}, nil)
+	state.RecordRestore(RestoreSummary{Status: "failed"})
+	state.RecordRestore(RestoreSummary{Status: "completed", Text: 1})
+	state.summary.resolvePublish(privacy.ApplyResult{Action: privacy.ModeDisabled}, nil)
+	want := []string{privacy.WarningRequestFailOpen, privacy.WarningResponseFailed}
+	if got := privacy.WarningsFromSummary(last); !reflect.DeepEqual(got, want) {
+		t.Fatalf("重试/配置切换抹掉异常: %s", last)
+	}
+}
+
+func TestPrivacyWarningsConcurrentResponseOnly(t *testing.T) {
+	state := NewPrivacyRequestState("successor-warning")
+	var last string
+	state.SetSummaryRecorder(func(payload string) { last = payload })
+	var wg sync.WaitGroup
+	for n := 0; n < 40; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state.RecordRestore(RestoreSummary{Status: "bypassed", Reason: "local_capacity"})
+		}()
+	}
+	wg.Wait()
+	if got := privacy.WarningsFromSummary(last); !reflect.DeepEqual(got, []string{privacy.WarningResponseBypassed}) {
+		t.Fatal(got)
+	}
+	if gjson.Get(last, "scan_count").Exists() {
+		t.Fatal("successor 不应伪造请求扫描")
+	}
+}
 
 // TestBuildPrivacyScanJSON_Actions 四分支：redact/detect/blocked/disabled。
 func TestBuildPrivacyScanJSON_Actions(t *testing.T) {

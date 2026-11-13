@@ -355,6 +355,9 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 				"request_id_allocation_failed", "unable to allocate request ID")}, nil
 		}
 		privacyState = newSubscriptionPrivacyRequestState(requestID, nil)
+		if i.submissions.observer != nil {
+			i.submissions.observer.BindPrivacyState(privacyState, nil)
+		}
 		requestContext = context.WithValue(ctx, "conn_id", requestID) //nolint:staticcheck
 		requestContext = handlers.WithPrivacyRequestState(requestContext, privacyState)
 	}
@@ -385,8 +388,11 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 					after := i.submissions.reject(submission, reject)
 					return reply(subscriptionWSErrorReply(reject.StatusCode, reject.Code, reject.Message, submissionStreamID(submission)), after)
 				}
-				i.submissions.markDispatched(submission, view)
-				return send(filtered)
+				i.submissions.markDispatched(submission, handlers.PrivacyAttemptView(req))
+				if handlers.PrivacyAttemptBypassed(req) {
+					i.submissions.markRestoreBypassed(submission)
+				}
+				return send(handlers.PrivacyAttemptBody(req, filtered))
 			}
 		}
 		return res, nil

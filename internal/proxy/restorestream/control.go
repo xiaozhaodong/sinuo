@@ -10,17 +10,8 @@ import (
 // 一条 SSE 只对应一个响应，每个输出位置至多对应一个工具调用。
 func (w *Writer) checkIdentity(raw []byte) error {
 	for _, path := range []string{"response_id", "response.id"} {
-		if id := gjson.GetBytes(raw, path).Str; id != "" {
-			if w.responseID != "" && w.responseID != id {
-				return ErrDelivery
-			}
-			if w.responseID == "" {
-				stored, err := w.retainID(id)
-				if err != nil {
-					return err
-				}
-				w.responseID = stored
-			}
+		if err := w.checkResponseID(gjson.GetBytes(raw, path).Str); err != nil {
+			return err
 		}
 	}
 	idx := gjson.GetBytes(raw, "output_index")
@@ -41,6 +32,47 @@ func (w *Writer) checkIdentity(raw []byte) error {
 	return nil
 }
 
+// WS 归属和正文必须采用同一解码对象，尤其不能再次用快速解析解释 Unicode 标识。
+func (w *Writer) checkDecodedIdentity(m object) error {
+	for _, id := range []string{str(m, "response_id"), str(obj(m, "response"), "id")} {
+		if err := w.checkResponseID(id); err != nil {
+			return err
+		}
+	}
+	if _, present := m["output_index"]; present {
+		for _, id := range []string{str(m, "call_id"), str(obj(m, "item"), "call_id")} {
+			if id == "" {
+				continue
+			}
+			i, valid := index(m, "output_index")
+			if !valid {
+				return ErrDelivery
+			}
+			if err := w.bindCall(i, id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (w *Writer) checkResponseID(id string) error {
+	if id == "" {
+		return nil
+	}
+	if w.responseID != "" && w.responseID != id {
+		return ErrDelivery
+	}
+	if w.responseID == "" {
+		stored, err := w.retainID(id)
+		if err != nil {
+			return err
+		}
+		w.responseID = stored
+	}
+	return nil
+}
+
 func (w *Writer) bindCall(i int, id string) error {
 	if id == "" {
 		return nil
@@ -52,7 +84,7 @@ func (w *Writer) bindCall(i int, id string) error {
 		return nil
 	}
 	if len(w.callIDs) >= 256 {
-		return ErrDelivery
+		return ErrLocalCapacity
 	}
 	stored, err := w.retainID(id)
 	if err != nil {
@@ -154,7 +186,7 @@ func (w *Writer) control(wire, raw []byte, typ, name string) (bool, error) {
 // 输出、调用与响应的身份字段要留到终态交叉校验；与逻辑文本预算分开核算。
 func (w *Writer) retainID(id string) (string, error) {
 	if len(id) > maxBytes-w.identityBytes {
-		return "", ErrDelivery
+		return "", ErrLocalCapacity
 	}
 	w.identityBytes += len(id)
 	return strings.Clone(id), nil

@@ -928,6 +928,8 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {string} replaced_text
  * @property {PrivacyRuleHitInfo[] | null} rule_hits
  * @property {number} scan_duration_ms
+ * @property {number} remask_matches
+ * @property {string} preview_warning
  */
 
 /**
@@ -1034,6 +1036,7 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
 /**
  * RequestRecord 请求记录
  * @typedef {Object} RequestRecord
+ * @property {string[] | null} [privacy_warnings]
  * @property {number | null} upstream_write_ms - 最终尝试写完偏移（毫秒），列表首字起点
  * @property {number | null} first_content_ms - 首个内容偏移（毫秒），只写一次
  * @property {number | null} first_text_ms - 首个正文偏移（毫秒），只写一次

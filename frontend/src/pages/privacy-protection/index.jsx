@@ -94,11 +94,11 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
         />
         字节
       </label>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1.5" title="扫描超限独立按此设置处理；开启响应回填时，截断扫描将整份原文放行并停用本轮回填。">
         超限
         <CustomSelect size="xs" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-32" />
       </span>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1.5" title="出错放行会发送隐私处理前的完整原文，并在请求详情中提示隐私保护未完成；不会发送部分改写的正文。">
         出错
         <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-24" />
       </span>

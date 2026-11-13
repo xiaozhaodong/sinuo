@@ -4,6 +4,7 @@ package restorestream
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"sinuo/internal/privacy"
@@ -12,6 +13,10 @@ import (
 const maxBytes = 4 << 20
 
 var ErrDelivery = errors.New("privacy_restore_failed: 响应回填不完整")
+
+// ErrLocalCapacity 仅表示本地预算或字典能力不足，不能用于协议与归属错误。
+// 只有尚未交付的服务端后继首帧可以据此撤销回填并应用失败策略。
+var ErrLocalCapacity = fmt.Errorf("%w: 本地回填能力不足", ErrDelivery)
 
 type Dictionary interface{ Lookup(string) (string, bool) }
 
@@ -53,7 +58,7 @@ func (m *matcher) feed(s string, d *countedValues, final bool) (string, error) {
 				v = id
 			}
 			if len(v) > d.limit-out.Len() {
-				return "", ErrDelivery
+				return "", ErrLocalCapacity
 			}
 			out.WriteString(v)
 			s = s[n:]
@@ -78,7 +83,7 @@ func (m *matcher) feed(s string, d *countedValues, final bool) (string, error) {
 		}
 	}
 	if len(s) > d.limit-out.Len() {
-		return "", ErrDelivery
+		return "", ErrLocalCapacity
 	}
 	if out.Len() == 0 {
 		return s, nil

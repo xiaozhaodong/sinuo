@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ type restoreInput struct {
 	conversationObject, conversationID bool
 	items                              map[int]*restoreInputItem
 	hasEncryptedFunction               bool
+	sealedThinking                     map[[2]int]struct{}
 }
 type restoreInputItem struct {
 	kind, id, role                           string
@@ -26,34 +28,43 @@ type restoreInputItem struct {
 func (r *restoreInput) observe(path []pathElem, token any) error {
 	if r.wrapped != nil && len(path) > 0 && path[0].Key == "response" {
 		if len(path) == 1 && token != json.Delim('{') {
-			return fmt.Errorf("invalid response wrapper")
+			return requestFormatError("response 必须是对象")
 		}
 		return r.wrapped.observe(path[1:], token)
 	}
 	text, isString := token.(string)
+	// 兼容上游可能返回缺失或空签名的思考块；其他签名形式保守地按不可改写处理。
+	// 在同次遍历中按消息与内容块收集，字段前后顺序不影响最终判断。
+	if r.claude && len(path) == 5 && path[0].Key == "messages" && path[1].Index >= 0 &&
+		path[2].Key == "content" && path[3].Index >= 0 && path[4].Key == "signature" && (!isString || text != "") {
+		if r.sealedThinking == nil {
+			r.sealedThinking = make(map[[2]int]struct{})
+		}
+		r.sealedThinking[[2]int{path[1].Index, path[3].Index}] = struct{}{}
+	}
 	if len(path) == 1 {
 		if path[0].Key == "stream" {
 			if _, ok := token.(bool); !ok {
-				return fmt.Errorf("invalid stream")
+				return requestFormatError("stream 必须是布尔值")
 			}
 		}
 		if !r.claude {
 			switch path[0].Key {
 			case "response":
-				return fmt.Errorf("unexpected response wrapper")
+				return requestFormatError("HTTP 请求不支持 response 包装")
 			case "previous_response_id", "conversation":
 				if token == json.Delim('{') && path[0].Key == "conversation" {
 					r.conversationObject = true
 				}
 				if token != nil && !isString && !(path[0].Key == "conversation" && token == json.Delim('{')) {
-					return fmt.Errorf("invalid reference")
+					return requestFormatError("历史引用字段类型错误")
 				}
 			}
 		}
 	}
 	if !r.claude && len(path) == 2 && path[0].Key == "conversation" && path[1].Key == "id" {
 		if !isString || text == "" {
-			return fmt.Errorf("invalid conversation id")
+			return requestFormatError("conversation.id 必须是非空字符串")
 		}
 		r.conversationID = true
 	}
@@ -98,7 +109,7 @@ func (r *restoreInput) observe(path []pathElem, token any) error {
 			item.arguments = text
 		case "encrypted_content":
 			if !isString && token != nil {
-				return fmt.Errorf("invalid encrypted content")
+				return requestFormatError("encrypted_content 必须是字符串")
 			}
 			item.cipher = text
 		}
@@ -114,11 +125,11 @@ func (r *restoreInput) finish() *PolicyError {
 		}
 	}
 	if r.conversationObject && !r.conversationID {
-		return restoreError("conversation 缺少会话标识")
+		return invalidRequest("conversation 缺少会话标识")
 	}
 	for _, item := range r.items {
 		if item.kind == "item_reference" && item.id == "" {
-			return restoreError("item_reference 缺少历史标识")
+			return invalidRequest("item_reference 缺少历史标识")
 		}
 		if item.cipher == "" || item.kind == "reasoning" || item.kind == "compaction" {
 			continue
@@ -188,8 +199,11 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 	if len(s.RestoreKey) != 32 || s.CompileError != "" {
 		return restoreError("可逆脱敏密钥或规则快照不可用")
 	}
+	if s.Dict == nil {
+		return restoreError("进程回填字典不可用")
+	}
 	if !utf8.Valid(body) {
-		return restoreError("可逆脱敏需要有效 UTF-8")
+		return invalidRequest("请求需要有效 UTF-8")
 	}
 	replay := restoreInput{claude: isClaudeMessagesPath(req.Path), items: make(map[int]*restoreInputItem)}
 	if req.WebSocket {
@@ -203,6 +217,13 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 		return match(p) || replay.claude && claudeThinking(p) || !replay.claude && reasoningText(p)
 	}, &replay)
 	if err != nil {
+		if reason, ok := err.(requestFormatError); ok {
+			return invalidRequest(restoreRejection(reason))
+		}
+		// 普通遍历无回填深度限制，只在失败路径复验语法；不把本地深度上限当成请求非法。
+		if _, syntaxErr := walkJSONText(body, nil, nil); syntaxErr != nil || len(bytes.TrimSpace(body)) == 0 || bytes.TrimSpace(body)[0] != '{' {
+			return invalidRequest("请求包含无效 JSON")
+		}
 		return restoreError("可逆脱敏需要无歧义的 JSON 请求")
 	}
 	if e := replay.finish(); e != nil {
@@ -218,8 +239,13 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 			scope = replay.wrapped
 			seg.Path = seg.Path[1:]
 		}
-		seg.sealed = claudeThinking(seg.Path) || !replay.claude && reasoningText(seg.Path) && scope.items[seg.Path[1].Index].kind == "reasoning"
-		if seg.sealed || match(seg.Path) {
+		thinking := replay.claude && claudeThinking(seg.Path)
+		if thinking {
+			_, seg.sealed = scope.sealedThinking[[2]int{seg.Path[1].Index, seg.Path[3].Index}]
+		} else {
+			seg.sealed = !replay.claude && reasoningText(seg.Path) && scope.items[seg.Path[1].Index].kind == "reasoning"
+		}
+		if thinking || seg.sealed || match(seg.Path) {
 			kept = append(kept, seg)
 		}
 	}
@@ -233,10 +259,12 @@ func (s *Snapshot) processRestoreRequest(req Request, body []byte, result *Apply
 	e = s.applyReversible(req, body, result, candidates, kept, view)
 	view.index = nil
 	if e != nil {
+		view.Release()
 		return e
 	}
 	if result.Changed {
 		if e := replay.verifyFunctionReplays(view, result.Body, "input"); e != nil {
+			view.Release()
 			return e
 		}
 	}

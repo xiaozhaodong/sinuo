@@ -95,7 +95,7 @@ func (s *PrivacyService) rebuildSnapshotLocked(ctx context.Context, markCompileE
 	if err != nil {
 		current := s.CurrentSnapshot()
 		if errors.Is(err, privacy.ErrLiteralBudget) && (current.Version == 0 || current.CompileBlocked) {
-			// 旧库超限仍允许管理与删减，开启隐私时由引擎明确拒绝出站。
+			// 旧库超限仍允许管理与删减，开启隐私时由引擎按 on_error 原文放行或拒绝。
 			// 仅保留规则描述供候选校验使用，不伪装成部分编译成功的词典。
 			descriptions := make([]privacy.CompiledRule, len(activeRules))
 			for i, rule := range activeRules {

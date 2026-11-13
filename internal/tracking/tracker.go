@@ -19,6 +19,7 @@ import (
 
 	"sinuo/config"
 	"sinuo/internal/appdir"
+	"sinuo/internal/privacy"
 	timezonepolicy "sinuo/internal/timezone"
 	"sinuo/internal/tokenusage"
 
@@ -2338,6 +2339,7 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 
 	return RequestDetail{
 		ID:                      0, // 热池中的请求还没有数据库ID
+		PrivacyWarnings:         privacy.WarningsFromSummary(req.PrivacyScanJSON),
 		RequestID:               req.RequestID,
 		ClientIP:                req.ClientIP,
 		UserAgent:               req.UserAgent,

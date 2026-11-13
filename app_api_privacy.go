@@ -99,6 +99,8 @@ type PrivacyRuleTestResult struct {
 	ReplacedText   string               `json:"replaced_text"`
 	RuleHits       []PrivacyRuleHitInfo `json:"rule_hits"`
 	ScanDurationMs float64              `json:"scan_duration_ms"`
+	RemaskMatches  int                  `json:"remask_matches"`
+	PreviewWarning string               `json:"preview_warning"`
 }
 
 // PrivacyPresetInfo 预设规则集摘要
@@ -286,8 +288,19 @@ func (a *App) TestPrivacyRules(input PrivacyRuleTestInput) (PrivacyRuleTestResul
 		ProviderType: strings.TrimSpace(input.ProviderType),
 	}
 	result := svc.TestText(req, input.Text)
-	if result.SkippedReason != "" {
+	if result.SkippedReason != "" && !result.FailOpen && result.SkippedReason != privacy.SkippedScanTruncated {
 		return PrivacyRuleTestResult{}, fmt.Errorf("隐私规则测试未执行：%s", result.SkippedReason)
+	}
+	warning := ""
+	if result.FailOpen {
+		warning = "按当前策略原文放行，隐私保护未完成。"
+		if result.Truncated {
+			warning = "扫描超限：" + warning
+		} else if reason := result.SafeFailureMessage(); reason != "" {
+			warning = reason + "；" + warning
+		}
+	} else if result.Truncated {
+		warning = "扫描超限：仅替换已扫描部分。"
 	}
 
 	hits := make([]PrivacyRuleHitInfo, 0, len(result.RuleHits))
@@ -303,6 +316,8 @@ func (a *App) TestPrivacyRules(input PrivacyRuleTestInput) (PrivacyRuleTestResul
 		ReplacedText:   string(result.Body),
 		RuleHits:       hits,
 		ScanDurationMs: float64(result.ScanDuration.Microseconds()) / 1000.0,
+		RemaskMatches:  result.RemaskMatches,
+		PreviewWarning: warning,
 	}, nil
 }
 

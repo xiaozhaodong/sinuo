@@ -79,7 +79,7 @@ func validateSubscriptionJSON(body []byte) error {
 }
 
 func validateSubscriptionJSONDocument(body []byte) error {
-	return codexidentity.ValidateJSON(body)
+	return codexidentity.ValidateJSONSyntax(body)
 }
 
 func isSubscriptionPrivacyPath(path string) bool {
@@ -106,13 +106,12 @@ func (f subscriptionPrivacyFilter) Apply(ctx context.Context, req privacy.Reques
 	result = sanitizeSubscriptionPrivacyResult(result)
 	if err == nil && !bytes.Equal(body, result.Body) {
 		if validationErr := validateSubscriptionPrivacyReplacement(body, result.Body); validationErr != nil {
-			result.Body = nil
-			return result, &privacy.PolicyError{
+			return result.ResolveFailure(body, &privacy.PolicyError{
 				StatusCode: http.StatusUnprocessableEntity,
 				Code:       privacy.CodeScanFailed,
 				Message:    "privacy output contains invalid or ambiguous JSON",
 				Result:     subscriptionPrivacySummary(result),
-			}
+			})
 		}
 	}
 	if err == nil {

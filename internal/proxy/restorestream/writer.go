@@ -451,7 +451,7 @@ func (w *Writer) get(k fieldKey) (*field, error) {
 		return f, nil
 	}
 	if len(w.fields) >= 256 {
-		return nil, ErrDelivery
+		return nil, ErrLocalCapacity
 	}
 	f := &field{key: k}
 	w.fields[k] = f
@@ -463,12 +463,15 @@ func (w *Writer) delta(k fieldKey, parent object, attr string, envelope object) 
 		return false, ErrDelivery
 	}
 	f, e := w.get(k)
-	if e != nil || f.done {
+	if e != nil {
+		return false, e
+	}
+	if f.done {
 		return false, ErrDelivery
 	}
 	f.declared = false
 	if (w.codex || k.role == "arguments") && len(s) > maxBytes-w.rawBytes {
-		return false, ErrDelivery
+		return false, ErrLocalCapacity
 	}
 	var v string
 	if k.role == "arguments" {
@@ -520,12 +523,12 @@ func (w *Writer) delta(k fieldKey, parent object, attr string, envelope object) 
 func (w *Writer) keep(f *field, raw, out string) error {
 	w.trackTail(f)
 	if len(out) > maxBytes-w.outputBytes {
-		return ErrDelivery
+		return ErrLocalCapacity
 	}
 	w.outputBytes += len(out)
 	if w.codex || f.key.role == "arguments" {
 		if len(raw) > maxBytes-w.rawBytes {
-			return ErrDelivery
+			return ErrLocalCapacity
 		}
 		w.rawBytes += len(raw)
 		f.raw.WriteString(raw)

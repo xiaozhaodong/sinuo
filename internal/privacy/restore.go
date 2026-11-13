@@ -74,9 +74,10 @@ func restoreError(reason restoreRejection) *PolicyError {
 	return &PolicyError{Code: codeRestoreRejected, StatusCode: http.StatusUnprocessableEntity, Message: string(reason), restoreReason: reason}
 }
 
-// SafeRestoreMessage 供需要清理过滤器错误的入口使用。自定义过滤器的 Message 不属于可信提示。
+// SafeRestoreMessage 供需要清理过滤器错误的入口使用，包含编译容量的固定原因。
+// 自定义过滤器的 Message 不属于可信提示，不能作为返回内容。
 func (e *PolicyError) SafeRestoreMessage() string {
-	if e == nil || e.Code != codeRestoreRejected {
+	if e == nil || e.Code != codeRestoreRejected && e.Code != CodeInvalidRequest && e.Code != CodeScanFailed {
 		return ""
 	}
 	return string(e.restoreReason)
@@ -91,18 +92,38 @@ func supportsRestore(req Request) bool {
 }
 
 // OpenResponseRestoreView 为上游主动创建的后继响应固定当前字典，不制造请求扫描或命中。
-func (s *Snapshot) OpenResponseRestoreView() (*RestoreView, *PolicyError) {
+// 协议已校验但本地回填器无法处理的首帧，也在发布视图前采用同一失败策略。
+// 返回非 nil 视图时，视图已发布且所有权转移给调用方；调用方必须在响应结束、
+// 中断或后续准备失败时调用 Release。返回的 ApplyResult 不持有该视图。
+// 返回 nil 视图时，内部未创建视图或已完成失败清理，调用方无需释放；
+// 此时 err 为 nil 也可能表示回填未启用或按策略放行，应结合 ApplyResult 判断。
+func (s *Snapshot) OpenResponseRestoreView(restoreSupported bool) (*RestoreView, ApplyResult, error) {
 	if s == nil || !s.Settings.ResponseRestoreEnabled || s.Settings.Mode != ModeRedact {
-		return nil, nil
+		return nil, ApplyResult{}, nil
+	}
+	result := ApplyResult{Action: ModeRedact, RestoreStatus: "pending", SnapshotVersion: s.Version,
+		failurePolicy: &failurePolicy{onError: s.Settings.OnError, overLimit: s.Settings.OverLimitAction, path: "/v1/responses", restore: true}}
+	if !restoreSupported {
+		resolved, err := result.ResolveFailure(nil, restoreError("响应结构超出本地回填能力"))
+		return nil, resolved, err
 	}
 	if s.Dict == nil {
-		return nil, restoreError("进程回填字典不可用")
+		resolved, err := result.ResolveFailure(nil, restoreError("进程回填字典不可用"))
+		return nil, resolved, err
 	}
 	v := &RestoreView{dict: s.Dict}
 	if err := v.Publish(); err != nil {
-		return nil, err
+		result.Restore = v
+		resolved, failure := result.ResolveFailure(nil, err)
+		return nil, resolved, failure
 	}
-	return v, nil
+	return v, result, nil
+}
+
+// ResolveResponseRestoreFailure 复用创建视图时固定的失败策略。
+// OpenResponseRestoreView 成功返回的视图不在此结果中，调用方须先释放视图再解析失败策略。
+func (r ApplyResult) ResolveResponseRestoreFailure() (ApplyResult, error) {
+	return r.ResolveFailure(nil, restoreError("响应结构超出本地回填能力"))
 }
 
 func expandable(value string) bool {
@@ -155,7 +176,7 @@ func (s *Snapshot) applyReversible(req Request, body []byte, result *ApplyResult
 		return policyErr
 	}
 	if result.Truncated {
-		return restoreError("可逆脱敏扫描不完整")
+		return s.newOverLimitError()
 	}
 	started := time.Now()
 	defer func() { result.RemaskDuration = time.Since(started) }()

@@ -1,6 +1,10 @@
 package privacy
 
-import "sinuo/internal/codexidentity"
+import (
+	"unicode/utf8"
+
+	"sinuo/internal/codexidentity"
+)
 
 // Responses 回放的 arguments 是内嵌 JSON；先解码字符串叶子，再按两层各自的规则重编码。
 func expandRestoreSegments(segments []textSegment, path string) ([]textSegment, func(map[int]string) map[int]string, *PolicyError) {
@@ -23,6 +27,9 @@ func expandRestoreSegments(segments []textSegment, path string) ([]textSegment, 
 		}
 		data := []byte(seg.Value)
 		if codexidentity.ValidateJSON(data) != nil {
+			if codexidentity.ValidateJSONSyntax(data) != nil || !utf8.Valid(data) {
+				return nil, nil, invalidRequest("回放的工具参数不是完整 JSON")
+			}
 			return nil, nil, restoreError("回放的工具参数不是完整 JSON")
 		}
 		children, err := collectJSONTextSegments(data, func([]pathElem) bool { return true })

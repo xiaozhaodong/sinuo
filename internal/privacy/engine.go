@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tidwall/gjson"
 )
 
 // CompiledRule 编译后的规则。literal 规则 regex 为 nil。
@@ -137,26 +139,26 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 		return result, nil
 	}
 	result.Action = s.Settings.Mode
+	result.failurePolicy = &failurePolicy{onError: s.Settings.OnError, overLimit: s.Settings.OverLimitAction, path: req.Path,
+		restore: supportsRestore(req) && s.Settings.ResponseRestoreEnabled && s.Settings.Mode == ModeRedact}
+	// 部分规则编译失败不影响普通检测和脱敏；可逆模式另行检查 CompileError。
 	if s.CompileBlocked {
 		result.SkippedReason = CodeScanFailed
-		return result, &PolicyError{StatusCode: http.StatusServiceUnavailable, Code: CodeScanFailed, Message: ErrLiteralBudget.Error(), Result: result}
+		// 固定容量说明同时用于拒绝响应和原文放行记录，不携带具体规则或原值。
+		result.failureReason = restoreRejection(ErrLiteralBudget.Error())
+		return result.ResolveFailure(body, &PolicyError{StatusCode: http.StatusServiceUnavailable, Code: CodeScanFailed,
+			Message: ErrLiteralBudget.Error(), restoreReason: result.failureReason})
 	}
 
 	started := time.Now()
 	reversible := supportsRestore(req) && s.Settings.ResponseRestoreEnabled && s.Settings.Mode == ModeRedact
-	candidates := s.candidateRules(req)
+	var candidateStorage [localCandidateCapacity]int
+	candidates := s.candidateRules(req, candidateStorage[:0])
 	if reversible {
 		err := s.processRestoreRequest(req, body, &result, candidates)
 		result.ScanDuration = time.Since(started)
 		if err != nil {
-			result.RestoreStatus = "not_applicable"
-			if !isClaudeMessagesPath(req.Path) {
-				err.StatusCode = http.StatusBadRequest
-			} else {
-				err.StatusCode = http.StatusUnprocessableEntity
-			}
-			err.Result = result
-			return result, err
+			return result.ResolveFailure(body, err)
 		}
 		return result, nil
 	}
@@ -173,7 +175,7 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 
 	segments, skippedReason, err := s.collectSegments(req, body)
 	if err != nil {
-		return s.handleScanError(result, started, err)
+		return s.handleScanError(result, started)
 	}
 	if skippedReason != "" {
 		result.SkippedReason = skippedReason
@@ -201,9 +203,15 @@ func (s *Snapshot) Apply(req Request, body []byte) (ApplyResult, error) {
 	return result, nil
 }
 
-// candidateRules 按 scope 预过滤启用规则
-func (s *Snapshot) candidateRules(req Request) []int {
-	candidates := make([]int, 0, len(s.Rules))
+// 常见规则集使用请求内缓冲；超出容量正常分配，不限制参与扫描的规则数。
+const localCandidateCapacity = 64
+
+// candidateRules 按 scope 预过滤启用规则，不保留调用方提供的缓冲。
+func (s *Snapshot) candidateRules(req Request, candidates []int) []int {
+	candidates = candidates[:0]
+	if cap(candidates) < len(s.Rules) {
+		candidates = make([]int, 0, len(s.Rules))
+	}
 	for i := range s.Rules {
 		rule := &s.Rules[i]
 		if !rule.Enabled {
@@ -401,20 +409,11 @@ func (s *Snapshot) newOverLimitError() *PolicyError {
 }
 
 // handleScanError 按 on_error 策略处理内部扫描错误（不含命中原文）
-func (s *Snapshot) handleScanError(result ApplyResult, started time.Time, err error) (ApplyResult, error) {
+func (s *Snapshot) handleScanError(result ApplyResult, started time.Time) (ApplyResult, error) {
 	result.ScanDuration = time.Since(started)
-	if s.Settings.OnError == OnErrorFailClosed {
-		policyErr := &PolicyError{
-			StatusCode: http.StatusUnprocessableEntity,
-			Code:       CodeScanFailed,
-			Message:    fmt.Sprintf("privacy scan failed and on_error is fail_closed: %v", err),
-		}
-		result.SkippedReason = CodeScanFailed
-		policyErr.Result = result
-		return result, policyErr
-	}
-	result.SkippedReason = fmt.Sprintf("scan_error: %v", err)
-	return result, nil
+	result.SkippedReason = CodeScanFailed
+	return result.ResolveFailure(result.Body, &PolicyError{StatusCode: http.StatusUnprocessableEntity,
+		Code: CodeScanFailed, Message: "隐私扫描失败"})
 }
 
 func sortedRuleHits(hits map[int64]*RuleHit) []RuleHit {
@@ -429,31 +428,77 @@ func sortedRuleHits(hits map[int64]*RuleHit) []RuleHit {
 	return out
 }
 
-// ApplyToText 对一段裸文本执行规则（测试面板用）。
-// 始终按 redact 语义返回替换后文本，但不会越过 mode=disabled 的快照。
+// ApplyToText 按脱敏模式预览单段文本；沿用实际出站扫描、回填和失败策略。
+// 忽略全局模式，但保留规则开关与作用域。测试不发布词条、不记录统计，
+// 也不预热真实扫描缓存，避免影响后续请求的扫描预算。
 func (s *Snapshot) ApplyToText(req Request, text string) ApplyResult {
-	result := ApplyResult{Action: ModeRedact}
+	result := ApplyResult{Body: []byte(text), Action: ModeRedact}
 	if s == nil {
+		result.SkippedReason = "隐私规则快照不可用"
 		return result
 	}
 	result.SnapshotVersion = s.Version
 	if s.CompileBlocked {
-		result.Body = []byte(text)
 		result.SkippedReason = ErrLiteralBudget.Error()
 		return result
 	}
-	started := time.Now()
-
-	outcome := s.scanText(s.candidateRules(req), text)
-	hits := make(map[int64]*RuleHit)
-	s.countHits(&result, hits, text, outcome.hits)
-	replaced := text
-	if len(outcome.regions) > 0 {
-		replaced = s.applyRegions(text, outcome.regions)
-		result.Changed = true
+	preview := *s
+	preview.Settings.Mode = ModeRedact
+	preview.Cache = nil
+	// 关闭/仅检测模式没有活动回填词典，独立预览仍使用同一密钥生成标识。
+	// 脱敏模式缺少词典则属于真实错误，交给 Apply 按当前策略处理。
+	if s.Settings.Mode != ModeRedact && preview.Dict == nil && preview.Settings.ResponseRestoreEnabled {
+		preview.Dict = NewRestoreDict()
 	}
-	result.Body = []byte(replaced)
-	result.RuleHits = sortedRuleHits(hits)
-	result.ScanDuration = time.Since(started)
+	body, field := previewTextBodyForPath(req.Path, text)
+	req.ContentType = "text/plain"
+	if field != "" {
+		req.ContentType = "application/json"
+	}
+	result, err := preview.Apply(req, body)
+	if result.Restore != nil {
+		// 只读取 Prepare 固定的词典索引；不调用 Publish，草稿立即释放。
+		result.Restore.Release()
+		result.Restore = nil
+	}
+	if err != nil {
+		result.Body = []byte(text)
+		result.SkippedReason = "隐私处理失败，当前策略拒绝出站"
+		if failure, ok := err.(*PolicyError); ok {
+			if reason := failure.SafeRestoreMessage(); reason != "" {
+				result.SkippedReason = reason
+			} else if failure.Code == CodeScanBodyTooLarge {
+				result.SkippedReason = "扫描文本超过上限，当前策略拒绝出站"
+			}
+		}
+		return result
+	}
+	if field != "" {
+		value := gjson.GetBytes(result.Body, field)
+		if value.Type != gjson.String {
+			result.Body = nil
+			result.SkippedReason = "测试预览结果解析失败"
+			return result
+		}
+		result.Body = []byte(value.Str)
+	}
 	return result
+}
+
+// 文本作为选定协议中的单个用户文本字段处理；用户输入中的 JSON/代码仍是文本，
+// 不被当作完整请求解析。返回字段路径仅用于提取处理后的预览文本。
+func previewTextBodyForPath(path, text string) ([]byte, string) {
+	var prefix, suffix, field string
+	switch {
+	case isClaudeMessagesPath(path):
+		prefix, suffix, field = `{"messages":[{"role":"user","content":`, `}]}`, "messages.0.content"
+	case path == "/v1/responses" || path == "/v1/responses/compact" || path == "/v1/alpha/search":
+		prefix, suffix, field = `{"input":`, `}`, "input"
+	case path == "/v1/images/generations" || path == "/v1/images/edits":
+		prefix, suffix, field = `{"prompt":`, `}`, "prompt"
+	default:
+		return []byte(text), ""
+	}
+	body := append([]byte(prefix), encodeJSONString(text)...)
+	return append(body, suffix...), field
 }

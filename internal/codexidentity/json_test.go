@@ -201,3 +201,18 @@ func TestSourceHeadersRejectAmbiguityAndInjection(t *testing.T) {
 		t.Fatalf("无效头未拒绝: %+v", s)
 	}
 }
+
+func TestValidateJSONSyntaxSeparatesDepthFromProtocol(t *testing.T) {
+	deep := strings.Repeat("[", 300) + "0" + strings.Repeat("]", 300)
+	if err := ValidateJSON([]byte(deep)); err == nil {
+		t.Fatal("字段解析器应保留能力上限")
+	}
+	if err := ValidateJSONSyntax([]byte(deep)); err != nil {
+		t.Fatal("合法深层 JSON 被当成协议错误", err)
+	}
+	for _, raw := range []string{`{"x":` + deep + `,"x":1}`, `{"x":` + deep + `,"y":{"a":1,"\u0061":2}}`, deep + ` {}`, deep[:len(deep)-1]} {
+		if err := ValidateJSONSyntax([]byte(raw)); err == nil {
+			t.Fatal("未拒绝语法或重复键错误")
+		}
+	}
+}

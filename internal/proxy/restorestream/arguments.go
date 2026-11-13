@@ -28,7 +28,7 @@ func (a *arguments) feed(s string, d *countedValues) (string, error) {
 	out.Grow(len(s))
 	for len(s) > 0 {
 		if out.Len() > d.limit {
-			return "", ErrDelivery
+			return "", ErrLocalCapacity
 		}
 		if !a.quoted {
 			i := strings.IndexByte(s, '"')
@@ -41,7 +41,7 @@ func (a *arguments) feed(s string, d *countedValues) (string, error) {
 				switch c {
 				case '{', '[':
 					if len(a.containers) >= 256 {
-						return "", ErrDelivery
+						return "", ErrLocalCapacity
 					}
 					a.containers = append(a.containers, c)
 				case '}', ']':
@@ -167,7 +167,7 @@ func (a *arguments) feed(s string, d *countedValues) (string, error) {
 		}
 	}
 	if out.Len() > d.limit {
-		return "", ErrDelivery
+		return "", ErrLocalCapacity
 	}
 	return out.String(), nil
 }

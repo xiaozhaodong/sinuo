@@ -14,7 +14,7 @@ func newTestSnapshot(t *testing.T, settings Settings, rules ...Rule) *Snapshot {
 	if err != nil {
 		t.Fatalf("compile rules failed: %v", err)
 	}
-	return &Snapshot{Version: 1, Settings: settings, Rules: compiled}
+	return &Snapshot{Version: 1, Settings: settings, Rules: compiled, Dict: NewRestoreDict()}
 }
 
 func redactSettings() Settings {
@@ -367,7 +367,7 @@ func TestApplyInvalidJSONFailOpenPassthrough(t *testing.T) {
 	if !bytes.Equal(result.Body, body) {
 		t.Error("fail_open must passthrough original body")
 	}
-	if !strings.HasPrefix(result.SkippedReason, "scan_error") {
+	if result.SkippedReason != SkippedFailOpen || !result.FailOpen {
 		t.Errorf("skipped reason = %q", result.SkippedReason)
 	}
 }

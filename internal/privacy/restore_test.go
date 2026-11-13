@@ -15,6 +15,7 @@ func TestRestoreStagingAndStableReplay(t *testing.T) {
 	rule.Pattern = `password=(?P<redact>[a-zA-Z0-9]+)`
 	s := newTestSnapshot(t, redactSettings(), rule)
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{7}, 32)
 	req := claudeRequest()
 	req.StreamingHTTP = true
@@ -48,6 +49,7 @@ func TestRestoreStagingAndStableReplay(t *testing.T) {
 		t.Fatal("应遮蔽独立短裸值并允许出站", err)
 	}
 	s.Settings.ScanMaxBytes = 8
+	s.Settings.OverLimitAction = OverLimitFailClosed
 	if _, err = s.Apply(req, body); err == nil {
 		t.Fatal("接受了不完整扫描")
 	}
@@ -57,6 +59,7 @@ func TestRestoreResponsesReplayAndAdmission(t *testing.T) {
 	const secret = "value-with-quote\""
 	s := newTestSnapshot(t, redactSettings(), literalRule(1, 1, secret, "[MASK]", ActionRedact))
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{2}, 32)
 	req := Request{Path: "/v1/responses", UpstreamType: UpstreamTypeAccount, StreamingHTTP: true}
 	args, _ := json.Marshal(map[string]any{secret: []string{secret}})
@@ -105,6 +108,7 @@ func TestRestoreWeakValuesAndOpaqueFields(t *testing.T) {
 	short := literalRule(2, 2, "0123", "[x]", ActionRedact)
 	s := newTestSnapshot(t, redactSettings(), rule, short)
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{1}, 32)
 	req := claudeRequest()
 	apply := func(text string) (ApplyResult, error) {
@@ -158,6 +162,7 @@ func TestRestoreWeakValuesAndOpaqueFields(t *testing.T) {
 func TestRestoreCacheBudgetAndStrictJSON(t *testing.T) {
 	s := newTestSnapshot(t, redactSettings(), literalRule(1, 1, "fixture-secret", "[x]", ActionRedact))
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{1}, 32)
 	s.Cache = NewSegmentCache(16)
 	req := claudeRequest()
@@ -170,6 +175,7 @@ func TestRestoreCacheBudgetAndStrictJSON(t *testing.T) {
 		t.Fatal("热缓存预算应只包含新增段", err)
 	}
 	s.Cache = nil
+	s.Settings.OverLimitAction = OverLimitFailClosed
 	if _, err := s.Apply(req, body); err == nil {
 		t.Fatal("冷缓存大正文被放行")
 	}
@@ -186,6 +192,7 @@ func TestToolResultScannedWithOrWithoutPlainHistory(t *testing.T) {
 	s := newTestSnapshot(t, redactSettings(), rule)
 	s.Dict = NewRestoreDict()
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{2}, 32)
 	req := claudeRequest()
 	req.SessionID = "old-session"
@@ -204,6 +211,7 @@ func TestExistingMarkerInsideEscapedToolJSON(t *testing.T) {
 	s := newTestSnapshot(t, redactSettings(), literalRule(1, 1, "0123", "[x]", ActionRedact), literalRule(2, 2, "secret", "[x]", ActionRedact))
 	s.Dict = NewRestoreDict()
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{2}, 32)
 	req := Request{Path: "/v1/responses", UpstreamType: UpstreamTypeAccount}
 	inner := `{"path":"\u007b` + exampleRestoreToken[1:] + `secret"}`
@@ -231,6 +239,7 @@ func TestToolOutputAfterPartialDictionaryEviction(t *testing.T) {
 	rule.Pattern = `password=(?P<redact>[a-zA-Z0-9]+)`
 	s := newTestSnapshot(t, redactSettings(), rule)
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{3}, 32)
 	s.Dict = newRestoreDict(2, 4096)
 	var tokens []string

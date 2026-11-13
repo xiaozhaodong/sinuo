@@ -23,7 +23,7 @@ func (d *countedValues) lookup(id string) (string, bool, error) {
 	}
 	v, ok := d.dict.Lookup(id)
 	if state, checked := d.dict.(interface{ LookupError() error }); checked && state.LookupError() != nil {
-		return "", false, ErrDelivery
+		return "", false, ErrLocalCapacity
 	}
 	if ok {
 		d.count++

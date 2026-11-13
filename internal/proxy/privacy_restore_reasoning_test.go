@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tidwall/gjson"
 
 	"sinuo/internal/codexidentity"
+	"sinuo/internal/privacy"
 	"sinuo/internal/store"
 )
 
@@ -117,5 +119,83 @@ func TestOAuthPoolRestoresReasoningReplay(t *testing.T) {
 	foreign := send(strings.Join([]string{user("ordinary"), replayedItem, user("repeat")}, ","))
 	if attempts != 3 || gjson.Get(completion(foreign).Get("2.arguments").Str, "value").Str != routeTestValue {
 		t.Fatal("本轮零替换也应正常还原已知的工具值")
+	}
+}
+
+// 从真实端点入口验证空签名思考出站已脱敏，普通回答仍可回填；有签名命中保持零出站。
+func TestEndpointRestoreClaudeThinkingSignature(t *testing.T) {
+	for _, tc := range []struct {
+		name, signature string
+		blocked         bool
+	}{
+		{"missing", "", false},
+		{"empty", `,"signature":""`, false},
+		{"signed", `,"signature":"opaque"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				body, err := io.ReadAll(r.Body)
+				token := gjson.GetBytes(body, "messages.0.content.0.thinking").Str
+				if err != nil || !wireToken.MatchString(token) || strings.Contains(string(body), routeTestValue) {
+					t.Error("空签名思考明文未在出站前遮蔽")
+					http.Error(w, "fixture", 400)
+					return
+				}
+				if gjson.GetBytes(body, "messages.0.content.0.signature").Raw != gjson.Get(`{`+strings.TrimPrefix(tc.signature, ",")+`}`, "signature").Raw {
+					t.Error("签名字段被改写")
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, routeSSE(token, false))
+			}))
+			t.Cleanup(up.Close)
+			h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("thinking", up.URL, 1))
+			filter := newRestoreTestFilter(t)
+			filter.Settings.OnError = privacy.OnErrorFailClosed
+			h.SetPrivacyFilter(filter)
+			raw := fmt.Sprintf(`{"model":"claude-test","stream":true,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":%q%s}]},{"role":"user","content":"continue"}]}`, routeTestValue, tc.signature)
+			req := privacySummaryRequest("/v1/messages", raw, "req-thinking-test")
+			req.Header.Set("Accept", "text/event-stream")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if tc.blocked {
+				if rec.Code != 422 || calls.Load() != 0 || !strings.Contains(rec.Body.String(), "privacy_restore_rejected") {
+					t.Fatal("有签名思考命中未保持零出站拒绝")
+				}
+				return
+			}
+			if rec.Code != http.StatusOK || calls.Load() != 1 || !strings.Contains(rec.Body.String(), "message_stop") {
+				t.Fatalf("空签名思考请求未完成: status=%d calls=%d", rec.Code, calls.Load())
+			}
+			var text strings.Builder
+			for _, line := range strings.Split(rec.Body.String(), "\n") {
+				if data, ok := strings.CutPrefix(line, "data: "); ok && gjson.Get(data, "delta.type").Str == "text_delta" {
+					text.WriteString(gjson.Get(data, "delta.text").Str)
+				}
+			}
+			if text.String() != "before "+routeTestValue+" after" {
+				t.Fatal("空签名思考映射未用于普通回答回填")
+			}
+		})
+	}
+}
+
+func TestEndpointSignedThinkingFailOpen(t *testing.T) {
+	var seen []byte
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"type":"message","content":[{"type":"text","text":"{{SNU_0123456789abcdef0123456789abcdef}}"}]}`)
+	}))
+	defer up.Close()
+	h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("thinking-open", up.URL, 1))
+	h.SetPrivacyFilter(newRestoreTestFilter(t))
+	raw := fmt.Sprintf(`{"model":"claude-test","messages":[{"role":"assistant","content":[{"type":"thinking","signature":"opaque","thinking":%q}]},{"role":"user","content":%q}]}`, routeTestValue, routeTestValue)
+	req := privacySummaryRequest("/v1/messages", raw, "signed-open")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || string(seen) != raw || !strings.Contains(rec.Body.String(), "{{SNU_0123456789abcdef0123456789abcdef}}") {
+		t.Fatal("原文放行时改写了正文或回填了响应", rec.Code, rec.Body.String())
 	}
 }

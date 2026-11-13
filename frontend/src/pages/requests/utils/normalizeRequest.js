@@ -10,6 +10,7 @@
 
 import { isCodexSearchRequest, normalizeRequestSource } from './requestSource.js';
 import { normalizeInputUsage } from './requestInputUsage.js';
+import { normalizePrivacyWarnings } from './privacyWarnings.js';
 
 const pick = (request, keys, fallback) => {
   for (const key of keys) {
@@ -22,6 +23,7 @@ const pick = (request, keys, fallback) => {
 
 export const normalizeRequest = (request = {}) => normalizeRequestSource({
   ...request,
+  privacyWarnings: normalizePrivacyWarnings(pick(request, ['privacy_warnings', 'privacyWarnings'], [])),
   requestFamily: pick(request, ['request_family', 'requestFamily'], 'other'),
   upstreamType: pick(request, ['upstream_type', 'upstreamType'], 'endpoint'),
   upstreamName: pick(request, ['upstream_name', 'upstreamName'], ''),

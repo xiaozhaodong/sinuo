@@ -16,6 +16,7 @@ import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { firstContentDelayMs, requestSpeedMetrics } from '../utils/streamPhases.js';
 import StreamPhaseProperties from './StreamPhaseProperties.jsx';
+import PrivacyWarningBadge from './PrivacyWarningBadge.jsx';
 import {
   formatOptionalTimingBadge,
   formatTimingBadge,
@@ -164,12 +165,13 @@ const ScheduleValue = ({ request, snapshot, isAccountRequest }) => {
   );
 };
 
-const PrivacyValue = ({ privacyScan }) => {
+const PrivacyValue = ({ privacyScan, warnings }) => {
   const scan = requestPrivacySummary(privacyScan);
   const restore = responsePrivacySummary(privacyScan?.restore);
-  if (!scan && !restore) return <DashText />;
+  if (!scan && !restore && !warnings?.length) return <DashText />;
   return (
     <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 gap-y-0.5">
+      {warnings?.length > 0 && <><dt className="text-xs text-fg-muted">异常记录</dt><dd><PrivacyWarningBadge codes={warnings} detailed /></dd></>}
       {scan && <><dt className="text-xs text-fg-muted">请求</dt><dd className={scan.tone}>{scan.text}</dd></>}
       {restore && <><dt className="text-xs text-fg-muted">响应</dt><dd className={restore.tone}>{restore.text}</dd></>}
     </dl>
@@ -204,7 +206,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
             {lifecycleLoading ? <LoadingLine /> : <ScheduleValue request={request} snapshot={snapshot} isAccountRequest={isAccountRequest} />}
           </Property>
           <Property label="隐私" truncate={false}>
-            {lifecycleLoading ? <LoadingLine /> : <PrivacyValue privacyScan={lifecycle?.privacyScan || null} />}
+            {lifecycleLoading ? <LoadingLine /> : <PrivacyValue privacyScan={lifecycle?.privacyScan || null} warnings={request.privacyWarnings} />}
           </Property>
           {retryPropertyVisible(request, accountSwitchCount, isAccountRequest) && <Property label="重试" truncate={false}>
             {Number.isFinite(request.upstreamFirstDispatchMs) && <><span className="font-mono">{request.retryCount ?? 0}</span> 次</>}

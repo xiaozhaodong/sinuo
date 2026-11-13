@@ -5,6 +5,15 @@ import { readFileSync } from 'node:fs';
 import { mergeRequestRows, COMPARED_FIELDS } from './mergeRequestRows.js';
 import { TABLE_COLUMNS } from './constants.js';
 
+test('隐私异常更新行引用，等值数组与正常空数组保持引用', () => {
+  const previous = { requestId: 'notice', privacyWarnings: ['request_fail_open'] };
+  assert.equal(mergeRequestRows([previous], [{ ...previous, privacyWarnings: ['request_fail_open'] }])[0], previous);
+  const next = { ...previous, privacyWarnings: ['request_fail_open', 'response_bypassed'] };
+  assert.equal(mergeRequestRows([previous], [next])[0], next);
+  const normal = { requestId: 'normal' };
+  assert.equal(mergeRequestRows([normal], [{ ...normal, privacyWarnings: [] }])[0], normal);
+});
+
 test('流阶段字段变化更新引用，同值保留引用', () => {
   for (const field of ['firstContentMs','firstTextMs','firstContentAt','upstreamWriteMs','streamFlowMs','stopReason','firstReasoningMs','reasoningHidden','upstreamRequestId']) {
     const before = { requestId: 'synthetic-phase', [field]: null };

@@ -8,6 +8,15 @@ import {
   normalizeNotification
 } from './useGlobalToasts.js';
 
+test('隐私事件不依赖后端文案，忽略原始错误与伪造级别', () => {
+  const normalized = normalizeNotification({ data: { kind: 'privacy_warning', request_id: 'req',
+    warning_codes: ['response_bypassed'], message: 'SYNTHETIC-PRIVATE', level: 'success' } });
+  assert.equal(normalized.level, 'warning');
+  assert.match(normalized.title, /响应回填未完成/);
+  assert.match(normalized.message, /占位符/);
+  assert.doesNotMatch(JSON.stringify(normalized), /SYNTHETIC-PRIVATE/);
+});
+
 test('normalizes Wails notification payloads for the global toast host', () => {
   const notification = normalizeNotification({
     event: 'notification',

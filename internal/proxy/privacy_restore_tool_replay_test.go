@@ -26,6 +26,7 @@ func TestEncryptedFunctionReplay(t *testing.T) {
 	for _, mode := range []string{"JSON", "SSE", "WS", "WS-wrapped"} {
 		t.Run(mode, func(t *testing.T) {
 			filter := newRestoreTestFilter(t).Snapshot
+			filter.Settings.OnError = privacy.OnErrorFailClosed
 			req := privacy.Request{Path: "/v1/responses", SessionID: "session-A", UpstreamType: privacy.UpstreamTypeSubscription, WebSocket: strings.HasPrefix(mode, "WS")}
 			if mode == "SSE" {
 				req.UpstreamType = privacy.UpstreamTypeAccount
@@ -155,6 +156,7 @@ func TestEncryptedFunctionReplay(t *testing.T) {
 			}
 			// 重启后只保留原密钥与规则。即使另一个调用先填充了新字典，也能重发旧历史。
 			filter = newRestoreTestFilter(t).Snapshot
+			filter.Settings.OnError = privacy.OnErrorFailClosed
 			later, err := apply(req, encode("ordinary"))
 			if err != nil {
 				t.Fatal(err)
@@ -212,6 +214,7 @@ func TestEncryptedToolReplayAccountFailover(t *testing.T) {
 	defer up.Close()
 	h, _ := phaseAccountHandler(t, up.URL, 2)
 	filter := globalToolReplayFilter{newRestoreTestFilter(t)}
+	filter.Settings.OnError = privacy.OnErrorFailClosed
 	h.SetPrivacyFilter(filter)
 	post := func(id, body string) gjson.Result {
 		t.Helper()
@@ -240,6 +243,7 @@ func TestEncryptedToolReplayAccountFailover(t *testing.T) {
 
 func TestEncryptedToolHistoryEmptyArrays(t *testing.T) {
 	filter := newRestoreTestFilter(t).Snapshot
+	filter.Settings.OnError = privacy.OnErrorFailClosed
 	for _, field := range []string{"encrypted_function_args", "encrypted_output"} {
 		for _, ws := range []bool{false, true} {
 			req := privacy.Request{Path: "/v1/responses", UpstreamType: privacy.UpstreamTypeAccount, WebSocket: ws}

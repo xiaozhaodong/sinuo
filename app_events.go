@@ -24,8 +24,7 @@ const (
 )
 
 // wailsRequestBroadcaster 将内部请求生命周期事件桥接到 Wails WebView。
-// 现有 EventBus 接口沿用 SSEBroadcaster 命名，但这里只处理 request 类型，
-// 避免与端点、分组等已经存在的 Wails 推送路径重复广播。
+// 现有 EventBus 接口沿用 SSEBroadcaster 命名，处理 request 与隐私通知。
 type wailsRequestBroadcaster struct {
 	app *App
 }
@@ -43,10 +42,15 @@ func (a *App) emit(name string, data any) {
 }
 
 func (b *wailsRequestBroadcaster) BroadcastEvent(eventType string, data map[string]interface{}) {
-	if eventType != "request" || b == nil || b.app == nil || b.app.ctx == nil {
+	if b == nil || b.app == nil || b.app.ctx == nil {
 		return
 	}
-	b.app.emit(EventRequestUpdate, data)
+	switch eventType {
+	case "request":
+		b.app.emit(EventRequestUpdate, data)
+	case "notification":
+		b.app.emitNotificationData(data)
+	}
 }
 
 func (b *wailsRequestBroadcaster) IsEventManagerActive() bool {

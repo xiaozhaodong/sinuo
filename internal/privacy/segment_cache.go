@@ -50,7 +50,11 @@ func NewSegmentCache(capacity int) *SegmentCache {
 
 // candidateFingerprint 同一快照下候选规则集（受 scope 影响）的指纹
 func (c *SegmentCache) candidateFingerprint(candidates []int) uint64 {
-	buf := make([]byte, 0, len(candidates)*4)
+	var storage [localCandidateCapacity * 4]byte
+	buf := storage[:0]
+	if len(candidates) > len(storage)/4 {
+		buf = make([]byte, 0, len(candidates)*4)
+	}
 	for _, idx := range candidates {
 		buf = binary.LittleEndian.AppendUint32(buf, uint32(idx))
 	}

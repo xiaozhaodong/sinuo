@@ -54,11 +54,16 @@ func newSubscriptionTrackingObserver(tracker *tracking.UsageTracker, eventBus ev
 // StartHTTP 为业务调用/压缩建记录；空 kind 是不需登记的辅助请求。
 func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *subscriptionRequestTracking {
 	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, connectionID: start.ConnectionID, startedAt: start.StartedAt, path: start.Path}
-	if start.RequestKind == "" || o == nil || o.tracker == nil || start.RequestID == "" {
+	if start.RequestKind == "" || o == nil || start.RequestID == "" {
 		return handle
 	}
 	if start.RequestKind != tracking.RequestKindGeneration && start.RequestKind != tracking.RequestKindCompaction {
 		slog.Warn("订阅请求种类非法，拒绝追踪记录", "request_id", start.RequestID, "code", "subscription_tracking_invalid_kind")
+		return handle
+	}
+	// 追踪关闭或登记失败时仍发隐私通知，只跳过没有记录可更新的持久化。
+	handle.privacySummary = newPrivacySummaryWriter(nil, o.eventBus, start.RequestID)
+	if o.tracker == nil {
 		return handle
 	}
 	if handle.startedAt.IsZero() {
@@ -90,6 +95,7 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 		return handle
 	}
 	handle.active = true
+	handle.privacySummary = newPrivacySummaryWriter(o.tracker, o.eventBus, start.RequestID)
 	o.publish(events.EventRequestStarted, events.PriorityNormal, map[string]interface{}{
 		"request_id": start.RequestID, "method": start.Method, "path": start.Path,
 		"request_family": family,
@@ -110,6 +116,7 @@ func (o *subscriptionTrackingObserver) publish(eventType events.EventType, prior
 }
 
 type subscriptionRequestTracking struct {
+	privacySummary  func(string)
 	phaseCollector  *StreamPhaseCollector // 在mu下维护；非流式不创建
 	phaseRequestID  *string               // 最终尝试响应头请求ID，在 mu 下覆盖
 	phaseStopReason *string               // 上游结束原因原文，在 mu 下维护
@@ -174,8 +181,8 @@ func (t *subscriptionRequestTracking) SetRequestProfile(model, reasoning string)
 }
 
 func (t *subscriptionRequestTracking) recordPrivacySummary(payload string) {
-	if t.active && payload != "" {
-		t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{PrivacyScanJSON: &payload})
+	if t.privacySummary != nil {
+		t.privacySummary(payload)
 	}
 }
 
@@ -413,9 +420,6 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	o.mu.Lock()
 	o.submissions[submission] = handle
 	o.mu.Unlock()
-	if submission.PrivacyState != nil {
-		submission.PrivacyState.SetSummaryRecorder(handle.recordPrivacySummary)
-	}
 }
 
 func (o *subscriptionTrackingObserver) SubmissionBound(submission *subscriptionSubmission, result *ParseResult) {

@@ -17,12 +17,13 @@ type RestoreSummary struct {
 }
 
 type privacySummaryRecorder struct {
-	mu      sync.Mutex
-	write   func(string)
-	scan    privacy.ApplyResult
-	policy  *privacy.PolicyError
-	count   int
-	restore RestoreSummary
+	mu       sync.Mutex
+	write    func(string)
+	scan     privacy.ApplyResult
+	policy   *privacy.PolicyError
+	count    int
+	restore  RestoreSummary
+	warnings []string
 }
 
 // SetSummaryRecorder 串行合并扫描与交付。等待响应期间只保留允许写进详情的字段。
@@ -32,7 +33,7 @@ func (s *PrivacyRequestState) SetSummaryRecorder(write func(string)) {
 }
 
 func (r *privacySummaryRecorder) flushLocked() {
-	if payload := BuildPrivacyScanJSON(r.scan, r.policy, r.count, r.restore); payload != "" {
+	if payload := buildPrivacyScanJSON(r.scan, r.policy, r.count, r.warnings, r.restore); payload != "" {
 		r.write(payload)
 	}
 }
@@ -41,6 +42,7 @@ func (r *privacySummaryRecorder) recordScan(result privacy.ApplyResult, rejectio
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.count++
+	r.warnings = privacy.MergeWarnings(r.warnings, privacy.RequestWarnings(result, rejection))
 	r.scan = result
 	r.scan.Body = nil
 	r.scan.Restore = nil
@@ -66,6 +68,7 @@ func (s *PrivacyRequestState) RecordRestore(delivery RestoreSummary) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.restore != delivery {
+		r.warnings = privacy.MergeWarnings(r.warnings, privacy.ResponseWarnings(delivery.Status))
 		r.restore = delivery
 		r.flushLocked()
 	}
@@ -80,10 +83,21 @@ func (r *privacySummaryRecorder) finishPending() {
 	}
 }
 
-func (r *privacySummaryRecorder) rejectPublish(err *privacy.PolicyError) {
+func (r *privacySummaryRecorder) resolvePublish(result privacy.ApplyResult, err *privacy.PolicyError) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.policy = &privacy.PolicyError{Code: err.Code}
-	r.restore = RestoreSummary{Status: "not_applicable"}
+	// 不增加 scan_count：发布失败没有产生第二次扫描。
+	r.warnings = privacy.MergeWarnings(r.warnings, privacy.RequestWarnings(result, err))
+	r.scan = result
+	r.scan.Body, r.scan.Restore = nil, nil
+	r.scan.RuleHits = append([]privacy.RuleHit(nil), result.RuleHits...)
+	for i := range r.scan.RuleHits {
+		r.scan.RuleHits[i].Matches = nil
+	}
+	r.policy = nil
+	if err != nil {
+		r.policy = &privacy.PolicyError{Code: err.Code}
+	}
+	r.restore = RestoreSummary{Status: result.RestoreStatus}
 	r.flushLocked()
 }

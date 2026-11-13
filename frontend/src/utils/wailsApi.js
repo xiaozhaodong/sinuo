@@ -1349,6 +1349,7 @@ export const getRequests = async (params = {}) => {
 
   // 转换请求记录格式
   const requests = (result.requests || []).map(r => ({
+    privacy_warnings: r.privacy_warnings || [],
     request_id: r.request_id,
     session_id: r.session_id || '',
     id: r.request_id,
@@ -2545,7 +2546,9 @@ export const testPrivacyRules = async (input = {}) => {
     changed: Boolean(result?.changed),
     replaced_text: result?.replaced_text ?? '',
     rule_hits: Array.isArray(result?.rule_hits) ? result.rule_hits : [],
-    scan_duration_ms: Number(result?.scan_duration_ms ?? 0)
+    scan_duration_ms: Number(result?.scan_duration_ms ?? 0),
+    remask_matches: Number(result?.remask_matches ?? 0),
+    preview_warning: result?.preview_warning ?? ''
   };
 };
 

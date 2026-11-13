@@ -14,6 +14,13 @@ func ValidateJSON(raw []byte) error {
 	return err
 }
 
+// ValidateJSONSyntax 仅验证协议语法与重复键，不把字段解析器的 256 层能力限制当成协议错误。
+// 标准库仍在入口限制 JSON 最大深度；需要读取字段的调用方继续使用原有有界解析器。
+func ValidateJSONSyntax(raw []byte) error {
+	_, err := scanJSONLimit(raw, 0, false, 0)
+	return err
+}
+
 // JSONFields 读取对象直属字段；值保留原始字节表示。
 func JSONFields(raw []byte) (map[string]json.RawMessage, error) {
 	object, err := parseObject(raw)
@@ -58,13 +65,18 @@ type jsonScanner struct {
 	pos       int
 	indexRoot bool
 	spans     []jsonFieldSpan
+	maxDepth  int
 }
 
 func scanJSON(raw []byte, depth int, indexRoot bool) ([]jsonFieldSpan, error) {
+	return scanJSONLimit(raw, depth, indexRoot, 256)
+}
+
+func scanJSONLimit(raw []byte, depth int, indexRoot bool, maxDepth int) ([]jsonFieldSpan, error) {
 	if !json.Valid(raw) {
 		return nil, fmt.Errorf("invalid JSON")
 	}
-	s := jsonScanner{raw: raw, indexRoot: indexRoot}
+	s := jsonScanner{raw: raw, indexRoot: indexRoot, maxDepth: maxDepth}
 	err := s.value(depth)
 	return s.spans, err
 }
@@ -92,7 +104,7 @@ func (s *jsonScanner) stringEnd() {
 }
 
 func (s *jsonScanner) value(depth int) error {
-	if depth > 256 {
+	if s.maxDepth > 0 && depth > s.maxDepth {
 		return fmt.Errorf("JSON nesting exceeds 256")
 	}
 	s.space()

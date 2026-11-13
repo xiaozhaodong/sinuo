@@ -80,12 +80,22 @@ const PrivacyRuleTestPanel = ({ onTest, variant = 'card', showHeader = true }) =
         <FormSection title="测试结果" actions={(
           <>
             <span className="tone-slate rounded border px-1.5 text-[11px] leading-[18px]">原文 {result.original_length} 字符</span>
-            <span className="tone-indigo rounded border px-1.5 text-[11px] leading-[18px]">命中 {result.hit_count} 处</span>
+            <span className="tone-indigo rounded border px-1.5 text-[11px] leading-[18px]">规则命中 {result.hit_count} 处</span>
             <span className="rounded border border-line px-1.5 text-[11px] leading-[18px] text-fg-muted">耗时 {result.scan_duration_ms.toFixed(2)} ms</span>
           </>
         )}>
+          {result.preview_warning && (
+            <FormBlock>
+              <p role="alert" className="rounded-md border border-warn-line bg-warn-soft px-3 py-2 text-xs text-warn">{result.preview_warning}</p>
+            </FormBlock>
+          )}
           <FormBlock>
-            <div className="mb-1 text-xs font-medium text-fg-muted">替换后文本</div>
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-fg-muted">
+              <span title="按脱敏模式预览当前规则和回填设置；测试不会写入内存回填词典。">替换后文本</span>
+              {result.remask_matches > 0 && (
+                <span title="包含本次发现值的扩展遮蔽与内存词典命中，可能与规则命中重叠。">再次遮蔽 {result.remask_matches} 处</span>
+              )}
+            </div>
             <pre className={`whitespace-pre-wrap break-all overflow-y-auto rounded-md border border-line-soft bg-pane px-3 py-2 font-mono text-xs ${isDrawer ? 'max-h-72' : 'max-h-48'}`}>
               {result.replaced_text || '（空）'}
             </pre>
@@ -93,6 +103,9 @@ const PrivacyRuleTestPanel = ({ onTest, variant = 'card', showHeader = true }) =
           <FormBlock>
             <div className="mb-1 text-xs font-medium text-fg-muted">命中规则</div>
             <PrivacyHitList hits={result.rule_hits} />
+            {result.hit_count === 0 && result.remask_matches > 0 && (
+              <p className="mt-1 text-xs text-fg-muted">以上替换来自内存回填词典。</p>
+            )}
           </FormBlock>
         </FormSection>
       )}

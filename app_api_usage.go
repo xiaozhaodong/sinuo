@@ -240,6 +240,8 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 // RequestRecord 请求记录
 type RequestRecord struct {
+	PrivacyWarnings []string `json:"privacy_warnings,omitempty"`
+
 	UpstreamWriteMs         *int64  `json:"upstream_write_ms"`          // 最终尝试写完偏移（毫秒），列表首字起点
 	FirstContentMs          *int64  `json:"first_content_ms"`           // 首个内容偏移（毫秒），只写一次
 	FirstTextMs             *int64  `json:"first_text_ms"`              // 首个正文偏移（毫秒），只写一次
@@ -442,6 +444,7 @@ func resolveRequestQueryOptions(policy *timezonepolicy.Policy, params RequestQue
 // formatAPITime 的真实契约：零值返回空串，非零值经 FormatStorage 输出固定微秒精度 UTC ISO。
 func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	record := RequestRecord{
+		PrivacyWarnings:         r.PrivacyWarnings,
 		RequestID:               r.RequestID,
 		Timestamp:               formatAPITime(r.StartTime),
 		RequestFamily:           r.RequestFamily,

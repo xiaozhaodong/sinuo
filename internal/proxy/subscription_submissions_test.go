@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"sinuo/internal/privacy"
+	"sinuo/internal/proxy/handlers"
 )
 
 type submissionEvent struct {
@@ -36,6 +37,8 @@ func (o *recordingSubmissionObserver) append(kind string, s *subscriptionSubmiss
 
 func (o *recordingSubmissionObserver) SubmissionStarted(s *subscriptionSubmission) {
 	o.append("started", s, "")
+}
+func (*recordingSubmissionObserver) BindPrivacyState(*handlers.PrivacyRequestState, *subscriptionSubmission) {
 }
 func (o *recordingSubmissionObserver) SubmissionBound(s *subscriptionSubmission, _ *ParseResult) {
 	o.append("bound", s, "")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
@@ -18,6 +19,9 @@ type ValidatedMessage struct{ raw []byte }
 
 // Valid 表示此帧已通过 ValidateMessage，零值表示未校验。
 func (msg ValidatedMessage) Valid() bool { return msg.raw != nil }
+
+// RestoreSupported 在安装首帧回填器前检查结构凭证和本地字节上限，不与请求扫描预算混用。
+func (msg ValidatedMessage) RestoreSupported() bool { return msg.Valid() && len(msg.raw) <= maxBytes }
 
 // ValidateMessage 在读侧关联前校验 UTF-8、单个 JSON 对象、深度和各层重复键。
 // 控制回执与元数据也要校验，但不属于回填写入器的 4 MiB 交付预算。
@@ -44,29 +48,58 @@ func (w *Writer) WriteMessage(payload []byte, send func([]byte) error) error {
 // WriteValidatedMessage 在串行写侧检查响应归属、预算与协议状态。每次 send
 // 成功才确认对应的交付计数；零值不能作为已校验帧使用。
 func (w *Writer) WriteValidatedMessage(msg ValidatedMessage, send func([]byte) error) error {
-	payload := msg.raw
-	if payload == nil || w.terminal || len(payload) > maxBytes {
-		return ErrDelivery
-	}
-	m, err := w.decodeWebSocketEvent(msg)
+	payload, err := w.prepareWebSocketMessage(msg, send, false)
 	if err != nil {
 		return err
 	}
-	if str(m, "type") == "" {
-		return ErrDelivery
+	return w.DeliverPreparedMessage(payload, send)
+}
+
+// PrepareOpeningMessage 在全新的回填器上完成首帧全部处理，不发送字节、不确认交付。
+// 失败后调用方必须丢弃此回填器；成功后才可将其安装到对应响应。
+func (w *Writer) PrepareOpeningMessage(msg ValidatedMessage) ([]byte, error) {
+	if w.responseID != "" || len(w.fields) != 0 {
+		return nil, ErrDelivery
+	}
+	return w.prepareWebSocketMessage(msg, nil, true)
+}
+
+// DeliverPreparedMessage 只在实际写出成功后确认首帧的回填统计。
+func (w *Writer) DeliverPreparedMessage(payload []byte, send func([]byte) error) error {
+	if err := send(payload); err != nil {
+		return err
+	}
+	w.confirmDelivery()
+	return nil
+}
+
+func (w *Writer) prepareWebSocketMessage(msg ValidatedMessage, send func([]byte) error, opening bool) ([]byte, error) {
+	payload := msg.raw
+	if !msg.Valid() || w.terminal {
+		return nil, ErrDelivery
+	}
+	if len(payload) > maxBytes {
+		return nil, ErrLocalCapacity
+	}
+	m, err := w.decodeWebSocketEvent(msg)
+	if err != nil {
+		return nil, err
+	}
+	typ := strings.TrimSpace(str(m, "type"))
+	if typ == "" || opening && typ != "response.created" {
+		return nil, ErrDelivery
 	}
 	if id := str(m, "stream_id"); id != "" && id != w.streamID {
 		if w.streamID != "" {
-			return ErrDelivery
+			return nil, ErrDelivery
 		}
 		var err error
 		if w.streamID, err = w.retainID(id); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	w.socketSend = send
 	defer func() { w.socketSend = nil }()
-	typ := str(m, "type")
 	// 原生中断可在工具 JSON 仍未闭合时丢弃输出项。客户端收到中断事件，
 	// 随后的 incomplete 不应把这段已经放弃的参数当成一次成功工具调用。
 	why := str(obj(obj(m, "response"), "incomplete_details"), "reason")
@@ -80,25 +113,21 @@ func (w *Writer) WriteValidatedMessage(msg ValidatedMessage, send func([]byte) e
 	}
 	changed, err := w.responses(m, typ)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if seq, ok := index(m, "sequence_number"); ok {
 		w.lastSequence, w.hasSequence = int64(seq)+w.sequenceOffset, true
 	}
 	if changed {
 		payload, err = json.Marshal(m)
-		if err != nil || len(payload) > maxBytes {
-			return ErrDelivery
+		if err != nil {
+			return nil, ErrDelivery
+		}
+		if len(payload) > maxBytes {
+			return nil, ErrLocalCapacity
 		}
 	}
-	payload, err = OffsetWebSocketSequence(payload, w.sequenceOffset)
-	if err != nil {
-		return err
-	}
-	if err = send(payload); err == nil {
-		w.confirmDelivery()
-	}
-	return err
+	return OffsetWebSocketSequence(payload, w.sequenceOffset)
 }
 
 // SequenceOffset 是该响应为补发增量占用的序号数，由同一写协程用于生成帧和控制回执。

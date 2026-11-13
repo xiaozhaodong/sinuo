@@ -14,6 +14,7 @@ func TestRestoreSealedReasoningReplay(t *testing.T) {
 	sealed := `{ "id":"rs_1", "summary":[{"type":"summary_text","text":"` + exampleRestoreToken + `"}], "type":"reasoning", "encrypted_content":"private-value-123\u002f=" }`
 	s := newTestSnapshot(t, redactSettings(), literalRule(1, 1, value, "[MASK]", ActionRedact))
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{1}, 32)
 	req := Request{Path: "/v1/responses", UpstreamType: UpstreamTypeAccount, StreamingHTTP: true}
 	apply := func(user, item string) (ApplyResult, error) {
@@ -59,6 +60,7 @@ func TestRestoreHistoricalWeakValues(t *testing.T) {
 	s := newTestSnapshot(t, redactSettings(), rule)
 	s.Dict = NewRestoreDict()
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{2}, 32)
 	req := claudeRequest()
 	seed, err := s.Apply(req, []byte(`{"messages":[{"role":"user","content":"password=admin admin password=8080 password=123456 password=abcdef012345"}]}`))
@@ -104,6 +106,7 @@ func TestRestoreSealedCurrentRequestValues(t *testing.T) {
 	rule.Pattern = `password=(?P<redact>[a-zA-Z0-9]+)`
 	s := newTestSnapshot(t, redactSettings(), rule)
 	s.Settings.ResponseRestoreEnabled = true
+	s.Settings.OnError = OnErrorFailClosed
 	s.RestoreKey = bytes.Repeat([]byte{2}, 32)
 	for _, tc := range []struct {
 		req                          Request

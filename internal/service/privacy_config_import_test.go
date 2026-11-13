@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -203,7 +204,7 @@ func TestPrivacyManualCompileBudgetDoesNotPersistChanges(t *testing.T) {
 	}
 }
 
-func TestPrivacyOversizedLegacyDictionaryBlocksUntilRepaired(t *testing.T) {
+func TestPrivacyOversizedLegacyDictionaryRespectsOnErrorAndRecoversAfterRepair(t *testing.T) {
 	s := newTestPrivacyService(t)
 	ctx := context.Background()
 	enableRedactMode(t, s)
@@ -218,12 +219,31 @@ func TestPrivacyOversizedLegacyDictionaryBlocksUntilRepaired(t *testing.T) {
 	if err := restarted.Initialize(ctx); err != nil || !restarted.CurrentSnapshot().CompileBlocked || restarted.Status() != PrivacyStatusDegraded {
 		t.Fatal("旧库超预算应保留服务管理入口并显式降级", err)
 	}
+	body := []byte(`{"messages":[{"role":"user","content":"sample"}]}`)
+	opened, openErr := restarted.Apply(ctx, privacy.Request{Path: "/v1/messages"}, body)
+	if openErr != nil || !opened.FailOpen || opened.Changed || !bytes.Equal(opened.Body, body) {
+		t.Fatal("旧词典不可用时必须遵守默认出错放行", openErr)
+	}
+	if opened.SafeFailureMessage() != privacy.ErrLiteralBudget.Error() {
+		t.Fatal("原文放行缺少词典容量原因和删减提示", opened.SafeFailureMessage())
+	}
+	closed, err := restarted.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.OnError = privacy.OnErrorFailClosed
+	if _, err := restarted.UpdateSettings(ctx, closed); err != nil {
+		t.Fatal(err)
+	}
 	assertBlocked := func() {
 		t.Helper()
 		_, err := restarted.Apply(ctx, privacy.Request{Path: "/v1/messages"}, []byte(`{"messages":[{"role":"user","content":"sample"}]}`))
 		var policy *privacy.PolicyError
 		if !errors.As(err, &policy) || policy.StatusCode != 503 || policy.Code != privacy.CodeScanFailed {
-			t.Fatal("超限的旧词典不能在开启隐私时透传请求", err)
+			t.Fatal("出错拒绝时旧词典不可用不能透传请求", err)
+		}
+		if policy.Message != privacy.ErrLiteralBudget.Error() || policy.Result.SafeFailureMessage() != policy.Message {
+			t.Fatal("拒绝响应和详情缺少一致的词典容量提示", policy.Message)
 		}
 	}
 	assertBlocked()

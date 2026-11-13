@@ -158,6 +158,14 @@ func (eb *eventBus) setupDefaultFilters() {
 		RateLimit:       0,
 	}
 
+	// 隐私通知只接收请求标识和固定异常码，不透传摘要或正文。
+	eb.filters[EventPrivacyWarning] = EventFilter{
+		ShouldBroadcast: func(event Event) bool { return true },
+		DataTransformer: func(event Event) map[string]interface{} {
+			return map[string]interface{}{"kind": "privacy_warning", "request_id": event.Data["request_id"], "warning_codes": event.Data["warning_codes"]}
+		},
+	}
+
 	// 端点健康事件过滤器 - 关键事件，立即推送
 	eb.filters[EventEndpointHealthy] = EventFilter{
 		ShouldBroadcast: func(event Event) bool { return true },

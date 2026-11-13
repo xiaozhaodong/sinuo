@@ -117,7 +117,7 @@ func (w *Writer) tree(value any) (bool, error) {
 			var t matcher
 			x, e := t.feed(s, &w.toolValues, true)
 			if len(x) > maxBytes-w.outputBytes {
-				return nil, ErrDelivery
+				return nil, ErrLocalCapacity
 			}
 			w.outputBytes += len(x)
 			changed = changed || x != s
@@ -199,11 +199,14 @@ func (w *Writer) responses(m object, typ string) (bool, error) {
 		var changed bool
 		resp := obj(m, "response")
 		outputs, _ := resp["output"].([]any)
-		for idx, it := range outputs {
-			item, ok := it.(object)
-			if !ok {
+		// 先检查完整快照的基本结构，不能让前部容量不足掩盖尾部的协议错误。
+		for _, it := range outputs {
+			if _, ok := it.(object); !ok {
 				return false, ErrDelivery
 			}
+		}
+		for idx, it := range outputs {
+			item := it.(object)
 			c, e := w.item(idx, item, m, complete)
 			if e != nil {
 				return false, e
@@ -236,7 +239,7 @@ func (w *Writer) bindID(i int, id string) error {
 		return nil
 	}
 	if len(w.ids) >= 256 {
-		return ErrDelivery
+		return ErrLocalCapacity
 	}
 	stored, err := w.retainID(id)
 	if err != nil {

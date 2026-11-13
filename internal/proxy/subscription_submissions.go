@@ -9,19 +9,20 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"sinuo/internal/monitor"
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/restorestream"
-
-	"github.com/tidwall/gjson"
 )
 
 // subscriptionSubmissionObserver 是 P2b 的同步生命周期接缝。
 // 回调参数不含请求正文；实现不得在回调中再次解析 Responses 事件。
 type subscriptionSubmissionObserver interface {
 	SubmissionStarted(*subscriptionSubmission)
+	// BindPrivacyState 在扫描或回填前独立调用；追加输入没有 submission，预热也无需生成记录。
+	BindPrivacyState(*handlers.PrivacyRequestState, *subscriptionSubmission)
 	// SubmissionBound 携带 response.created 的解析结果（响应模型与回显的 reasoning.effort）。
 	SubmissionBound(*subscriptionSubmission, *ParseResult)
 	SubmissionTerminal(*subscriptionSubmission, *ParseResult)
@@ -51,6 +52,9 @@ type subscriptionSubmission struct {
 	terminalRead       *ParseResult
 	successorView      *privacy.RestoreView
 	dispatched         bool
+	restoreBypassed    bool
+	restoreDecided     bool // 每条响应只决定一次，当前连接配置不覆盖已发布的结果。
+	restoreRejected    bool // 首帧拒绝后，已经读入的后续帧也不能变成普通透传。
 
 	settled       bool
 	responseBytes int64
@@ -59,6 +63,7 @@ type subscriptionSubmission struct {
 
 type subscriptionSubmissionState struct {
 	restoring    atomic.Int64 // 已发布且尚未结束的回填响应数量
+	bypassed     atomic.Int64 // 原文放行的在途响应与有界去重收据数量
 	mu           sync.Mutex
 	connectionID string
 	sessionID    string
@@ -82,6 +87,7 @@ const subscriptionRecentResponseIDLimit = 256
 type subscriptionCompletedResponse struct {
 	streamID       string
 	restored       bool
+	bypassed       bool
 	sequenceOffset int64
 }
 
@@ -151,6 +157,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 
 	if s.observer != nil {
 		s.observer.SubmissionStarted(submission)
+		s.observer.BindPrivacyState(privacyState, submission)
 	}
 	return submission, true, nil
 }
@@ -158,6 +165,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 // 观察原帧时固定归属和用量。回填路径等下游写出后才用这份收据结算。
 type subscriptionResponseEvent struct {
 	typ, responseID   string
+	streamID          string
 	submission        *subscriptionSubmission
 	result            *ParseResult
 	terminal          bool
@@ -169,45 +177,71 @@ type subscriptionResponseEvent struct {
 }
 
 func (s *subscriptionSubmissionState) observeUpstream(payload []byte, msg restorestream.ValidatedMessage) (subscriptionResponseEvent, error) {
-	restoring := msg.Valid()
-	ev := readSubscriptionWSEvent(payload, msg)
+	ev, valid := readSubscriptionWSEvent(payload, msg)
+	return s.observeDecodedUpstream(payload, msg, ev, valid, msg.Valid(), msg.Valid())
+}
+
+// 路由只在入口解码一次；归属确定后，保护限制取自该响应自己的已发布状态。
+func (s *subscriptionSubmissionState) observeDecodedUpstream(payload []byte, msg restorestream.ValidatedMessage, ev subscriptionResponseEvent, validRoute, strict, protectUnowned bool) (subscriptionResponseEvent, error) {
+	if !validRoute {
+		if !strict {
+			// 未参与回填的连接保持原样透传；歧义帧不用于归属、结算或序号改写。
+			return subscriptionResponseEvent{}, nil
+		}
+		if ev.typ != "error" {
+			return ev, restorestream.ErrDelivery
+		}
+	}
 	if ev.result == nil {
 		return ev, nil
 	}
 	pendingOnly := false
-	if restoring && ev.typ == "error" {
-		frame, validRoute, err := restoreWSErrorFrame(payload)
-		if err != nil {
-			return ev, err
-		}
-		ev.errorFrame = frame
-		switch gjson.GetBytes(frame, "error.code").Str {
-		case "websocket_connection_limit_reached":
-			ev.connectionExpired = true
-			return ev, nil
-		case "invalid_stream_id", "websocket_stream_limit_reached", "previous_response_not_found", "previous_response_id_not_found":
-			pendingOnly = true
-		}
-		// 结算仍采用原始用量，但错误详情不能持久化上游回显的输入。
-		ev.result.ErrorInfo = ParseResponsesEventJSON("error", frame).ErrorInfo
-		if !validRoute || ev.responseID != gjson.GetBytes(frame, "response_id").Str {
-			return ev, nil
-		}
+	if ev.typ == "error" {
+		pendingOnly, ev.connectionExpired = subscriptionWSErrorDisposition(payload)
 	}
-	streamID := gjson.GetBytes(payload, "stream_id").Str
-	if ev.typ == "response.created" {
-		if err := s.bindCreated(ev.responseID, streamID, ev.result, restoring); err != nil {
+	if validRoute && ev.typ == "response.created" {
+		if err := s.bindCreated(ev.responseID, ev.streamID, ev.result, strict); err != nil {
 			return ev, err
 		}
 	}
-	ev.submission = s.deliveryTarget(ev.responseID, streamID, ev.typ, restoring, pendingOnly)
+	if validRoute {
+		ev.submission = s.deliveryTarget(ev.responseID, ev.streamID, ev.typ, strict, pendingOnly)
+	}
 	ev.terminal = ev.result != nil && ev.result.IsCompleted && isResponsesTerminalEvent(ev.typ)
-	if ev.terminal && ev.submission == nil && s.duplicateRestoreTerminal(ev.responseID, streamID, restoring) {
+	if validRoute && ev.terminal && ev.submission == nil && s.duplicateRestoreTerminal(ev.responseID, ev.streamID) {
 		ev.duplicate = true
 		return ev, nil
 	}
+	protect := protectUnowned
+	if ev.submission != nil {
+		if ev.submission.restoreRejected {
+			return ev, restorestream.ErrDelivery
+		}
+		protect = s.submissionRestores(ev.submission)
+	}
+	if protect && !msg.Valid() {
+		return ev, restorestream.ErrDelivery
+	}
+	if ev.typ == "error" {
+		if protect || !validRoute {
+			frame, owned, err := restoreWSErrorFrameForRoute(payload, subscriptionWSRoute{ev.typ, ev.responseID, ev.streamID}, validRoute)
+			if err != nil {
+				return ev, err
+			}
+			ev.errorFrame = frame
+			// 结算仍采用原始用量，但错误详情不能持久化上游回显的输入。
+			ev.result.ErrorInfo = ParseResponsesEventJSON("error", frame).ErrorInfo
+			if !owned {
+				ev.submission = nil
+				return ev, nil
+			}
+		}
+		if ev.connectionExpired {
+			return ev, nil
+		}
+	}
 	s.responseProgress(ev.submission, ev.result, int64(len(payload)))
-	if ev.terminal && restoring && ev.submission != nil {
+	if ev.terminal && ev.submission != nil {
 		s.mu.Lock()
 		ev.submission.terminalRead = ev.result
 		s.mu.Unlock()
@@ -217,74 +251,42 @@ func (s *subscriptionSubmissionState) observeUpstream(payload []byte, msg restor
 	return ev, nil
 }
 
-// 回填数据帧在读侧只解码一次；仅把归属和观测结果交给队列。回执、元数据
-// 仍然只读事件类型，不把它们可能很大的扩展字段展开成对象。
-func readSubscriptionWSEvent(raw []byte, msg restorestream.ValidatedMessage) subscriptionResponseEvent {
+// 回填数据帧复用读侧解码对象校验归属；队列只保存原帧和观测结果。
+// 控制回执也校验路由，但不计为生成内容，不改变既有用量与生命周期观测。
+func readSubscriptionWSEvent(raw []byte, msg restorestream.ValidatedMessage) (subscriptionResponseEvent, bool) {
 	var ev subscriptionResponseEvent
+	if !msg.Valid() && !utf8.Valid(raw) {
+		return ev, false
+	}
 	var decoded map[string]any
+	var route subscriptionWSRoute
+	var validRoute bool
 	if msg.Valid() {
-		// 提示只用于决定是否值得解码，不能用来决定归属或跳过严格校验。
-		hint := gjson.GetBytes(raw, "type").Str
-		if hint == "error" || strings.HasPrefix(hint, "response.") && !subscriptionWSControlReceipt(hint) {
-			if m, err := msg.DecodeForObservation(); err == nil && canonicalWSRouting(m) {
-				decoded = m
-				ev.typ, _ = decoded["type"].(string)
-				ev.typ = strings.TrimSpace(ev.typ)
-				response, _ := decoded["response"].(map[string]any)
-				ev.responseID, _ = response["id"].(string)
-				if ev.responseID == "" {
-					ev.responseID, _ = decoded["response_id"].(string)
-				}
-			}
+		decoded, _ = msg.DecodeForObservation()
+	} else if validateSubscriptionJSON(raw) == nil {
+		// 未通过回填深度检查不等于协议非法；普通观测沿用标准库数字语义。
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			decoded = nil
 		}
 	}
-	if decoded == nil {
-		ev.typ = responsesEventType(raw)
+	if decoded != nil {
+		route, validRoute = canonicalSubscriptionWSRoute(decoded)
+	} else {
+		// 数值溢出只影响用量观测，路由仍由标准解码的原始数值版本确定。
+		route, validRoute = decodeSubscriptionWSRoute(raw)
 	}
+	ev.typ, ev.responseID, ev.streamID = route.typ, route.responseID, route.streamID
 	ev.controlReceipt = subscriptionWSControlReceipt(ev.typ)
 	ev.metadata = ev.typ == "responsesapi.websocket_timing" || strings.HasPrefix(ev.typ, "codex.")
 	if ev.typ == "" || ev.controlReceipt || ev.metadata {
-		return ev
+		return ev, validRoute
 	}
 	if decoded != nil {
 		ev.result = observeDecodedResponsesEvent(ev.typ, decoded, len(raw))
 	} else {
-		ev.responseID = responsesEventID(raw)
 		ev.result = ParseResponsesEventJSON(ev.typ, raw)
 	}
-	return ev
-}
-
-// 原结构体解码允许大小写别名，遇到类型错误则不返回 ID。map 不保留键顺序；
-// 非规范路由字段继续由原解码器解释，不能从 map 猜选同名字段或绑定另一条流。
-func canonicalWSRouting(m map[string]any) bool {
-	for k, v := range m {
-		switch k {
-		case "type", "response_id":
-			if _, ok := v.(string); !ok && v != nil {
-				return false
-			}
-		case "response":
-			obj, ok := v.(map[string]any)
-			if !ok && v != nil {
-				return false
-			}
-			for name, value := range obj {
-				if name == "id" {
-					if _, ok := value.(string); !ok && value != nil {
-						return false
-					}
-				} else if strings.EqualFold(name, "id") {
-					return false
-				}
-			}
-		default:
-			if strings.EqualFold(k, "type") || strings.EqualFold(k, "response_id") || strings.EqualFold(k, "response") {
-				return false
-			}
-		}
-	}
-	return true
+	return ev, validRoute
 }
 
 // mergeIntermediateDiagnostics 把非 created、非终态事件携带的响应模型 / 思考字段合并进对应 submission。
@@ -359,19 +361,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID, streamID string, r
 		s.warn("duplicate_response_id")
 		return nil
 	}
-	selected := -1
-	for n, candidate := range s.pending {
-		if candidate.settled || candidate.terminalRead != nil || !candidate.dispatched {
-			continue
-		}
-		if streamID == "" || streamID == candidate.StreamID {
-			selected = n
-			break
-		}
-		if selected == -1 && candidate.StreamID == "" {
-			selected = n
-		}
-	}
+	selected := s.pendingCreatedIndexLocked(streamID)
 	if selected != -1 {
 		submission = s.pending[selected]
 		s.pending = slices.Delete(s.pending, selected, selected+1)
@@ -416,6 +406,7 @@ func (s *subscriptionSubmissionState) bindCreated(responseID, streamID string, r
 	if s.observer != nil {
 		if started {
 			s.observer.SubmissionStarted(submission)
+			s.observer.BindPrivacyState(submission.PrivacyState, submission)
 		}
 		s.observer.SubmissionBound(submission, result)
 	}
@@ -485,6 +476,7 @@ func (s *subscriptionSubmissionState) close(reason string) {
 	}
 	s.closed = true
 	s.restoring.Store(0)
+	s.bypassed.Store(0)
 	for _, submission := range s.active {
 		if submission.settled {
 			continue
@@ -507,6 +499,9 @@ func (s *subscriptionSubmissionState) close(reason string) {
 }
 
 func (s *subscriptionSubmissionState) removeSubmissionLocked(target *subscriptionSubmission) {
+	if target.restoreBypassed {
+		s.bypassed.Add(-1)
+	}
 	if target.restore != nil {
 		s.restoring.Add(-1)
 	}
@@ -525,7 +520,10 @@ func (s *subscriptionSubmissionState) removeSubmissionLocked(target *subscriptio
 }
 
 func (s *subscriptionSubmissionState) rememberCompletedLocked(sub *subscriptionSubmission) {
-	receipt := subscriptionCompletedResponse{streamID: sub.StreamID, restored: sub.restore != nil}
+	receipt := subscriptionCompletedResponse{streamID: sub.StreamID, restored: sub.restore != nil, bypassed: sub.restoreBypassed}
+	if receipt.bypassed {
+		s.bypassed.Add(1)
+	}
 	if receipt.restored {
 		receipt.sequenceOffset = sub.restore.SequenceOffset()
 	}
@@ -536,6 +534,9 @@ func (s *subscriptionSubmissionState) rememberCompletedLocked(sub *subscriptionS
 	}
 	oldest := s.recentOrder[0]
 	s.recentOrder = s.recentOrder[1:]
+	if s.recentIDs[oldest].bypassed {
+		s.bypassed.Add(-1)
+	}
 	delete(s.recentIDs, oldest)
 }
 
@@ -573,20 +574,4 @@ func responsesEventType(payload []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(event.Type)
-}
-
-func responsesEventID(payload []byte) string {
-	var event struct {
-		Response struct {
-			ID string `json:"id"`
-		} `json:"response"`
-		ResponseID string `json:"response_id"`
-	}
-	if json.Unmarshal(payload, &event) != nil {
-		return ""
-	}
-	if event.Response.ID != "" {
-		return event.Response.ID
-	}
-	return event.ResponseID
 }

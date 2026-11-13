@@ -8,13 +8,14 @@ import (
 )
 
 func (w *Writer) decodeWebSocketEvent(msg ValidatedMessage) (object, error) {
-	if m, envelope := w.decodeToolSnapshot(msg); m != nil {
-		return m, w.checkIdentity(envelope)
+	if m, _ := w.decodeToolSnapshot(msg); m != nil {
+		return m, w.checkDecodedIdentity(m)
 	}
-	if err := w.checkIdentity(msg.raw); err != nil {
+	m, err := msg.decodeObject()
+	if err != nil {
 		return nil, err
 	}
-	return msg.decodeObject()
+	return m, w.checkDecodedIdentity(m)
 }
 
 // 单工具的大快照可直接复用已累积的参数。核对内容和字段位置后，只需在剩余

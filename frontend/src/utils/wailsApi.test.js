@@ -53,6 +53,20 @@ const loadRequestMappingBindings = async (requests = [22, 0, undefined].map((fir
   return import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 };
 
+test('GetRequests 保留隐私异常码，列表刷新后仍能显示异常', async (t) => {
+  const bindings = await loadRequestMappingBindings([{ request_id: 'notice', privacy_warnings: ['request_fail_open', 'response_bypassed'] }]);
+  const originalWindow = globalThis.window;
+  t.mock.method(console, 'log', () => {});
+  try {
+    globalThis.window = { location: { protocol: 'wails:' } };
+    const result = await bindings.getRequests();
+    assert.deepEqual(normalizeRequest(result.requests[0]).privacyWarnings, ['request_fail_open', 'response_bypassed']);
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
 test('GetRequests 透传首次取连接偏移：22、真实0与缺失，并保留重试标记的可信判定', async (t) => {
   const bindings = await loadRequestMappingBindings();
   const originalWindow = globalThis.window;

@@ -10,6 +10,7 @@ const (
 	EventRequestStarted   EventType = "request_started"
 	EventRequestUpdated   EventType = "request_updated"
 	EventRequestCompleted EventType = "request_completed"
+	EventPrivacyWarning   EventType = "privacy_warning"
 
 	// 端点健康事件
 	EventEndpointHealthy   EventType = "endpoint_healthy"
@@ -55,6 +56,7 @@ var EventTypeMapping = map[EventType]string{
 	EventRequestStarted:          "request",
 	EventRequestUpdated:          "request",
 	EventRequestCompleted:        "request",
+	EventPrivacyWarning:          "notification",
 	EventEndpointHealthy:         "endpoint",
 	EventEndpointUnhealthy:       "endpoint",
 	EventConnectionStats:         "connection",

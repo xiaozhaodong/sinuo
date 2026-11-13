@@ -105,6 +105,8 @@ func (d *RestoreDict) releaseRetiredPayloadLocked() {
 
 // RestoreView 在出站前暂存一批映射，发布后固定响应的首次查找结果。
 // values 仅在独占扫描阶段写入。其余可变状态由 dict.mu 保护。
+// 持有者负责在使用结束或放弃时调用 Release；Publish 不转移所有权，也不代替释放。
+// Release 可重复调用，但首次释放后不得继续使用视图。
 type RestoreView struct {
 	values              map[string]string
 	size                int

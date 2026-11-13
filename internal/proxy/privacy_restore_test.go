@@ -296,7 +296,7 @@ func TestAccountRestoreFailureStopsLocally(t *testing.T) {
 	}
 	raw := routeBody(true)
 	rec := request(strings.Replace(raw, `"stream":true`, `"stream":true,"previous_response_id":{"bad":"type"}`, 1))
-	if calls.Load() != 0 || !strings.Contains(rec.Body.String(), "privacy_restore_rejected") {
+	if calls.Load() != 0 || !strings.Contains(rec.Body.String(), privacy.CodeInvalidRequest) {
 		t.Fatal("无效引用已出站", calls.Load(), rec.Body.String())
 	}
 	rec = request(raw)

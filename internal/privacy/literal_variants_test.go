@@ -222,11 +222,11 @@ func TestExactVariantsSharedScannerMatchesSequential(t *testing.T) {
 		}
 		s := newTestSnapshot(t, redactSettings(), rules...)
 		text := strings.Join(inputs, "|") + randomAlphabetString(rng, "ab +/?=%", 0, 100)
-		shared := s.scanText(s.candidateRules(claudeRequest()), text)
+		shared := s.scanText(s.candidateRules(claudeRequest(), nil), text)
 		for i := range s.Rules {
 			s.Rules[i].literals = nil
 		}
-		if sequential := s.scanText(s.candidateRules(claudeRequest()), text); !reflect.DeepEqual(shared, sequential) {
+		if sequential := s.scanText(s.candidateRules(claudeRequest(), nil), text); !reflect.DeepEqual(shared, sequential) {
 			t.Fatalf("共享与逐条匹配不一致，round=%d", round)
 		}
 	}

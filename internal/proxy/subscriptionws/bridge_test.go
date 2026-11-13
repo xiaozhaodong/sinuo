@@ -435,7 +435,8 @@ func TestBridgeInjectsReplyWithoutForwardOrClosingConnection(t *testing.T) {
 }
 
 func TestBridgeReplySharesReverseQueueOrderWithUpstreamEvents(t *testing.T) {
-	upstreamSent := make(chan struct{})
+	upstreamQueued := make(chan struct{})
+	localReplyQueued := make(chan struct{})
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
@@ -445,7 +446,6 @@ func TestBridgeReplySharesReverseQueueOrderWithUpstreamEvents(t *testing.T) {
 		if err := conn.Write(r.Context(), websocket.MessageText, []byte("upstream-first")); err != nil {
 			return
 		}
-		close(upstreamSent)
 		for {
 			if _, _, err := conn.Read(r.Context()); err != nil {
 				return
@@ -454,9 +454,26 @@ func TestBridgeReplySharesReverseQueueOrderWithUpstreamEvents(t *testing.T) {
 	}))
 	t.Cleanup(upstreamServer.Close)
 
-	interceptor := testInterceptor(func(_ context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+	interceptor := testInterceptor(func(ctx context.Context, direction Direction, payload []byte) (InterceptResult, error) {
+		if direction == DirectionUpstreamToDownstream && string(payload) == "upstream-first" {
+			return InterceptResult{Forward: payload, Deliver: func(send func([]byte) error, _ func([]byte, func()) error) error {
+				// 等实际 writer 取到上游事件，再允许测试发送被拦截的请求。
+				close(upstreamQueued)
+				select {
+				case <-localReplyQueued:
+					return send(payload)
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}}, nil
+		}
 		if direction == DirectionDownstreamToUpstream && string(payload) == "blocked" {
 			return InterceptResult{Reply: []byte(`{"type":"error","status":422}`)}, nil
+		}
+		if direction == DirectionDownstreamToUpstream && string(payload) == "reply-queue-barrier" {
+			// 同一 reader 读到下一帧时，前一帧的本地回复已经入队。
+			close(localReplyQueued)
+			return InterceptResult{}, nil
 		}
 		return InterceptResult{Forward: payload}, nil
 	})
@@ -465,12 +482,15 @@ func TestBridgeReplySharesReverseQueueOrderWithUpstreamEvents(t *testing.T) {
 	ctx := testContext(t)
 	conn, _ := dialBridge(ctx, t, server, websocket.CompressionDisabled)
 	select {
-	case <-upstreamSent:
+	case <-upstreamQueued:
 	case <-ctx.Done():
 		t.Fatal("upstream event was not queued")
 	}
 	if err := conn.Write(ctx, websocket.MessageText, []byte("blocked")); err != nil {
 		t.Fatalf("write blocked message: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte("reply-queue-barrier")); err != nil {
+		t.Fatalf("write queue barrier: %v", err)
 	}
 	_, first, err := conn.Read(ctx)
 	if err != nil {

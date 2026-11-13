@@ -309,6 +309,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.privacyFilter != nil {
 			privacyState := handlers.NewPrivacyRequestState(connID)
 			privacyState.SessionID = clientSessionID(r)
+			// count_tokens 不建立生成记录，但处理失败仍应给出通知。
+			privacyState.SetSummaryRecorder(newPrivacySummaryWriter(nil, h.eventBus, connID))
 			defer privacyState.ReleaseRestore()
 			*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
 			ctx = r.Context()
@@ -325,11 +327,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		privacyState := handlers.NewPrivacyRequestState(reqID)
 		privacyState.SessionID = clientSessionID(r)
 		defer privacyState.ReleaseRestore()
-		privacyState.SetSummaryRecorder(func(payload string) {
-			if h.usageTracker != nil && reqID != "" {
-				h.usageTracker.RecordRequestUpdate(reqID, tracking.UpdateOptions{PrivacyScanJSON: &payload})
-			}
-		})
+		privacyState.SetSummaryRecorder(newPrivacySummaryWriter(h.usageTracker, h.eventBus, reqID))
 		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
 		ctx = r.Context()
 	}
