@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	MaxFiles      = 32
+	MaxFiles      = 32 // 手动导入单批文件数，自动来源扫描不使用此限制。
 	MaxFileBytes  = 2 << 20
 	MaxTotalBytes = 8 << 20
 	MaxValues     = 10000
@@ -69,11 +69,17 @@ func (p *parser) addFinding(f Finding) error {
 	return nil
 }
 
-// Parse 按文件类型解析；一个文件解析失败时丢弃该文件的部分结果，其他文件仍可预览。
+// Parse 校验手动导入批次，再交给共用解析器。
 func Parse(ctx context.Context, files []File) ([]Result, error) {
 	if len(files) == 0 || len(files) > MaxFiles {
 		return nil, errors.New("请选择 1–32 个配置文件")
 	}
+	return ParseSource(ctx, files)
+}
+
+// ParseSource 按文件类型解析整个来源，不限制文件数，统一检查大小与候选容量。
+// 一个文件解析失败时丢弃该文件的部分结果，手动导入仍可预览其他文件。
+func ParseSource(ctx context.Context, files []File) ([]Result, error) {
 	total := 0
 	for _, f := range files {
 		if len(f.Content) > MaxFileBytes {
@@ -103,10 +109,14 @@ func Parse(ctx context.Context, files []File) ([]Result, error) {
 			err = p.parseYAML(content)
 		case r.Format == "env":
 			err = p.parseEnv(content)
+		case r.Format == "aws" || r.Format == "npmrc":
+			err = p.parseCredentialAssignments(content, r.Format)
+		case r.Format == "netrc":
+			err = p.parseNetrc(content)
 		case r.Format == "properties":
 			err = p.parseProperties(content)
 		default:
-			err = errors.New("仅支持 .env、JSON、YAML/YML 和 properties 文件")
+			err = errors.New("仅支持 .env、JSON、YAML/YML、properties、AWS credentials、npmrc 和 netrc 文件")
 		}
 		if err != nil {
 			r.Error = err.Error()
@@ -124,6 +134,14 @@ func Parse(ctx context.Context, files []File) ([]Result, error) {
 
 func fileFormat(name string) string {
 	name = strings.ToLower(SafeName(name))
+	switch name {
+	case "credentials":
+		return "aws"
+	case ".npmrc", "npmrc":
+		return "npmrc"
+	case ".netrc", "_netrc":
+		return "netrc"
+	}
 	switch path.Ext(name) {
 	case ".json":
 		return "json"
@@ -139,6 +157,9 @@ func fileFormat(name string) string {
 	}
 	return ""
 }
+
+// SupportsFileName 供登记来源的目录枚举与手动导入共用格式准入。
+func SupportsFileName(name string) bool { return fileFormat(name) != "" }
 
 // SafeName 只保留文件别名，不接受绝对路径、控制字符或过长元数据。
 func SafeName(name string) string {

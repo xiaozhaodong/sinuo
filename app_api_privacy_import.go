@@ -2,6 +2,7 @@ package main
 
 import (
 	"sinuo/internal/privacy/configimport"
+	"sinuo/internal/service"
 )
 
 // PrivacyConfigImportFile 只包含用户主动选择的文件内容，不接受后端文件路径。
@@ -63,6 +64,11 @@ func (a *App) PreviewPrivacyConfigImport(files []PrivacyConfigImportFile) (Priva
 	if err != nil {
 		return out, err
 	}
+	return privacyConfigImportPreviewDTO(preview), nil
+}
+
+func privacyConfigImportPreviewDTO(preview service.PrivacyConfigPreview) PrivacyConfigImportPreview {
+	var out PrivacyConfigImportPreview
 	out.ID, out.ExpiresAt = preview.ID, preview.ExpiresAt
 	out.Files = make([]PrivacyConfigImportFileResult, 0, len(preview.Files))
 	for _, f := range preview.Files {
@@ -76,7 +82,7 @@ func (a *App) PreviewPrivacyConfigImport(files []PrivacyConfigImportFile) (Priva
 			Status: c.Status, Selectable: c.Selectable, Selected: c.Selected,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // CommitPrivacyConfigImport 事务追加选中项，并发布一次运行快照。

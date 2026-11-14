@@ -28,6 +28,7 @@ import PrivacyRuleDrawer from './components/PrivacyRuleDrawer.jsx';
 import PrivacyRuleTestDrawer from './components/PrivacyRuleTestDrawer.jsx';
 import PrivacyPresetDialog from './components/PrivacyPresetDialog.jsx';
 import PrivacyExactSecretsPanel from './components/PrivacyExactSecretsPanel.jsx';
+import PrivacyConfigSourcesPanel from './components/PrivacyConfigSourcesPanel.jsx';
 import PrivacyRestoreDictionaryPanel from './components/PrivacyRestoreDictionaryPanel.jsx';
 import PrivacyBuiltinRulesPanel from './components/PrivacyBuiltinRulesPanel.jsx';
 import {
@@ -82,7 +83,7 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
     || onError !== settings.on_error;
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-fg-muted">
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-fg-muted">
       <label className="flex items-center gap-1.5">
         扫描上限
         <input
@@ -96,11 +97,11 @@ const ScanSettingsBar = ({ settings, busy, onSave }) => {
       </label>
       <span className="flex items-center gap-1.5" title="扫描超限独立按此设置处理；开启响应回填时，截断扫描将整份原文放行并停用本轮回填。">
         超限
-        <CustomSelect size="xs" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-32" />
+        <CustomSelect size="xs" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-[104px]" />
       </span>
       <span className="flex items-center gap-1.5" title="出错放行会发送隐私处理前的完整原文，并在请求详情中提示隐私保护未完成；不会发送部分改写的正文。">
         出错
-        <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-24" />
+        <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-20" />
       </span>
       <label className="flex items-center gap-2 text-xs" title="脱敏模式可回填 Claude 普通端点、Codex 账号池及两者订阅直通的 SSE 和 JSON 响应。Codex 订阅直通也支持原生 WebSocket。">
         <input type="checkbox" className="app-checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
@@ -145,6 +146,7 @@ const PrivacyStatusBar = ({ settings, stats }) => {
 
 const PRIVACY_TABS = [
   { id: 'exact', label: '本地敏感值' },
+  { id: 'sources', label: '配置来源' },
   { id: 'builtin', label: '内置规则' },
   { id: 'advanced', label: '高级预设' },
   { id: 'restore', label: '内存回填字典' }
@@ -279,7 +281,7 @@ const PrivacyProtectionPage = () => {
 
       {/* 范围条：规则分类页签 + 扫描参数 */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line bg-inspector px-3 py-1.5">
-        <PageTabs tabs={PRIVACY_TABS} activeTab={activeTab} onChange={setActiveTab} idPrefix="privacy" ariaLabel="隐私保护" />
+        <PageTabs tabs={PRIVACY_TABS} activeTab={activeTab} onChange={(tab) => { setActiveTab(tab); if (tab === 'exact') reloadAll(); }} idPrefix="privacy" ariaLabel="隐私保护" />
         <span className="flex-1" aria-hidden="true" />
         <ScanSettingsBar
           key={`${settings.response_restore_enabled}|${settings.scan_max_bytes}|${settings.over_limit_action}|${settings.on_error}|${settings.version}`}
@@ -306,6 +308,7 @@ const PrivacyProtectionPage = () => {
         aria-labelledby={`privacy-tab-${activeTab}`}
         className="flex min-h-0 flex-1 flex-col"
       >
+        {activeTab === 'sources' && <PrivacyConfigSourcesPanel onImported={async () => { await reloadAll(); await reloadStats(); }} />}
         {activeTab === 'restore' && (
           <PrivacyRestoreDictionaryPanel
             key={`${settings.mode}|${settings.response_restore_enabled}`}

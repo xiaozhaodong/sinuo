@@ -436,7 +436,7 @@ const PrivacyExactSecretsPanel = ({
                     <span className="ml-2 text-fg-subtle">{secret.value_length} 字符</span>
                   </td>
                   <td className="font-mono text-xs text-fg-body">{secret.placeholder}</td>
-                  <td className="text-xs text-fg-subtle">{secret.source_type}</td>
+                  <td className="text-xs text-fg-subtle">{secret.source_type === 'config_source' ? '配置来源' : secret.source_type}</td>
                   <td><RowMoreButton onOpenMenu={(event) => openRowMenu(event, secret)} /></td>
                 </tr>
               ))}

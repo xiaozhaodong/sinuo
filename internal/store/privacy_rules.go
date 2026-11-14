@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"sinuo/internal/store/schema"
 )
 
 // PrivacySettingsRecord 隐私保护全局设置（单行，id=1）
@@ -58,6 +60,7 @@ type PrivacyExactSecretRecord struct {
 
 // PrivacyStore 隐私规则存储接口
 type PrivacyStore interface {
+	PrivacyConfigSourceStore
 	GetSettings(ctx context.Context) (*PrivacySettingsRecord, error)
 	UpdateSettings(ctx context.Context, record *PrivacySettingsRecord) error
 	ListRules(ctx context.Context) ([]*PrivacyRuleRecord, error)
@@ -157,6 +160,10 @@ func (s *SQLitePrivacyStore) ensureSchema(ctx context.Context) error {
 				s.schemaError = fmt.Errorf("ensure privacy schema failed: %w", err)
 				return
 			}
+		}
+		if err := schema.EnsurePrivacySources(ctx, s.db); err != nil {
+			s.schemaError = err
+			return
 		}
 		s.schemaError = s.ensureRestoreColumns(ctx)
 	})

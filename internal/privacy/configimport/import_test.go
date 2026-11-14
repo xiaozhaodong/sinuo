@@ -343,6 +343,69 @@ func TestConfigImportErrorsAreBoundedAndDoNotLeak(t *testing.T) {
 	}
 }
 
+func TestConfigImportSourceAllowsMoreFilesThanManualImport(t *testing.T) {
+	files := make([]File, 64)
+	for i := range files {
+		files[i] = File{Name: fmt.Sprintf(".env.%03d", i), Content: fmt.Sprintf("PASSWORD=synthetic-multi-file-secret-%03d", i)}
+	}
+	if _, err := Parse(context.Background(), files); err == nil {
+		t.Fatal("手动导入应继续限制单批文件数")
+	}
+	results, err := ParseSource(context.Background(), files)
+	if err != nil || len(results) != len(files) {
+		t.Fatal("自动来源不应受手动导入文件数限制", len(results), err)
+	}
+	for i, result := range results {
+		if result.Error != "" || len(result.Findings) != 1 || result.Findings[0].Value != fmt.Sprintf("synthetic-multi-file-secret-%03d", i) {
+			t.Fatalf("来源中第 %d 个文件未完整解析: %s", i, result.Error)
+		}
+	}
+}
+
+func TestConfigImportSourceBudgetsAcrossManyFiles(t *testing.T) {
+	ctx := context.Background()
+	if _, err := ParseSource(ctx, []File{{Name: ".env", Content: strings.Repeat("x", MaxFileBytes+1)}}); err == nil {
+		t.Fatal("自动来源不能绕过单文件大小限制")
+	}
+	oversize := make([]File, 64)
+	for i := range oversize {
+		oversize[i] = File{Name: fmt.Sprintf(".env.%03d", i), Content: "#" + strings.Repeat("x", MaxTotalBytes/len(oversize))}
+	}
+	if _, err := ParseSource(ctx, oversize); err == nil || !strings.Contains(err.Error(), "8 MiB") {
+		t.Fatal("自动来源总大小必须跨全部文件累计", err)
+	}
+	for _, count := range []int{MaxValues, MaxValues + 1} {
+		files := make([]File, 64)
+		contents := make([]strings.Builder, len(files))
+		for i := 0; i < count; i++ {
+			fmt.Fprintf(&contents[i%len(files)], "DB_%d_PASSWORD=synthetic-shared-secret\n", i)
+		}
+		for i := range files {
+			files[i] = File{Name: fmt.Sprintf(".env.%03d", i), Content: contents[i].String()}
+		}
+		results, err := ParseSource(ctx, files)
+		if count > MaxValues {
+			if err == nil || results != nil || !strings.Contains(err.Error(), "候选超过 10000") {
+				t.Fatal("候选数量应按整个来源计数且超限不能返回部分结果", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal("候选上限内应允许多文件来源", err)
+		}
+		total := 0
+		for _, result := range results {
+			if result.Error != "" {
+				t.Fatal(result.Error)
+			}
+			total += len(result.Findings)
+		}
+		if total != count {
+			t.Fatalf("候选遗漏: got %d, want %d", total, count)
+		}
+	}
+}
+
 func FuzzConfigImport(f *testing.F) {
 	for _, seed := range []string{`{"password":"example-password"}`, "PASSWORD='alpha9 beta42'", "password: |\n  alpha9beta42", `password=alpha\u0020beta42`, "a: &a {password: synthetic-secret}\nb: {<<: *a}", "a: &a [*a]"} {
 		f.Add(seed)

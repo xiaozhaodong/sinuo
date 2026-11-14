@@ -11,6 +11,7 @@ async function invoke(name, ...args) {
 }
 
 export const previewConfigImport = (files) => invoke('PreviewPrivacyConfigImport', files);
+export const previewConfigSourceImport = (sourceID) => invoke('PreviewPrivacyConfigSourceImport', sourceID);
 export const commitConfigImport = (id, selected) => invoke('CommitPrivacyConfigImport', id, selected);
 export const cancelConfigImport = (id) => invoke('CancelPrivacyConfigImport', id);
 
@@ -38,20 +39,20 @@ export function selectedConfigIDs(candidates, selected) {
 }
 
 // 处理窗口在文件读取或预览返回前卸载的情况，防止留下无人持有的预览。
-export function createConfigImportSession(api = { preview: previewConfigImport, commit: commitConfigImport, cancel: cancelConfigImport }) {
+export function createConfigImportSession(api = { preview: previewConfigImport, previewSource: previewConfigSourceImport, commit: commitConfigImport, cancel: cancelConfigImport }, sourceID = null) {
   let id = null;
   let disposed = false;
   return {
     async preview(files) {
       if (disposed) return null;
       if (id) { await api.cancel(id); id = null; }
-      const result = await api.preview(files);
+      const result = sourceID === null ? await api.preview(files) : await api.previewSource(sourceID);
       if (disposed) { await api.cancel(result.id); return null; }
       id = result.id;
       return result;
     },
     async commit(selected) {
-      if (!id || disposed) throw new Error('导入预览已失效，请重新选择文件');
+      if (!id || disposed) throw new Error('导入预览已失效，请重新生成预览');
       const result = await api.commit(id, selected);
       id = null;
       return result;

@@ -21,6 +21,12 @@ import * as migration$0 from "./internal/migration/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as privacy$0 from "./internal/privacy/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as service$0 from "./internal/service/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as store$0 from "./internal/store/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -240,6 +246,15 @@ export function DeleteModelPricing(modelName) {
  */
 export function DeleteModelRouteBinding(assignmentID) {
     return $Call.ByID(257991805, assignmentID);
+}
+
+/**
+ * DeletePrivacyConfigSource 移除登记，已导入敏感值保留。
+ * @param {number} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function DeletePrivacyConfigSource(id) {
+    return $Call.ByID(512549969, id);
 }
 
 /**
@@ -781,6 +796,14 @@ export function ListModelRouteBindings() {
 }
 
 /**
+ * ListPrivacyConfigSources 仅返回登记路径、同步状态和数量，不返回文件内容。
+ * @returns {$CancellablePromise<service$0.PrivacyConfigSourceState>}
+ */
+export function ListPrivacyConfigSources() {
+    return $Call.ByID(4105729637);
+}
+
+/**
  * ListPrivacyExactSecrets 列出本地精确敏感值，不返回明文。
  * @returns {$CancellablePromise<$models.PrivacyExactSecretInfo[] | null>}
  */
@@ -855,6 +878,15 @@ export function PinUpstreamAccountSelection(id) {
  */
 export function PreviewPrivacyConfigImport(files) {
     return $Call.ByID(3097270658, files);
+}
+
+/**
+ * PreviewPrivacyConfigSourceImport 预览已登记来源，只返回掩码候选，无需前端重新选文件。
+ * @param {number} sourceID
+ * @returns {$CancellablePromise<$models.PrivacyConfigImportPreview>}
+ */
+export function PreviewPrivacyConfigSourceImport(sourceID) {
+    return $Call.ByID(1937410643, sourceID);
 }
 
 /**
@@ -961,6 +993,15 @@ export function SaveCodexModelCatalog(input) {
  */
 export function SaveCodexSubscriptionProxyConfig(input, expectedRevision) {
     return $Call.ByID(551409248, input, expectedRevision);
+}
+
+/**
+ * SavePrivacyConfigSource 登记用户明确指定的位置；保存后由后台扫描并记录同步结果。
+ * @param {store$0.PrivacyConfigSourceRecord} input
+ * @returns {$CancellablePromise<store$0.PrivacyConfigSourceRecord | null>}
+ */
+export function SavePrivacyConfigSource(input) {
+    return $Call.ByID(286534211, input);
 }
 
 /**
@@ -1075,6 +1116,15 @@ export function StopLogStream() {
  */
 export function SwapUpstreamAccountGroups(sourceGroup, targetGroup) {
     return $Call.ByID(2048535966, sourceGroup, targetGroup);
+}
+
+/**
+ * SyncPrivacyConfigSources 立即检查一个来源；id=0 表示全部启用来源。
+ * @param {number} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function SyncPrivacyConfigSources(id) {
+    return $Call.ByID(3133066374, id);
 }
 
 /**

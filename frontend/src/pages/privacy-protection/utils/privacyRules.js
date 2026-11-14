@@ -45,14 +45,15 @@ export const PRIVACY_EXACT_SECRET_CATEGORY_OPTIONS = [
   { value: 'custom', label: '自定义' }
 ];
 
+// 下拉前已有「超限」「出错」标签，选项只写处理方式，保证范围条在默认窗口宽度下单行。
 export const PRIVACY_OVER_LIMIT_OPTIONS = [
-  { value: 'scan_prefix', label: '截断扫描并提示' },
-  { value: 'fail_closed', label: '超限拒绝' }
+  { value: 'scan_prefix', label: '截断并提示' },
+  { value: 'fail_closed', label: '拒绝' }
 ];
 
 export const PRIVACY_ON_ERROR_OPTIONS = [
-  { value: 'fail_open', label: '出错放行' },
-  { value: 'fail_closed', label: '出错拒绝' }
+  { value: 'fail_open', label: '放行' },
+  { value: 'fail_closed', label: '拒绝' }
 ];
 
 export const DEFAULT_SCAN_MAX_BYTES = 4194304;

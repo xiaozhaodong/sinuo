@@ -399,6 +399,9 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 
 	// 4. 关闭使用追踪 (flush 数据库)
+	if a.privacyService != nil {
+		a.privacyService.CloseConfigSourceSync()
+	}
 	if a.usageTracker != nil {
 		if err := a.usageTracker.Close(); err != nil {
 			a.logger.Error("使用追踪器关闭失败", "error", err)
@@ -600,6 +603,9 @@ func (a *App) setupPrivacyService() {
 	}
 	if a.privacyService.Status() == service.PrivacyStatusDegraded {
 		a.logger.Warn("⚠️ 隐私保护部分规则未激活（编译失败），请在前端检查规则状态")
+	}
+	if err := a.privacyService.StartConfigSourceSync(ctx); err != nil {
+		a.logger.Error("配置来源自动同步未启动", "error", err)
 	}
 	a.logger.Info("✅ 隐私保护服务已启用 (SQLite)")
 }

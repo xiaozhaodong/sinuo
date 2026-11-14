@@ -207,7 +207,7 @@ func normalizeExactSecretCategory(category string) string {
 
 func normalizeExactSecretSourceType(sourceType string) string {
 	switch strings.ToLower(strings.TrimSpace(sourceType)) {
-	case "manual", "endpoint_token", "endpoint_api_key", "upstream_account", "imported":
+	case "manual", "endpoint_token", "endpoint_api_key", "upstream_account", "imported", "config_source":
 		return strings.ToLower(strings.TrimSpace(sourceType))
 	default:
 		return "manual"

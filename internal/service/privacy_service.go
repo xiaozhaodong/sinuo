@@ -45,13 +45,16 @@ type PrivacyRuntimeStats struct {
 
 // PrivacyService 隐私保护服务
 type PrivacyService struct {
-	restoreCapacity privacy.RestoreCapacity
-	store           store.PrivacyStore
-	mu              sync.Mutex                  // 串行化所有写操作（保存->编译->热替换）
-	configImport    *privacyConfigImportSession // 同样由 mu 保护；取消、确认或过期后释放
-	snapshot        atomic.Pointer[privacy.Snapshot]
-	version         atomic.Int64
-	status          atomic.Value // string
+	sourceMu         sync.Mutex            // 来源登记、文件读取与同步串行；提交快照时再取得 mu。
+	sourceWatcher    *privacyConfigWatcher // 由 mu 保护生命周期。
+	sourceWatchError string
+	restoreCapacity  privacy.RestoreCapacity
+	store            store.PrivacyStore
+	mu               sync.Mutex                  // 串行化所有写操作（保存->编译->热替换）
+	configImport     *privacyConfigImportSession // 同样由 mu 保护；取消、确认或过期后释放
+	snapshot         atomic.Pointer[privacy.Snapshot]
+	version          atomic.Int64
+	status           atomic.Value // string
 
 	statsMu       sync.Mutex
 	scanCount     int64

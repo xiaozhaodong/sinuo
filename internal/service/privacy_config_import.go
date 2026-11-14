@@ -60,10 +60,13 @@ type PrivacyConfigImportResult struct {
 }
 
 type privacyConfigImportSession struct {
-	id      string
-	expires time.Time
-	timer   *time.Timer
-	records map[string]*store.PrivacyExactSecretRecord
+	id           string
+	expires      time.Time
+	timer        *time.Timer
+	records      map[string]*store.PrivacyExactSecretRecord
+	sourceValues map[string][]store.PrivacyConfigSourceValue
+	source       *store.PrivacyConfigSourceRecord
+	sourceDigest string
 }
 
 // PreviewConfigImport 只在内存生成预览。原值不进入返回 DTO、日志或 SQLite。
@@ -79,6 +82,12 @@ func (s *PrivacyService) PreviewConfigImport(ctx context.Context, files []config
 	if err != nil {
 		return out, err
 	}
+	return s.previewParsedConfigImportLocked(ctx, parsed)
+}
+
+// 两种入口共用去重、分类、已有值识别与临时预览生命周期。
+func (s *PrivacyService) previewParsedConfigImportLocked(ctx context.Context, parsed []configimport.Result) (PrivacyConfigPreview, error) {
+	var out PrivacyConfigPreview
 	existing, err := s.store.ListExactSecrets(ctx)
 	if err != nil {
 		return out, errors.New("读取本地敏感值失败，请重试")
@@ -94,16 +103,27 @@ func (s *PrivacyService) PreviewConfigImport(ctx context.Context, files []config
 	state := &privacyConfigImportSession{id: hex.EncodeToString(token[:]), expires: time.Now().Add(privacyConfigImportTTL), records: make(map[string]*store.PrivacyExactSecretRecord)}
 	out.ID, out.ExpiresAt = state.id, state.expires.Format(time.RFC3339)
 	out.Files = make([]PrivacyConfigFileResult, 0, len(parsed))
-	out.Candidates = make([]PrivacyConfigCandidate, 0)
-	indexes := make(map[string]int)
 	for _, file := range parsed {
 		out.Files = append(out.Files, PrivacyConfigFileResult{Name: file.Name, Format: file.Format, Scanned: file.Scanned, Found: len(file.Findings), Error: file.Error})
+	}
+	out.Candidates, state.records = configImportCandidates(parsed, hashes)
+	state.timer = time.AfterFunc(privacyConfigImportTTL, func() { s.CancelConfigImport(state.id) })
+	s.configImport = state
+	return out, nil
+}
+
+// 分类与同值合并只有这一套规则，来源待确认计数和预览使用相同候选。
+func configImportCandidates(parsed []configimport.Result, hashes map[string]*store.PrivacyExactSecretRecord) ([]PrivacyConfigCandidate, map[string]*store.PrivacyExactSecretRecord) {
+	candidates := make([]PrivacyConfigCandidate, 0)
+	records := make(map[string]*store.PrivacyExactSecretRecord)
+	indexes := make(map[string]int)
+	for _, file := range parsed {
 		for _, f := range file.Findings {
 			source := file.Name + ":" + f.Path
 			if !f.Excluded {
 				hash := HashPrivacySecretValue(f.Value)
 				if index, ok := indexes[hash]; ok {
-					c := &out.Candidates[index]
+					c := &candidates[index]
 					if len(c.Sources) < 32 {
 						c.Sources = append(c.Sources, source)
 					}
@@ -112,25 +132,23 @@ func (s *PrivacyService) PreviewConfigImport(ctx context.Context, files []config
 						updated, record := configImportCandidate(c.ID, file.Name, f, hashes[hash])
 						updated.Sources = c.Sources
 						*c = updated
-						delete(state.records, c.ID)
+						delete(records, c.ID)
 						if record != nil {
-							state.records[c.ID] = record
+							records[c.ID] = record
 						}
 					}
 					continue
 				}
-				indexes[hash] = len(out.Candidates)
+				indexes[hash] = len(candidates)
 			}
-			c, record := configImportCandidate(strconv.Itoa(len(out.Candidates)+1), file.Name, f, hashes[HashPrivacySecretValue(f.Value)])
-			out.Candidates = append(out.Candidates, c)
+			c, record := configImportCandidate(strconv.Itoa(len(candidates)+1), file.Name, f, hashes[HashPrivacySecretValue(f.Value)])
+			candidates = append(candidates, c)
 			if record != nil {
-				state.records[c.ID] = record
+				records[c.ID] = record
 			}
 		}
 	}
-	state.timer = time.AfterFunc(privacyConfigImportTTL, func() { s.CancelConfigImport(state.id) })
-	s.configImport = state
-	return out, nil
+	return candidates, records
 }
 
 func configImportCandidate(id, file string, f configimport.Finding, existing *store.PrivacyExactSecretRecord) (PrivacyConfigCandidate, *store.PrivacyExactSecretRecord) {
@@ -165,22 +183,26 @@ func configImportCandidate(id, file string, f configimport.Finding, existing *st
 
 // CommitConfigImport 只接受预览 ID 与用户勾选的候选 ID，不接受客户端回传原值。
 func (s *PrivacyService) CommitConfigImport(ctx context.Context, id string, selected []string) (PrivacyConfigImportResult, error) {
+	// 与来源同步、登记修改保持相同锁顺序，确认时来源边界不能被并发替换。
+	s.sourceMu.Lock()
+	defer s.sourceMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out PrivacyConfigImportResult
 	state := s.configImport
 	if state == nil || state.id != id {
-		return out, errors.New("导入预览已失效，请重新选择文件")
+		return out, errors.New("导入预览已失效，请重新生成预览")
 	}
 	if !time.Now().Before(state.expires) {
 		s.clearConfigImportLocked()
-		return out, errors.New("导入预览已过期，请重新选择文件")
+		return out, errors.New("导入预览已过期，请重新生成预览")
 	}
 	if len(selected) == 0 || len(selected) > configimport.MaxValues {
 		return out, errors.New("请选择有效的导入候选")
 	}
 	seen := make(map[string]bool, len(selected))
 	records := make([]*store.PrivacyExactSecretRecord, 0, len(selected))
+	var sourceValues []store.PrivacyConfigSourceValue
 	for _, key := range selected {
 		r := state.records[key]
 		if r == nil {
@@ -188,21 +210,41 @@ func (s *PrivacyService) CommitConfigImport(ctx context.Context, id string, sele
 		}
 		if !seen[key] {
 			records = append(records, r)
+			if state.source != nil {
+				values := state.sourceValues[key]
+				if len(values) == 0 {
+					return out, errors.New("来源候选关联已失效，请重新生成预览")
+				}
+				sourceValues = append(sourceValues, values...)
+			}
 			seen[key] = true
 		}
 	}
+	if err := s.validateConfigSourceReview(ctx, state); err != nil {
+		return out, err
+	}
 	var next *privacy.Snapshot
-	added, err := s.store.ImportExactSecrets(ctx, records, func(all []*store.PrivacyExactSecretRecord) error {
+	prepare := func(all []*store.PrivacyExactSecretRecord) error {
 		var err error
 		next, err = s.snapshotWithExactSecretsLocked(all)
 		return err
-	})
+	}
+	var added int
+	var err error
+	if state.source == nil {
+		added, err = s.store.ImportExactSecrets(ctx, records, prepare)
+	} else {
+		added, err = s.store.ImportConfigSourceSecrets(ctx, state.source.ID, sourceValues, prepare)
+	}
 	if err != nil {
 		if errors.Is(err, errPrivacyConfigDictionaryLimit) {
 			return out, errPrivacyConfigDictionaryLimit
 		}
 		if errors.Is(err, privacy.ErrLiteralBudget) {
 			return out, privacy.ErrLiteralBudget
+		}
+		if errors.Is(err, store.ErrConfigSourceHistoryLimit) {
+			return out, store.ErrConfigSourceHistoryLimit
 		}
 		return out, &privacyConfigImportError{cause: err}
 	}
@@ -231,6 +273,7 @@ func (s *PrivacyService) clearConfigImportLocked() {
 		s.configImport.timer.Stop()
 	}
 	s.configImport.records = nil
+	s.configImport.sourceValues = nil
 	s.configImport = nil
 }
 

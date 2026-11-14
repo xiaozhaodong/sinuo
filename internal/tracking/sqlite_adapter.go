@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"sinuo/internal/appdir"
+	"sinuo/internal/store/schema"
 	timezonepolicy "sinuo/internal/timezone"
 )
 
@@ -814,6 +815,9 @@ func (s *SQLiteAdapter) backfillCompletionMs(ctx context.Context) error {
 }
 
 func (s *SQLiteAdapter) ensurePrivacyExactSecretsSchema(ctx context.Context) error {
+	if err := schema.EnsurePrivacySources(ctx, s.db); err != nil {
+		return fmt.Errorf("failed to ensure privacy config sources schema: %w", err)
+	}
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS privacy_exact_secrets (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

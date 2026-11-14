@@ -1,32 +1,56 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileUp, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
 import Sheet from '@components/desktop/Sheet.jsx';
+import { resolveErrorMessage } from '@utils/errors.js';
 import { exactSecretCategoryLabel } from '../utils/privacyRules.js';
 import { createConfigImportSession, defaultConfigSelection, readConfigImportFiles, selectedConfigIDs } from '../utils/configImport.js';
 
 const statusLabels = { new: '建议加入', review: '按需选择', existing: '已存在', excluded: '未收录' };
 
-const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
+const PrivacyConfigImportSheet = ({ source = null, onClose, onImported }) => {
+  const sourceID = source?.id ?? null;
   const pickerRef = useRef(null);
   const focusRef = useRef(null);
   const sessionRef = useRef(null);
   const [preview, setPreview] = useState(null);
   const [selected, setSelected] = useState(new Set());
-  const [busy, setBusy] = useState('');
+  const [busy, setBusy] = useState(sourceID === null ? '' : 'preview');
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(sourceID === null ? 'all' : 'review');
   const [page, setPage] = useState(0);
 
+  const acceptPreview = useCallback((session, next) => {
+    if (sessionRef.current !== session || !next) return;
+    setPreview(next);
+    // 来源确认只由用户勾选，避免默认选中其他筛选分类中的新值。
+    setSelected(sourceID === null ? defaultConfigSelection(next.candidates) : new Set());
+  }, [sourceID]);
+
   useEffect(() => {
-    const session = createConfigImportSession();
+    const session = createConfigImportSession(undefined, sourceID);
     sessionRef.current = session;
+    if (sourceID !== null) {
+      session.preview().then((next) => acceptPreview(session, next)).catch((err) => {
+        if (sessionRef.current === session) setError(resolveErrorMessage(err));
+      }).finally(() => {
+        if (sessionRef.current === session) setBusy('');
+      });
+    }
     return () => {
       sessionRef.current = null;
       session.dispose().catch(() => console.warn('配置导入预览释放失败；本机预览将在 10 分钟内过期'));
     };
-  }, []);
+  }, [sourceID, acceptPreview]);
+
+  const recheckSource = async () => {
+    const session = sessionRef.current;
+    setBusy('preview'); setError(''); setPreview(null); setSelected(new Set()); setFilter('review'); setPage(0);
+    try { acceptPreview(session, await session.preview()); }
+    catch (err) { if (sessionRef.current === session) setError(resolveErrorMessage(err)); }
+    finally { if (sessionRef.current === session) setBusy(''); }
+  };
 
   const chooseFiles = async (event) => {
     const files = Array.from(event.target.files || []);
@@ -36,10 +60,9 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
     const session = sessionRef.current;
     try {
       const next = await session.preview(await readConfigImportFiles(files));
-      if (sessionRef.current !== session || !next) return;
-      setPreview(next); setSelected(defaultConfigSelection(next.candidates));
+      acceptPreview(session, next);
     } catch (err) {
-      if (sessionRef.current === session) setError(err.message || String(err));
+      if (sessionRef.current === session) setError(resolveErrorMessage(err));
     } finally {
       if (sessionRef.current === session) setBusy('');
     }
@@ -58,7 +81,7 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
       const saved = await sessionRef.current.commit(selectedConfigIDs(preview.candidates, selected));
       setResult(saved); setPreview(null); setSelected(new Set());
       await onImported();
-    } catch (err) { setError(err.message || String(err)); }
+    } catch (err) { setError(resolveErrorMessage(err)); }
     finally { setBusy(''); }
   };
 
@@ -73,7 +96,7 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
   });
 
   return (
-    <Sheet title="从配置文件导入" label="从配置文件导入" width={880} onClose={close} closeDisabled={Boolean(busy)} initialFocusRef={focusRef}
+    <Sheet title={source ? '确认配置来源候选' : '从配置文件导入'} label={source ? '确认配置来源候选' : '从配置文件导入'} width={880} onClose={close} closeDisabled={Boolean(busy)} initialFocusRef={focusRef}
       footerStart={error ? <span role="alert" className="text-danger">{error}</span> : <span className="text-fg-muted">{preview ? `已选 ${selectedIDs.length} 项 · 确认前不写入敏感值库` : '文件仅在本机解析'}</span>}
       footer={<><Button variant="ghost" onClick={close} disabled={Boolean(busy)}>{result ? '完成' : '取消'}</Button>{!result && <Button onClick={confirm} disabled={!selectedIDs.length || Boolean(busy)} loading={busy === 'commit'}>加入 {selectedIDs.length} 项并生效</Button>}</>}>
       {result ? (
@@ -86,13 +109,13 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
         <div className="my-4 flex items-center gap-4 rounded-lg border border-line bg-surface px-4 py-3">
           <FileUp size={27} className="shrink-0 text-fg-muted" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-medium text-fg">选择配置，检查候选，一次加入</p>
-            <p className="mt-1 text-xs leading-relaxed text-fg-muted">.env · JSON · YAML · properties，支持多选。单文件 2 MiB，合计 8 MiB。</p>
+            <p className="text-[13px] font-medium text-fg">{source ? source.name : '选择配置，检查候选，一次加入'}</p>
+            <p className="mt-1 break-all text-xs leading-relaxed text-fg-muted">{source ? source.path : '.env · JSON · YAML · properties · AWS credentials · npmrc · netrc。单文件 2 MiB，合计 8 MiB。'}</p>
           </div>
-          <Button ref={focusRef} variant="secondary" onClick={() => pickerRef.current?.click()} loading={busy === 'preview'} disabled={Boolean(busy)}>{preview ? '重新选择' : '选择文件'}</Button>
-          <input ref={pickerRef} type="file" multiple aria-label="选择配置文件" className="hidden" onChange={chooseFiles} />
+          <Button ref={focusRef} variant="secondary" onClick={source ? recheckSource : () => pickerRef.current?.click()} loading={busy === 'preview'} disabled={Boolean(busy)}>{source ? '重新检查' : preview ? '重新选择' : '选择文件'}</Button>
+          {!source && <input ref={pickerRef} type="file" multiple aria-label="选择配置文件" className="hidden" onChange={chooseFiles} />}
         </div>
-        {!preview && !busy && <p className="py-7 text-center text-sm text-fg-muted">自动提取密码、凭据和完整私钥；账号与地址由你按需选择。</p>}
+        {!preview && !busy && <p className="py-7 text-center text-sm text-fg-muted">{source ? '请点击“重新检查”加载此来源的候选。' : '自动提取密码、凭据和完整私钥；账号与地址由你按需选择。'}</p>}
         {busy === 'preview' && <p className="py-7 text-center text-sm text-fg-muted" role="status">正在本机解析并去重…</p>}
         {preview && <>
           <div className="mb-3 space-y-1.5 text-xs">
@@ -112,7 +135,7 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
                 ...Object.entries(statusLabels).map(([value, label]) => ({ value, label: `${label}（${candidates.filter((c) => c.status === value).length}）` }))
               ]}
             />
-            <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => setSelected(defaultConfigSelection(candidates))}>恢复建议选择</Button>
+            {!source && <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => setSelected(defaultConfigSelection(candidates))}>恢复建议选择</Button>}
             <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => setSelected(new Set())}>清除选择</Button>
           </div>
           <div className="mt-1 max-h-[38vh] overflow-auto">
@@ -125,7 +148,7 @@ const PrivacyConfigImportSheet = ({ onClose, onImported }) => {
                 <td className="py-3"><span className={`font-medium ${candidate.status === 'new' ? 'text-success' : 'text-fg-muted'}`}>{statusLabels[candidate.status]}</span><p className="mt-1 leading-relaxed text-fg-muted">{candidate.reason}</p></td>
               </tr>)}</tbody>
             </table>
-            {visible.length === 0 && <p className="py-7 text-center text-fg-muted">{candidates.length ? '此分类没有候选' : '未找到可识别的候选，请检查文件结果。'}</p>}
+            {visible.length === 0 && <p className="py-7 text-center text-fg-muted">{source && filter === 'review' ? '此来源已没有待确认候选。' : candidates.length ? '此分类没有候选' : '未找到可识别的候选，请检查文件结果。'}</p>}
           </div>
           {visible.length > 100 && <div className="mt-2 flex items-center justify-end gap-2 text-xs text-fg-muted">
             <span>第 {page + 1} / {Math.ceil(visible.length / 100)} 页</span>

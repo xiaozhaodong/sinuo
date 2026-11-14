@@ -73,3 +73,37 @@ test('后端失败明确抛出，并保留会话用于重试或取消', async ()
   await session.dispose();
   assert.deepEqual(cancelled, ['retry-preview']);
 });
+
+test('来源预览直接发送登记 ID，刷新与确认复用同一会话，无需文件选择或文件内容', async () => {
+  const calls = [];
+  let sequence = 0;
+  const session = createConfigImportSession({
+    preview: async () => assert.fail('来源入口不能读取用户重新选择的文件'),
+    previewSource: async (...args) => { calls.push(['source', ...args]); return { id: `source-${++sequence}`, candidates: [] }; },
+    cancel: async (id) => { calls.push(['cancel', id]); },
+    commit: async (...args) => { calls.push(['commit', ...args]); return { added: 1, skipped: 0 }; }
+  }, 23);
+  await session.preview();
+  await session.preview();
+  assert.deepEqual(await session.commit(['pending-value-id']), { added: 1, skipped: 0 });
+  await session.dispose();
+  assert.deepEqual(calls, [
+    ['source', 23], ['cancel', 'source-1'], ['source', 23], ['commit', 'source-2', ['pending-value-id']]
+  ]);
+});
+
+test('来源窗口关闭后到达的预览会立即释放，不能留下可确认会话', async () => {
+  let resolve;
+  const cancelled = [];
+  const session = createConfigImportSession({
+    previewSource: () => new Promise((done) => { resolve = done; }),
+    cancel: async (id) => cancelled.push(id),
+    commit: async () => assert.fail('关闭后的窗口不能确认')
+  }, 7);
+  const pending = session.preview();
+  await session.dispose();
+  resolve({ id: 'late-source-preview' });
+  assert.equal(await pending, null);
+  assert.deepEqual(cancelled, ['late-source-preview']);
+  await assert.rejects(session.commit(['a']), /失效/);
+});

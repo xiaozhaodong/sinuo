@@ -27,6 +27,7 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 
 	for _, table := range []string{
 		"privacy_settings", "privacy_rules", "privacy_exact_secrets",
+		"privacy_config_sources", "privacy_config_source_values", "privacy_config_source_reviews",
 		"model_routing_settings", "model_upstream_groups", "model_routing_assignments",
 	} {
 		var name string
@@ -35,6 +36,10 @@ func TestInitSchemaCreatesPrivacyTables(t *testing.T) {
 		if err != nil {
 			t.Fatalf("table %s missing: %v", table, err)
 		}
+	}
+	var hasResolvedPath bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('privacy_config_sources') WHERE name='resolved_path')`).Scan(&hasResolvedPath); err != nil || !hasResolvedPath {
+		t.Fatalf("privacy config source resolved_path missing: %v", err)
 	}
 
 	var (
