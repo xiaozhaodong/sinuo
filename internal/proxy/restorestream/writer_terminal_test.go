@@ -66,6 +66,57 @@ func TestFinishRequiresDeliveredTerminal(t *testing.T) {
 	}
 }
 
+func TestClaudeOutputLimitTerminal(t *testing.T) {
+	const tool = "data: " + `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","input":{}}}` + "\n\n"
+	const text = "data: " + `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n"
+	const endText = "data: " + `{"type":"content_block_stop","index":1}` + "\n\n"
+	const reason = "event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":"max_tokens"}}` + "\n\n"
+	const stop = "event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
+
+	t.Run("先补发参数尾部再交付上限和完整终态", func(t *testing.T) {
+		const piece = `{"value":"begin {{SNU_ab`
+		dst := httptest.NewRecorder()
+		w := New(dst, "/v1/messages", nil)
+		defer w.Release()
+		input := fmt.Sprintf("data: "+`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":%q}}`+"\n\n", piece)
+		for _, part := range []string{tool, input, reason, "event: message_stop\n"} {
+			if _, err := io.WriteString(w, part); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if w.Terminal() || !strings.HasSuffix(dst.Body.String(), reason) {
+			t.Fatal("终态半帧被提前交付")
+		}
+		if _, err := io.WriteString(w, strings.TrimPrefix(stop, "event: message_stop\n")); err != nil {
+			t.Fatal(err)
+		}
+		var received strings.Builder
+		for _, line := range strings.Split(dst.Body.String(), "\n") {
+			if raw, ok := strings.CutPrefix(line, "data: "); ok {
+				received.WriteString(gjson.Get(raw, "delta.partial_json").Str)
+			}
+		}
+		if err := w.Finish(); err != nil || !w.Terminal() || received.String() != piece || !strings.HasSuffix(dst.Body.String(), reason+stop) {
+			t.Fatalf("客户端没有收到原始参数片段和有序的终态：%q，%v", dst.Body.String(), err)
+		}
+	})
+
+	for _, tc := range []struct{ name, blocks string }{
+		{"多个块未闭合", tool + text},
+		{"未闭合块不是最后一个", tool + text + endText},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := httptest.NewRecorder()
+			w := New(dst, "/v1/messages", nil)
+			defer w.Release()
+			_, err := io.WriteString(w, tc.blocks+reason+stop)
+			if !errors.Is(err, ErrDelivery) || strings.Contains(dst.Body.String(), stop) {
+				t.Fatalf("异常的工具块序列被当成了正常截断：%v", err)
+			}
+		})
+	}
+}
+
 func TestTruncatedStreamFlushesHeldDeltas(t *testing.T) {
 	const half = "{{SNU_ab"
 	for _, codex := range []bool{false, true} {

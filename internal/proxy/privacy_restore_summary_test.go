@@ -21,6 +21,75 @@ func privacySummaryRequest(path, body, requestID string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), "conn_id", requestID))
 }
 
+func TestClaudeMaxTokensWithOpenBlock(t *testing.T) {
+	const start = "event: message_start\ndata: " + `{"type":"message_start","message":{"model":"claude-test","content":[],"usage":{"input_tokens":2}}}` + "\n\n" +
+		"event: content_block_start\ndata: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"first"}}` + "\n\n" +
+		"event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: content_block_start\ndata: " + `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"second"}}` + "\n\n" +
+		"event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":1}` + "\n\n"
+	const tool = "event: content_block_start\ndata: " + `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tool-test","name":"write","input":{}}}` + "\n\n" +
+		"event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"partial"}}` + "\n\n"
+	const text = "event: content_block_start\ndata: " + `{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"partial"}}` + "\n\n"
+	const closeBlock = "event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":2}` + "\n\n"
+	const delta = "event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":64000}}` + "\n\n"
+	const stop = "event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
+
+	for _, tc := range []struct {
+		name, blocks, quality string
+		restore               bool
+	}{
+		{"未闭合工具参数", tool, "stream_truncated", true},
+		{"未闭合文本", text, "stream_truncated", true},
+		{"关闭回填", tool, "stream_truncated", false},
+		{"已闭合文本", text + closeBlock, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := start + tc.blocks + delta + stop
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, wire)
+			}))
+			t.Cleanup(up.Close)
+			h, _ := newEndpointPipelineTestHandler(t, endpointPipelineConfig("synthetic", up.URL, 1))
+			tracker := attachRetryTracker(t, h)
+			filter := newRestoreTestFilter(t)
+			filter.Settings.ResponseRestoreEnabled = tc.restore
+			h.SetPrivacyFilter(filter)
+			const id = "claude-max-tokens"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, privacySummaryRequest("/v1/messages", `{"model":"claude-test","messages":[{"role":"user","content":"hello"}],"stream":true}`, id))
+
+			if rec.Code != http.StatusOK || rec.Body.String() != wire {
+				t.Errorf("客户端未原样收到上游事件，HTTP %d，响应 %q", rec.Code, rec.Body.String())
+			}
+			result := timingLifecycleData(t, tracker, id)
+			if result.Detail.Status != "completed" || result.Detail.FailureReason != tc.quality || result.StopReason == nil || *result.StopReason != "max_tokens" || result.Detail.OutputTokens != 64000 {
+				t.Errorf("截断结算不符：status=%s quality=%q stop=%v output=%d", result.Detail.Status, result.Detail.FailureReason, result.StopReason, result.Detail.OutputTokens)
+			}
+			summary := gjson.Parse(result.PrivacyScanJSON)
+			if tc.restore && (summary.Get("restore.status").Str != "completed" || summary.Get("hit_count").Int() != 0 || len(summary.Get("warnings").Array()) != 0) {
+				t.Errorf("零命中响应交付异常：%s", summary.Raw)
+			}
+		})
+	}
+
+	t.Run("终态分片在数据到齐后才结束读取", func(t *testing.T) {
+		parser := NewTokenParser()
+		for _, line := range strings.Split(start+tool+delta, "\n") {
+			parser.ParseSSELineV2(line)
+		}
+		parser.ParseSSELineV2("event: message_stop")
+		if parser.HasTerminalEvent() {
+			t.Fatal("仅收到事件名就停止读取，会导致客户端丢失终态")
+		}
+		parser.ParseSSELineV2(`data: {"type":"message_stop"}`)
+		parser.ParseSSELineV2("")
+		if !parser.HasTerminalEvent() || !parser.GetStreamCompleteness().CutAtOutputLimit {
+			t.Fatal("收到完整终态后未标记输出上限截断")
+		}
+	})
+}
+
 func TestClaudeRestoreSummaryAfterMessageStop(t *testing.T) {
 	const trailer = ": keepalive"
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

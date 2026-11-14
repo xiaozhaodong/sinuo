@@ -47,8 +47,13 @@ func (sp *StreamProcessor) logRestoreDelivery(resp *http.Response, path, media s
 		status = "failed"
 	case sp.lastAPIError != nil:
 		status = "upstream_error"
-	case sp.downstreamDisconnected || err != nil || writer != nil && !sp.tokenParser.GetStreamCompleteness().IsComplete:
+	case sp.downstreamDisconnected || err != nil:
 		status = "interrupted"
+	case writer != nil:
+		quality := sp.tokenParser.GetStreamCompleteness()
+		if !quality.IsComplete && !quality.CutAtOutputLimit {
+			status = "interrupted"
+		}
 	}
 	reason := ""
 	if errors.Is(err, restorestream.ErrResponseFormat) {

@@ -11,6 +11,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"sinuo/internal/codexidentity"
+	"sinuo/internal/proxy/response"
 )
 
 type fieldKey struct {
@@ -43,6 +44,7 @@ type Writer struct {
 	callIDs        map[int]string
 	responseID     string
 	blocks         map[int]string
+	claudeTail     response.ClaudeBlockTail
 	outputBytes    int
 	rawBytes       int
 	identityBytes  int

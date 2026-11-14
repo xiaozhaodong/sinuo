@@ -151,6 +151,7 @@ func (w *Writer) control(wire, raw []byte, typ, name string) (bool, error) {
 				return true, ErrDelivery
 			}
 			w.blocks[i] = kind
+			w.claudeTail.Start(i)
 			if kind == "tool_use" || kind == "server_tool_use" {
 				if gjson.GetBytes(raw, "content_block.input").Raw == "{}" {
 					return true, w.send(wire)
@@ -158,7 +159,10 @@ func (w *Writer) control(wire, raw []byte, typ, name string) (bool, error) {
 			}
 		} else {
 			// 即使上游省略了开始事件，也要收尾可能已接收的文本 delta。
-			delete(w.blocks, i)
+			if _, open := w.blocks[i]; open {
+				delete(w.blocks, i)
+				w.claudeTail.Stop(i)
+			}
 			if f := w.fast; f != nil && f.key.item == i && f.closed {
 				if err := w.closeField(f.partial, nil); err != nil {
 					return true, err
@@ -167,10 +171,19 @@ func (w *Writer) control(wire, raw []byte, typ, name string) (bool, error) {
 				return true, w.send(wire)
 			}
 		}
-	case "message_delta", "ping":
+	case "message_delta":
+		w.claudeTail.MessageDelta(gjson.GetBytes(raw, "delta.stop_reason").Str)
+		if w.claudeTail.CutAtOutputLimit() {
+			// 尾部仍属于内容块，必须在停止原因之前交付。工具参数可以是半截 JSON。
+			if err := w.flushHeldFields(); err != nil {
+				return true, err
+			}
+		}
+		return true, w.send(wire)
+	case "ping":
 		return true, w.send(wire)
 	case "message_stop":
-		if w.hasOpenTool() {
+		if !w.claudeTail.CutAtOutputLimit() && w.hasOpenTool() {
 			return true, ErrDelivery
 		}
 		if err := w.flushHeldFields(); err != nil {
