@@ -10,12 +10,13 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Property, PropertyList } from '@components/desktop/Inspector.jsx';
-import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors, requestPrivacySummary, responsePrivacySummary, summarizeTerminalReason } from '../utils/lifecycle.js';
+import { buildLifecycleSegments, countAccountSwitches, lifecycleSegmentColors, requestPrivacySummary, responsePrivacySummary } from '../utils/lifecycle.js';
 import { retryPropertyVisible } from '../utils/retryTiming.js';
 import { formatRouteMode } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { firstContentDelayMs, requestSpeedMetrics } from '../utils/streamPhases.js';
-import { formatBytesCompact, summarizeFlowIntegrity } from '../utils/requestFlow.js';
+import { summarizeFlowIntegrity } from '../utils/requestFlow.js';
+import RequestFlowTrail from './RequestFlowTrail.jsx';
 import StreamPhaseProperties from './StreamPhaseProperties.jsx';
 import PrivacyWarningBadge from './PrivacyWarningBadge.jsx';
 import {
@@ -179,76 +180,6 @@ const PrivacyValue = ({ privacyScan, warnings }) => {
   );
 };
 
-const FlowTrailSummary = ({ flow }) => {
-  const legs = Array.isArray(flow.legs) ? flow.legs : [];
-  const contacts = Array.isArray(flow.contacts) ? flow.contacts : [];
-  const legCount = Math.max(flow.total_legs || 0, legs.length);
-  const contactCount = Math.max(flow.total_contacts || 0, contacts.length);
-  const showContactDetails = contacts.length > 0 && (contactCount > 1 || contacts.some(
-    ({ http_status_code, outcome_code }) => http_status_code >= 400 ||
-      (outcome_code && !['completed', 'success', 'ok'].includes(outcome_code))
-  ));
-  const names = new Map(legs.map(({ leg_seq, target_snapshot: target }) => [
-    leg_seq, target?.upstream_name || target?.endpoint_name || target?.upstream_source_name || target?.upstream_type || '—'
-  ]));
-  const lastContactByLeg = new Map(contacts.map((contact) => [contact.leg_seq, contact]));
-  const protocol = flow.transport === 'ws' ? 'WS' : 'HTTP';
-  const bytesLabel = formatBytesCompact(flow.downstream_bytes_written);
-  return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-fg-muted">
-        <span className="rounded border border-line bg-surface-sub px-1.5 font-mono text-[10.5px] text-fg-body">{protocol}</span>
-        {flow.origin === 'server_successor' && (
-          <span className="rounded border border-accent-line bg-accent-soft px-1 text-[10.5px] text-accent-fg">服务端续推</span>
-        )}
-        <span>{legCount} 段选路 · {contactCount} 次联系</span>
-        {bytesLabel && <span className="whitespace-nowrap text-fg-subtle">下行 <span className="font-mono">{bytesLabel}</span></span>}
-        {flow.downstream_delivery_outcome === 'delivered' && <span>已完整交付</span>}
-        {flow.downstream_delivery_outcome === 'partial_or_failed' && <span className="text-warn">交付不完整</span>}
-        {flow.downstream_delivery_outcome === 'aborted' && <span className="text-warn">交付已中止</span>}
-        {flow.downstream_flush_error && <span className="text-warn">Flush 异常</span>}
-      </div>
-      <div className="flex flex-wrap items-center gap-1">
-        {legs.map((leg) => {
-          const name = names.get(leg.leg_seq);
-          const lastContact = lastContactByLeg.get(leg.leg_seq);
-          return (
-            <span key={leg.leg_seq} className="inline-flex items-baseline gap-1 rounded border border-line-soft bg-surface px-1.5 py-0.5 text-[11px] text-fg-body">
-              <span className="font-mono text-fg-subtle">#{leg.leg_seq}</span>
-              <span className="max-w-[120px] truncate" title={name}>{name}</span>
-              {leg.reason_code && <span className="text-fg-subtle">({leg.reason_code})</span>}
-              {lastContact?.http_status_code ? <span className="font-mono text-fg-muted">{lastContact.http_status_code}</span> : null}
-            </span>
-          );
-        })}
-      </div>
-      {showContactDetails && (
-        <details>
-          <summary className="cursor-pointer text-xs text-accent">查看尝试记录</summary>
-          <ol className="mt-1 space-y-1">
-            {contacts.map((contact) => {
-              const { contact_seq, leg_seq, start_offset_ms, end_offset_ms, http_status_code, outcome_code } = contact;
-              const duration = Number.isFinite(start_offset_ms) && Number.isFinite(end_offset_ms) && end_offset_ms >= start_offset_ms
-                ? formatOptionalTimingBadge(end_offset_ms - start_offset_ms) : '';
-              const outcome = outcome_code === 'completed' || outcome_code === 'success'
-                ? '完成' : summarizeTerminalReason(outcome_code) || outcome_code;
-              const result = [http_status_code && `HTTP ${http_status_code}`, outcome,
-                contact.transport_resend && '传输重发', duration].filter(Boolean).join(' · ');
-              return (
-                <li key={contact_seq} className="flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-fg-body">
-                  <span className="font-mono text-fg-subtle">#{contact_seq}</span>
-                  <span className="break-all">{names.get(leg_seq) || `选路 #${leg_seq}`}</span>
-                  {result && <span className="text-fg-muted">{result}</span>}
-                </li>
-              );
-            })}
-          </ol>
-        </details>
-      )}
-    </div>
-  );
-};
-
 const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = false }) => {
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
   const settled = !UNSETTLED_STATUSES.has(request.status);
@@ -291,7 +222,7 @@ const LifecyclePanel = ({ request = {}, lifecycle = null, lifecycleLoading = fal
           </Property>}
           {!lifecycleLoading && flow && (
             <Property label="链路轨迹" truncate={false}>
-              <FlowTrailSummary key={request.requestId} flow={flow} />
+              <RequestFlowTrail key={request.requestId} flow={flow} settled={settled} />
             </Property>
           )}
           {!lifecycleLoading && integrityWarnings.length > 0 && (

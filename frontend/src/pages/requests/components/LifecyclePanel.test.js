@@ -33,17 +33,21 @@ const renderFlow = (flow) => renderToStaticMarkup(createElement(LifecyclePanel, 
   request: { requestId: 'test', status: 'completed' }, lifecycle: { flow }
 }));
 
-test('单次 WS 请求保留紧凑的链路轨迹', () => {
+test('单次 WS 请求默认收起，成功也能展开看真实毫秒时间线', () => {
   const html = renderFlow({
     transport: 'ws', legs: [{ leg_seq: 1, target_snapshot: { upstream_name: 'chatgpt-subscription' } }],
-    contacts: [{ leg_seq: 1, contact_seq: 1 }], downstream_bytes_written: 249549
+    contacts: [{ leg_seq: 1, contact_seq: 1, write_done_offset_ms: 0, first_upstream_byte_offset_ms: 642 }],
+    first_client_write_offset_ms: 646, upstream_terminal_offset_ms: 3280, downstream_delivery_done_offset_ms: 3283,
+    downstream_delivery_outcome: 'delivered', downstream_bytes_written: 249549
   });
-  const text = html.replace(/<[^>]*>/g, '');
-  for (const label of ['链路轨迹', 'WS', '1 段选路 · 1 次联系', '下行 243.7 KB', 'chatgpt-subscription']) {
-    assert.ok(text.includes(label), label);
-  }
-  assert.doesNotMatch(html, /查看尝试记录/);
-  assert.doesNotMatch(renderFlow(null), /链路轨迹|查看尝试记录/);
+  const [summary, detail] = html.split('<details');
+  assert.match(summary, /链路轨迹[\s\S]*WS[\s\S]*chatgpt-subscription[\s\S]*已完整交付[\s\S]*243\.7 KB/);
+  assert.doesNotMatch(summary, /1 段选路|1 次联系/);
+  assert.doesNotMatch(detail.split('>')[0], /\bopen\b/);
+  const text = detail.replace(/<[^>]*>/g, '');
+  assert.match(text, /查看轨迹.*距请求开始.*发往上游0 ms.*收到上游首帧642 ms.*首次写给客户端646 ms.*收到上游终态3\.280 s.*下行交付结束3\.283 s/);
+  assert.doesNotMatch(text, /上游尝试|HTTP 200/);
+  assert.doesNotMatch(renderFlow(null), /链路轨迹|查看轨迹/);
 });
 
 test('单次联系失败可展开查看原因或 HTTP 错误，正常联系保持紧凑', () => {
@@ -57,10 +61,12 @@ test('单次联系失败可展开查看原因或 HTTP 错误，正常联系保�
   ]) {
     const html = renderContact(contact);
     const details = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
-    assert.ok(details.includes('查看尝试记录') && details.includes(expected), expected);
+    assert.ok(details.includes('查看轨迹') && details.includes(expected), expected);
   }
   for (const outcome_code of [undefined, 'completed', 'success', 'ok']) {
-    assert.doesNotMatch(renderContact({ http_status_code: 200, outcome_code }), /查看尝试记录/);
+    const [summary, detail] = renderContact({ http_status_code: 200, outcome_code }).split('<details');
+    assert.doesNotMatch(summary, /HTTP 200/);
+    assert.match(detail, /HTTP 200/);
   }
 });
 
@@ -80,9 +86,38 @@ test('同账号重试及换号按实际联系顺序展开，裁剪后仍显示�
   });
   assert.match(html, /6 段选路 · 9 次联系/);
   const attempts = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
-  assert.match(attempts, /查看尝试记录/);
+  assert.match(attempts, /上游尝试/);
   assert.doesNotMatch(attempts, /候选/);
-  assert.match(attempts, /#1[\s\S]*?账号甲[\s\S]*?429[\s\S]*?限流[\s\S]*?100ms[\s\S]*?#2[\s\S]*?账号甲[\s\S]*?503[\s\S]*?传输重发[\s\S]*?#9[\s\S]*?账号乙[\s\S]*?200/);
+  assert.match(attempts, /#1[\s\S]*?账号甲[\s\S]*?429[\s\S]*?限流[\s\S]*?100 ms[\s\S]*?#2[\s\S]*?账号甲[\s\S]*?503[\s\S]*?传输重发[\s\S]*?#9[\s\S]*?账号乙[\s\S]*?200/);
+});
+
+test('按实际联系的账号 ID 统计换号，最后一段尚未发出时保留真实事件', () => {
+  const legs = [17, 45, 86].map((id, index) => ({
+    leg_seq: index + 1, selected_offset_ms: index * 100,
+    target_snapshot: { upstream_id: id, upstream_type: 'account', upstream_name: '同名账号' }
+  }));
+  const contacts = [1, 1, 2].map((leg_seq, i) => ({
+    contact_seq: i + 1, leg_seq, first_upstream_byte_offset_ms: 20 + i * 50
+  }));
+  const renderTrace = (ls, cs) => renderFlow({ transport: 'http', legs: ls, contacts: cs });
+  assert.match(renderTrace(legs.slice(0, 1), contacts.slice(0, 2)), /同一账号 · 联系 2 次/);
+  assert.match(renderTrace(legs.slice(0, 2), contacts), /收到上游首字节[\s\S]*120 ms/);
+  const html = renderTrace(legs, contacts);
+  assert.match(html, /换号 1 次 · 联系 3 次/);
+  assert.match(html, /选定上游[\s\S]*200 ms/);
+  assert.doesNotMatch(html, /收到上游首字节|发往同名账号|undefined/);
+});
+
+test('本地拒绝和不完整交付只列已记录的时刻，按实际发生顺序排列', () => {
+  const html = renderFlow({
+    transport: 'ws', origin: 'server_successor', upstream_terminal_offset_ms: 900,
+    downstream_delivery_done_offset_ms: 852, downstream_delivery_outcome: 'partial_or_failed',
+    downstream_flush_error: true
+  });
+  assert.match(html, /服务端续推[\s\S]*交付不完整[\s\S]*Flush 异常/);
+  assert.match(html, /下行交付结束[\s\S]*852 ms[\s\S]*收到上游终态[\s\S]*900 ms/);
+  assert.doesNotMatch(html, /发往上游|收到上游首帧|首次写给客户端/);
+  assert.match(renderFlow({ transport: 'http', origin: 'client_request' }), /查看轨迹[\s\S]*暂无已记录的时间点/);
 });
 
 test('详情明细：按条上的顺序显示段名、耗时、说明与总耗时', () => {
