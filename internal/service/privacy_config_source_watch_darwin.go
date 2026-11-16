@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"os"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -20,19 +21,20 @@ type privacyDirectoryWatcher struct {
 	once    sync.Once
 }
 
-func newPrivacyDirectoryWatcher(paths []string) (*privacyDirectoryWatcher, error) {
+// 单个目录的错误随可用监听一起返回，最后一个返回值仅表示监听器整体无法启动。
+func newPrivacyDirectoryWatcher(paths []string) (*privacyDirectoryWatcher, []error, error) {
 	if len(paths) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	kq, err := unix.Kqueue()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	unix.CloseOnExec(kq)
 	w := &privacyDirectoryWatcher{kq: kq, paths: make(map[int]string), changes: make(chan string, 64), done: make(chan struct{}), stopped: make(chan struct{})}
 	if err := unix.Pipe(w.pipe[:]); err != nil {
 		_ = unix.Close(kq)
-		return nil, err
+		return nil, nil, err
 	}
 	unix.CloseOnExec(w.pipe[0])
 	unix.CloseOnExec(w.pipe[1])
@@ -43,25 +45,34 @@ func newPrivacyDirectoryWatcher(paths []string) (*privacyDirectoryWatcher, error
 			w.release()
 		}
 	}()
-	changes := make([]unix.Kevent_t, 1, len(paths)+1)
-	unix.SetKevent(&changes[0], w.pipe[0], unix.EVFILT_READ, unix.EV_ADD|unix.EV_ENABLE)
+	var stopEvent unix.Kevent_t
+	unix.SetKevent(&stopEvent, w.pipe[0], unix.EVFILT_READ, unix.EV_ADD|unix.EV_ENABLE)
+	if _, err := unix.Kevent(kq, []unix.Kevent_t{stopEvent}, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	var skipped []error
 	for _, path := range paths {
 		fd, err := unix.Open(path, unix.O_EVTONLY|unix.O_CLOEXEC, 0)
 		if err != nil {
-			return nil, err
+			skipped = append(skipped, &os.PathError{Op: "打开目录", Path: path, Err: err})
+			continue
 		}
-		w.paths[fd] = path
 		var event unix.Kevent_t
 		unix.SetKevent(&event, fd, unix.EVFILT_VNODE, unix.EV_ADD|unix.EV_CLEAR|unix.EV_ENABLE)
 		event.Fflags = unix.NOTE_WRITE | unix.NOTE_DELETE | unix.NOTE_RENAME
-		changes = append(changes, event)
+		if _, err := unix.Kevent(kq, []unix.Kevent_t{event}, nil, nil); err != nil {
+			_ = unix.Close(fd)
+			skipped = append(skipped, &os.PathError{Op: "注册目录监听", Path: path, Err: err})
+			continue
+		}
+		w.paths[fd] = path
 	}
-	if _, err := unix.Kevent(kq, changes, nil, nil); err != nil {
-		return nil, err
+	if len(w.paths) == 0 {
+		return nil, skipped, nil
 	}
 	started = true
 	go w.run()
-	return w, nil
+	return w, skipped, nil
 }
 
 func (w *privacyDirectoryWatcher) events() <-chan string {

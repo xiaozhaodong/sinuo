@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +24,11 @@ type privacyConfigWatcher struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
 	err    string
-	// 仅启动初始化和监听循环访问；保存实际监听对象，不能把同名新目录当成旧监听。
+	// 保存目录身份，包括原生监听受限的目录，以便从父目录的事件识别同名替换。
 	directories     map[string]os.FileInfo
 	linkPaths       map[string]os.FileInfo
 	directoryEvents *privacyDirectoryWatcher
+	partial         bool // 下次来源变更时重试未装上的目录监听。
 }
 
 func (w *privacyConfigWatcher) setError(message string) { w.mu.Lock(); w.err = message; w.mu.Unlock() }
@@ -40,22 +42,24 @@ func (s *PrivacyService) StartConfigSourceSync(ctx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
-	fs, err := fsnotify.NewWatcher()
-	if err != nil {
-		const message = "文件监听启动失败，请重试启动应用"
-		s.sourceWatchError = message
-		s.mu.Unlock()
-		return errors.New(message)
-	}
 	watchCtx, cancel := context.WithCancel(context.Background())
-	w := &privacyConfigWatcher{fs: fs, wake: make(chan struct{}, 1), done: make(chan struct{}), cancel: cancel}
+	w := &privacyConfigWatcher{wake: make(chan struct{}, 1), done: make(chan struct{}), cancel: cancel}
 	s.sourceWatcher = w
 	s.sourceWatchError = ""
 	s.mu.Unlock()
-	sources := s.refreshSourceWatches(ctx, w)
+	sources, watchErr := s.refreshSourceWatches(ctx, w)
 	// 同步错误已在各来源内保存，不阻止其他来源和应用启动。
 	if err := s.SyncConfigSources(ctx, 0); err != nil {
 		slog.Warn("配置来源启动同步未完成", "error", err)
+	}
+	if watchErr != nil {
+		cancel()
+		s.mu.Lock()
+		s.sourceWatcher = nil
+		s.sourceWatchError = watchErr.Error()
+		close(w.done)
+		s.mu.Unlock()
+		return watchErr
 	}
 	go s.runConfigSourceWatcher(watchCtx, w, sources)
 	return nil
@@ -93,15 +97,14 @@ func (s *PrivacyService) wakeConfigSources() {
 	}
 }
 
-func (s *PrivacyService) refreshSourceWatches(ctx context.Context, w *privacyConfigWatcher) []*store.PrivacyConfigSourceRecord {
+func (s *PrivacyService) refreshSourceWatches(ctx context.Context, w *privacyConfigWatcher) ([]*store.PrivacyConfigSourceRecord, error) {
 	sources, err := s.store.ListConfigSources(ctx)
 	if err != nil {
-		w.setError("无法读取配置来源，请重新启动应用")
-		return nil
+		return nil, fmt.Errorf("读取配置来源监听清单失败：%w", err)
 	}
 	wanted := make(map[string]os.FileInfo)
 	fileDirectories := make(map[string]bool)
-	w.linkPaths = make(map[string]os.FileInfo)
+	linkPaths := make(map[string]os.FileInfo)
 	for _, source := range sources {
 		if !source.Enabled {
 			continue
@@ -116,16 +119,18 @@ func (s *PrivacyService) refreshSourceWatches(ctx context.Context, w *privacyCon
 		}
 		// 链接可能位于任意祖先，也可能经过登记路径之外的中间链接。
 		for link := range privacySourceLinkPaths(source.Path) {
-			w.linkPaths[link], _ = os.Lstat(link)
+			linkPaths[link], _ = os.Lstat(link)
 			paths = append(paths, filepath.Dir(link))
 		}
 		for _, path := range paths {
 			addPrivacySourceDirectoryWatches(path, wanted, fileDirectories)
 		}
 	}
-	w.setError("")
-	fileWatches := w.fs.WatchList()
-	unchanged := len(wanted) == len(w.directories) && len(fileWatches) == len(fileDirectories)
+	var fileWatches []string
+	if w.fs != nil {
+		fileWatches = w.fs.WatchList()
+	}
+	unchanged := w.fs != nil && !w.partial && len(wanted) == len(w.directories) && len(fileWatches) == len(fileDirectories)
 	for _, path := range fileWatches {
 		if !fileDirectories[path] {
 			unchanged = false
@@ -139,27 +144,28 @@ func (s *PrivacyService) refreshSourceWatches(ctx context.Context, w *privacyCon
 		}
 	}
 	if unchanged {
-		return sources
+		w.linkPaths = linkPaths
+		w.setError("")
+		return sources, nil
 	}
 	// kqueue 在移除重命名目录时会留下隐式子文件监听；重建整个实例才能清除旧对象缓存。
 	next, err := fsnotify.NewWatcher()
 	if err != nil {
-		w.setError("文件监听重建失败，请重新启动应用")
-		return sources
+		return nil, fmt.Errorf("创建文件监听失败：%w", err)
 	}
+	var warnings []string
 	active := make(map[string]os.FileInfo)
 	paths := make([]string, 0, len(wanted))
 	for path, before := range wanted {
 		if fileDirectories[path] {
 			if err := next.Add(path); err != nil {
-				w.setError("部分目录无法监听，请检查目录权限并重启应用；也可手动立即检查")
-				continue
+				warnings = append(warnings, fmt.Sprintf("监听文件变更 %q 失败：%v", path, err))
 			}
 		}
 		after, err := os.Stat(path)
 		if err != nil || !os.SameFile(before, after) {
 			// 安装期间再次替换时不登记错误身份，下一轮移除并重新安装。
-			w.setError("监听目录正在变化，将重新检查")
+			warnings = append(warnings, fmt.Sprintf("目录 %q 正在变化，将重新检查", path))
 			select {
 			case w.wake <- struct{}{}:
 			default:
@@ -169,20 +175,36 @@ func (s *PrivacyService) refreshSourceWatches(ctx context.Context, w *privacyCon
 		active[path] = after
 		paths = append(paths, path)
 	}
-	directoryEvents, err := newPrivacyDirectoryWatcher(paths)
+	directoryEvents, skipped, err := newPrivacyDirectoryWatcher(paths)
 	if err != nil {
 		_ = next.Close()
-		w.setError("目录变更监听启动失败，请重新启动应用")
-		return sources
+		return nil, fmt.Errorf("创建目录变更监听失败：%w", err)
+	}
+	for _, failure := range skipped {
+		warnings = append(warnings, failure.Error())
+	}
+	slices.Sort(warnings)
+	if len(warnings) > 0 && len(paths) > 0 && directoryEvents == nil && len(next.WatchList()) == 0 {
+		_ = next.Close()
+		return nil, fmt.Errorf("未能安装任何配置来源监听。%s", strings.Join(warnings, "；"))
 	}
 	previous, previousDirectoryEvents := w.fs, w.directoryEvents
 	w.fs, w.directoryEvents = next, directoryEvents
 	w.directories = active
-	if err := previous.Close(); err != nil {
-		w.setError("旧文件监听关闭失败，请重新启动应用")
+	w.linkPaths = linkPaths
+	w.partial = len(warnings) != 0
+	var prefix string
+	if w.partial {
+		prefix = "部分目录监听不完整，可手动检查配置来源。"
+	}
+	if previous != nil {
+		if err := previous.Close(); err != nil {
+			warnings = append(warnings, fmt.Sprintf("关闭旧文件监听失败：%v", err))
+		}
 	}
 	previousDirectoryEvents.close()
-	return sources
+	w.setError(prefix + strings.Join(warnings, "；"))
+	return sources, nil
 }
 
 // 每一层祖先都可能被整体替换，必须保留到根目录的身份和变更通知。
@@ -307,7 +329,11 @@ func (s *PrivacyService) runConfigSourceWatcher(ctx context.Context, w *privacyC
 	syncSources := func() {
 		pending = nil
 		timer.Stop()
-		sources = s.refreshSourceWatches(ctx, w)
+		if updated, err := s.refreshSourceWatches(ctx, w); err != nil {
+			w.setError(err.Error())
+		} else {
+			sources = updated
+		}
 		if err := s.SyncConfigSources(ctx, 0); err != nil && ctx.Err() == nil {
 			slog.Warn("配置来源同步未完成", "error", err)
 		}

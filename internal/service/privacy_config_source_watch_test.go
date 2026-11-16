@@ -2,11 +2,33 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestPrivacyConfigSourcesWatchStartupFailureCanRetry(t *testing.T) {
+	s := newConfigSourceService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.StartConfigSourceSync(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("启动未向调用方返回监听清单读取错误：%v", err)
+	}
+	state, err := s.ListConfigSources(context.Background())
+	if err != nil || state.Watching || state.WatchError == "" {
+		t.Fatalf("启动失败状态错误：%+v, %v", state, err)
+	}
+	if err := s.StartConfigSourceSync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.CloseConfigSourceSync)
+	state, err = s.ListConfigSources(context.Background())
+	if err != nil || !state.Watching || state.WatchError != "" {
+		t.Fatalf("重试启动后状态错误：%+v, %v", state, err)
+	}
+}
 
 func TestPrivacyConfigSourcesWatchDirectoryReplacement(t *testing.T) {
 	for _, kind := range []string{"file", "directory"} {
