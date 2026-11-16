@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"sinuo/internal/tracking"
 
@@ -80,6 +81,7 @@ func (s *subscriptionToolResponse) observe(result *ParseResult) {
 	s.track.SetModel(result.ModelName)
 	s.track.MergeResponseFields(result.ResponseModel, result.ResponseReasoningFields)
 	if result.IsCompleted {
+		s.track.markFlowUpstreamTerminal(time.Now())
 		s.terminal = true
 		s.failed = s.failed || result.Status == StatusErrorAPI
 	}
@@ -102,6 +104,9 @@ func (s *subscriptionToolResponse) finish(httpStatus int, mode string, copyErr, 
 		status, reason = "failed", "subscription_response_incomplete"
 	case mode == "json" && !s.parsed:
 		status, reason = "failed", "subscription_response_invalid"
+	}
+	if mode == "json" && s.parsed {
+		s.track.markFlowUpstreamTerminal(time.Now())
 	}
 	s.track.settle(status, reason, nil, &httpStatus)
 }

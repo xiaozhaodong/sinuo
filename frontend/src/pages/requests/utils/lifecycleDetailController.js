@@ -49,6 +49,9 @@ export const createLifecycleDetailController = ({
       return;
     }
 
+    let appliedRevision = 0;
+    let hasSnapshot = false;
+
     const reload = async () => {
       try {
         const result = await fetchDetail(nextRequestId);
@@ -56,12 +59,16 @@ export const createLifecycleDetailController = ({
         if (generation !== gen || !isOpen || requestId !== nextRequestId) {
           return;
         }
+        const fetchedRevision = Number(result?.requestRevision ?? result?.request_revision ?? 0);
+        if (result?.found && fetchedRevision < appliedRevision) return;
+        hasSnapshot = result?.found === true;
+        appliedRevision = hasSnapshot && Number.isFinite(fetchedRevision) ? fetchedRevision : 0;
         onChange(result);
       } catch (error) {
         if (generation !== gen || !isOpen || requestId !== nextRequestId) {
           return;
         }
-        onChange({ found: false, request: null, error });
+        if (!hasSnapshot) onChange({ found: false, request: null, error });
       }
     };
 
@@ -70,9 +77,10 @@ export const createLifecycleDetailController = ({
     if (typeof subscribe === 'function') {
       unsubscribe = subscribe((data) => {
         // 事件过滤：其它请求的事件直接忽略。
-        if (generation === gen && isOpen && requestId === nextRequestId && data?.request_id === nextRequestId) {
-          scheduler?.schedule();
+        if (generation !== gen || !isOpen || requestId !== nextRequestId || data?.request_id !== nextRequestId) {
+          return;
         }
+        scheduler?.schedule();
       });
     }
 

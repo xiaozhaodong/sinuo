@@ -96,7 +96,7 @@ func TestCompleteEndpointSchedule_PersistsFinalSnapshotAfterArchive(t *testing.T
 	lifecycle := NewRequestLifecycleManager(tracker, nil, requestID, nil)
 	lifecycle.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", false)
 	lifecycle.CompleteRequest(nil)
-	handler.completeEndpointSchedule(requestID, scope, "member", endpoint.EndpointScheduleOutcomeSuccess, "")
+	handler.completeEndpointSchedule(lifecycle, scope, "member", endpoint.EndpointScheduleOutcomeSuccess, "")
 
 	data, err := tracker.GetRequestLifecycleData(context.Background(), requestID)
 	if err != nil {

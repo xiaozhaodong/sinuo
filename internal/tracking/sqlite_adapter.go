@@ -509,6 +509,18 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			alterSQL:    "ALTER TABLE upstream_accounts ADD COLUMN quota_refreshed_at DATETIME",
 			description: "quota 最近刷新时间字段",
 		},
+		{
+			table:       "request_logs",
+			checkColumn: "request_flow_json",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_flow_json TEXT",
+			description: "请求详情的有界轨迹字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "request_revision",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_revision INTEGER",
+			description: "请求可见状态单调版本号字段",
+		},
 	}
 
 	for _, m := range migrations {
@@ -1211,10 +1223,16 @@ func (s *SQLiteAdapter) BuildInsertOrReplaceQuery(table string, columns []string
 			}
 		}
 		if !skipInUpdate { // 跳过冲突键字段
-			if col == "start_time" {
+			switch col {
+			case "start_time":
 				// 对start_time使用COALESCE，只在原值为NULL时才更新
 				updatePairs = append(updatePairs, fmt.Sprintf("%s = COALESCE(request_logs.%s, EXCLUDED.%s)", col, col, col))
-			} else {
+			case "request_revision":
+				// 版本号单调递增不倒退
+				updatePairs = append(updatePairs, "request_revision = MAX(COALESCE(request_logs.request_revision, 0), COALESCE(EXCLUDED.request_revision, 0))")
+			case "request_flow_json":
+				updatePairs = append(updatePairs, "request_flow_json = COALESCE(EXCLUDED.request_flow_json, request_logs.request_flow_json)")
+			default:
 				updatePairs = append(updatePairs, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
 			}
 		}

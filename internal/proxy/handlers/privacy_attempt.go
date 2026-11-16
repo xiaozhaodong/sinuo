@@ -173,14 +173,35 @@ func BindPrivacyResponse(r *http.Request, resp *http.Response) {
 	}
 	resp.Body = &privacyResponseBody{resp.Body, a.view, r.URL.Path, state}
 }
+func unwrapPrivacyResponseBody(rc io.ReadCloser) *privacyResponseBody {
+	for i := 0; i < 16 && rc != nil; i++ {
+		if b, ok := rc.(*privacyResponseBody); ok {
+			return b
+		}
+		unwrapper, ok := rc.(interface{ Unwrap() io.ReadCloser })
+		if !ok {
+			return nil
+		}
+		rc = unwrapper.Unwrap()
+	}
+	return nil
+}
+
 func ResponseRestore(resp *http.Response) (string, *privacy.RestoreView) {
-	if b, ok := resp.Body.(*privacyResponseBody); ok {
+	if resp == nil {
+		return "", nil
+	}
+	if b := unwrapPrivacyResponseBody(resp.Body); b != nil {
 		return b.path, b.view
 	}
 	return "", nil
 }
+
 func RecordRestoreDelivery(resp *http.Response, result RestoreSummary) {
-	if b, ok := resp.Body.(*privacyResponseBody); ok {
+	if resp == nil {
+		return
+	}
+	if b := unwrapPrivacyResponseBody(resp.Body); b != nil {
 		b.state.RecordRestore(result)
 	}
 }

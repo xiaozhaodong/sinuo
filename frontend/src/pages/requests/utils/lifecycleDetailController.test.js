@@ -148,3 +148,37 @@ test('关闭会退订事件订阅', () => {
   controller.close();
   assert.equal(wasUnsubscribed(), true);
 });
+
+test('刷新失败或读到旧版本时保留已显示详情，后续生命周期事件可重试', async () => {
+  const responses = [
+    { found: true, requestRevision: 5 },
+    new Error('temporary failure'),
+    { found: true, requestRevision: 4 },
+    { found: true, requestRevision: 6 }
+  ];
+  const changes = [];
+  let notify, run;
+  const controller = createLifecycleDetailController({
+    fetchDetail: async () => {
+      const next = responses.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    onChange: (value) => changes.push(value.requestRevision),
+    subscribe: (cb) => { notify = cb; return () => {}; },
+    schedulerFactory: ({ refresh }) => ({
+      triggerNow: refresh, schedule: () => { run = refresh; }, cancel() {}
+    })
+  });
+  controller.open('req');
+  await flush();
+  for (const expected of [[5], [5], [5, 6]]) {
+    run = null;
+    // 匹配请求的生命周期通知都能刷新，即使它带着旧的版本号。
+    notify({ request_id: 'req', request_revision: 4 });
+    assert.ok(run);
+    await run();
+    assert.deepEqual(changes, expected);
+  }
+  controller.close();
+});

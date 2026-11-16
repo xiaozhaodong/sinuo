@@ -15,13 +15,39 @@ func (t *subscriptionRequestTracking) SetUpstreamResponse(resp *http.Response) {
 	}
 	id := handlers.UpstreamRequestID(resp.Header)
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.active && !t.settled {
 		t.phaseRequestID = &id
 	}
+	t.mu.Unlock()
+	t.observeUpstreamHTTPResponse(resp)
+}
+
+// markFlowUpstreamTerminal 在结算前保留首个协议终态的观测时刻。
+func (t *subscriptionRequestTracking) markFlowUpstreamTerminal(at time.Time) {
+	t.mu.Lock()
+	if !t.active || t.flow.finalized || t.flow.upstreamTerminalObserved {
+		t.mu.Unlock()
+		return
+	}
+	t.flow.upstreamTerminalObserved = true
+	event := tracking.RequestFlowEvent{Kind: tracking.FlowEventUpstreamTerminal, At: &at}
+	if t.flow.deferEvents {
+		t.flow.deferredEvents = append(t.flow.deferredEvents, event)
+		t.mu.Unlock()
+		return
+	}
+	t.flow.pendingTerminalAt = &at
+	t.mu.Unlock()
+	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{FlowEvents: []tracking.RequestFlowEvent{event}})
+	t.mu.Lock()
+	t.flow.pendingTerminalAt = nil
+	t.mu.Unlock()
 }
 
 func (t *subscriptionRequestTracking) ObserveStreamResult(result *ParseResult, readBytes int, at time.Time) {
+	if result != nil && result.IsCompleted {
+		t.markFlowUpstreamTerminal(at)
+	}
 	t.mu.Lock()
 	if !t.active || t.settled {
 		t.mu.Unlock()
@@ -61,7 +87,19 @@ func (t *subscriptionRequestTracking) streamPhaseUpdateLocked() tracking.UpdateO
 		phases = t.phaseCollector.Snapshot(streamReasoningTokens(t.responseState.String()))
 	}
 	phases.StopReason, phases.UpstreamRequestID = t.phaseStopReason, t.phaseRequestID
-	return tracking.UpdateOptions{StreamPhases: phases}
+	var flowEvents []tracking.RequestFlowEvent
+	if len(t.flow.deferredEvents) > 0 {
+		flowEvents = append([]tracking.RequestFlowEvent(nil), t.flow.deferredEvents...)
+		t.flow.deferredEvents = nil
+	}
+	// 上报与结算并发时，先把同一观测时刻并入结算前的更新。reducer 只接受首次终态。
+	if at := t.flow.pendingTerminalAt; at != nil {
+		flowEvents = append(flowEvents, tracking.RequestFlowEvent{Kind: tracking.FlowEventUpstreamTerminal, At: at})
+	}
+	return tracking.UpdateOptions{
+		StreamPhases: phases,
+		FlowEvents:   flowEvents,
+	}
 }
 
 func (o *subscriptionTrackingObserver) SubmissionStreamResult(submission *subscriptionSubmission, result *ParseResult, size int64, at time.Time) {

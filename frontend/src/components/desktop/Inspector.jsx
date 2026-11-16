@@ -46,8 +46,8 @@ export const InspectorSection = ({ title, action = null, children }) => (
 );
 
 // 属性列表：左侧右对齐的标签 + 右侧值；值可以是文本，也可以是输入控件。
-// 有多行值（如两行摘要）时传 align="start"，标签与值的首行对齐
-const PROPERTY_ALIGN = { center: 'items-center', start: 'items-start' };
+// 多行内容可按顶边对齐；首行混排文字和徽标时按文字基线对齐。
+const PROPERTY_ALIGN = { center: 'items-center', start: 'items-start', baseline: 'items-baseline' };
 
 export const PropertyList = ({ children, labelWidth = 84, align = 'center' }) => (
   <dl

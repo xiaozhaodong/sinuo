@@ -15,11 +15,38 @@ func (rlm *RequestLifecycleManager) SetUpstreamResponse(resp *http.Response) {
 		id = handlers.UpstreamRequestID(resp.Header)
 	}
 	rlm.timingMu.Lock()
-	defer rlm.timingMu.Unlock()
 	if !rlm.upstreamSettled && rlm.firstTokenAt.IsZero() {
 		rlm.phaseRequestID = &id
 		rlm.phaseStopReason = nil
 	}
+	rlm.timingMu.Unlock()
+	if resp != nil {
+		rlm.ObserveUpstreamFlowResponse(resp)
+	}
+}
+
+// 同时观测解析器的协议终态和内容计时。Claude 的 message_delta 可带最终用量，
+// 只有解析器见到 message_stop 才算收到正常终态。
+func (rlm *RequestLifecycleManager) observeStream(processor *StreamProcessor) {
+	processor.SetStreamTimingRecorders(rlm.RecordFirstTokenAndReturn, rlm.RecordStreamCompletion)
+	rlm.flowState.mu.Lock()
+	writer := rlm.flowState.downstreamWriter
+	if writer != nil {
+		writer.observeStreamTerminal(false)
+		processor.onDownstreamDisconnected = writer.markDeliveryStopped
+	}
+	rlm.flowState.mu.Unlock()
+	terminalObserved := false
+	processor.SetStreamPhaseObserver(func(result *ParseResult, readBytes int, at time.Time) {
+		if !terminalObserved && (processor.tokenParser.HasTerminalEvent() || (result != nil && result.ErrorInfo != nil)) {
+			terminalObserved = true
+			if writer != nil {
+				writer.observeStreamTerminal(true)
+			}
+			rlm.MarkFlowUpstreamTerminal()
+		}
+		rlm.ObserveStreamResult(result, readBytes, at)
+	})
 }
 
 // ObserveStreamResult 与连接追踪共用计时锁，但首响后仍继续收集内容。

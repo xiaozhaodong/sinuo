@@ -29,8 +29,9 @@ type imageAPIStreamRelayResult struct {
 // imageAPIStreamTiming 流式生图的计时回调：首个有效事件（partial / completed）到达记首响，
 // 完成事件写出后记生成耗时。零值表示不计时。
 type imageAPIStreamTiming struct {
-	OnFirstEvent func()
-	OnCompleted  func()
+	OnFirstEvent       func()
+	OnUpstreamTerminal func() // 已校验终态，早于下游写入
+	OnCompleted        func()
 }
 
 type imageAPIStreamEvent struct {
@@ -180,6 +181,9 @@ func relayValidatedImageAPIStream(w http.ResponseWriter, resp *http.Response, pa
 			continue
 		}
 
+		if validation.Terminal && timing.OnUpstreamTerminal != nil {
+			timing.OnUpstreamTerminal()
+		}
 		if !result.Committed {
 			if timing.OnFirstEvent != nil {
 				timing.OnFirstEvent()

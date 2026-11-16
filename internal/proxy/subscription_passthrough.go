@@ -67,11 +67,20 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		observer = newSubscriptionTrackingObserver(p.proxy.usageTracker, p.proxy.eventBus)
 	}
 	kind, family, toolRequest := subscriptionHTTPTrackingKind(route.Kind)
+	if r.Context().Err() != nil {
+		return
+	}
 	track := observer.StartHTTP(SubscriptionHTTPStart{
 		RequestID: requestID, StartedAt: time.Now(), Method: r.Method, Path: route.InternalPath,
+		ClientIP: subscriptionRemoteIP(r.RemoteAddr), UserAgent: truncateSubscriptionText(r.UserAgent(), 50),
 		RequestKind: kind, RequestFamily: family, IsStreaming: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
 		SessionID: clientSessionID(r),
+		Transport: tracking.FlowTransportHTTP,
+		Origin:    tracking.FlowOriginClientRequest,
 	})
+	w = track.WrapDownstreamWriter(w)
+	var copyOutcome string
+	defer func() { track.finishDownstreamDelivery(copyOutcome) }()
 	defer track.Complete(nil, "")
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 		status := http.StatusUnauthorized
@@ -94,14 +103,13 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 	if route.Kind == subscriptionRouteImagesEdits {
 		requestModel = imageEditRequestModel(body.normalizedBody, r.Header.Get("Content-Type"), requestModel)
 	}
-	track.SetModel(requestModel)
-	track.SetRequestProfile(requestModel, requestReasoning)
-	// 先看 Accept：命中就不必为 stream 再扫一遍正文
+	var streaming bool
 	if family == tracking.RequestFamilyImage {
-		track.SetStreaming(imageAPIRequestStreamEnabled(r, body.normalizedBody))
+		streaming = imageAPIRequestStreamEnabled(r, body.normalizedBody)
 	} else {
-		track.SetStreaming(strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool())
+		streaming = strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool()
 	}
+	track.setRequestProfile(requestModel, requestReasoning, streaming)
 	privacyState := handlers.NewPrivacyRequestState(requestID)
 	privacyState.SessionID = clientSessionID(r)
 	privacyState.SetSummaryRecorder(track.recordPrivacySummary)
@@ -214,8 +222,19 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 			"conn_id", requestID, "kind", string(route.Kind), "status_code", resp.StatusCode)
 	}
 	copyErr := p.writeResponse(w, resp)
+	copyOutcome = tracking.FlowDeliveryDelivered
+	if copyErr != nil {
+		copyOutcome = tracking.FlowDeliveryPartialOrFailed
+	}
 	if capture != nil {
-		capture.Finish()
+		// 下游可能在最后一块上写失败；由真实 EOF 或完整 Content-Length 判断上游读取是否完成。
+		upstreamComplete := copyErr == nil || capture.readEOF
+		if resp.ContentLength >= 0 {
+			upstreamComplete = responseBytes == resp.ContentLength
+		}
+		if capture.mode != "json" || upstreamComplete {
+			capture.Finish()
+		}
 	}
 	if toolResponse != nil {
 		toolResponse.finish(resp.StatusCode, capture.mode, copyErr, r.Context().Err())
@@ -320,6 +339,9 @@ func (b *subscriptionObservedBody) Read(data []byte) (int, error) {
 	if b.onBytes != nil {
 		b.onBytes(*b.bytes)
 	}
+	if b.capture != nil && err == io.EOF {
+		b.capture.readEOF = true
+	}
 	if n > 0 && b.capture != nil {
 		_, _ = b.capture.Write(data[:n])
 	}
@@ -395,6 +417,7 @@ func (f subscriptionFlushingWriter) Write(data []byte) (int, error) {
 // subscriptionResponseCapture 只暂存有界事件/JSON，不保留整段流，也不改动转发正文。
 // SSE 仅在此分帧，终态和元数据交给 Responses 或工具解析器解释。
 type subscriptionResponseCapture struct {
+	readEOF          bool
 	mode             string
 	pending          []byte
 	parser           *TokenParser

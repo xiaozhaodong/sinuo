@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net/http/httptrace"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,16 @@ type UpstreamWriteTiming struct {
 type UpstreamTraceRecorder interface {
 	RecordUpstreamGetConn(UpstreamConnAttempt)
 	RecordUpstreamWrite(UpstreamWriteTiming)
+}
+
+// UpstreamFlowTraceRecorder 为可选扩展接口，供请求详情记录连接就绪、头写出、正文写出与首响字节。
+// 保持独立扩展接口，避免影响仅实现 UpstreamTraceRecorder 的现有调用方或测试替身。
+type UpstreamFlowTraceRecorder interface {
+	RecordUpstreamFlowGetConn(previous int, attempt UpstreamConnAttempt) int
+	RecordUpstreamFlowGotConn(contact int, at time.Time, info httptrace.GotConnInfo)
+	RecordUpstreamFlowWroteHeaders(contact int, at time.Time)
+	RecordUpstreamFlowWroteRequest(contact int, timing UpstreamWriteTiming, writeErr error)
+	RecordUpstreamFlowFirstResponseByte(contact int, at time.Time)
 }
 
 // UpstreamAttemptSummary 是同一追踪内上一次连接尝试的摘要。
@@ -96,15 +107,17 @@ func (s *UpstreamTraceState) markGetConn() UpstreamConnAttempt {
 	return attempt
 }
 
-func (s *UpstreamTraceState) markGotConn(info httptrace.GotConnInfo) {
+func (s *UpstreamTraceState) markGotConn(info httptrace.GotConnInfo) time.Time {
+	at := time.Now()
 	s.mu.Lock()
 	s.gotConn = true
 	s.attemptSummary.GotConn = true
 	s.attemptSummary.Reused = info.Reused
 	s.attemptSummary.WasIdle = info.WasIdle
 	s.attemptSummary.IdleTime = info.IdleTime
-	s.writeTiming.ConnReadyAt = time.Now()
+	s.writeTiming.ConnReadyAt = at
 	s.mu.Unlock()
+	return at
 }
 
 func (s *UpstreamTraceState) markTLSHandshakeDone() {
@@ -113,11 +126,13 @@ func (s *UpstreamTraceState) markTLSHandshakeDone() {
 	s.mu.Unlock()
 }
 
-func (s *UpstreamTraceState) markWroteHeaders() {
+func (s *UpstreamTraceState) markWroteHeaders() time.Time {
+	at := time.Now()
 	s.mu.Lock()
 	s.wroteHeaders = true
 	s.attemptSummary.WroteHeaders = true
 	s.mu.Unlock()
+	return at
 }
 
 func (s *UpstreamTraceState) markWroteRequest(err error) UpstreamWriteTiming {
@@ -159,21 +174,35 @@ func (s *UpstreamTraceState) MarkWroteHeadersForTest() {
 // WithUpstreamTrace 挂载连接与写出事件；成功写完后在锁外回调同次尝试的时刻。
 func WithUpstreamTrace(ctx context.Context, recorder UpstreamTraceRecorder) (context.Context, *UpstreamTraceState) {
 	state := &UpstreamTraceState{}
+	flowRecorder, _ := recorder.(UpstreamFlowTraceRecorder)
+	// 每个 RoundTrip 单独绑定 contact，旧请求迟到的回调只携带自己的序号。
+	var contact atomic.Int64
 	trace := &httptrace.ClientTrace{
 		GetConn: func(string) {
 			attempt := state.markGetConn()
 			if recorder != nil {
 				recorder.RecordUpstreamGetConn(attempt)
 			}
+			if flowRecorder != nil {
+				if seq := flowRecorder.RecordUpstreamFlowGetConn(int(contact.Load()), attempt); seq > 0 {
+					contact.Store(int64(seq))
+				}
+			}
 		},
 		GotConn: func(info httptrace.GotConnInfo) {
-			state.markGotConn(info)
+			at := state.markGotConn(info)
+			if flowRecorder != nil {
+				flowRecorder.RecordUpstreamFlowGotConn(int(contact.Load()), at, info)
+			}
 		},
 		TLSHandshakeDone: func(tls.ConnectionState, error) {
 			state.markTLSHandshakeDone()
 		},
 		WroteHeaders: func() {
-			state.markWroteHeaders()
+			at := state.markWroteHeaders()
+			if flowRecorder != nil {
+				flowRecorder.RecordUpstreamFlowWroteHeaders(int(contact.Load()), at)
+			}
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			timing := state.markWroteRequest(info.Err)
@@ -181,6 +210,14 @@ func WithUpstreamTrace(ctx context.Context, recorder UpstreamTraceRecorder) (con
 			// 请求可能只发送了部分内容，不能伪造“上游写完”时间。
 			if info.Err == nil && recorder != nil {
 				recorder.RecordUpstreamWrite(timing)
+			}
+			if flowRecorder != nil {
+				flowRecorder.RecordUpstreamFlowWroteRequest(int(contact.Load()), timing, info.Err)
+			}
+		},
+		GotFirstResponseByte: func() {
+			if flowRecorder != nil {
+				flowRecorder.RecordUpstreamFlowFirstResponseByte(int(contact.Load()), time.Now())
 			}
 		},
 	}

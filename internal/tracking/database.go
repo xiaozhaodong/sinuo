@@ -144,8 +144,20 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 				"error", err,
 				"event_type", event.Type,
 				"request_id", event.RequestID)
+			ut.recordIntegrityIssue(event.RequestID, "build_write_query_failed")
 			continue
 		}
+
+		var flowEvents []RequestFlowEvent
+		if event.Type == "flexible_update" {
+			if opts, ok := event.Data.(UpdateOptions); ok && len(opts.FlowEvents) > 0 {
+				flowEvents = make([]RequestFlowEvent, len(opts.FlowEvents))
+				copy(flowEvents, opts.FlowEvents)
+			}
+		}
+		gapCode := ut.getPendingRequestGap(event.RequestID)
+
+		var gapStored bool
 
 		writeReq := WriteRequest{
 			Query:     query,
@@ -153,6 +165,21 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 			Response:  make(chan error, 1),
 			Context:   context.Background(),
 			EventType: event.Type,
+			TxFn: func(ctx context.Context, tx *sql.Tx) error {
+				if query != "" {
+					if _, execErr := tx.ExecContext(ctx, query, args...); execErr != nil {
+						return execErr
+					}
+				}
+				if len(flowEvents) > 0 || gapCode != "" {
+					var flowErr error
+					gapStored, flowErr = ut.applyFlowEventsInSQLiteTx(ctx, tx, event.RequestID, flowEvents, gapCode)
+					if flowErr != nil {
+						return flowErr
+					}
+				}
+				return nil
+			},
 		}
 
 		// 通过队列发送写操作。processBatch 只由 processEvents（及测试）调用，
@@ -163,7 +190,11 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 				"error", err,
 				"event_type", event.Type,
 				"request_id", event.RequestID)
+			ut.recordIntegrityIssue(event.RequestID, "db_write_failed")
 			continue
+		}
+		if gapStored {
+			ut.recordEventWriteSuccess(event.RequestID, gapCode)
 		}
 		successCount++
 	}
@@ -230,6 +261,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -291,6 +323,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			duration_ms = COALESCE(?, duration_ms),
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -350,6 +383,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			cache_creation_1h_cost_usd = ?,
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -409,6 +443,7 @@ func (ut *UsageTracker) buildSubscriptionSettlementQuery(event RequestEvent) (st
 		input_cost_usd = ?, output_cost_usd = ?, cache_creation_cost_usd = ?,
 		cache_creation_5m_cost_usd = ?, cache_creation_1h_cost_usd = ?, cache_read_cost_usd = ?, total_cost_usd = ?,
 		%s,
+		request_revision = COALESCE(request_revision, 0) + 1,
 		updated_at = %s
 	WHERE request_id = ?`, responseDiagnosticsSetClause, ut.adapter.BuildUTCDateTimeNow())
 	args := []interface{}{
@@ -456,8 +491,21 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 	if err != nil {
 		return "", nil, err
 	}
-	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "request_source", "request_kind", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "request_model", "request_reasoning", "session_id", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
+	initialFlow := &RequestFlow{
+		SchemaVersion: RequestFlowSchemaVersion,
+		Transport:     FlowTransportHTTP,
+		Origin:        FlowOriginClientRequest,
+	}
+	if t := normalizeFlowTransport(data.FlowTransport); t != "" {
+		initialFlow.Transport = t
+	}
+	if o := normalizeFlowOrigin(data.FlowOrigin); o != "" {
+		initialFlow.Origin = o
+	}
+	initialFlowJSON, _ := MarshalRequestFlowBounded(initialFlow)
+
+	columns := []string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "request_source", "request_kind", "start_time", "status", "is_streaming", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "request_model", "request_reasoning", "session_id", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd", "cache_read_cost_usd", "total_cost_usd", "updated_at", "request_flow_json", "request_revision"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "'pending'", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow(), "?", "?"}
 
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
@@ -488,6 +536,7 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 			args = append(args, nil)
 		}
 	}
+	args = append(args, nullString(initialFlowJSON), int64(1))
 
 	return query, args, nil
 }
@@ -505,6 +554,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 			status = ?,
 			retry_count = ?,
 			http_status_code = ?,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -520,8 +570,8 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 
 	// 使用适配器构建INSERT OR REPLACE查询
 	// 重新加入start_time，但在UPSERT时保护已有值不被覆盖
-	columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
+	columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at", "request_revision"}
+	placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow(), "COALESCE((SELECT request_revision FROM request_logs WHERE request_id = ?), 0) + 1"}
 	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 	args := []interface{}{
@@ -531,6 +581,7 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		data.RetryCount,
 		data.HTTPStatus,
 		timezonepolicy.FormatStorage(event.Timestamp), // 提供start_time值用于插入新记录
+		event.RequestID,
 	}
 
 	return query, args, nil
@@ -698,13 +749,19 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		args = append(args, strings.TrimSpace(*opts.RequestReasoning))
 	}
 
-	// 如果没有字段需要更新，返回错误
+	// 如果没有任何标量字段和离散路径事件需要更新，返回错误
 	if len(setParts) == 0 {
+		if len(opts.FlowEvents) > 0 {
+			return "", nil, nil
+		}
 		return "", nil, fmt.Errorf("no fields to update in flexible_update event")
 	}
 
-	// 总是更新updated_at字段
-	setParts = append(setParts, fmt.Sprintf("updated_at = %s", ut.adapter.BuildUTCDateTimeNow()))
+	// 总是递增版本号并更新updated_at字段
+	setParts = append(setParts,
+		"request_revision = COALESCE(request_revision, 0) + 1",
+		fmt.Sprintf("updated_at = %s", ut.adapter.BuildUTCDateTimeNow()),
+	)
 
 	// 构建完整的UPDATE语句
 	query := fmt.Sprintf("UPDATE request_logs SET %s WHERE request_id = ?",
@@ -781,6 +838,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		%s,
 		http_status_code = CASE WHEN http_status_code IS NULL OR http_status_code = 0 THEN 200 ELSE http_status_code END,
 		status = 'completed',
+		request_revision = COALESCE(request_revision, 0) + 1,
 		updated_at = %s
 	WHERE request_id = ?`, responseDiagnosticsSetClause, ut.adapter.BuildUTCDateTimeNow())
 
@@ -873,6 +931,7 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_1h_cost_usd = COALESCE(?, cache_creation_1h_cost_usd),
 			cache_read_cost_usd = COALESCE(?, cache_read_cost_usd), total_cost_usd = COALESCE(?, total_cost_usd),
 			%s,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, responseDiagnosticsSetClause, ut.adapter.BuildUTCDateTimeNow())
 
@@ -907,6 +966,7 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_1h_cost_usd = COALESCE(?, cache_creation_1h_cost_usd),
 			cache_read_cost_usd = COALESCE(?, cache_read_cost_usd), total_cost_usd = COALESCE(?, total_cost_usd),
 			%s,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, responseDiagnosticsSetClause, ut.adapter.BuildUTCDateTimeNow())
 
@@ -1043,6 +1103,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 			status = ?,
 			retry_count = ?,
 			http_status_code = ?,
+			request_revision = COALESCE(request_revision, 0) + 1,
 			updated_at = %s
 		WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -1087,6 +1148,7 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 		status = ?,
 		retry_count = ?,
 		http_status_code = ?,
+		request_revision = COALESCE(request_revision, 0) + 1,
 		updated_at = %s
 	WHERE request_id = ?`, ut.adapter.BuildUTCDateTimeNow())
 
@@ -1109,8 +1171,8 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 
 	if rowsAffected == 0 {
 		// 记录不存在，使用适配器构建INSERT OR REPLACE查询
-		columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-		placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow()}
+		columns := []string{"request_id", "endpoint_name", "status", "retry_count", "http_status_code", "start_time", "updated_at", "request_revision"}
+		placeholders := []string{"?", "?", "?", "?", "?", "?", ut.adapter.BuildUTCDateTimeNow(), "COALESCE((SELECT request_revision FROM request_logs WHERE request_id = ?), 0) + 1"}
 		insertQuery := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
 
 		_, err = tx.ExecContext(ctx, insertQuery,
@@ -1119,7 +1181,8 @@ func (ut *UsageTracker) updateRequestStatus(ctx context.Context, tx *sql.Tx, eve
 			data.Status,
 			data.RetryCount,
 			data.HTTPStatus,
-			timezonepolicy.FormatStorage(event.Timestamp))
+			timezonepolicy.FormatStorage(event.Timestamp),
+			event.RequestID)
 	}
 
 	return err
@@ -1185,6 +1248,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		total_cost_usd = ?,
 		%s,
 		status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
+		request_revision = COALESCE(request_revision, 0) + 1,
 		updated_at = %s
 	WHERE request_id = ?`, responseDiagnosticsSetClause, ut.adapter.BuildUTCDateTimeNow())
 
@@ -1226,8 +1290,8 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 			request_id, start_time, end_time, duration_ms, model_name,
 			input_tokens, output_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens,
 			input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
-			cache_read_cost_usd, total_cost_usd, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`
+			cache_read_cost_usd, total_cost_usd, status, request_revision
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 1)`
 
 		// 使用已计算的 startTime 和 durationMs
 		_, err = tx.ExecContext(ctx, insertQuery,

@@ -16,6 +16,7 @@ import (
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/proxy/response"
 	"sinuo/internal/proxy/restorestream"
+	"sinuo/internal/tracking"
 )
 
 // 端点侧扁平转发管线（方案 §4.4）：单层候选循环替代旧 streaming/regular 双循环壳。
@@ -46,6 +47,7 @@ const (
 // handleEndpointPipeline 端点转发主入口（streaming 与 regular 合并，仅 Process 分叉）
 func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager, isSSE bool) {
 	connID := lifecycleManager.GetRequestID()
+	w = lifecycleManager.WrapDownstreamWriter(w)
 	profile := endpoint.BuildRouteRequestProfile(r.URL.Path, bodyBytes)
 	if profile.Model != "" {
 		lifecycleManager.SetModel(profile.Model)
@@ -69,6 +71,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	result := h.endpointManager.PrepareRouteCandidates(ctx, profile)
 	scope = result.Scope
 	h.endpointManager.BeginEndpointScheduleSnapshot(connID, r.URL.Path, result.Snapshot)
+	if result.Snapshot != nil {
+		lifecycleManager.persistEndpointScheduleSnapshot(result.Snapshot)
+	}
 
 	if len(result.Candidates) == 0 {
 		if block := h.endpointManager.GetRouteBlock(profile); block != nil {
@@ -82,7 +87,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			if scope.Kind == endpoint.RouteScopeUnassigned {
 				outcome = endpoint.EndpointScheduleOutcomeModelRoutingUnassigned
 			}
-			h.completeEndpointSchedule(connID, scope, "", outcome, block.Message)
+			h.completeEndpointSchedule(lifecycleManager, scope, "", outcome, block.Message)
 			h.writeEndpointPipelineError(w, isSSE, flusher, block.StatusCode,
 				fmt.Sprintf("%s: %s", block.Code, block.Message), block.RetryAfter)
 			return
@@ -92,7 +97,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		// 不补则 route_mode 落库为默认 auto，manual_preferred/manual_fixed 期间的失败会被误读成自动调度。
 		h.noteRequestRouteContext(lifecycleManager, scope, "no_routable_candidates")
 		lifecycleManager.FailRequest("no_endpoints_available", "no routable endpoint candidates", http.StatusServiceUnavailable)
-		h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeNoCandidates, "no routable endpoint candidates")
+		h.completeEndpointSchedule(lifecycleManager, scope, "", endpoint.EndpointScheduleOutcomeNoCandidates, "no routable endpoint candidates")
 		h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusServiceUnavailable,
 			"Service Unavailable: no routable endpoint candidates", retryAfter)
 		return
@@ -104,6 +109,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	}
 
 	var lastErr error
+	var nextLegReason string
 	attemptedEndpoints := 0
 	// admission lease 只覆盖当前候选的 attempt：切换下一候选时立即释放上一轮 lease，
 	// 避免失败候选的 lease 持有到请求结束、无意义拖住停用/删除的 drain 等待；
@@ -127,7 +133,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		select {
 		case <-ctx.Done():
 			lifecycleManager.CancelRequest("client disconnected", nil)
-			h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeCancelled, "client disconnected")
+			h.completeEndpointSchedule(lifecycleManager, scope, "", endpoint.EndpointScheduleOutcomeCancelled, "client disconnected")
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
 			if isSSE && hasCommitted() {
 				fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
@@ -142,7 +148,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		queuedFor, paceErr := h.waitForEndpointDispatch(ctx, plan.EndpointName)
 		if paceErr != nil {
 			lifecycleManager.CancelRequest("client disconnected while waiting for endpoint dispatch", nil)
-			h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeCancelled, "client disconnected while waiting for endpoint dispatch")
+			h.completeEndpointSchedule(lifecycleManager, scope, "", endpoint.EndpointScheduleOutcomeCancelled, "client disconnected while waiting for endpoint dispatch")
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
 			return
 		}
@@ -168,6 +174,12 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeAttempting, "")
 		routeDecision := h.endpointManager.NoteRouteDecisionForScope(scope, ep.Config.Name, "")
 		lifecycleManager.SetRouteDecision(routeDecision, ep.Config.Name)
+		lifecycleManager.RecordFlowLegSelected(tracking.RequestFlowTargetSnapshot{
+			UpstreamType: "endpoint",
+			UpstreamName: ep.Config.Name,
+			EndpointName: ep.Config.Name,
+			RouteMode:    routeDecision.Mode,
+		}, nextLegReason, false)
 		lifecycleManager.UpdateStatus("forwarding", i, 0)
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
@@ -188,7 +200,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			slog.Warn(fmt.Sprintf("🛡️ [隐私保护] [%s] 请求被策略拒绝: %s", connID, policyErr.Code))
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", policyErr.StatusCode))
 			lifecycleManager.FailRequest(handlers.PrivacyFailureReason(policyErr), policyErr.Message, policyErr.StatusCode)
-			h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePrivacyBlocked, policyErr.Message)
+			h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePrivacyBlocked, policyErr.Message)
 			h.writeEndpointPipelineError(w, isSSE, flusher, policyErr.StatusCode,
 				fmt.Sprintf("%s: %s", policyErr.Code, policyErr.Message), 0)
 			return
@@ -208,6 +220,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 				if release := h.tryAcquireRateLimitRetryGate(ep.Config.Name, r.URL.Path); release != nil {
 					closeEndpointResponse(resp)
 					releaseUpstream()
+					lifecycleManager.RecordFlowAttemptEnded(http.StatusTooManyRequests, "rate_limit_retry")
 					// 首次 attempt 已结束；等待期不占用 admission，重试在真正发送前重新准入。
 					admission.Release()
 					admission = nil
@@ -251,7 +264,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 				closeEndpointResponse(resp)
 				releaseUpstream()
 				lifecycleManager.CancelRequest("client disconnected", nil)
-				h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomeCancelled, "client disconnected during rate limit wait")
+				h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomeCancelled, "client disconnected during rate limit wait")
 				*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", 499))
 				return
 			}
@@ -285,6 +298,8 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			if tripped {
 				// §9.2 规则 9：阈值触发可在本次请求内换下一候选
 				if i+1 < len(result.Candidates) && attemptedEndpoints < maxCandidates && ctx.Err() == nil {
+					nextLegReason = decision.Reason
+					lifecycleManager.RecordFlowAttemptEnded(http.StatusTooManyRequests, decision.Reason)
 					lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
 					h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
 					h.notifyFailover(FailoverEvent{
@@ -303,23 +318,25 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			// §9.2 规则 8：阈值前（或无可用候选）返回规范化 429，保留有效 Retry-After
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", http.StatusTooManyRequests))
 			lifecycleManager.FailRequest("rate_limited", detail, http.StatusTooManyRequests)
-			h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomeRateLimited, detail)
+			h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomeRateLimited, detail)
 			h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusTooManyRequests,
 				"Too Many Requests: upstream rate limited", retryAfterSeconds)
 			return
 
 		case EndpointForwardNextCandidate:
 			detail := endpointFailureDetail(forwardErr, resp, ep.Config.Name)
+			statusCode := 0
+			if resp != nil {
+				statusCode = resp.StatusCode
+			}
 			closeEndpointResponse(resp)
 			releaseUpstream()
+			nextLegReason = decision.Reason
+			lifecycleManager.RecordFlowAttemptEnded(statusCode, decision.Reason)
 			lastErr = fmt.Errorf("%s: %s", decision.Reason, detail)
 			h.markEndpointFailure(ep.Config.Name, target.Revision(), target.FailureEpoch(), decision, profile, detail)
 			h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeTryNext, detail)
 			if i+1 < len(result.Candidates) && ctx.Err() == nil {
-				statusCode := 0
-				if resp != nil {
-					statusCode = resp.StatusCode
-				}
 				h.notifyFailover(FailoverEvent{
 					Lane:         FailoverLaneCC,
 					From:         ep.Config.Name,
@@ -343,7 +360,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			// 「真实码→500 + Retry-After」客户端重试控制转换仅此一份（§3.1）
 			*r = *r.WithContext(context.WithValue(r.Context(), "final_status_code", http.StatusInternalServerError))
 			lifecycleManager.FailRequest(decision.Reason, detail, http.StatusInternalServerError)
-			h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughError, detail)
+			h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughError, detail)
 			h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusInternalServerError,
 				fmt.Sprintf("upstream failure (%s): %s", decision.Reason, detail), endpointPassthroughRetryAfterSeconds)
 			return
@@ -353,9 +370,9 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			relayErr := h.relayEndpointRawResponse(w, resp, lifecycleManager, isSSE, flusher)
 			releaseUpstream()
 			if relayErr != nil {
-				h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughError, relayErr.Error())
+				h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughError, relayErr.Error())
 			} else {
-				h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughRaw, detail)
+				h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpoint.EndpointScheduleOutcomePassthroughRaw, detail)
 			}
 			return
 
@@ -372,7 +389,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 				outcome, outcomeDetail = h.processEndpointRegularResponse(w, r, resp, lifecycleManager, ep.Config.Name)
 			}
 			releaseUpstream()
-			h.completeEndpointSchedule(connID, scope, ep.Config.Name, endpointScheduleOutcomeName(outcome), outcomeDetail)
+			h.completeEndpointSchedule(lifecycleManager, scope, ep.Config.Name, endpointScheduleOutcomeName(outcome), outcomeDetail)
 			// v8 §11.2：FullSuccess 只更新运行时 retained，不再持久化 active（D9）；
 			// count_tokens 不建立 /v1/messages retained（§10 规则 6）
 			if outcome == ProcessOutcomeFullSuccess && r.URL.Path == "/v1/messages" {
@@ -397,7 +414,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 	}
 	retryAfter := h.endpointRetryAfterSeconds(result.Snapshot)
 	lifecycleManager.FailRequest("all_endpoints_failed", reason, http.StatusServiceUnavailable)
-	h.completeEndpointSchedule(connID, scope, "", endpoint.EndpointScheduleOutcomeAllCandidatesFailed, reason)
+	h.completeEndpointSchedule(lifecycleManager, scope, "", endpoint.EndpointScheduleOutcomeAllCandidatesFailed, reason)
 	h.writeEndpointPipelineError(w, isSSE, flusher, http.StatusServiceUnavailable,
 		"Service Unavailable: "+reason, retryAfter)
 }
@@ -413,9 +430,9 @@ func (h *Handler) noteRequestRouteContext(lifecycleManager *RequestLifecycleMana
 	lifecycleManager.SetRouteDecision(route, "")
 }
 
-func (h *Handler) completeEndpointSchedule(requestID string, scope endpoint.RouteScope, endpointName, outcome, finalError string) {
-	finalSnapshot := h.endpointManager.CompleteEndpointScheduleSnapshot(requestID, endpointName, outcome, finalError)
-	h.persistEndpointScheduleSnapshot(requestID, finalSnapshot)
+func (h *Handler) completeEndpointSchedule(lifecycleManager *RequestLifecycleManager, scope endpoint.RouteScope, endpointName, outcome, finalError string) {
+	finalSnapshot := h.endpointManager.CompleteEndpointScheduleSnapshot(lifecycleManager.GetRequestID(), endpointName, outcome, finalError)
+	lifecycleManager.persistEndpointScheduleSnapshot(finalSnapshot)
 	h.endpointManager.SettleRouteDecision(scope, endpointName, outcome)
 }
 
@@ -518,10 +535,9 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
 	w.WriteHeader(resp.StatusCode)
 
-	tokenParser := NewTokenParserWithUsageTracker(connID, h.usageTracker)
-	processor := NewStreamProcessor(tokenParser, h.usageTracker, w, flusher, connID, endpointName)
-	processor.SetStreamTimingRecorders(lifecycleManager.RecordFirstTokenAndReturn, lifecycleManager.RecordStreamCompletion)
-	processor.SetStreamPhaseObserver(lifecycleManager.ObserveStreamResult)
+	tokenParser := NewTokenParserWithUsageTracker(connID, lifecycleManager.usageTracker)
+	processor := NewStreamProcessor(tokenParser, lifecycleManager.usageTracker, w, flusher, connID, endpointName)
+	lifecycleManager.observeStream(processor)
 	if upstreamCancel != nil {
 		processor.EnableDownstreamTailDrain(endpointStreamTailDrainTimeout, upstreamCancel)
 	}
@@ -691,7 +707,7 @@ func (h *Handler) relayEndpointRawResponse(w http.ResponseWriter, resp *http.Res
 		// 客户端可能把 JSON 错误体当 SSE 解析而识别不出错误
 		clearEndpointStreamingHeaders(w.Header())
 	}
-	if err := h.writeRawResponse(w, resp); err != nil {
+	if err := h.writeRawResponse(w, resp, lifecycleManager); err != nil {
 		lifecycleManager.FailRequest("endpoint_response_write_error", err.Error(), resp.StatusCode)
 		return err
 	}

@@ -36,6 +36,8 @@ type subscriptionSubmission struct {
 	RequestID          string
 	SessionID          string
 	ConnectionID       string
+	ClientIP           string
+	UserAgent          string
 	Sequence           uint64
 	Model              string
 	Reasoning          string // v6.3 请求思考串
@@ -62,23 +64,26 @@ type subscriptionSubmission struct {
 }
 
 type subscriptionSubmissionState struct {
-	restoring    atomic.Int64 // 已发布且尚未结束的回填响应数量
-	bypassed     atomic.Int64 // 原文放行的在途响应与有界去重收据数量
-	mu           sync.Mutex
-	connectionID string
-	sessionID    string
-	baseContext  context.Context
-	observer     subscriptionSubmissionObserver
-	sequence     uint64
-	closed       bool
-	pending      []*subscriptionSubmission
-	active       []*subscriptionSubmission
-	byResponseID map[string]*subscriptionSubmission
-	recentIDs    map[string]subscriptionCompletedResponse
-	recentOrder  []string
-	activity     *monitor.RequestActivity
-	requestIDs   monitor.RequestIDGenerator
-	inFlight     map[*subscriptionSubmission]*monitor.RequestLease
+	restoring       atomic.Int64 // 已发布且尚未结束的回填响应数量
+	bypassed        atomic.Int64 // 原文放行的在途响应与有界去重收据数量
+	mu              sync.Mutex
+	connectionID    string
+	sessionID       string
+	clientIP        string
+	userAgent       string
+	baseContext     context.Context
+	observer        subscriptionSubmissionObserver
+	sequence        uint64
+	closed          bool
+	rejectedReplies map[*subscriptionSubmission]func(int64)
+	pending         []*subscriptionSubmission
+	active          []*subscriptionSubmission
+	byResponseID    map[string]*subscriptionSubmission
+	recentIDs       map[string]subscriptionCompletedResponse
+	recentOrder     []string
+	activity        *monitor.RequestActivity
+	requestIDs      monitor.RequestIDGenerator
+	inFlight        map[*subscriptionSubmission]*monitor.RequestLease
 }
 
 const subscriptionRecentResponseIDLimit = 256
@@ -104,6 +109,8 @@ func newSubscriptionSubmissionState(ctx context.Context, connectionID string, ob
 		recentIDs:    make(map[string]subscriptionCompletedResponse),
 	}
 	if info := subscriptionRequestInfoFromContext(ctx); info != nil {
+		state.clientIP = info.ClientIP
+		state.userAgent = info.UserAgent
 		state.activity = info.activity
 		state.requestIDs = info.requestIDs
 	}
@@ -137,6 +144,8 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 		RequestID:          requestID,
 		SessionID:          s.sessionID,
 		ConnectionID:       s.connectionID,
+		ClientIP:           s.clientIP,
+		UserAgent:          s.userAgent,
 		Sequence:           s.sequence,
 		Model:              create.Model,
 		Reasoning:          create.Reasoning,
@@ -378,6 +387,8 @@ func (s *subscriptionSubmissionState) bindCreated(responseID, streamID string, r
 			RequestID:       requestID,
 			SessionID:       s.sessionID,
 			ConnectionID:    s.connectionID,
+			ClientIP:        s.clientIP,
+			UserAgent:       s.userAgent,
 			Sequence:        s.sequence,
 			Generate:        true,
 			ServerInitiated: true,
@@ -444,6 +455,10 @@ func (s *subscriptionSubmissionState) finishTerminal(submission *subscriptionSub
 }
 
 func (s *subscriptionSubmissionState) reject(submission *subscriptionSubmission, policyErr *privacy.PolicyError) func() {
+	return s.rejectWithReply(submission, policyErr, 0)
+}
+
+func (s *subscriptionSubmissionState) rejectWithReply(submission *subscriptionSubmission, policyErr *privacy.PolicyError, replyBytes int) func() {
 	if submission == nil {
 		return nil
 	}
@@ -457,12 +472,33 @@ func (s *subscriptionSubmissionState) reject(submission *subscriptionSubmission,
 		delete(s.byResponseID, submission.ResponseID)
 	}
 	s.removeSubmissionLocked(submission)
+	policyErr = sanitizeSubscriptionPolicyError(policyErr)
+	observer, tracksDelivery := s.observer.(interface {
+		SubmissionRejectionDelivered(*subscriptionSubmission, *privacy.PolicyError, int64)
+	})
+	awaitReply := tracksDelivery && replyBytes > 0
+	if awaitReply {
+		if s.rejectedReplies == nil {
+			s.rejectedReplies = make(map[*subscriptionSubmission]func(int64))
+		}
+		s.rejectedReplies[submission] = func(n int64) { observer.SubmissionRejectionDelivered(submission, policyErr, n) }
+	}
 	s.mu.Unlock()
-	if s.observer != nil {
-		s.observer.SubmissionRejected(submission, sanitizeSubscriptionPolicyError(policyErr))
+	if !awaitReply && s.observer != nil {
+		s.observer.SubmissionRejected(submission, policyErr)
 	}
 	releaseSubscriptionSubmission(submission)
-	return s.activityForwarded(submission)
+	release := s.activityForwarded(submission)
+	return func() {
+		s.mu.Lock()
+		finish := s.rejectedReplies[submission]
+		delete(s.rejectedReplies, submission)
+		s.mu.Unlock()
+		if finish != nil {
+			finish(int64(replyBytes))
+		}
+		release()
+	}
 }
 
 // close 一次性中断所有未终结提交；重复 close/terminal 不会重复回调。
@@ -475,6 +511,8 @@ func (s *subscriptionSubmissionState) close(reason string) {
 		return
 	}
 	s.closed = true
+	replies := s.rejectedReplies
+	s.rejectedReplies = nil
 	s.restoring.Store(0)
 	s.bypassed.Store(0)
 	for _, submission := range s.active {
@@ -489,6 +527,10 @@ func (s *subscriptionSubmissionState) close(reason string) {
 	s.byResponseID = make(map[string]*subscriptionSubmission)
 	s.mu.Unlock()
 
+	// 桥接已经退出，剩余的本地错误帧没有成功写出。
+	for _, finish := range replies {
+		finish(0)
+	}
 	for _, sub := range interrupted {
 		sub.reportRestore("interrupted", "subscription_response_interrupted")
 		if s.observer != nil {

@@ -244,7 +244,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	countTokensIntercept := r.URL.Path == "/v1/messages/count_tokens" && h.config.TokenCounting.Enabled && !claudeSubscription
 	poolMetadata, hasPoolMetadata := subscriptionPoolMetadataFromContext(r.Context())
 	var lifecycleManager *RequestLifecycleManager
-	startTrackedRequest := func(bool) {}
 	if !countTokensIntercept {
 		// 创建统一的请求生命周期管理器
 		lifecycleManager = NewRequestLifecycleManager(h.usageTracker, h.tokenUsageMonitor(), connID, h.eventBus)
@@ -269,17 +268,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// 📊 [失败追踪] 设置端点管理器，用于记录成功/失败
 			lifecycleManager.SetEndpointManager(h.endpointManager)
 		}
-
-		clientIP := r.RemoteAddr
-		userAgent := r.Header.Get("User-Agent")
-		requestStarted := false
-		startTrackedRequest = func(isStreaming bool) {
-			if requestStarted {
-				return
-			}
-			lifecycleManager.StartRequest(clientIP, userAgent, r.Method, r.URL.Path, isStreaming)
-			requestStarted = true
-		}
 	}
 
 	// 请求方向唯一规范化入口：读取一次，必要时解压 zstd，并清理压缩元数据。
@@ -290,9 +278,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		normalizedBodyMetadata, bodyErr = normalizeRequestBodyWithMetadata(w, r, h.config)
 	}
+	if r.Context().Err() != nil {
+		return
+	}
 	if bodyErr != nil {
 		if lifecycleManager != nil {
-			startTrackedRequest(false)
+			lifecycleManager.StartRequest(r.RemoteAddr, r.UserAgent(), r.Method, r.URL.Path, false)
+			w = lifecycleManager.WrapDownstreamWriter(w)
+			defer lifecycleManager.finishDownstreamDelivery()
 			lifecycleManager.FailRequest(bodyErr.Code, bodyErr.Message, bodyErr.StatusCode)
 		}
 		writeRequestBodyError(w, r.URL.Path, bodyErr)
@@ -321,17 +314,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 🛡️ 请求级隐私过滤状态：同一 requestID + scopeFingerprint 重试时复用扫描结果
-	if h.privacyFilter != nil {
-		reqID := lifecycleManager.GetRequestID()
-		privacyState := handlers.NewPrivacyRequestState(reqID)
-		privacyState.SessionID = clientSessionID(r)
-		defer privacyState.ReleaseRestore()
-		privacyState.SetSummaryRecorder(newPrivacySummaryWriter(h.usageTracker, h.eventBus, reqID))
-		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
-		ctx = r.Context()
-	}
-
 	// v6.3：同步解析请求模型与思考配置（只取顶层字段，不整体解码），早于 StartRequest，
 	// 保证 422 未分配 / 账号池未就绪 / 秒终态等路径的 start 行也带请求字段。
 	requestModel, requestReasoning := reasoning.ParseRequest(r.URL.Path, bodyBytes)
@@ -349,7 +331,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isSSE := h.detectSSERequest(r, bodyBytes)
 
 	// 开始请求跟踪（传递流式标记）
-	startTrackedRequest(isSSE)
+	lifecycleManager.StartRequest(r.RemoteAddr, r.UserAgent(), r.Method, r.URL.Path, isSSE)
+	w = lifecycleManager.WrapDownstreamWriter(w)
+	defer lifecycleManager.finishDownstreamDelivery()
+
+	// 🛡️ 请求级隐私过滤状态：同一 requestID + scopeFingerprint 重试时复用扫描结果
+	if h.privacyFilter != nil {
+		reqID := lifecycleManager.GetRequestID()
+		privacyState := handlers.NewPrivacyRequestState(reqID)
+		privacyState.SessionID = clientSessionID(r)
+		defer privacyState.ReleaseRestore()
+		privacyState.SetSummaryRecorder(newPrivacySummaryWriter(lifecycleManager.usageTracker, h.eventBus, reqID))
+		*r = *r.WithContext(handlers.WithPrivacyRequestState(r.Context(), privacyState))
+		ctx = r.Context()
+	}
 
 	if r.URL.Path == openAIImagesGenerationsPath {
 		h.handleImageGeneration(ctx, w, r, bodyBytes, lifecycleManager)
@@ -609,7 +604,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 		}
 
 		if resp.StatusCode >= 400 {
-			if err := h.writeRawResponse(w, resp); err != nil {
+			if err := h.writeRawResponse(w, resp, nil); err != nil {
 				releaseUpstream()
 				writeCodexModelsError(w, http.StatusBadGateway, "account_pool_response_error", "failed to read upstream model list from account pool")
 				return true
@@ -618,7 +613,7 @@ func (h *Handler) handleCodexModelsAccountPassthrough(ctx context.Context, w htt
 			return true
 		}
 
-		if err := h.writeRawResponse(w, resp); err != nil {
+		if err := h.writeRawResponse(w, resp, nil); err != nil {
 			releaseUpstream()
 			writeCodexModelsError(w, http.StatusBadGateway, "account_pool_response_error", "failed to read upstream model list from account pool")
 			return true

@@ -34,6 +34,8 @@ type SubscriptionHTTPStart struct {
 	// v6.3 请求侧模型与思考串，随 start 事件原子写入
 	RequestModel     string
 	RequestReasoning string
+	Transport        string
+	Origin           string
 }
 
 type subscriptionTrackingObserver struct {
@@ -53,7 +55,7 @@ func newSubscriptionTrackingObserver(tracker *tracking.UsageTracker, eventBus ev
 
 // StartHTTP 为业务调用/压缩建记录；空 kind 是不需登记的辅助请求。
 func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *subscriptionRequestTracking {
-	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, connectionID: start.ConnectionID, startedAt: start.StartedAt, path: start.Path}
+	handle := &subscriptionRequestTracking{observer: o, requestID: start.RequestID, connectionID: start.ConnectionID, startedAt: start.StartedAt, path: start.Path, streaming: start.IsStreaming}
 	if start.RequestKind == "" || o == nil || start.RequestID == "" {
 		return handle
 	}
@@ -88,13 +90,16 @@ func (o *subscriptionTrackingObserver) StartHTTP(start SubscriptionHTTPStart) *s
 			RequestModel:       safeSubscriptionModel(start.RequestModel),
 			RequestReasoning:   strings.TrimSpace(start.RequestReasoning),
 			SessionID:          start.SessionID,
+			FlowTransport:      start.Transport,
+			FlowOrigin:         start.Origin,
 		},
 	)
 	if err != nil {
-		slog.Warn("订阅请求追踪登记失败", "request_id", start.RequestID, "code", "subscription_tracking_start_failed")
+		slog.Warn("订阅请求追踪登记失败", "request_id", start.RequestID, "code", "subscription_tracking_start_failed", "error", err)
 		return handle
 	}
 	handle.active = true
+	handle.initFlow(start.Transport, start.Origin)
 	handle.privacySummary = newPrivacySummaryWriter(o.tracker, o.eventBus, start.RequestID)
 	o.publish(events.EventRequestStarted, events.PriorityNormal, map[string]interface{}{
 		"request_id": start.RequestID, "method": start.Method, "path": start.Path,
@@ -133,6 +138,7 @@ type subscriptionRequestTracking struct {
 	path          string
 	requestFamily string
 	model         string
+	streaming     bool
 	responseModel string                  // v6.3 仅由响应解析写入
 	responseState reasoning.ResponseState // v6.3 响应思考按字段累计（created 的 effort + completed 的 reasoning_tokens）
 	httpStatus    *int
@@ -140,6 +146,7 @@ type subscriptionRequestTracking struct {
 	firstOutputAt time.Time
 	requestBytes  int64
 	responseBytes int64
+	flow          subscriptionFlowState
 }
 
 func (t *subscriptionRequestTracking) SetModel(model string) {
@@ -148,7 +155,7 @@ func (t *subscriptionRequestTracking) SetModel(model string) {
 		return
 	}
 	t.mu.Lock()
-	if !t.active || t.settled {
+	if !t.active || t.settled || t.model == model {
 		t.mu.Unlock()
 		return
 	}
@@ -157,22 +164,24 @@ func (t *subscriptionRequestTracking) SetModel(model string) {
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{ModelName: &model})
 }
 
-// SetRequestProfile 补写请求侧模型与思考串（订阅 HTTP 入口在 start 之后才读到请求体）。非空才写。
-func (t *subscriptionRequestTracking) SetRequestProfile(model, reasoning string) {
+// 请求体一次解析出的维度共用一次追踪更新，避免短流的重复元数据写入挤占结算队列。
+func (t *subscriptionRequestTracking) setRequestProfile(model, reasoning string, streaming bool) {
 	model = safeSubscriptionModel(model)
 	reasoning = strings.TrimSpace(reasoning)
-	if model == "" && reasoning == "" {
-		return
-	}
 	t.mu.Lock()
 	if !t.active || t.settled {
 		t.mu.Unlock()
 		return
 	}
+	if model != "" {
+		t.model = model
+	}
+	t.streaming = streaming
 	t.mu.Unlock()
-	opts := tracking.UpdateOptions{}
+	opts := tracking.UpdateOptions{IsStreaming: &streaming}
 	if model != "" {
 		opts.RequestModel = &model
+		opts.ModelName = &model
 	}
 	if reasoning != "" {
 		opts.RequestReasoning = &reasoning
@@ -188,10 +197,11 @@ func (t *subscriptionRequestTracking) recordPrivacySummary(payload string) {
 
 func (t *subscriptionRequestTracking) SetStreaming(streaming bool) {
 	t.mu.Lock()
-	if !t.active || t.settled {
+	if !t.active || t.settled || t.streaming == streaming {
 		t.mu.Unlock()
 		return
 	}
+	t.streaming = streaming
 	t.mu.Unlock()
 	t.observer.tracker.RecordRequestUpdate(t.requestID, tracking.UpdateOptions{IsStreaming: &streaming})
 }
@@ -240,7 +250,9 @@ func (t *subscriptionRequestTracking) MarkFirstOutput(responseBytes int64, at ti
 	opts.FirstTokenMs, opts.FirstTokenAt = &ms, &at
 	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 	t.persistedContacts = t.upstreamContacts
+	flowEvents := t.wsFirstByteEventsLocked(at)
 	t.mu.Unlock()
+	t.emitFlowEvents(flowEvents...)
 	// 订阅代理在开始与结算之间没有别的事件，不补这一条首响位会一直跑到请求结束。
 	t.observer.publish(events.EventRequestUpdated, events.PriorityNormal, firstResponseEventData(t.requestID, ms, at))
 }
@@ -251,10 +263,15 @@ func (t *subscriptionRequestTracking) MarkResponseBytes(responseBytes int64) {
 		return
 	}
 	t.mu.Lock()
+	var flowEvents []tracking.RequestFlowEvent
 	if t.active && !t.settled && responseBytes > t.responseBytes {
 		t.responseBytes = responseBytes
+		flowEvents = t.wsFirstByteEventsLocked(time.Time{})
 	}
 	t.mu.Unlock()
+	if len(flowEvents) > 0 {
+		t.emitFlowEvents(flowEvents...)
+	}
 }
 
 // MergeResponseFields 合并单个 Responses 事件的响应模型与思考字段：模型非空才覆盖，
@@ -284,6 +301,7 @@ func (t *subscriptionRequestTracking) ApplyParseResult(result *ParseResult) {
 	if !result.IsCompleted {
 		return
 	}
+	t.markFlowUpstreamTerminal(time.Now())
 	status := "completed"
 	failureCode := ""
 	if result.IsCancelled {
@@ -319,6 +337,7 @@ func (t *subscriptionRequestTracking) Complete(httpStatus *int, failureCode stri
 }
 
 func (t *subscriptionRequestTracking) settle(status, failureCode string, usage *tracking.TokenUsage, overrideHTTPStatus *int) {
+	t.finalizeFlowBeforeSettle(status, failureCode)
 	t.mu.Lock()
 	if !t.active || t.settled {
 		t.mu.Unlock()
@@ -403,11 +422,19 @@ func (o *subscriptionTrackingObserver) SubmissionStarted(submission *subscriptio
 	if submission == nil || !submission.Generate {
 		return
 	}
+	origin := tracking.FlowOriginClientRequest
+	if submission.ServerInitiated {
+		origin = tracking.FlowOriginServerSuccessor
+	}
 	start := SubscriptionHTTPStart{
 		RequestID: submission.RequestID, StartedAt: submission.StartedAt,
 		SessionID:    submission.SessionID,
 		ConnectionID: submission.ConnectionID,
+		ClientIP:     submission.ClientIP,
+		UserAgent:    submission.UserAgent,
 		Method:       "POST", Path: "/v1/responses", RequestKind: tracking.RequestKindGeneration, IsStreaming: true,
+		Transport: tracking.FlowTransportWS,
+		Origin:    origin,
 	}
 	// 服务端主动 successor 没有客户端 create，submission.Model 来自响应；
 	// 请求侧保持未知，否则前端会把同源的请求/响应模型误判为「一致」。
@@ -435,12 +462,26 @@ func (o *subscriptionTrackingObserver) SubmissionBound(submission *subscriptionS
 
 func (o *subscriptionTrackingObserver) SubmissionTerminal(submission *subscriptionSubmission, result *ParseResult) {
 	if handle := o.submissionHandle(submission, true); handle != nil {
+		handle.mu.Lock()
+		handle.flow.wsTerminalDelivered = result != nil && result.IsCompleted
+		handle.mu.Unlock()
 		handle.ApplyParseResult(result)
 	}
 }
 
 func (o *subscriptionTrackingObserver) SubmissionRejected(submission *subscriptionSubmission, policyErr *privacy.PolicyError) {
+	o.SubmissionRejectionDelivered(submission, policyErr, 0)
+}
+
+// 本地拒绝和上游终态分别记账。只有写帧成功才确认错误回复已交付。
+func (o *subscriptionTrackingObserver) SubmissionRejectionDelivered(submission *subscriptionSubmission, policyErr *privacy.PolicyError, written int64) {
 	if handle := o.submissionHandle(submission, true); handle != nil {
+		if written > 0 {
+			handle.recordFlowWSDownstreamDelivered(written, nil, time.Now())
+			handle.mu.Lock()
+			handle.flow.wsTerminalDelivered = true
+			handle.mu.Unlock()
+		}
 		code := "privacy_scan_failed"
 		if policyErr != nil {
 			code = safeSubscriptionFailureCode(policyErr.Code)
@@ -484,6 +525,7 @@ func (o *subscriptionTrackingObserver) SubmissionWarning(connectionID, code stri
 func (o *subscriptionTrackingObserver) SubmissionOutbound(submission *subscriptionSubmission, size int64, at time.Time) {
 	if handle := o.submissionHandle(submission, false); handle != nil {
 		handle.MarkOutbound(size, handlers.UpstreamWriteTiming{WroteAt: at})
+		handle.recordFlowWSOutbound(at)
 	}
 }
 

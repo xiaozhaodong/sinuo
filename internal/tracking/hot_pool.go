@@ -81,6 +81,11 @@ type ActiveRequest struct {
 	RequestReasoning  string `json:"request_reasoning,omitempty"`
 	ResponseReasoning string `json:"response_reasoning,omitempty"`
 
+	// 请求详情的执行路径与持久化版本
+	RequestFlow     *RequestFlow `json:"request_flow,omitempty"`
+	RequestFlowJSON string       `json:"request_flow_json,omitempty"`
+	RequestRevision int64        `json:"request_revision,omitempty"`
+
 	// 内部字段
 	mu               sync.RWMutex `json:"-"` // 保护单个请求的并发访问
 	archivePersisted bool         `json:"-"` // 归档事务已提交；后续更新必须回退到数据库 UPDATE
@@ -116,7 +121,8 @@ type HotPool struct {
 	config HotPoolConfig
 
 	// 归档回调（当请求需要归档时调用）
-	archiveCallback func(*ActiveRequest)
+	archiveCallbacks sync.WaitGroup // 从移出 requests 到归档入队的生产者
+	archiveCallback  func(*ActiveRequest)
 
 	// 统计信息；锁由 HotPool 持有，HotPoolStats 保持为可安全复制的纯数据快照。
 	statsMu sync.RWMutex
@@ -178,14 +184,15 @@ func (hp *HotPool) SetArchiveCallback(callback func(*ActiveRequest)) {
 // Add 添加新请求到热池
 func (hp *HotPool) Add(req *ActiveRequest) error {
 	hp.mu.Lock()
-	defer hp.mu.Unlock()
 
 	if hp.closed {
+		hp.mu.Unlock()
 		return fmt.Errorf("hot pool is closed")
 	}
 
 	// 检查是否已存在
 	if _, exists := hp.requests[req.RequestID]; exists {
+		hp.mu.Unlock()
 		return fmt.Errorf("request %s already exists in hot pool", req.RequestID)
 	}
 
@@ -198,6 +205,7 @@ func (hp *HotPool) Add(req *ActiveRequest) error {
 			"request_id", req.RequestID,
 			"current_size", len(hp.requests),
 			"max_size", hp.config.MaxSize)
+		hp.mu.Unlock()
 		return fmt.Errorf("hot pool is full (max: %d)", hp.config.MaxSize)
 	}
 
@@ -212,6 +220,7 @@ func (hp *HotPool) Add(req *ActiveRequest) error {
 	}
 	hp.statsMu.Unlock()
 
+	hp.mu.Unlock()
 	return nil
 }
 
@@ -230,16 +239,20 @@ func (hp *HotPool) Update(requestID string, updater func(*ActiveRequest)) error 
 		return fmt.Errorf("request %s not found in hot pool", requestID)
 	}
 
+	return hp.updateRequest(req, updater)
+}
+
+func (hp *HotPool) updateRequest(req *ActiveRequest, updater func(*ActiveRequest)) error {
 	// 使用请求级别的锁进行更新。归档事务提交后，内存副本不再是权威状态：
 	// 返回错误让调用方降级为数据库 UPDATE，避免“更新成功但未进入已提交 INSERT”。
 	req.mu.Lock()
+	defer req.mu.Unlock()
 	if req.archivePersisted {
-		req.mu.Unlock()
-		return fmt.Errorf("request %s archive already persisted", requestID)
+		return fmt.Errorf("request %s archive already persisted", req.RequestID)
 	}
-	updater(req)
-	req.mu.Unlock()
-
+	if updater != nil {
+		updater(req)
+	}
 	return nil
 }
 
@@ -252,9 +265,9 @@ func (hp *HotPool) Get(requestID string) (*ActiveRequest, bool) {
 	return req, exists
 }
 
-// cloneActiveRequest 逐字段构造副本（调用方必须已持 req.mu.RLock）。
+// cloneActiveRequestSummary 逐字段构造副本（调用方必须已持 req.mu.RLock）。
 // 不整体拷贝结构体，避免复制 sync.RWMutex（copylocks）与并发 Update 的数据竞争。
-func cloneActiveRequest(req *ActiveRequest) *ActiveRequest {
+func cloneActiveRequestSummary(req *ActiveRequest) *ActiveRequest {
 	clone := &ActiveRequest{
 		RequestID:             req.RequestID,
 		SessionID:             req.SessionID,
@@ -371,19 +384,25 @@ func (hp *HotPool) SnapshotRequest(requestID string) (*ActiveRequest, bool) {
 	if req.archivePersisted {
 		return nil, false
 	}
-	return cloneActiveRequest(req), true
+	detail := cloneActiveRequestSummary(req)
+	detail.RequestFlow = CloneRequestFlow(req.RequestFlow)
+	detail.RequestFlowJSON = req.RequestFlowJSON
+	detail.RequestRevision = req.RequestRevision
+	return detail, true
 }
 
 // Remove 从热池中移除请求（归档时调用）
 func (hp *HotPool) Remove(requestID string) *ActiveRequest {
 	hp.mu.Lock()
 	defer hp.mu.Unlock()
+	return hp.removeLocked(requestID)
+}
 
+func (hp *HotPool) removeLocked(requestID string) *ActiveRequest {
 	req, exists := hp.requests[requestID]
 	if !exists {
 		return nil
 	}
-
 	delete(hp.requests, requestID)
 
 	// 更新统计
@@ -397,20 +416,19 @@ func (hp *HotPool) Remove(requestID string) *ActiveRequest {
 
 // Archive 归档请求（移除并发送到归档通道）
 func (hp *HotPool) Archive(requestID string) error {
-	req := hp.Remove(requestID)
+	hp.mu.Lock()
+	req := hp.removeLocked(requestID)
 	if req == nil {
+		hp.mu.Unlock()
 		return fmt.Errorf("request %s not found in hot pool", requestID)
 	}
-
-	// 更新统计
+	callback := hp.archiveCallback
+	hp.archiveCallbacks.Add(1)
+	defer hp.archiveCallbacks.Done()
 	hp.statsMu.Lock()
 	hp.stats.TotalArchived++
 	hp.statsMu.Unlock()
-
-	// 调用归档回调
-	hp.mu.RLock()
-	callback := hp.archiveCallback
-	hp.mu.RUnlock()
+	hp.mu.Unlock()
 
 	if callback != nil {
 		callback(req)
@@ -425,18 +443,25 @@ func (hp *HotPool) CompleteAndArchive(requestID string, finalizer func(*ActiveRe
 	hp.mu.Lock()
 	req, exists := hp.requests[requestID]
 	if !exists {
+		// 超时清理或先前的结算已安排归档。在提交屏障之前，把迟到的真实结算并入同一行。
+		req = hp.archiving[requestID]
 		hp.mu.Unlock()
+		if req != nil {
+			return hp.updateRequest(req, finalizer)
+		}
 		return fmt.Errorf("request %s not found in hot pool", requestID)
 	}
 	// 从活跃列表移到归档中列表（而不是直接删除）
+	req.mu.Lock()
 	delete(hp.requests, requestID)
 	hp.archiving[requestID] = req
 	callback := hp.archiveCallback
+	hp.archiveCallbacks.Add(1)
+	defer hp.archiveCallbacks.Done()
 	currentSize := len(hp.requests)
 	hp.mu.Unlock()
 
 	// 应用最终更新
-	req.mu.Lock()
 	if finalizer != nil {
 		finalizer(req)
 	}
@@ -472,18 +497,30 @@ func (hp *HotPool) GetActive() []*ActiveRequest {
 	// 容量 = 活跃请求 + 归档中请求
 	result := make([]*ActiveRequest, 0, len(hp.requests)+len(hp.archiving))
 
-	// 添加活跃请求
+	// 添加活跃请求（排除极端竞态下已提交事务的副本）
 	for _, req := range hp.requests {
 		req.mu.RLock()
-		result = append(result, cloneActiveRequest(req))
+		var cloned *ActiveRequest
+		if !req.archivePersisted {
+			cloned = cloneActiveRequestSummary(req)
+		}
 		req.mu.RUnlock()
+		if cloned != nil {
+			result = append(result, cloned)
+		}
 	}
 
-	// 添加归档中的请求（确保过渡期不丢失）
+	// 添加归档中的请求（确保过渡期不丢失；已提交归档事务的副本必须排除）
 	for _, req := range hp.archiving {
 		req.mu.RLock()
-		result = append(result, cloneActiveRequest(req))
+		var cloned *ActiveRequest
+		if !req.archivePersisted {
+			cloned = cloneActiveRequestSummary(req)
+		}
 		req.mu.RUnlock()
+		if cloned != nil {
+			result = append(result, cloned)
+		}
 	}
 
 	return result
@@ -559,6 +596,7 @@ func (hp *HotPool) cleanup() {
 
 	now := time.Now()
 	expiredRequests := make([]*ActiveRequest, 0)
+	archiveOnCleanup := hp.config.ArchiveOnCleanup && hp.archiveCallback != nil
 
 	for id, req := range hp.requests {
 		if now.Sub(req.StartTime) > hp.config.MaxAge {
@@ -568,9 +606,14 @@ func (hp *HotPool) cleanup() {
 			req.FailureReason = "hot pool cleanup: request exceeded max age"
 			req.EndTime = &now
 			req.DurationMs = now.Sub(req.StartTime).Milliseconds()
+			// 驻留超时只结束请求行；上游联系的结果和耗时由真实网络事件记录。
+			req.RequestRevision++
 			req.mu.Unlock()
 
 			expiredRequests = append(expiredRequests, req)
+			if archiveOnCleanup {
+				hp.archiving[id] = req
+			}
 			delete(hp.requests, id)
 		}
 	}
@@ -588,12 +631,15 @@ func (hp *HotPool) cleanup() {
 			"remaining", len(hp.requests))
 
 	}
-	archiveOnCleanup := hp.config.ArchiveOnCleanup
 	callback := hp.archiveCallback
+	if archiveOnCleanup && len(expiredRequests) > 0 {
+		hp.archiveCallbacks.Add(1)
+		defer hp.archiveCallbacks.Done()
+	}
 	hp.mu.Unlock()
 
 	// 归档过期请求（如果启用），在锁外执行回调，避免全局锁被外部逻辑占用
-	if archiveOnCleanup && callback != nil {
+	if archiveOnCleanup {
 		for _, req := range expiredRequests {
 			callback(req)
 			hp.statsMu.Lock()
@@ -629,6 +675,12 @@ func (hp *HotPool) Close() error {
 			req.Status = "cancelled"
 			req.CancelReason = "hot pool shutdown"
 		}
+		if req.RequestFlow != nil {
+			if raw, err := MarshalRequestFlowBounded(req.RequestFlow); err == nil {
+				req.RequestFlowJSON = raw
+			}
+		}
+		req.RequestRevision++
 		req.mu.Unlock()
 		remainingRequests = append(remainingRequests, req)
 	}
@@ -642,6 +694,7 @@ func (hp *HotPool) Close() error {
 			callback(req)
 		}
 	}
+	hp.archiveCallbacks.Wait()
 	stats := hp.GetStats()
 
 	slog.Info("🔥 HotPool 已关闭",
@@ -670,6 +723,12 @@ func NewActiveRequestWithFamily(requestID, clientIP, userAgent, method, path, re
 // NewActiveRequestWithDimensions 创建带显式分类和 unknown usage 状态的活跃请求。
 func NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, dimensions RequestDimensions) *ActiveRequest {
 	requestFamily = normalizeRequestFamily(requestFamily)
+	initialFlow := &RequestFlow{
+		SchemaVersion: RequestFlowSchemaVersion,
+		Transport:     FlowTransportHTTP,
+		Origin:        FlowOriginClientRequest,
+	}
+	flowJSON, _ := MarshalRequestFlowBounded(initialFlow)
 	return &ActiveRequest{
 		RequestID:          requestID,
 		StartTime:          time.Now(),
@@ -691,5 +750,8 @@ func NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path
 		RequestModel:       strings.TrimSpace(dimensions.RequestModel),
 		RequestReasoning:   strings.TrimSpace(dimensions.RequestReasoning),
 		SessionID:          dimensions.SessionID,
+		RequestFlow:        initialFlow,
+		RequestFlowJSON:    flowJSON,
+		RequestRevision:    1,
 	}
 }

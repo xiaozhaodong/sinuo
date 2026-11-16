@@ -5,6 +5,9 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as endpoint$0 from "./internal/endpoint/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as tracking$0 from "./internal/tracking/models.js";
 
 /**
  * AccountScheduleCandidateDecisionInfo 最近一次调度候选账号决策信息
@@ -1004,6 +1007,9 @@ import * as endpoint$0 from "./internal/endpoint/models.js";
  * @property {number | null} [upstream_conn_ms]
  * @property {string} [schedule_snapshot_json]
  * @property {string} [privacy_scan_json]
+ * @property {number} request_revision
+ * @property {tracking$0.RequestFlow | null} [flow]
+ * @property {tracking$0.RequestIntegrity} integrity
  */
 
 /**

@@ -13,7 +13,9 @@ func recordEndpointUpstreamModel(lifecycleManager *RequestLifecycleManager, trac
 	if lifecycleManager == nil || traceState == nil {
 		return
 	}
-	lifecycleManager.SetUpstreamModel(traceState.UpstreamModel())
+	model := traceState.UpstreamModel()
+	lifecycleManager.SetUpstreamModel(model)
+	lifecycleManager.recordFlowUpstreamModel(model)
 }
 
 // applyStreamResponseDiagnostics 流式结束后从解析器终态读取响应模型与思考串（非空覆盖）。

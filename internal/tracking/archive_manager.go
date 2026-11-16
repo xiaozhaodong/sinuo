@@ -38,6 +38,7 @@ func DefaultArchiveManagerConfig() ArchiveManagerConfig {
 
 // ArchiveManager 管理归档写入
 type ArchiveManager struct {
+	admissionMu         sync.RWMutex // 关闭前先等待已受理的归档入队
 	archiveChan         chan *ArchiveEvent
 	adapter             DatabaseAdapter
 	config              ArchiveManagerConfig
@@ -48,6 +49,10 @@ type ArchiveManager struct {
 
 	// 热池引用（用于归档成功后清理）
 	hotPool *HotPool
+
+	// 完整性与版本提交回调（由 UsageTracker 注入）
+	callbackMu       sync.RWMutex
+	onIntegrityIssue func(requestID, code string)
 
 	// 统计信息
 	stats ArchiveStats
@@ -115,6 +120,22 @@ func (am *ArchiveManager) SetHotPool(hp *HotPool) {
 	am.hotPool = hp
 }
 
+// SetIntegrityObserver 设置归档通道/提交失败时的完整性回调。
+func (am *ArchiveManager) SetIntegrityObserver(fn func(requestID, code string)) {
+	am.callbackMu.Lock()
+	am.onIntegrityIssue = fn
+	am.callbackMu.Unlock()
+}
+
+func (am *ArchiveManager) reportIntegrityIssue(requestID, code string) {
+	am.callbackMu.RLock()
+	fn := am.onIntegrityIssue
+	am.callbackMu.RUnlock()
+	if fn != nil {
+		fn(requestID, code)
+	}
+}
+
 // UpdateEndpointMultipliers 更新端点成本倍率
 func (am *ArchiveManager) UpdateEndpointMultipliers(multipliers map[string]EndpointMultiplier) {
 	am.cacheMu.Lock()
@@ -138,27 +159,17 @@ func (am *ArchiveManager) UpdatePricing(pricing map[string]ModelPricing) {
 
 // Archive 发送请求到归档通道
 func (am *ArchiveManager) Archive(req *ActiveRequest) error {
-	event := &ArchiveEvent{
-		Request:   req,
-		Timestamp: time.Now(),
+	am.admissionMu.RLock()
+	defer am.admissionMu.RUnlock()
+	if err := am.ctx.Err(); err != nil {
+		return err
 	}
-
-	// 非阻塞发送
-	select {
-	case am.archiveChan <- event:
-		am.stats.mu.Lock()
-		am.stats.TotalReceived++
-		am.stats.mu.Unlock()
-		return nil
-	default:
-		am.stats.mu.Lock()
-		am.stats.TotalDropped++
-		am.stats.mu.Unlock()
-		slog.Warn("📦 归档通道已满，丢弃事件",
-			"request_id", req.RequestID,
-			"channel_length", len(am.archiveChan))
-		return fmt.Errorf("archive channel full, event dropped")
-	}
+	// 收到最终结算的请求必须落库。队列满时在热池锁外等待写入器腾出空间。
+	am.archiveChan <- &ArchiveEvent{Request: req, Timestamp: time.Now()}
+	am.stats.mu.Lock()
+	am.stats.TotalReceived++
+	am.stats.mu.Unlock()
+	return nil
 }
 
 // startArchiver 批量归档协程
@@ -266,7 +277,7 @@ func (am *ArchiveManager) flushBatch(events []*ArchiveEvent) error {
 	for retry := 0; retry < am.config.MaxRetry; retry++ {
 		err := am.batchInsert(events)
 		if err == nil {
-			// 归档成功，从热池的归档缓存中移除
+			// 归档成功，从热池的归档缓存中移除。
 			if am.hotPool != nil {
 				requestIDs := make([]string, len(events))
 				for i, event := range events {
@@ -287,10 +298,15 @@ func (am *ArchiveManager) flushBatch(events []*ArchiveEvent) error {
 		time.Sleep(time.Duration(retry+1) * time.Second)
 	}
 
+	for _, event := range events {
+		if event != nil && event.Request != nil {
+			am.reportIntegrityIssue(event.Request.RequestID, "archive_commit_failed")
+		}
+	}
 	return fmt.Errorf("batch insert failed after %d retries: %w", am.config.MaxRetry, lastErr)
 }
 
-// batchInsert 执行批量插入
+// batchInsert 在同一事务中归档整批请求。
 func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 	if am.adapter == nil {
 		return fmt.Errorf("database adapter not initialized")
@@ -305,7 +321,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 	}
 	defer tx.Rollback()
 
-	// endpoint 及其他非 account 请求写入 request_logs
+	// endpoint 及其他非 account 请求写入 request_logs（冲突时保护 start_time 与单调 request_revision）
 	requestStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path,
@@ -324,8 +340,92 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			cache_read_tokens,
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
-			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cache_read_cost_usd, total_cost_usd,
+			request_flow_json, request_revision
+		) VALUES (
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?,
+			?, ?,
+			?,
+			?, ?,
+			?, ?, ?,
+			?,
+			?, ?,
+			?, ?, ?,
+			?, ?,
+			?, ?
+		)
+		ON CONFLICT(request_id) DO UPDATE SET
+			client_ip = EXCLUDED.client_ip,
+			user_agent = EXCLUDED.user_agent,
+			method = EXCLUDED.method,
+			path = EXCLUDED.path,
+			start_time = COALESCE(request_logs.start_time, EXCLUDED.start_time),
+			end_time = EXCLUDED.end_time,
+			duration_ms = EXCLUDED.duration_ms,
+			first_token_ms = COALESCE(request_logs.first_token_ms, EXCLUDED.first_token_ms),
+			completion_ms = COALESCE(request_logs.completion_ms, EXCLUDED.completion_ms),
+			first_content_ms = COALESCE(request_logs.first_content_ms, EXCLUDED.first_content_ms),
+			first_text_ms = COALESCE(request_logs.first_text_ms, EXCLUDED.first_text_ms),
+			first_reasoning_ms = COALESCE(request_logs.first_reasoning_ms, EXCLUDED.first_reasoning_ms),
+			reasoning_hidden = COALESCE(request_logs.reasoning_hidden, EXCLUDED.reasoning_hidden),
+			stream_flow_ms = COALESCE(request_logs.stream_flow_ms, EXCLUDED.stream_flow_ms),
+			stop_reason = EXCLUDED.stop_reason,
+			upstream_request_id = EXCLUDED.upstream_request_id,
+			upstream_write_ms = EXCLUDED.upstream_write_ms,
+			upstream_first_dispatch_ms = COALESCE(request_logs.upstream_first_dispatch_ms, EXCLUDED.upstream_first_dispatch_ms),
+			upstream_dispatch_ms = EXCLUDED.upstream_dispatch_ms,
+			upstream_conn_ms = EXCLUDED.upstream_conn_ms,
+			schedule_snapshot_json = COALESCE(EXCLUDED.schedule_snapshot_json, request_logs.schedule_snapshot_json),
+			privacy_scan_json = COALESCE(EXCLUDED.privacy_scan_json, request_logs.privacy_scan_json),
+			request_family = EXCLUDED.request_family,
+			request_source = EXCLUDED.request_source,
+			request_kind = EXCLUDED.request_kind,
+			endpoint_name = EXCLUDED.endpoint_name,
+			model_name = EXCLUDED.model_name,
+			request_model = EXCLUDED.request_model,
+			upstream_model = EXCLUDED.upstream_model,
+			response_model = EXCLUDED.response_model,
+			request_reasoning = EXCLUDED.request_reasoning,
+			response_reasoning = EXCLUDED.response_reasoning,
+			session_id = EXCLUDED.session_id,
+			upstream_type = EXCLUDED.upstream_type,
+			upstream_source_name = EXCLUDED.upstream_source_name,
+			upstream_name = EXCLUDED.upstream_name,
+			upstream_id = EXCLUDED.upstream_id,
+			route_mode = EXCLUDED.route_mode,
+			requested_endpoint = EXCLUDED.requested_endpoint,
+			effective_endpoint = EXCLUDED.effective_endpoint,
+			fallback_reason = EXCLUDED.fallback_reason,
+			route_decision_at = EXCLUDED.route_decision_at,
+			status = EXCLUDED.status,
+			http_status_code = EXCLUDED.http_status_code,
+			retry_count = EXCLUDED.retry_count,
+			failure_reason = EXCLUDED.failure_reason,
+			cancel_reason = EXCLUDED.cancel_reason,
+			is_streaming = EXCLUDED.is_streaming,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			cache_creation_tokens = EXCLUDED.cache_creation_tokens,
+			cache_creation_5m_tokens = EXCLUDED.cache_creation_5m_tokens,
+			cache_creation_1h_tokens = EXCLUDED.cache_creation_1h_tokens,
+			cache_read_tokens = EXCLUDED.cache_read_tokens,
+			input_cost_usd = EXCLUDED.input_cost_usd,
+			output_cost_usd = EXCLUDED.output_cost_usd,
+			cache_creation_cost_usd = EXCLUDED.cache_creation_cost_usd,
+			cache_creation_5m_cost_usd = EXCLUDED.cache_creation_5m_cost_usd,
+			cache_creation_1h_cost_usd = EXCLUDED.cache_creation_1h_cost_usd,
+			cache_read_cost_usd = EXCLUDED.cache_read_cost_usd,
+			total_cost_usd = EXCLUDED.total_cost_usd,
+			request_flow_json = COALESCE(EXCLUDED.request_flow_json, request_logs.request_flow_json),
+			request_revision = MAX(COALESCE(request_logs.request_revision, 0), COALESCE(EXCLUDED.request_revision, 0))
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare request_logs statement: %w", err)
@@ -380,6 +480,10 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 // 调用方必须持有 req.mu 写锁，并保持到事务提交或回滚完成。
 func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestStmt *sql.Stmt, event *ArchiveEvent) error {
 	req := event.Request
+	if req.RequestRevision < 1 {
+		req.RequestRevision = 1
+	}
+
 	upstreamType := strings.TrimSpace(req.UpstreamType)
 	if upstreamType == "" {
 		upstreamType = "endpoint"
@@ -417,6 +521,19 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 	}
 	usageKnown := req.UsageKnown || legacyCompatibility
 	costKnown := req.CostKnown || legacyCompatibility
+
+	flowMarshaledNow := false
+	if req.RequestFlow != nil && req.RequestFlowJSON == "" {
+		if raw, mErr := MarshalRequestFlowBounded(req.RequestFlow); mErr == nil {
+			req.RequestFlowJSON = raw
+			flowMarshaledNow = true
+		}
+	}
+
+	if costKnown || flowMarshaledNow {
+		// 归档还更新了成本或轨迹时，详情也需要读取新版本。
+		req.RequestRevision++
+	}
 
 	_, err := requestStmt.ExecContext(ctx,
 		req.RequestID,
@@ -481,6 +598,8 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		nullableFloat64(costBreakdown.CacheCreation1hCost, costKnown),
 		nullableFloat64(costBreakdown.CacheReadCost, costKnown),
 		nullableFloat64(costBreakdown.TotalCost, costKnown),
+		nullString(req.RequestFlowJSON),
+		req.RequestRevision,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request %s: %w", req.RequestID, err)
@@ -640,7 +759,9 @@ func (am *ArchiveManager) GetChannelLength() int {
 // Close 关闭归档管理器
 func (am *ArchiveManager) Close() error {
 	slog.Info("📦 正在关闭 ArchiveManager...")
+	am.admissionMu.Lock()
 	am.cancel()
+	am.admissionMu.Unlock()
 	am.wg.Wait()
 	return nil
 }

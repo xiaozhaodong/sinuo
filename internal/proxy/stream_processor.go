@@ -80,6 +80,7 @@ type StreamProcessor struct {
 	cancelUpstreamRead         context.CancelFunc
 	downstreamTailDrainTimer   *time.Timer
 	downstreamDisconnected     bool
+	onDownstreamDisconnected   func()
 }
 
 // NewStreamProcessor 创建新的流式处理器实例
@@ -141,6 +142,9 @@ func (sp *StreamProcessor) beginDownstreamTailDrain(trigger string) {
 	}
 
 	sp.downstreamDisconnected = true
+	if sp.onDownstreamDisconnected != nil {
+		sp.onDownstreamDisconnected()
+	}
 	slog.Warn(fmt.Sprintf("⚠️ [下游断开Drain] [%s] 检测到下游断开，继续读取上游尾部，超时: %s, 触发: %s",
 		sp.requestID, sp.downstreamTailDrainTimeout, trigger))
 

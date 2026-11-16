@@ -515,18 +515,21 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 // RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
 // 内容计时与首次取连接偏移同时供列表使用；思考信号与上游请求ID仅详情返回。
 type RequestLifecycleDetail struct {
-	FirstReasoningMs        *int64         `json:"first_reasoning_ms"`  // 首个可见思考偏移（毫秒），只写一次
-	ReasoningHidden         *bool          `json:"reasoning_hidden"`    // 是否观测到不可见思考，只写一次
-	UpstreamRequestID       *string        `json:"upstream_request_id"` // 最终尝试响应头请求ID
-	Found                   bool           `json:"found"`
-	Source                  string         `json:"source,omitempty"` // hot_pool | database
-	Request                 *RequestRecord `json:"request,omitempty"`
-	UpstreamWriteMs         *int64         `json:"upstream_write_ms,omitempty"`
-	UpstreamFirstDispatchMs *int64         `json:"upstream_first_dispatch_ms,omitempty"`
-	UpstreamDispatchMs      *int64         `json:"upstream_dispatch_ms,omitempty"`
-	UpstreamConnMs          *int64         `json:"upstream_conn_ms,omitempty"`
-	ScheduleSnapshotJSON    string         `json:"schedule_snapshot_json,omitempty"`
-	PrivacyScanJSON         string         `json:"privacy_scan_json,omitempty"`
+	FirstReasoningMs        *int64                    `json:"first_reasoning_ms"`  // 首个可见思考偏移（毫秒），只写一次
+	ReasoningHidden         *bool                     `json:"reasoning_hidden"`    // 是否观测到不可见思考，只写一次
+	UpstreamRequestID       *string                   `json:"upstream_request_id"` // 最终尝试响应头请求ID
+	Found                   bool                      `json:"found"`
+	Source                  string                    `json:"source,omitempty"` // hot_pool | database
+	Request                 *RequestRecord            `json:"request,omitempty"`
+	UpstreamWriteMs         *int64                    `json:"upstream_write_ms,omitempty"`
+	UpstreamFirstDispatchMs *int64                    `json:"upstream_first_dispatch_ms,omitempty"`
+	UpstreamDispatchMs      *int64                    `json:"upstream_dispatch_ms,omitempty"`
+	UpstreamConnMs          *int64                    `json:"upstream_conn_ms,omitempty"`
+	ScheduleSnapshotJSON    string                    `json:"schedule_snapshot_json,omitempty"`
+	PrivacyScanJSON         string                    `json:"privacy_scan_json,omitempty"`
+	RequestRevision         int64                     `json:"request_revision"`
+	Flow                    *tracking.RequestFlow     `json:"flow,omitempty"`
+	Integrity               tracking.RequestIntegrity `json:"integrity"`
 }
 
 // GetRequestLifecycleDetail 获取单请求生命周期详情（桌面专用）。
@@ -561,6 +564,9 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 		UpstreamConnMs:          data.UpstreamConnMs,
 		ScheduleSnapshotJSON:    data.ScheduleSnapshotJSON,
 		PrivacyScanJSON:         data.PrivacyScanJSON,
+		RequestRevision:         data.RequestRevision,
+		Flow:                    data.Flow,
+		Integrity:               data.Integrity,
 	}, nil
 }
 

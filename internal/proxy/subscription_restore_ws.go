@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/tidwall/gjson"
 
@@ -58,7 +59,7 @@ func (s *subscriptionSubmissionState) deliveryTarget(id, streamID, typ string, s
 			return nil
 		}
 		// 已知响应的错误不能用另一个命名流来结算，包括原响应位于默认流的情况。
-		checkLane := sub.StreamID != "" || strict && typ == "error"
+		checkLane := sub.StreamID != "" || strict && (typ == "error" || subscriptionWSControlReceipt(typ))
 		if checkLane && streamID != "" && sub.StreamID != streamID {
 			return nil
 		}
@@ -70,10 +71,11 @@ func (s *subscriptionSubmissionState) deliveryTarget(id, streamID, typ string, s
 		if !sub.dispatched || sub.settled || sub.terminalRead != nil || streamID != "" && sub.StreamID != streamID {
 			continue
 		}
-		if !strict {
-			return sub
-		}
-		if typ == "error" {
+		if !strict || typ == "error" {
+			// 普通透传模式中，尚未绑定的 create 按发送顺序接收服务端拒绝。
+			if !strict && typ == "error" && sub.ResponseID == "" && len(s.pending) == len(s.active) {
+				return sub
+			}
 			if pendingOnly && sub.ResponseID != "" {
 				continue
 			}
@@ -179,23 +181,24 @@ func (s *subscriptionSubmissionState) duplicateRestoreTerminal(id, streamID stri
 }
 
 // 控制回执可在终态前后到达。序号偏移必须在串行写协程读取，此时队列前面的补发已经完成。
-func (s *subscriptionSubmissionState) controlReceipt(payload []byte, route subscriptionWSRoute) subscriptionws.InterceptResult {
+func (i *subscriptionWSInterceptor) controlReceipt(payload []byte, route subscriptionWSRoute) subscriptionws.InterceptResult {
+	s := i.submissions
 	res := subscriptionws.InterceptResult{Forward: payload}
-	if !gjson.GetBytes(payload, "sequence_number").Exists() {
-		return res
-	}
 	id := s.controlRouteID(route)
 	if id == "" {
 		return res
 	}
-	res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
-		out, err := restorestream.OffsetWebSocketSequence(payload, s.controlSequenceOffset(id, route.streamID))
-		if err != nil {
-			return rejectRestoreMessage(send, nil)
+	if gjson.GetBytes(payload, "sequence_number").Exists() {
+		res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
+			out, err := restorestream.OffsetWebSocketSequence(payload, s.controlSequenceOffset(id, route.streamID))
+			if err != nil {
+				return rejectRestoreMessage(send, nil)
+			}
+			return send(out)
 		}
-		return send(out)
 	}
-	return res
+	sub := s.deliveryTarget(id, route.streamID, route.typ, true, false)
+	return i.observeDownstreamWSDelivery(sub, res)
 }
 
 // 没有目标 ID 的回执只关联唯一可识别的响应。终态可能已经入队，但尚未交付。
@@ -270,7 +273,7 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 		return res, nil
 	}
 	if err != nil {
-		return res, err
+		return subscriptionws.InterceptResult{}, err
 	}
 	if ev.duplicate {
 		return subscriptionws.InterceptResult{}, nil
@@ -297,7 +300,7 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 		return res, nil
 	}
 	if ev.controlReceipt {
-		return i.submissions.controlReceipt(payload, subscriptionWSRoute{ev.typ, ev.responseID, ev.streamID}), nil
+		return i.controlReceipt(payload, subscriptionWSRoute{ev.typ, ev.responseID, ev.streamID}), nil
 	}
 	if ev.metadata {
 		return res, nil
@@ -321,7 +324,7 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 			res.Deliver = func(send func([]byte) error, _ func([]byte, func()) error) error {
 				return writer.DeliverPreparedMessage(opening, send)
 			}
-			return res, nil
+			return i.observeDownstreamWSDelivery(sub, res), nil
 		}
 	}
 	if sub.restore != nil {
@@ -346,7 +349,32 @@ func (i *subscriptionWSInterceptor) prepareUpstream(payload []byte) (subscriptio
 			}
 		}
 	}
-	return res, nil
+	return i.observeDownstreamWSDelivery(sub, res), nil
+}
+
+func (i *subscriptionWSInterceptor) observeDownstreamWSDelivery(sub *subscriptionSubmission, res subscriptionws.InterceptResult) subscriptionws.InterceptResult {
+	if sub == nil || i.submissions == nil || i.submissions.observer == nil || res.Forward == nil {
+		return res
+	}
+	observer, ok := i.submissions.observer.(interface {
+		SubmissionDownstreamDelivered(*subscriptionSubmission, int64, error, time.Time)
+	})
+	if !ok {
+		return res
+	}
+	deliver, payload := res.Deliver, res.Forward
+	res.Deliver = func(send func([]byte) error, reply func([]byte, func()) error) error {
+		observedSend := func(data []byte) error {
+			err := send(data)
+			observer.SubmissionDownstreamDelivered(sub, int64(len(data)), err, time.Now())
+			return err
+		}
+		if deliver != nil {
+			return deliver(observedSend, reply)
+		}
+		return observedSend(payload)
+	}
+	return res
 }
 
 // 首帧在读侧完成全部预处理，写侧只发送准备好的帧并确认交付。

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"sinuo/internal/proxy/handlers"
+	"sinuo/internal/tracking"
 )
 
 const (
@@ -28,7 +29,13 @@ const (
 // handleClaudeSubscription 订阅直通：单次转发，响应透明透传
 func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseWriter, r *http.Request, bodyBytes []byte, lifecycleManager *RequestLifecycleManager, isSSE bool) {
 	connID := lifecycleManager.GetRequestID()
+	w = lifecycleManager.WrapDownstreamWriter(w)
 	lifecycleManager.SetUpstream(claudeSubscriptionUpstreamType, ClaudeSubscriptionUpstreamName, ClaudeSubscriptionUpstreamName, 0)
+	lifecycleManager.RecordFlowLegSelected(tracking.RequestFlowTargetSnapshot{
+		UpstreamType:       claudeSubscriptionUpstreamType,
+		UpstreamSourceName: ClaudeSubscriptionUpstreamName,
+		UpstreamName:       ClaudeSubscriptionUpstreamName,
+	}, "", false)
 
 	// 不代填任何本地凭据：没有登录凭据时直接说明原因，而不是让官方回一个难懂的 401
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
@@ -70,7 +77,7 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		slog.Warn(fmt.Sprintf("📥 [订阅直通] [%s] 官方返回 %d，原样透传", connID, resp.StatusCode))
-		if err := h.writeRawResponse(w, resp); err != nil {
+		if err := h.writeRawResponse(w, resp, lifecycleManager); err != nil {
 			lifecycleManager.FailRequest("subscription_response_write_error", err.Error(), resp.StatusCode)
 			return
 		}

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_dispatch_ms INTEGER,           -- 最终尝试开始取连接的偏移（重试段终点）；HTTP 链路记录
     upstream_conn_ms INTEGER,               -- 最终尝试取得可用连接的偏移；HTTP 链路记录
     schedule_snapshot_json TEXT,            -- v6.2+: 账号池/端点调度快照（白名单 DTO JSON，终态覆盖写）
+    request_flow_json TEXT,                 -- 实际转发路径 JSON，记录目标选择、上游联系和响应交付；NULL 表示无路径记录
     privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）
     request_source TEXT NOT NULL DEFAULT 'legacy_proxy'
         CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy')),
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     
     -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
     status TEXT NOT NULL DEFAULT 'pending', -- 生命周期状态: pending/forwarding/processing/retry/suspended/completed/failed/cancelled
+    request_revision INTEGER,               -- 请求快照的递增版本号，用于识别重复或过期更新；历史记录的 NULL 按 0 读取
     http_status_code INTEGER,               -- HTTP状态码
     retry_count INTEGER DEFAULT 0,          -- 重试次数
 

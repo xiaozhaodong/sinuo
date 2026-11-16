@@ -8,11 +8,12 @@ package tracking
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
 // RequestLifecycleData 弹窗权威详情数据。
-// Detail 复用列表行映射；此结构补足完整阶段字段、调度与隐私摘要。
+// Detail 复用列表行映射；此结构补足完整阶段字段、调度、隐私摘要与路径完整性。
 type RequestLifecycleData struct {
 	StreamPhases
 	Detail                  RequestDetail // 弹窗权威行数据（status/timing/tokens/route/failure 等）
@@ -22,31 +23,38 @@ type RequestLifecycleData struct {
 	UpstreamConnMs          *int64
 	ScheduleSnapshotJSON    string
 	PrivacyScanJSON         string
+	Flow                    *RequestFlow
+	RequestRevision         int64
+	Integrity               RequestIntegrity
 	Source                  string // "hot_pool" | "database"
+}
+
+// 热池与 SQLite 详情共用归档格式及字节预算，并叠加尚未落库的写入缺口。
+func (ut *UsageTracker) lifecycleFlow(requestID, raw string) (*RequestFlow, RequestIntegrity) {
+	flow, integrity := ParseRequestFlowWhitelist(raw, true)
+	if gapCode := ut.getPendingRequestGap(requestID); gapCode != "" && !integrity.WriteGap {
+		integrity.WriteGap = true
+		integrity.WriteGapCode = gapCode
+		if integrity.DiagnosticCode == "" {
+			integrity.DiagnosticCode = gapCode
+			integrity.DiagnosticMessage = "追踪记录存在写入缺口"
+		}
+	}
+	return flow, integrity
 }
 
 // GetRequestLifecycleData 按 request_id 读取生命周期详情。
 // 行不存在返回 (nil, nil)；归档窗口（CompleteAndArchive 后、批量 INSERT 确认前）
-// 由 SnapshotRequest 的 archiving map 覆盖。
+// 由 SnapshotRequest 的 archiving map 覆盖，数据库路径在单条 SELECT 内保证自洽。
 func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID string) (*RequestLifecycleData, error) {
 	if requestID == "" {
 		return nil, nil
 	}
 
-	// 热池启用时先查内存（含 archiving）；miss 后回退 DB。
+	// 热池启用时先查内存（含未提交的 archiving）；miss 后回退 DB。
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		if snapshot, ok := ut.hotPool.SnapshotRequest(requestID); ok {
-			return &RequestLifecycleData{
-				StreamPhases:            snapshot.StreamPhases.Clone(),
-				Detail:                  ut.ActiveRequestToDetail(snapshot),
-				UpstreamWriteMs:         snapshot.UpstreamWriteMs,
-				UpstreamFirstDispatchMs: snapshot.UpstreamFirstDispatchMs,
-				UpstreamDispatchMs:      snapshot.UpstreamDispatchMs,
-				UpstreamConnMs:          snapshot.UpstreamConnMs,
-				ScheduleSnapshotJSON:    snapshot.ScheduleSnapshotJSON,
-				PrivacyScanJSON:         snapshot.PrivacyScanJSON,
-				Source:                  "hot_pool",
-			}, nil
+			return ut.hotRequestLifecycleData(snapshot), nil
 		}
 	}
 
@@ -54,50 +62,48 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 		return nil, fmt.Errorf("read database not initialized")
 	}
 
-	opts := &QueryOptions{RequestID: requestID}
-	details, err := ut.QueryRequestDetails(ctx, opts)
-	if err != nil {
-		return nil, err
+	return ut.readRequestLifecycleData(ctx, requestID)
+}
+
+func (ut *UsageTracker) hotRequestLifecycleData(snapshot *ActiveRequest) *RequestLifecycleData {
+	flow, integrity := ut.lifecycleFlow(snapshot.RequestID, snapshot.RequestFlowJSON)
+	return &RequestLifecycleData{
+		StreamPhases:            snapshot.StreamPhases.Clone(),
+		Detail:                  ut.ActiveRequestToDetail(snapshot),
+		UpstreamWriteMs:         snapshot.UpstreamWriteMs,
+		UpstreamFirstDispatchMs: snapshot.UpstreamFirstDispatchMs,
+		UpstreamDispatchMs:      snapshot.UpstreamDispatchMs,
+		UpstreamConnMs:          snapshot.UpstreamConnMs,
+		ScheduleSnapshotJSON:    snapshot.ScheduleSnapshotJSON,
+		PrivacyScanJSON:         snapshot.PrivacyScanJSON,
+		Flow:                    flow,
+		RequestRevision:         snapshot.RequestRevision,
+		Integrity:               integrity,
+		Source:                  "hot_pool",
 	}
-	if len(details) == 0 {
+}
+
+func (ut *UsageTracker) readRequestLifecycleData(ctx context.Context, requestID string) (*RequestLifecycleData, error) {
+	row := ut.readDB.QueryRowContext(ctx, "SELECT "+requestDetailsColumnsBase+`,
+    upstream_dispatch_ms, upstream_conn_ms, first_reasoning_ms, reasoning_hidden, upstream_request_id,
+    COALESCE(schedule_snapshot_json, ''), COALESCE(request_flow_json, ''), COALESCE(request_revision, 0)
+    FROM request_logs WHERE request_id = ?`, requestID)
+
+	var flowJSON string
+	data := &RequestLifecycleData{Source: "database"}
+	detail, err := ut.scanRequestDetailRow(row, &data.PrivacyScanJSON,
+		&data.UpstreamDispatchMs, &data.UpstreamConnMs, &data.FirstReasoningMs, &data.ReasoningHidden,
+		&data.UpstreamRequestID, &data.ScheduleSnapshotJSON, &flowJSON, &data.RequestRevision)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-
-	var upstreamWriteMs, upstreamDispatchMs, upstreamConnMs sql.NullInt64
-	var scheduleJSON, privacyJSON string
-	var phases StreamPhases
-	row := ut.readDB.QueryRowContext(ctx, `
-		SELECT upstream_write_ms, upstream_dispatch_ms, upstream_conn_ms,
-			first_content_ms, first_text_ms, first_reasoning_ms, reasoning_hidden,
-			stream_flow_ms, stop_reason, upstream_request_id,
-			COALESCE(schedule_snapshot_json, ''),
-			COALESCE(privacy_scan_json, '')
-		FROM request_logs WHERE request_id = ?`, requestID)
-	if err := row.Scan(&upstreamWriteMs, &upstreamDispatchMs, &upstreamConnMs,
-		&phases.FirstContentMs, &phases.FirstTextMs, &phases.FirstReasoningMs, &phases.ReasoningHidden,
-		&phases.StreamFlowMs, &phases.StopReason, &phases.UpstreamRequestID, &scheduleJSON, &privacyJSON); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query request lifecycle columns: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("read request lifecycle: %w", err)
 	}
-
-	data := &RequestLifecycleData{
-		StreamPhases:            phases,
-		Detail:                  details[0],
-		UpstreamFirstDispatchMs: details[0].UpstreamFirstDispatchMs,
-		ScheduleSnapshotJSON:    scheduleJSON,
-		PrivacyScanJSON:         privacyJSON,
-		Source:                  "database",
-	}
-	if upstreamWriteMs.Valid {
-		data.UpstreamWriteMs = &upstreamWriteMs.Int64
-	}
-	if upstreamDispatchMs.Valid {
-		data.UpstreamDispatchMs = &upstreamDispatchMs.Int64
-	}
-	if upstreamConnMs.Valid {
-		data.UpstreamConnMs = &upstreamConnMs.Int64
-	}
+	data.Detail = detail
+	data.FirstContentMs, data.FirstTextMs = detail.FirstContentMs, detail.FirstTextMs
+	data.StreamFlowMs, data.StopReason = detail.StreamFlowMs, detail.StopReason
+	data.UpstreamWriteMs, data.UpstreamFirstDispatchMs = detail.UpstreamWriteMs, detail.UpstreamFirstDispatchMs
+	data.Flow, data.Integrity = ut.lifecycleFlow(requestID, flowJSON)
 	return data, nil
 }

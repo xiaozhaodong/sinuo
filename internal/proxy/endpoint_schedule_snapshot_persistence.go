@@ -119,11 +119,11 @@ func clonePersistedUpstreamGroup(group *endpoint.UpstreamGroupSnapshot) *endpoin
 	return &clone
 }
 
-func (h *Handler) persistEndpointScheduleSnapshot(requestID string, snapshot *endpoint.EndpointScheduleSnapshot) {
-	if h == nil || h.usageTracker == nil || requestID == "" || snapshot == nil {
+func (rlm *RequestLifecycleManager) persistEndpointScheduleSnapshot(snapshot *endpoint.EndpointScheduleSnapshot) {
+	if rlm == nil || rlm.usageTracker == nil || rlm.requestID == "" || snapshot == nil {
 		return
 	}
 	if payload := marshalEndpointScheduleSnapshot(snapshot); payload != "" {
-		h.usageTracker.RecordRequestUpdate(requestID, tracking.UpdateOptions{ScheduleSnapshotJSON: &payload})
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{ScheduleSnapshotJSON: &payload})
 	}
 }

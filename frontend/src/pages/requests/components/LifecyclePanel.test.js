@@ -29,6 +29,62 @@ const compiled = await build({
 const { default: LifecyclePanel } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const render = (request) => renderToStaticMarkup(createElement(LifecyclePanel, { request }));
 
+const renderFlow = (flow) => renderToStaticMarkup(createElement(LifecyclePanel, {
+  request: { requestId: 'test', status: 'completed' }, lifecycle: { flow }
+}));
+
+test('单次 WS 请求保留紧凑的链路轨迹', () => {
+  const html = renderFlow({
+    transport: 'ws', legs: [{ leg_seq: 1, target_snapshot: { upstream_name: 'chatgpt-subscription' } }],
+    contacts: [{ leg_seq: 1, contact_seq: 1 }], downstream_bytes_written: 249549
+  });
+  const text = html.replace(/<[^>]*>/g, '');
+  for (const label of ['链路轨迹', 'WS', '1 段选路 · 1 次联系', '下行 243.7 KB', 'chatgpt-subscription']) {
+    assert.ok(text.includes(label), label);
+  }
+  assert.doesNotMatch(html, /查看尝试记录/);
+  assert.doesNotMatch(renderFlow(null), /链路轨迹|查看尝试记录/);
+});
+
+test('单次联系失败可展开查看原因或 HTTP 错误，正常联系保持紧凑', () => {
+  const renderContact = (contact) => renderFlow({
+    transport: 'http', contacts: [{ leg_seq: 1, contact_seq: 1, ...contact }]
+  });
+  for (const [contact, expected] of [
+    [{ outcome_code: 'write_error' }, '读写错误'],
+    [{ http_status_code: 200, outcome_code: 'timeout' }, '超时'],
+    [{ http_status_code: 503 }, 'HTTP 503']
+  ]) {
+    const html = renderContact(contact);
+    const details = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
+    assert.ok(details.includes('查看尝试记录') && details.includes(expected), expected);
+  }
+  for (const outcome_code of [undefined, 'completed', 'success', 'ok']) {
+    assert.doesNotMatch(renderContact({ http_status_code: 200, outcome_code }), /查看尝试记录/);
+  }
+});
+
+test('同账号重试及换号按实际联系顺序展开，裁剪后仍显示真实总数', () => {
+  const html = renderFlow({
+    transport: 'http', total_legs: 6, total_contacts: 9, truncated: true,
+    legs: [
+      { leg_seq: 1, target_snapshot: { upstream_name: '候选' } },
+      { leg_seq: 2, target_snapshot: { upstream_name: '账号甲' } },
+      { leg_seq: 6, target_snapshot: { upstream_name: '账号乙' } }
+    ],
+    contacts: [
+      { leg_seq: 2, contact_seq: 1, http_status_code: 429, outcome_code: 'rate_limited', start_offset_ms: 0, end_offset_ms: 100 },
+      { leg_seq: 2, contact_seq: 2, http_status_code: 503, transport_resend: true },
+      { leg_seq: 6, contact_seq: 9, http_status_code: 200, outcome_code: 'completed' }
+    ]
+  });
+  assert.match(html, /6 段选路 · 9 次联系/);
+  const attempts = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
+  assert.match(attempts, /查看尝试记录/);
+  assert.doesNotMatch(attempts, /候选/);
+  assert.match(attempts, /#1[\s\S]*?账号甲[\s\S]*?429[\s\S]*?限流[\s\S]*?100ms[\s\S]*?#2[\s\S]*?账号甲[\s\S]*?503[\s\S]*?传输重发[\s\S]*?#9[\s\S]*?账号乙[\s\S]*?200/);
+});
+
 test('详情明细：按条上的顺序显示段名、耗时、说明与总耗时', () => {
   const html = render({
     status: 'completed', duration: 5000, isStreaming: true,
@@ -199,4 +255,14 @@ test('进行中首内容实时事件先到时立即显示首字，首响只认�
   assert.match(completedTiming, /首字 7\.10s/);
   assert.match(completedTiming, /生成 14\.7s/);
   assert.match(completedTiming, /进行中，完成后显示完整耗时/);
+});
+
+test('选路前的本地响应也展示实际字节与交付结果', () => {
+  for (const [outcome, label] of [['delivered', '已完整交付'], ['partial_or_failed', '交付不完整'], ['aborted', '交付已中止']]) {
+    const html = renderFlow({ transport: 'http', downstream_bytes_written: outcome === 'aborted' ? 0 : 92, downstream_delivery_outcome: outcome });
+    const text = html.replace(/<[^>]*>/g, '');
+    assert.ok(text.includes('0 段选路 · 0 次联系'));
+    assert.ok(text.includes(label));
+    if (outcome !== 'aborted') assert.ok(text.includes('下行 92 B'));
+  }
 });

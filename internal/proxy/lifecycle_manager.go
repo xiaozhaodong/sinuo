@@ -93,6 +93,7 @@ type RequestLifecycleManager struct {
 	pendingErrorContext  *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
 	pendingErrorOriginal error                         // 预先计算上下文对应的原始错误，用于校验匹配
 	pendingErrorMu       sync.Mutex                    // 保护预先计算错误上下文的互斥锁
+	flowState            lifecycleFlowState            // 请求轨迹与下游交付状态
 }
 
 type lifecycleStateSnapshot struct {
@@ -188,9 +189,13 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 			RequestModel: requestModel, RequestReasoning: requestReasoning,
 			SessionID: sessionID,
 		}); err != nil {
-			slog.Error("请求分类非法，拒绝写入追踪记录", "request_id", rlm.requestID, "error", err)
+			slog.Warn("请求追踪登记失败，继续转发", "request_id", rlm.requestID, "error", err)
+			rlm.usageTracker = nil
+			rlm.errorRecovery.usageTracker = nil
+		} else {
+			rlm.recordFlowStart()
+			slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
 		}
-		slog.Info(fmt.Sprintf("🚀 Request started [%s]", rlm.requestID))
 	}
 
 	// 发布请求开始事件
@@ -240,6 +245,7 @@ func (rlm *RequestLifecycleManager) StartRequest(clientIP, userAgent, method, pa
 // 这是所有请求完成的统一入口，确保架构一致性
 func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage) {
 	rlm.finishUpstreamContacts()
+	rlm.finalizeFlowTerminal("completed", "")
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 	// 📊 [失败追踪] 记录端点成功；只清请求开始前的失败，保留进行期间的新失败证据
@@ -292,6 +298,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 // CompleteRequestWithCost 完成不按 Token 计价的请求，并记录调用方计算的固定成本。
 func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 	rlm.finishUpstreamContacts()
+	rlm.finalizeFlowTerminal("completed", "")
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 	modelName := rlm.billingModelName()
@@ -316,6 +323,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 //   - failureReason: 数据质量问题标识（如 "incomplete_stream", "stream_truncated"）
 func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
 	rlm.finishUpstreamContacts()
+	rlm.finalizeFlowTerminal("completed", failureReason)
 	duration := time.Since(rlm.startTime)
 	state := rlm.snapshotState()
 
@@ -638,6 +646,7 @@ func (rlm *RequestLifecycleManager) RecordStreamCompletion() {
 // RecordNonStreamingResponseComplete 记录非流响应完整可用的时刻。
 // 非流响应无法观察中间 token，因此首响与完成发生在同一时刻，生成耗时记为 0ms。
 func (rlm *RequestLifecycleManager) RecordNonStreamingResponseComplete() {
+	rlm.MarkFlowUpstreamTerminal()
 	if !rlm.RecordFirstTokenAndReturn() || rlm.usageTracker == nil || rlm.requestID == "" {
 		return
 	}
@@ -805,14 +814,16 @@ func (rlm *RequestLifecycleManager) billingModelName() string {
 // 注意: 失败追踪由 handler 层根据 RetryDecision.ShouldRecord 决定，这里不重复记录
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
 	rlm.finishUpstreamContacts()
+	rlm.finalizeFlowTerminal("failed", failureReason)
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()
 
 	if rlm.usageTracker != nil && rlm.requestID != "" {
-		opts := tracking.UpdateOptions{}
-		rlm.attachRouteDiagnostics(&opts, state)
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
+		var opts tracking.UpdateOptions
+		if rlm.attachRouteDiagnostics(&opts, state) {
+			rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
+		}
 	}
 
 	// 🚀 [架构重构] 使用统一的最终失败记录方法，一次性更新所有相关字段
@@ -831,9 +842,9 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)
 }
 
-func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, state lifecycleStateSnapshot) {
+func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, state lifecycleStateSnapshot) bool {
 	if opts == nil || state.routeDecisionAt.IsZero() {
-		return
+		return false
 	}
 
 	opts.RouteMode = &state.routeMode
@@ -841,6 +852,7 @@ func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.Update
 	opts.EffectiveEndpoint = &state.effectiveEndpoint
 	opts.FallbackReason = &state.fallbackReason
 	opts.RouteDecisionAt = &state.routeDecisionAt
+	return true
 }
 
 // CancelRequest 标记请求被取消
@@ -848,6 +860,7 @@ func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.Update
 // tokens参数可以为nil（无计费信息）或包含已产生的Token信息
 func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *tracking.TokenUsage) {
 	rlm.finishUpstreamContacts()
+	rlm.finalizeFlowTerminal("cancelled", cancelReason)
 	duration := time.Since(rlm.startTime)
 	modelName := rlm.billingModelName()
 	state := rlm.snapshotState()

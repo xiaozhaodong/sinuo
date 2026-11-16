@@ -71,6 +71,8 @@ type subscriptionRequestInfo struct {
 	Route         *subscriptionRoute
 	Mode          string
 	Revision      int64
+	ClientIP      string
+	UserAgent     string
 	Association   subscriptionClientAssociation
 	activity      *monitor.RequestActivity
 	requestIDs    monitor.RequestIDGenerator
@@ -254,6 +256,8 @@ func (h *CodexSubscriptionProxyHandler) serveRoute(w http.ResponseWriter, r *htt
 		Route:         route,
 		Mode:          snap.Mode,
 		Revision:      snap.Revision,
+		ClientIP:      clientIP,
+		UserAgent:     userAgent,
 		Association:   extractSubscriptionClientAssociation(r.Header),
 		activity:      h.activity,
 		requestIDs:    h.requestIDs,

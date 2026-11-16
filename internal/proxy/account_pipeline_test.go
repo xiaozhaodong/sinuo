@@ -484,7 +484,7 @@ func TestFailAndFinalizeAccountScheduleSnapshot_PersistsOnlyFinalSnapshot(t *tes
 
 	rlm := NewRequestLifecycleManager(tracker, nil, requestID, nil)
 	rlm.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/responses", true)
-	if err := handler.failAndFinalizeAccountScheduleSnapshot(context.Background(), requestID, 7, "acct-a", "write failed"); err != nil {
+	if err := handler.failAndFinalizeAccountScheduleSnapshot(context.Background(), requestID, tracker, 7, "acct-a", "write failed"); err != nil {
 		t.Fatalf("failAndFinalizeAccountScheduleSnapshot failed: %v", err)
 	}
 

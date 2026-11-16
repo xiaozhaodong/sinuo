@@ -301,6 +301,9 @@ type subscriptionWSInterceptor struct {
 }
 
 func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction subscriptionws.Direction, payload []byte) (subscriptionws.InterceptResult, error) {
+	if err := ctx.Err(); err != nil {
+		return subscriptionws.InterceptResult{}, err
+	}
 	if direction == subscriptionws.DirectionUpstreamToDownstream {
 		if i.submissions != nil {
 			result, err := i.prepareUpstream(payload)
@@ -385,8 +388,8 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 				if err := handlers.PublishPrivacyAttempt(req); err != nil {
 					reject := handlers.AsPrivacyPolicyError(err)
 					i.popPendingWrite()
-					after := i.submissions.reject(submission, reject)
-					return reply(subscriptionWSErrorReply(reject.StatusCode, reject.Code, reject.Message, submissionStreamID(submission)), after)
+					frame := subscriptionWSErrorReply(reject.StatusCode, reject.Code, reject.Message, submissionStreamID(submission))
+					return reply(frame, i.submissions.rejectWithReply(submission, reject, len(frame)))
 				}
 				i.submissions.markDispatched(submission, handlers.PrivacyAttemptView(req))
 				if handlers.PrivacyAttemptBypassed(req) {
@@ -402,14 +405,15 @@ func (i *subscriptionWSInterceptor) Intercept(ctx context.Context, direction sub
 		policyErr = &privacy.PolicyError{StatusCode: http.StatusUnprocessableEntity, Code: privacy.CodeScanFailed, Message: "privacy scan failed"}
 	}
 	policyErr = sanitizeSubscriptionPolicyError(policyErr)
+	frame := subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message, submissionStreamID(submission))
 	var replyForwarded func()
 	if isCreate && submission != nil {
-		replyForwarded = i.submissions.reject(submission, policyErr)
+		replyForwarded = i.submissions.rejectWithReply(submission, policyErr, len(frame))
 	} else {
 		i.submissions.warn("non_create_privacy_rejected")
 	}
 	i.warn(policyErr.Code, "event_type", eventLogType)
-	return subscriptionws.InterceptResult{Reply: subscriptionWSErrorReply(policyErr.StatusCode, policyErr.Code, policyErr.Message), ReplyForwarded: replyForwarded}, nil
+	return subscriptionws.InterceptResult{Reply: frame, ReplyForwarded: replyForwarded}, nil
 }
 
 func (i *subscriptionWSInterceptor) Forwarded(direction subscriptionws.Direction, size int64, at time.Time) {

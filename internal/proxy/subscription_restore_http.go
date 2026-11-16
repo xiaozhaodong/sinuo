@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/restorestream"
@@ -51,6 +52,7 @@ func deliverSubscriptionHTTP(w http.ResponseWriter, r *http.Request, resp *http.
 		if result != nil {
 			track.observeResponseFields(result)
 			if result.IsCompleted {
+				track.markFlowUpstreamTerminal(time.Now())
 				terminal = result
 			}
 		}

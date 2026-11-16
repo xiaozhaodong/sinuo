@@ -159,8 +159,9 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 
 	if isStreaming {
 		result, relayErr := relayValidatedImageAPIStream(w, resp, r.URL.Path, imageAPIStreamTiming{
-			OnFirstEvent: lifecycleManager.RecordFirstToken,
-			OnCompleted:  lifecycleManager.RecordStreamCompletion,
+			OnFirstEvent:       lifecycleManager.RecordFirstToken,
+			OnUpstreamTerminal: lifecycleManager.MarkFlowUpstreamTerminal,
+			OnCompleted:        lifecycleManager.RecordStreamCompletion,
 		})
 		if relayErr != nil {
 			if result.WriteFailure {

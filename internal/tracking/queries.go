@@ -91,7 +91,7 @@ const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_lim
 
 const requestDetailsOrderBy = "start_time DESC, request_id DESC"
 
-const requestDetailsSelectBase = `SELECT id, request_id,
+const requestDetailsColumnsBase = `id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
 	method, path, CAST(start_time AS TEXT), CAST(end_time AS TEXT), duration_ms, first_token_ms, completion_ms,
@@ -126,8 +126,9 @@ const requestDetailsSelectBase = `SELECT id, request_id,
 	cache_read_tokens,
 	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
 	cache_read_cost_usd, total_cost_usd,
-	CAST(created_at AS TEXT), CAST(updated_at AS TEXT), COALESCE(privacy_scan_json, '')
-	FROM request_logs WHERE 1=1`
+	CAST(created_at AS TEXT), CAST(updated_at AS TEXT), COALESCE(privacy_scan_json, '')`
+
+const requestDetailsSelectBase = "SELECT " + requestDetailsColumnsBase + "\n\tFROM request_logs WHERE 1=1"
 
 func resolveRequestQuerySource(upstreamType string) requestQuerySource {
 	switch upstreamType {
@@ -272,86 +273,101 @@ func appendRequestIDInFilter(query string, args []interface{}, requestIDs []stri
 	return query, args
 }
 
+type requestDetailRowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, privacySummary *string, extraDest ...interface{}) (RequestDetail, error) {
+	var detail RequestDetail
+	var startAt, createdAt, updatedAt timezonepolicy.DBTime
+	var endAt, routeDecisionAt timezonepolicy.NullDBTime
+	var input, output, creation, creation5m, creation1h, read sql.NullInt64
+	var inputCost, outputCost, creationCost, readCost, totalCost sql.NullFloat64
+	if privacySummary == nil {
+		privacySummary = new(string)
+	}
+	dest := []interface{}{
+		&detail.ID, &detail.RequestID,
+		&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
+		&startAt, &endAt, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
+		&detail.RequestFamily, &detail.RequestSource, &detail.RequestKind, &detail.EndpointName,
+		&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
+		&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &routeDecisionAt,
+		&detail.ModelName,
+		&detail.RequestModel, &detail.UpstreamModel, &detail.ResponseModel,
+		&detail.RequestReasoning, &detail.ResponseReasoning,
+		&detail.SessionID,
+		&detail.IsStreaming,
+		&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount, &detail.UpstreamFirstDispatchMs,
+		&detail.UpstreamWriteMs, &detail.FirstContentMs, &detail.FirstTextMs, &detail.StreamFlowMs, &detail.StopReason,
+		&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
+		&input, &output,
+		&creation, &creation5m, &creation1h, &read,
+		&inputCost, &outputCost,
+		&creationCost, &readCost, &totalCost,
+		&createdAt, &updatedAt,
+		privacySummary,
+	}
+	dest = append(dest, extraDest...)
+	if err := scanner.Scan(dest...); err != nil {
+		return RequestDetail{}, fmt.Errorf("failed to scan request detail: %w", err)
+	}
+	detail.StartTime = startAt.Time.UTC()
+	detail.PrivacyWarnings = privacy.WarningsFromSummary(*privacySummary)
+	if endAt.Valid {
+		value := endAt.Time.UTC()
+		detail.EndTime = &value
+	}
+	if routeDecisionAt.Valid {
+		value := routeDecisionAt.Time.UTC()
+		detail.RouteDecisionAt = &value
+	}
+	detail.CreatedAt = createdAt.Time.UTC()
+	detail.UpdatedAt = updatedAt.Time.UTC()
+	detail.UsageKnown = input.Valid || output.Valid || creation.Valid || creation5m.Valid || creation1h.Valid || read.Valid
+	if input.Valid {
+		detail.InputTokens = input.Int64
+	}
+	if output.Valid {
+		detail.OutputTokens = output.Int64
+	}
+	if creation.Valid {
+		detail.CacheCreationTokens = creation.Int64
+	}
+	if creation5m.Valid {
+		detail.CacheCreation5mTokens = creation5m.Int64
+	}
+	if creation1h.Valid {
+		detail.CacheCreation1hTokens = creation1h.Int64
+	}
+	if read.Valid {
+		detail.CacheReadTokens = read.Int64
+	}
+	detail.CostKnown = totalCost.Valid
+	if inputCost.Valid {
+		detail.InputCostUSD = inputCost.Float64
+	}
+	if outputCost.Valid {
+		detail.OutputCostUSD = outputCost.Float64
+	}
+	if creationCost.Valid {
+		detail.CacheCreationCostUSD = creationCost.Float64
+	}
+	if readCost.Valid {
+		detail.CacheReadCostUSD = readCost.Float64
+	}
+	if totalCost.Valid {
+		detail.TotalCostUSD = totalCost.Float64
+	}
+	return detail, nil
+}
+
 func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail, error) {
 	var details []RequestDetail
 	for rows.Next() {
-		var detail RequestDetail
-		var startAt, createdAt, updatedAt timezonepolicy.DBTime
-		var endAt, routeDecisionAt timezonepolicy.NullDBTime
-		var input, output, creation, creation5m, creation1h, read sql.NullInt64
-		var inputCost, outputCost, creationCost, readCost, totalCost sql.NullFloat64
-		var privacySummary string
-		err := rows.Scan(
-			&detail.ID, &detail.RequestID,
-			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
-			&startAt, &endAt, &detail.DurationMs, &detail.FirstTokenMs, &detail.CompletionMs,
-			&detail.RequestFamily, &detail.RequestSource, &detail.RequestKind, &detail.EndpointName,
-			&detail.UpstreamType, &detail.UpstreamSourceName, &detail.UpstreamName, &detail.UpstreamID,
-			&detail.RouteMode, &detail.RequestedEndpoint, &detail.EffectiveEndpoint, &detail.FallbackReason, &routeDecisionAt,
-			&detail.ModelName,
-			&detail.RequestModel, &detail.UpstreamModel, &detail.ResponseModel,
-			&detail.RequestReasoning, &detail.ResponseReasoning,
-			&detail.SessionID,
-			&detail.IsStreaming,
-			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount, &detail.UpstreamFirstDispatchMs,
-			&detail.UpstreamWriteMs, &detail.FirstContentMs, &detail.FirstTextMs, &detail.StreamFlowMs, &detail.StopReason,
-			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
-			&input, &output,
-			&creation, &creation5m, &creation1h, &read,
-			&inputCost, &outputCost,
-			&creationCost, &readCost, &totalCost,
-			&createdAt, &updatedAt,
-			&privacySummary,
-		)
+		detail, err := ut.scanRequestDetailRow(rows, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan request detail: %w", err)
-		}
-		detail.StartTime = startAt.Time.UTC()
-		detail.PrivacyWarnings = privacy.WarningsFromSummary(privacySummary)
-		if endAt.Valid {
-			value := endAt.Time.UTC()
-			detail.EndTime = &value
-		}
-		if routeDecisionAt.Valid {
-			value := routeDecisionAt.Time.UTC()
-			detail.RouteDecisionAt = &value
-		}
-		detail.CreatedAt = createdAt.Time.UTC()
-		detail.UpdatedAt = updatedAt.Time.UTC()
-		detail.UsageKnown = input.Valid || output.Valid || creation.Valid || creation5m.Valid || creation1h.Valid || read.Valid
-		if input.Valid {
-			detail.InputTokens = input.Int64
-		}
-		if output.Valid {
-			detail.OutputTokens = output.Int64
-		}
-		if creation.Valid {
-			detail.CacheCreationTokens = creation.Int64
-		}
-		if creation5m.Valid {
-			detail.CacheCreation5mTokens = creation5m.Int64
-		}
-		if creation1h.Valid {
-			detail.CacheCreation1hTokens = creation1h.Int64
-		}
-		if read.Valid {
-			detail.CacheReadTokens = read.Int64
-		}
-		detail.CostKnown = totalCost.Valid
-		if inputCost.Valid {
-			detail.InputCostUSD = inputCost.Float64
-		}
-		if outputCost.Valid {
-			detail.OutputCostUSD = outputCost.Float64
-		}
-		if creationCost.Valid {
-			detail.CacheCreationCostUSD = creationCost.Float64
-		}
-		if readCost.Valid {
-			detail.CacheReadCostUSD = readCost.Float64
-		}
-		if totalCost.Valid {
-			detail.TotalCostUSD = totalCost.Float64
+			return nil, err
 		}
 		details = append(details, detail)
 	}

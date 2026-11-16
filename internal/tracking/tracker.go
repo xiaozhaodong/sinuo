@@ -142,6 +142,8 @@ type RequestStartData struct {
 	UsageKnown         bool   `json:"usage_known"`
 	RequestModel       string `json:"request_model,omitempty"`     // v6.3: 客户端原始请求模型
 	RequestReasoning   string `json:"request_reasoning,omitempty"` // v6.3: 客户端请求思考配置（归一化串）
+	FlowTransport      string `json:"flow_transport,omitempty"`
+	FlowOrigin         string `json:"flow_origin,omitempty"`
 }
 
 // RequestDimensions 是开始记录时必须原子写入的来源与分类维度。
@@ -156,6 +158,8 @@ type RequestDimensions struct {
 	UsageKnown         bool
 	RequestModel       string // v6.3: 客户端原始请求模型，随 start 原子写入
 	RequestReasoning   string // v6.3: 客户端请求思考配置（归一化串），随 start 原子写入
+	FlowTransport      string // 请求轨迹传输类型: http | ws
+	FlowOrigin         string // 请求轨迹请求起源: client_request | server_successor
 }
 
 // RequestSettlement 用于需要保留 unknown usage/HTTP 状态的独立结算路径。
@@ -415,6 +419,7 @@ type HotPoolSettings struct {
 type WriteRequest struct {
 	Query     string
 	Args      []interface{}
+	TxFn      func(ctx context.Context, tx *sql.Tx) error
 	Response  chan error
 	Context   context.Context
 	EventType string // 用于调试和监控
@@ -466,6 +471,9 @@ type UpdateOptions struct {
 	// 请求侧两项通常随 start 写入；订阅 HTTP 入口在 start 之后才读到请求体，用此补写（非空才写）
 	RequestModel     *string
 	RequestReasoning *string
+
+	// 请求轨迹离散路径事件（在热池锁或 SQLite 单写事务内按统一 reducer 归并）
+	FlowEvents []RequestFlowEvent
 }
 
 // UsageTracker 使用跟踪器
@@ -473,6 +481,7 @@ type UsageTracker struct {
 	// 原有字段（兼容性）
 	db            *sql.DB
 	eventChan     chan RequestEvent
+	eventMu       sync.RWMutex // 关闭前等待已经受理的事件入队
 	config        *Config
 	pricing       map[string]ModelPricing       // 模型定价缓存
 	endpointMu    map[string]EndpointMultiplier // 端点倍率缓存
@@ -512,6 +521,10 @@ type UsageTracker struct {
 	hotPool        *HotPool        // 内存热池（活跃请求）
 	archiveManager *ArchiveManager // 归档管理器（批量写入）
 	hotPoolEnabled bool            // 是否启用热池模式
+
+	// 按请求保留待持久化的写入缺口。
+	gapMu       sync.RWMutex
+	pendingGaps map[string]string
 }
 
 func (ut *UsageTracker) reconnectDatabases() error {
@@ -751,11 +764,13 @@ func (ut *UsageTracker) initHotPool() {
 
 	// 设置双向引用：ArchiveManager 需要访问 HotPool 来清理归档缓存
 	ut.archiveManager.SetHotPool(ut.hotPool)
+	ut.archiveManager.SetIntegrityObserver(ut.recordIntegrityIssue)
 
 	// 设置热池归档回调
+	archive := ut.archiveManager.Archive
 	ut.hotPool.SetArchiveCallback(func(req *ActiveRequest) {
-		if ut.archiveManager != nil {
-			ut.archiveManager.Archive(req)
+		if err := archive(req); err != nil {
+			slog.Error("归档管理器已关闭", "request_id", req.RequestID, "error", err)
 		}
 	})
 
@@ -832,8 +847,10 @@ func (ut *UsageTracker) Close() error {
 
 	slog.Info("Shutting down usage tracker...")
 
-	// 取消上下文（不需要持有锁）
+	// 确保已受理的结算先入队，再让事件处理器排空并退出。
+	ut.eventMu.Lock()
 	ut.cancel()
+	ut.eventMu.Unlock()
 
 	// 等待所有协程完成；写处理器最后停，事件处理器关闭阶段的刷写要经由它落库
 	ut.wg.Wait()
@@ -864,7 +881,6 @@ func (ut *UsageTracker) Close() error {
 		if err := ut.hotPool.Close(); err != nil {
 			slog.Error("Failed to close hot pool", "error", err)
 		}
-		ut.hotPool = nil
 	}
 	if ut.archiveManager != nil {
 		if err := ut.archiveManager.Close(); err != nil {
@@ -872,6 +888,7 @@ func (ut *UsageTracker) Close() error {
 		}
 		ut.archiveManager = nil
 	}
+	ut.hotPool = nil
 
 	// 关闭数据库适配器（会自动处理所有连接）
 	if ut.adapter != nil {
@@ -898,12 +915,14 @@ func (ut *UsageTracker) RecordRequestStart(requestID, clientIP, userAgent, metho
 
 // RecordRequestStartWithFamily 记录请求开始；请求类型必须由入口显式传入。
 func (ut *UsageTracker) RecordRequestStartWithFamily(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool) {
-	_ = ut.RecordRequestStartAtWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, ut.now(), RequestDimensions{
+	if err := ut.RecordRequestStartAtWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, ut.now(), RequestDimensions{
 		RequestSource: RequestSourceLegacyProxy,
 		RequestKind:   RequestKindLegacy,
 		UpstreamType:  "endpoint",
 		UsageKnown:    true,
-	})
+	}); err != nil {
+		slog.Warn("请求追踪登记失败", "request_id", requestID, "error", err)
+	}
 }
 
 // RecordRequestStartAtWithDimensions 原子登记请求的来源、种类和实际归属。
@@ -911,6 +930,14 @@ func (ut *UsageTracker) RecordRequestStartWithFamily(requestID, clientIP, userAg
 func (ut *UsageTracker) RecordRequestStartAtWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, startedAt time.Time, dimensions RequestDimensions) error {
 	if ut.config == nil || !ut.config.Enabled {
 		return nil
+	}
+	// 唯一写锁来自 Close；关闭可能仍在等已受理的结算入队，此时新登记立即退出。
+	if !ut.eventMu.TryRLock() {
+		return context.Canceled
+	}
+	defer ut.eventMu.RUnlock()
+	if err := ut.ctx.Err(); err != nil {
+		return err
 	}
 	requestFamily = normalizeRequestFamily(requestFamily)
 	requestSource, err := normalizeRequestSource(dimensions.RequestSource)
@@ -942,23 +969,51 @@ func (ut *UsageTracker) RecordRequestStartAtWithDimensions(requestID, clientIP, 
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		req := NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, dimensions)
 		req.StartTime = startedAt
-		if err := ut.hotPool.Add(req); err != nil {
-			slog.Warn("🔥 热池添加请求失败，降级到事件队列模式",
-				"request_id", requestID,
-				"error", err)
-			// 降级到传统模式
-			ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, startedAt, dimensions)
+		if dimensions.FlowTransport != "" || dimensions.FlowOrigin != "" {
+			_ = ApplyRequestFlowEvents(&req.RequestFlow, startedAt, startedAt, RequestFlowEvent{
+				Kind:      FlowEventInit,
+				At:        &startedAt,
+				Transport: dimensions.FlowTransport,
+				Origin:    dimensions.FlowOrigin,
+			})
+			if raw, mErr := MarshalRequestFlowBounded(req.RequestFlow); mErr == nil {
+				req.RequestFlowJSON = raw
+			}
 		}
-		return nil
+		err := ut.hotPool.Add(req)
+		if err == nil {
+			return nil
+		}
+		slog.Warn("🔥 热池添加请求失败，降级到事件队列模式", "request_id", requestID, "error", err)
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, startedAt, dimensions)
-	return nil
+	return ut.recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, startedAt, dimensions)
+}
+
+var errEventBufferFull = errors.New("usage tracking event buffer full")
+
+// 已登记请求的结算和已合并的轨迹须按顺序入队，队列满时等待消费者。
+func (ut *UsageTracker) enqueueEvent(event RequestEvent, waitForSpace bool) error {
+	ut.eventMu.RLock()
+	defer ut.eventMu.RUnlock()
+	if err := ut.ctx.Err(); err != nil {
+		return err
+	}
+	if waitForSpace {
+		ut.eventChan <- event
+		return nil
+	}
+	select {
+	case ut.eventChan <- event:
+		return nil
+	default:
+		return errEventBufferFull
+	}
 }
 
 // recordRequestStartLegacy 传统模式记录请求开始
-func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, startedAt time.Time, dimensions RequestDimensions) {
+func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent, method, path, requestFamily string, isStreaming bool, startedAt time.Time, dimensions RequestDimensions) error {
 	event := RequestEvent{
 		Type:      "start",
 		RequestID: requestID,
@@ -980,16 +1035,16 @@ func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent,
 			RequestModel:       dimensions.RequestModel,
 			RequestReasoning:   dimensions.RequestReasoning,
 			SessionID:          dimensions.SessionID,
+			FlowTransport:      dimensions.FlowTransport,
+			FlowOrigin:         dimensions.FlowOrigin,
 		},
 	}
 
 	select {
 	case ut.eventChan <- event:
-		// 成功发送事件
+		return nil
 	default:
-		// 缓冲区满时的处理策略
-		slog.Warn("Usage tracking event buffer full, dropping start event",
-			"request_id", requestID)
+		return errEventBufferFull
 	}
 }
 
@@ -1018,128 +1073,9 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 
 	// 🔥 v4.1 热池模式：直接更新内存（核心优化点：无数据库写入）
 	if ut.hotPoolEnabled && ut.hotPool != nil {
+		now := ut.now()
 		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
-			// 流阶段的写一次规则由共享模块维护。
-			req.StreamPhases.merge(opts.StreamPhases)
-			if req.FirstContentAt == nil && opts.FirstContentAt != nil {
-				req.FirstContentAt = phaseCopy(opts.FirstContentAt)
-			}
-			// 只更新非nil的字段
-			if opts.EndpointName != nil {
-				req.EndpointName = *opts.EndpointName
-			}
-			if opts.RequestFamily != nil {
-				req.RequestFamily = normalizeRequestFamily(*opts.RequestFamily)
-			}
-			if opts.UpstreamType != nil {
-				req.UpstreamType = *opts.UpstreamType
-			}
-			if opts.UpstreamSourceName != nil {
-				req.UpstreamSourceName = *opts.UpstreamSourceName
-			}
-			if opts.UpstreamName != nil {
-				req.UpstreamName = *opts.UpstreamName
-			}
-			if opts.UpstreamID != nil {
-				req.UpstreamID = *opts.UpstreamID
-			}
-			if opts.RequestSource != nil {
-				req.RequestSource = *opts.RequestSource
-			}
-			if opts.RequestKind != nil {
-				req.RequestKind = *opts.RequestKind
-			}
-			if opts.IsStreaming != nil {
-				req.IsStreaming = *opts.IsStreaming
-			}
-			if opts.RouteMode != nil {
-				req.RouteMode = *opts.RouteMode
-			}
-			if opts.RequestedEndpoint != nil {
-				req.RequestedEndpoint = *opts.RequestedEndpoint
-			}
-			if opts.EffectiveEndpoint != nil {
-				req.EffectiveEndpoint = *opts.EffectiveEndpoint
-			}
-			if opts.FallbackReason != nil {
-				req.FallbackReason = *opts.FallbackReason
-			}
-			if opts.RouteDecisionAt != nil {
-				decisionAt := *opts.RouteDecisionAt
-				req.RouteDecisionAt = &decisionAt
-			}
-			if opts.Status != nil {
-				req.Status = *opts.Status
-			}
-			if opts.RetryCount != nil {
-				req.RetryCount = *opts.RetryCount
-			}
-			if opts.HttpStatus != nil {
-				req.HTTPStatus = *opts.HttpStatus
-				req.HTTPStatusKnown = true
-			}
-			if opts.ModelName != nil {
-				req.ModelName = *opts.ModelName
-			}
-			// 首响落定后起点就不再动：晚到的重试写完回调不能改写已经算出首响的那个起点
-			if req.FirstTokenMs == nil {
-				if req.UpstreamFirstDispatchMs == nil && opts.UpstreamFirstDispatchMs != nil && *opts.UpstreamFirstDispatchMs >= 0 {
-					value := *opts.UpstreamFirstDispatchMs
-					req.UpstreamFirstDispatchMs = &value
-				}
-				if opts.UpstreamWriteMs != nil && *opts.UpstreamWriteMs >= 0 {
-					value := *opts.UpstreamWriteMs
-					req.UpstreamWriteMs = &value
-				}
-				if opts.UpstreamDispatchMs != nil && *opts.UpstreamDispatchMs >= 0 {
-					value := *opts.UpstreamDispatchMs
-					req.UpstreamDispatchMs = &value
-				}
-				if opts.UpstreamConnMs != nil && *opts.UpstreamConnMs >= 0 {
-					value := *opts.UpstreamConnMs
-					req.UpstreamConnMs = &value
-				}
-			}
-			if opts.FirstTokenStartAt != nil && !opts.FirstTokenStartAt.IsZero() && req.FirstTokenMs == nil {
-				startAt := *opts.FirstTokenStartAt
-				req.FirstTokenStartAt = &startAt
-			}
-			if opts.FirstTokenMs != nil && *opts.FirstTokenMs >= 0 && req.FirstTokenMs == nil {
-				firstTokenMs := *opts.FirstTokenMs
-				req.FirstTokenMs = &firstTokenMs
-				if opts.FirstTokenAt != nil && !opts.FirstTokenAt.IsZero() {
-					firstTokenAt := *opts.FirstTokenAt
-					req.FirstTokenAt = &firstTokenAt
-				}
-			}
-			if opts.CompletionMs != nil && *opts.CompletionMs >= 0 && req.CompletionMs == nil {
-				completionMs := *opts.CompletionMs
-				req.CompletionMs = &completionMs
-			}
-			if opts.FailureReason != nil {
-				req.FailureReason = *opts.FailureReason
-			}
-			if opts.ScheduleSnapshotJSON != nil {
-				req.ScheduleSnapshotJSON = *opts.ScheduleSnapshotJSON
-			}
-			if opts.PrivacyScanJSON != nil {
-				req.PrivacyScanJSON = *opts.PrivacyScanJSON
-			}
-			if opts.UpstreamModel != nil {
-				req.UpstreamModel = strings.TrimSpace(*opts.UpstreamModel)
-			}
-			if opts.ResponseModel != nil && strings.TrimSpace(*opts.ResponseModel) != "" {
-				req.ResponseModel = strings.TrimSpace(*opts.ResponseModel)
-			}
-			if opts.ResponseReasoning != nil && strings.TrimSpace(*opts.ResponseReasoning) != "" {
-				req.ResponseReasoning = strings.TrimSpace(*opts.ResponseReasoning)
-			}
-			if opts.RequestModel != nil && strings.TrimSpace(*opts.RequestModel) != "" {
-				req.RequestModel = strings.TrimSpace(*opts.RequestModel)
-			}
-			if opts.RequestReasoning != nil && strings.TrimSpace(*opts.RequestReasoning) != "" {
-				req.RequestReasoning = strings.TrimSpace(*opts.RequestReasoning)
-			}
+			applyUpdateOptionsToActiveRequest(req, opts, now)
 		})
 		if err != nil {
 			// 请求可能不在热池中（已归档或从未记录），降级到传统模式
@@ -1157,6 +1093,9 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 
 // recordRequestUpdateLegacy 传统模式更新请求
 func (ut *UsageTracker) recordRequestUpdateLegacy(requestID string, opts UpdateOptions) {
+	if len(opts.FlowEvents) > 0 {
+		opts.FlowEvents = append([]RequestFlowEvent(nil), opts.FlowEvents...)
+	}
 	event := RequestEvent{
 		Type:      "flexible_update",
 		RequestID: requestID,
@@ -1164,12 +1103,11 @@ func (ut *UsageTracker) recordRequestUpdateLegacy(requestID string, opts UpdateO
 		Data:      opts,
 	}
 
-	select {
-	case ut.eventChan <- event:
-		// 成功发送事件
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping flexible_update event",
-			"request_id", requestID)
+	if err := ut.enqueueEvent(event, len(opts.FlowEvents) > 0); err != nil {
+		slog.Warn("请求追踪更新未入队", "request_id", requestID, "error", err)
+		if errors.Is(err, errEventBufferFull) {
+			ut.recordIntegrityIssue(requestID, "event_channel_full_update")
+		}
 	}
 }
 
@@ -1249,6 +1187,12 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 			req.FailureReason = failureReason
 			req.CostOverrideUSD = costOverrideUSD
 			diag.applyTo(req)
+			if req.RequestFlow != nil {
+				if raw, mErr := MarshalRequestFlowBounded(req.RequestFlow); mErr == nil {
+					req.RequestFlowJSON = raw
+				}
+			}
+			req.RequestRevision++
 			// 成本在归档时计算
 		})
 		if err != nil {
@@ -1299,12 +1243,8 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 		},
 	}
 
-	select {
-	case ut.eventChan <- event:
-		// 成功发送事件
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping success event",
-			"request_id", requestID)
+	if err := ut.enqueueEvent(event, true); err != nil {
+		slog.Warn("请求成功结算未入队", "request_id", requestID, "error", err)
 	}
 }
 
@@ -1368,6 +1308,12 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 				}
 			}
 			diag.applyTo(req)
+			if req.RequestFlow != nil {
+				if raw, mErr := MarshalRequestFlowBounded(req.RequestFlow); mErr == nil {
+					req.RequestFlowJSON = raw
+				}
+			}
+			req.RequestRevision++
 		})
 		if err != nil {
 			// 请求可能不在热池中，降级到传统模式
@@ -1408,12 +1354,8 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 		},
 	}
 
-	select {
-	case ut.eventChan <- event:
-		// 成功发送事件
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping final_failure event",
-			"request_id", requestID)
+	if err := ut.enqueueEvent(event, true); err != nil {
+		slog.Warn("请求失败结算未入队", "request_id", requestID, "error", err)
 	}
 }
 
@@ -1460,6 +1402,12 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 			req.EndTime = &now
 			req.DurationMs = settlement.Duration.Milliseconds()
 			settlement.Diagnostics.applyTo(req)
+			if req.RequestFlow != nil {
+				if raw, mErr := MarshalRequestFlowBounded(req.RequestFlow); mErr == nil {
+					req.RequestFlowJSON = raw
+				}
+			}
+			req.RequestRevision++
 		})
 		if err == nil {
 			return nil
@@ -1473,12 +1421,7 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 		Timestamp: ut.now(),
 		Data:      settlement,
 	}
-	select {
-	case ut.eventChan <- event:
-		return nil
-	default:
-		return fmt.Errorf("usage tracking event buffer full while settling %s", requestID)
-	}
+	return ut.enqueueEvent(event, true)
 }
 
 // RecordFailedRequestTokens 记录失败请求的Token使用
@@ -1513,6 +1456,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 			if failureReason != "" && req.FailureReason == "" {
 				req.FailureReason = failureReason
 			}
+			req.RequestRevision++
 		})
 		if err == nil {
 			slog.Debug(fmt.Sprintf("🔥 [热池Token更新] [%s] 原因: %s, 模型: %s, 输入: %d, 输出: %d",
@@ -1544,12 +1488,8 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 		},
 	}
 
-	select {
-	case ut.eventChan <- event:
-		slog.Debug(fmt.Sprintf("💾 [失败Token事件] [%s] 原因: %s, 模型: %s", requestID, failureReason, modelName))
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping failed request tokens event",
-			"request_id", requestID)
+	if err := ut.enqueueEvent(event, true); err != nil {
+		slog.Warn("失败请求的用量未入队", "request_id", requestID, "error", err)
 	}
 }
 
@@ -1576,6 +1516,7 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
 			}
+			req.RequestRevision++
 		})
 		if err == nil {
 			slog.Info(fmt.Sprintf("🔥 [热池Token恢复] [%s] 模型: %s, 输入: %d, 输出: %d",
@@ -1606,14 +1547,15 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 		},
 	}
 
-	select {
-	case ut.eventChan <- event:
-		slog.Info(fmt.Sprintf("🔧 [Token恢复事件] [%s] 模型: %s, 输入: %d, 输出: %d",
-			requestID, modelName, tokens.InputTokens, tokens.OutputTokens))
-	default:
-		slog.Warn("Usage tracking event buffer full, dropping token recovery event",
-			"request_id", requestID)
+	if err := ut.enqueueEvent(event, false); err != nil {
+		slog.Warn("恢复的请求用量未入队", "request_id", requestID, "error", err)
+		if errors.Is(err, errEventBufferFull) {
+			ut.recordIntegrityIssue(requestID, "event_channel_full_token_recovery")
+		}
+		return
 	}
+	slog.Info(fmt.Sprintf("🔧 [Token恢复事件] [%s] 模型: %s, 输入: %d, 输出: %d",
+		requestID, modelName, tokens.InputTokens, tokens.OutputTokens))
 }
 
 // UpdatePricing 更新模型定价（运行时动态更新）
@@ -1794,13 +1736,11 @@ func (ut *UsageTracker) ForceFlush() error {
 		Data:      nil,
 	}
 
-	select {
-	case ut.eventChan <- flushEvent:
-		slog.Info("Force flush event sent")
-		return nil
-	default:
-		return fmt.Errorf("event channel full, cannot force flush")
+	if err := ut.enqueueEvent(flushEvent, false); err != nil {
+		return fmt.Errorf("cannot force flush: %w", err)
 	}
+	slog.Info("Force flush event sent")
+	return nil
 }
 
 // GetPricing 获取模型定价
@@ -2075,7 +2015,11 @@ func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
 		}
 	}()
 
-	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	if req.TxFn != nil {
+		err = req.TxFn(ctx, tx)
+	} else {
+		_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -2117,7 +2061,11 @@ func (ut *UsageTracker) executeWriteTransaction(ctx context.Context, req WriteRe
 		}
 	}()
 
-	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	if req.TxFn != nil {
+		err = req.TxFn(ctx, tx)
+	} else {
+		_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}

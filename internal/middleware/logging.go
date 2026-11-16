@@ -73,6 +73,11 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
+// FlushError 供 ResponseController 获取实际的网络写出错误。
+func (rw *responseWriter) FlushError() error {
+	return http.NewResponseController(rw.ResponseWriter).Flush()
+}
+
 // Unwrap returns the underlying ResponseWriter
 // 支持 Go 1.20+ http.ResponseController 自动解包访问底层接口
 func (rw *responseWriter) Unwrap() http.ResponseWriter {

@@ -421,7 +421,19 @@ export const safeParseJson = (value) => {
  */
 export const fetchRequestLifecycleDetail = async (requestId) => {
   if (!isWailsEnvironment()) {
-    return { found: false, request: null, upstreamWriteMs: null, upstreamFirstDispatchMs: null, upstreamDispatchMs: null, upstreamConnMs: null, scheduleSnapshot: null, privacyScan: null };
+    return {
+      found: false,
+      request: null,
+      upstreamWriteMs: null,
+      upstreamFirstDispatchMs: null,
+      upstreamDispatchMs: null,
+      upstreamConnMs: null,
+      scheduleSnapshot: null,
+      privacyScan: null,
+      requestRevision: 0,
+      flow: null,
+      integrity: null
+    };
   }
   const detail = await WailsApi.getRequestLifecycleDetail(requestId);
   return {
@@ -435,7 +447,10 @@ export const fetchRequestLifecycleDetail = async (requestId) => {
     reasoningHidden: detail?.reasoning_hidden ?? null,
     upstreamRequestId: detail?.upstream_request_id ?? '',
     scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),
-    privacyScan: safeParseJson(detail?.privacy_scan_json)
+    privacyScan: safeParseJson(detail?.privacy_scan_json),
+    requestRevision: Number(detail?.request_revision ?? detail?.requestRevision ?? 0) || 0,
+    flow: detail?.flow ?? null,
+    integrity: detail?.integrity ?? null
   };
 };
 
