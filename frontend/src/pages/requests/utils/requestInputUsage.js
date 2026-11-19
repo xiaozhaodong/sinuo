@@ -23,6 +23,8 @@ export const normalizeInputUsage = (request) => {
   const total = fullInputTokens(includesCache, input, created, read);
   return {
     inputTokens: input, cacheReadTokens: read, cacheCreationTokens: created,
+    cacheCreation30mTokens: request.cache_creation_30m_tokens ?? request.cacheCreation30mTokens ?? null,
+    cacheCreation12hTokens: request.cache_creation_12h_tokens ?? request.cacheCreation12hTokens ?? null,
     cacheCreation5mTokens: created5m, cacheCreation1hTokens: created1h,
     cacheRatio: total > 0 && Number.isFinite(read) && read >= 0 && read <= total ? read / total : null
   };

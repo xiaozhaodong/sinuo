@@ -49,3 +49,28 @@ func TestNormalizeAccountRecord_NonAPIKeyResetsMultipliersToDefault(t *testing.T
 		t.Fatalf("expected non-api_key cache multipliers reset to 1.0, got %+v", record)
 	}
 }
+
+func TestNormalizeAccountRecord_ApiKeyDefaultUnifiedAndExplicitSplit(t *testing.T) {
+	omitted := &UpstreamAccountRecord{
+		ProviderType:  "api_key",
+		AccountName:   "omitted-multipliers",
+		CredentialRaw: "sk-test",
+	}
+	normalizeAccountRecord(omitted)
+	if omitted.CostMultiplier != 1.0 || omitted.InputCostMultiplier != 1.0 || omitted.OutputCostMultiplier != 1.0 ||
+		omitted.CacheCreationCostMultiplier != 1.0 || omitted.CacheCreationCostMultiplier1h != 1.0 || omitted.CacheReadCostMultiplier != 1.0 {
+		t.Fatalf("省略倍率的 api_key 账号应默认统一 ×1，got %+v", omitted)
+	}
+
+	split := &UpstreamAccountRecord{
+		ProviderType:        "api_key",
+		AccountName:         "split-multipliers",
+		CredentialRaw:       "sk-test",
+		CostMultiplier:      0,
+		InputCostMultiplier: 0.5,
+	}
+	normalizeAccountRecord(split)
+	if split.CostMultiplier != 0 || split.InputCostMultiplier != 0.5 || split.OutputCostMultiplier != 1.0 {
+		t.Fatalf("显式分项模式的 api_key 账号应保留总倍率 0，got %+v", split)
+	}
+}

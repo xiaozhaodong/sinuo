@@ -4,14 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"embed"
-	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sinuo/internal/store"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,6 +116,8 @@ func requestFamilyFromPath(path string) string {
 
 // RequestEvent 表示请求事件
 type RequestEvent struct {
+	billing   *billingSnapshot
+	baseRate  *eventBaseRate
 	Type      string      `json:"type"` // "start", "flexible_update", "success", "final_failure", "complete", "failed_request_tokens", "token_recovery"
 	RequestID string      `json:"request_id"`
 	Timestamp time.Time   `json:"timestamp"`
@@ -188,6 +188,7 @@ type RequestUpdateData struct {
 
 // RequestCompleteData 请求完成事件数据
 type RequestCompleteData struct {
+	CacheWriteDurations
 	ModelName             string               `json:"model_name"`
 	Path                  string               `json:"path,omitempty"`
 	InputTokens           int64                `json:"input_tokens"`
@@ -205,6 +206,7 @@ type RequestCompleteData struct {
 
 // TokenUsage token使用统计
 type TokenUsage struct {
+	CacheWriteDurations
 	InputTokens           int64
 	OutputTokens          int64
 	CacheCreationTokens   int64 // 缓存创建总量；Claude 可细分 5m / 1h，Codex 写入已包含在 InputTokens 中。
@@ -216,16 +218,19 @@ type TokenUsage struct {
 
 // ModelPricing 模型定价配置
 type ModelPricing struct {
-	Input           float64 `yaml:"input"`             // per 1M tokens
-	Output          float64 `yaml:"output"`            // per 1M tokens
-	CacheCreation   float64 `yaml:"cache_creation"`    // per 1M tokens (5分钟缓存创建，1.25x input)
-	CacheCreation1h float64 `yaml:"cache_creation_1h"` // per 1M tokens (1小时缓存创建，2x input)
-	CacheRead       float64 `yaml:"cache_read"`        // per 1M tokens (缓存读取)
+	responsesWrites    bool
+	cache30m, cache12h float64
+	Input              float64 `yaml:"input"`             // per 1M tokens
+	Output             float64 `yaml:"output"`            // per 1M tokens
+	CacheCreation      float64 `yaml:"cache_creation"`    // per 1M tokens (5分钟缓存创建，1.25x input)
+	CacheCreation1h    float64 `yaml:"cache_creation_1h"` // per 1M tokens (1小时缓存创建，2x input)
+	CacheRead          float64 `yaml:"cache_read"`        // per 1M tokens (缓存读取)
 }
 
 // EndpointMultiplier 端点成本倍率（v5.0+ 支持端点级别的成本调整）
 // 成本计算公式：模型基础定价 * 端点倍率
 type EndpointMultiplier struct {
+	EndpointID                    int64   `json:"-"` // 端点存储 ID，旧 YAML 和测试可仅提供名称。
 	CostMultiplier                float64 // 总体倍率（如果 > 0，会覆盖分项倍率）
 	InputCostMultiplier           float64 // 输入成本倍率
 	OutputCostMultiplier          float64 // 输出成本倍率
@@ -275,60 +280,43 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 		path = requestPath[0]
 	}
 
-	// 使用默认倍率
-	var m EndpointMultiplier
+	legacyPrice := *pricing
+	if legacyPrice.CacheCreation1h <= 0 {
+		legacyPrice.CacheCreation1h = legacyPrice.Input * 2
+	}
+	return calculateAtRate(usage, &legacyPrice, multiplier, path)
+}
+
+func calculateAtRate(usage *TokenUsage, pricing *ModelPricing, multiplier *EndpointMultiplier, path string) CostBreakdown {
+	m := DefaultEndpointMultiplier()
 	if multiplier != nil {
-		m = *multiplier
-	} else {
-		m = DefaultEndpointMultiplier()
+		m = multiplier.effective()
 	}
 
-	// 确保倍率有效（0 或负数视为 1.0）
-	ensureMultiplier := func(v float64) float64 {
-		if v <= 0 {
-			return 1.0
-		}
-		return v
-	}
-
-	// 获取 1h 缓存定价（如果未设置，使用 2x input 作为默认）
-	cacheCreation1hPrice := pricing.CacheCreation1h
-	if cacheCreation1hPrice <= 0 {
-		cacheCreation1hPrice = pricing.Input * 2.0 // 默认 2x input
-	}
-
-	// 基础成本计算（每百万 token）
 	inputIncludesCache := usage.IncludesCacheInInput(path)
-	billableInputTokens := usage.InputTokens
-	if inputIncludesCache {
-		billableInputTokens -= usage.CacheReadTokens
-		if billableInputTokens < 0 {
-			billableInputTokens = 0
-		}
-	}
+	billableInputTokens := usage.billableInputTokens(inputIncludesCache, pricing.responsesWrites)
 	inputCost := float64(billableInputTokens) * pricing.Input / 1_000_000
 	outputCost := float64(usage.OutputTokens) * pricing.Output / 1_000_000
 	cacheReadCost := float64(usage.CacheReadTokens) * pricing.CacheRead / 1_000_000
 
-	// Codex 缓存写入只补统计，仍包含在上面的普通输入计费量中，不再追加创建费用。
+	// 仅选中的版本价表启用 Responses 缓存写入单价。
 	// Claude 缓存创建独立于 input_tokens，继续按 5m / 1h 原价计费。
 	var cache5mCost, cache1hCost float64
 	if !inputIncludesCache {
-		if usage.CacheCreation5mTokens > 0 || usage.CacheCreation1hTokens > 0 {
-			// 有分开的缓存数据，分别计算
-			cache5mCost = float64(usage.CacheCreation5mTokens) * pricing.CacheCreation / 1_000_000
-			cache1hCost = float64(usage.CacheCreation1hTokens) * cacheCreation1hPrice / 1_000_000
-		} else {
-			// 向后兼容：只有总数，默认使用 5m 定价
-			cache5mCost = float64(usage.CacheCreationTokens) * pricing.CacheCreation / 1_000_000
-		}
+		fiveMinutes, oneHour := usage.claudeCacheWriteTokens()
+		cache5mCost = float64(fiveMinutes) * pricing.CacheCreation / 1_000_000
+		cache1hCost = float64(oneHour) * pricing.CacheCreation1h / 1_000_000
 	}
-	cacheCreationCost := cache5mCost + cache1hCost
+	var responsesWriteCost float64
+	if inputIncludesCache && pricing.responsesWrites && usage.CacheCreationTokens > 0 {
+		responsesWriteCost = (float64(*usage.CacheCreation30mTokens)*pricing.cache30m + float64(*usage.CacheCreation12hTokens)*pricing.cache12h) / 1_000_000
+	}
+	cacheCreationCost := cache5mCost + cache1hCost + responsesWriteCost
 
 	// 应用端点倍率
 	if m.CostMultiplier > 0 {
 		// 总体倍率模式：所有成本统一乘以总体倍率
-		totalMultiplier := ensureMultiplier(m.CostMultiplier)
+		totalMultiplier := m.CostMultiplier
 		inputCost *= totalMultiplier
 		outputCost *= totalMultiplier
 		cache5mCost *= totalMultiplier
@@ -337,12 +325,12 @@ func CalculateCostV2(usage *TokenUsage, pricing *ModelPricing, multiplier *Endpo
 		cacheReadCost *= totalMultiplier
 	} else {
 		// 分项倍率模式：各项成本分别乘以对应倍率
-		inputCost *= ensureMultiplier(m.InputCostMultiplier)
-		outputCost *= ensureMultiplier(m.OutputCostMultiplier)
-		cacheReadCost *= ensureMultiplier(m.CacheReadCostMultiplier)
-		cache5mCost *= ensureMultiplier(m.CacheCreationCostMultiplier)
-		cache1hCost *= ensureMultiplier(m.CacheCreationCostMultiplier1h)
-		cacheCreationCost = cache5mCost + cache1hCost
+		inputCost *= m.InputCostMultiplier
+		outputCost *= m.OutputCostMultiplier
+		cacheReadCost *= m.CacheReadCostMultiplier
+		cache5mCost *= m.CacheCreationCostMultiplier
+		cache1hCost *= m.CacheCreationCostMultiplier1h
+		cacheCreationCost = cache5mCost + cache1hCost + responsesWriteCost*m.CacheCreationCostMultiplier
 	}
 
 	return CostBreakdown{
@@ -428,6 +416,7 @@ type WriteRequest struct {
 // UpdateOptions 统一的请求更新选项
 // 支持可选字段更新，只更新非nil的字段
 type UpdateOptions struct {
+	BillingChannel store.BillingChannel // 只随成功写出的时刻传入
 	StreamPhases
 	FirstContentAt     *time.Time     // 首个内容绝对时刻，只在热池供进行中跑秒，不落库
 	EndpointName       *string        // 端点名称
@@ -483,7 +472,10 @@ type UsageTracker struct {
 	eventChan     chan RequestEvent
 	eventMu       sync.RWMutex // 关闭前等待已经受理的事件入队
 	config        *Config
-	pricing       map[string]ModelPricing       // 模型定价缓存
+	priceLoadMu   sync.Mutex
+	baseRates     *baseRateCatalog
+	pricing       map[string]ModelPricing // 模型定价缓存
+	endpointByID  map[int64]EndpointMultiplier
 	endpointMu    map[string]EndpointMultiplier // 端点倍率缓存
 	accountMu     map[int64]EndpointMultiplier  // 账号倍率缓存
 	ctx           context.Context
@@ -654,7 +646,7 @@ func NewUsageTrackerWithPolicy(config *Config, policy *timezonepolicy.Policy) (*
 		db:        db, // 兼容性：指向readDB
 		eventChan: make(chan RequestEvent, config.BufferSize),
 		config:    config,
-		pricing:   config.ModelPricing,
+		pricing:   cloneModelPricingMap(config.ModelPricing),
 		ctx:       ctx,
 		cancel:    cancel,
 
@@ -969,6 +961,11 @@ func (ut *UsageTracker) RecordRequestStartAtWithDimensions(requestID, clientIP, 
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		req := NewActiveRequestWithDimensions(requestID, clientIP, userAgent, method, path, requestFamily, isStreaming, dimensions)
 		req.StartTime = startedAt
+		req.billing = ut.snapshotBilling(startedAt)
+		if req.billing.versions != nil {
+			req.UsageKnown = false
+			req.CostKnown = false
+		}
 		if dimensions.FlowTransport != "" || dimensions.FlowOrigin != "" {
 			_ = ApplyRequestFlowEvents(&req.RequestFlow, startedAt, startedAt, RequestFlowEvent{
 				Kind:      FlowEventInit,
@@ -1040,6 +1037,7 @@ func (ut *UsageTracker) recordRequestStartLegacy(requestID, clientIP, userAgent,
 		},
 	}
 
+	ut.captureEventBilling(&event)
 	select {
 	case ut.eventChan <- event:
 		return nil
@@ -1074,7 +1072,16 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 	// 🔥 v4.1 热池模式：直接更新内存（核心优化点：无数据库写入）
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		now := ut.now()
+		var outbound billingSnapshot
+		if opts.UpstreamWriteMs != nil && opts.FirstTokenStartAt != nil {
+			outbound = ut.snapshotBilling(*opts.FirstTokenStartAt)
+			outbound.channel = opts.BillingChannel
+		}
 		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
+			if !outbound.at.IsZero() && req.FirstTokenMs == nil && req.EndTime == nil {
+				outbound.channel = outbound.channelFor(req)
+				req.billing = outbound
+			}
 			applyUpdateOptionsToActiveRequest(req, opts, now)
 		})
 		if err != nil {
@@ -1103,6 +1110,7 @@ func (ut *UsageTracker) recordRequestUpdateLegacy(requestID string, opts UpdateO
 		Data:      opts,
 	}
 
+	ut.captureEventBilling(&event)
 	if err := ut.enqueueEvent(event, len(opts.FlowEvents) > 0); err != nil {
 		slog.Warn("请求追踪更新未入队", "request_id", requestID, "error", err)
 		if errors.Is(err, errEventBufferFull) {
@@ -1150,14 +1158,11 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 	}
 
 	// 🚀 [架构修复] 支持 nil tokens，确保耗时信息总是被记录
-	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
-	var cacheCreation5mTokens, cacheCreation1hTokens int64 // v5.0.1+
+	var usage TokenUsage
 	if tokens != nil {
-		inputTokens = tokens.InputTokens
-		outputTokens = tokens.OutputTokens
-		cacheCreationTokens = tokens.CacheCreationTokens
-		cacheCreation5mTokens, cacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
-		cacheReadTokens = tokens.CacheReadTokens
+		usage = *tokens
+		usage.CacheWriteDurations = tokens.CacheWriteDurations.clone()
+		usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
 	}
 	// 如果 tokens 为 nil，所有 token 字段都是 0，但 duration 仍然会被记录
 
@@ -1168,12 +1173,13 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 			req.Status = "completed"
 			req.ModelName = modelName
 			if tokens != nil {
-				req.InputTokens = inputTokens
-				req.OutputTokens = outputTokens
-				req.CacheCreationTokens = cacheCreationTokens
-				req.CacheCreation5mTokens = cacheCreation5mTokens // v5.0.1+
-				req.CacheCreation1hTokens = cacheCreation1hTokens // v5.0.1+
-				req.CacheReadTokens = cacheReadTokens
+				req.CacheWriteDurations = usage.CacheWriteDurations
+				req.InputTokens = usage.InputTokens
+				req.OutputTokens = usage.OutputTokens
+				req.CacheCreationTokens = usage.CacheCreationTokens
+				req.CacheCreation5mTokens = usage.CacheCreation5mTokens // v5.0.1+
+				req.CacheCreation1hTokens = usage.CacheCreation1hTokens // v5.0.1+
+				req.CacheReadTokens = usage.CacheReadTokens
 				req.UsageKnown = true
 				req.CostKnown = true
 			}
@@ -1192,28 +1198,28 @@ func (ut *UsageTracker) recordRequestSuccessWithQualityAndCost(requestID, modelN
 					req.RequestFlowJSON = raw
 				}
 			}
+			req.settleBaseCost()
 			req.RequestRevision++
-			// 成本在归档时计算
 		})
 		if err != nil {
 			// 请求可能不在热池中，降级到传统模式
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil, diag)
+			ut.recordRequestSuccessLegacy(requestID, modelName, usage, duration, failureReason, costOverrideUSD, tokens != nil, diag)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, duration, failureReason, costOverrideUSD, tokens != nil, diag)
+	ut.recordRequestSuccessLegacy(requestID, modelName, usage, duration, failureReason, costOverrideUSD, tokens != nil, diag)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
 // 🔧 [方案A实现] 2025-12-20: 增加 failureReason 参数支持
 func (ut *UsageTracker) recordRequestSuccessLegacy(
 	requestID, modelName string,
-	inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64,
+	usage TokenUsage,
 	duration time.Duration,
 	failureReason string,
 	costOverrideUSD *float64,
@@ -1227,14 +1233,15 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
+			CacheWriteDurations:   usage.CacheWriteDurations,
 			ModelName:             modelName,
 			Path:                  path,
-			InputTokens:           inputTokens,
-			OutputTokens:          outputTokens,
-			CacheCreationTokens:   cacheCreationTokens,
-			CacheCreation5mTokens: cacheCreation5mTokens,
-			CacheCreation1hTokens: cacheCreation1hTokens,
-			CacheReadTokens:       cacheReadTokens,
+			InputTokens:           usage.InputTokens,
+			OutputTokens:          usage.OutputTokens,
+			CacheCreationTokens:   usage.CacheCreationTokens,
+			CacheCreation5mTokens: usage.CacheCreation5mTokens,
+			CacheCreation1hTokens: usage.CacheCreation1hTokens,
+			CacheReadTokens:       usage.CacheReadTokens,
 			Duration:              duration,
 			FailureReason:         failureReason,
 			CostOverrideUSD:       costOverrideUSD,
@@ -1263,14 +1270,11 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 	}
 
 	// 处理Token信息（失败/取消时可能有也可能没有）
-	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
-	var cacheCreation5mTokens, cacheCreation1hTokens int64 // 🔧 [修复] 2025-12-11: 添加 5m/1h 缓存字段
+	var usage TokenUsage
 	if tokens != nil {
-		inputTokens = tokens.InputTokens
-		outputTokens = tokens.OutputTokens
-		cacheCreationTokens = tokens.CacheCreationTokens
-		cacheCreation5mTokens, cacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
-		cacheReadTokens = tokens.CacheReadTokens
+		usage = *tokens
+		usage.CacheWriteDurations = tokens.CacheWriteDurations.clone()
+		usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = ut.cacheCreationDurations(requestID, tokens)
 	}
 
 	// 🔥 v4.1 热池模式：完成失败请求并归档
@@ -1287,12 +1291,13 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 			// 🔧 [修复] 2025-12-15: 只有当 tokens 参数不为 nil 时才更新 token 字段
 			// 否则保留热池中已有的值（可能由 RecordFailedRequestTokens 设置）
 			if tokens != nil {
-				req.InputTokens = inputTokens
-				req.OutputTokens = outputTokens
-				req.CacheCreationTokens = cacheCreationTokens
-				req.CacheCreation5mTokens = cacheCreation5mTokens
-				req.CacheCreation1hTokens = cacheCreation1hTokens
-				req.CacheReadTokens = cacheReadTokens
+				req.CacheWriteDurations = usage.CacheWriteDurations
+				req.InputTokens = usage.InputTokens
+				req.OutputTokens = usage.OutputTokens
+				req.CacheCreationTokens = usage.CacheCreationTokens
+				req.CacheCreation5mTokens = usage.CacheCreation5mTokens
+				req.CacheCreation1hTokens = usage.CacheCreation1hTokens
+				req.CacheReadTokens = usage.CacheReadTokens
 				req.UsageKnown = true
 				req.CostKnown = true
 			}
@@ -1313,6 +1318,7 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 					req.RequestFlowJSON = raw
 				}
 			}
+			req.settleBaseCost()
 			req.RequestRevision++
 		})
 		if err != nil {
@@ -1320,18 +1326,18 @@ func (ut *UsageTracker) RecordRequestFinalFailureWithDiagnostics(requestID, mode
 			slog.Debug("🔥 热池完成失败请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil, diag)
+			ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, usage, tokens != nil, diag)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens, tokens != nil, diag)
+	ut.recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail, duration, httpStatus, usage, tokens != nil, diag)
 }
 
 // recordRequestFinalFailureLegacy 传统模式记录请求失败
 // 🔧 [修复] 2025-12-11: 添加 modelName 和 5m/1h 缓存字段参数
-func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens int64, hasTokenUsage bool, diag *ResponseDiagnostics) {
+func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, status, reason, errorDetail string, duration time.Duration, httpStatus int, usage TokenUsage, hasTokenUsage bool, diag *ResponseDiagnostics) {
 	event := RequestEvent{
 		Type:      "final_failure",
 		RequestID: requestID,
@@ -1343,12 +1349,13 @@ func (ut *UsageTracker) recordRequestFinalFailureLegacy(requestID, modelName, st
 			"duration":                 duration,
 			"http_status":              httpStatus, // HTTP状态码
 			"model_name":               modelName,  // 🔧 [修复] 2025-12-11: 添加模型名
-			"input_tokens":             inputTokens,
-			"output_tokens":            outputTokens,
-			"cache_creation_tokens":    cacheCreationTokens,
-			"cache_creation_5m_tokens": cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
-			"cache_creation_1h_tokens": cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
-			"cache_read_tokens":        cacheReadTokens,
+			"input_tokens":             usage.InputTokens,
+			"output_tokens":            usage.OutputTokens,
+			"cache_creation_tokens":    usage.CacheCreationTokens,
+			"cache_creation_5m_tokens": usage.CacheCreation5mTokens, // 🔧 [修复] 2025-12-11
+			"cache_creation_1h_tokens": usage.CacheCreation1hTokens, // 🔧 [修复] 2025-12-11
+			"cache_read_tokens":        usage.CacheReadTokens,
+			"cache_write_durations":    usage.CacheWriteDurations,
 			"has_token_usage":          hasTokenUsage,
 			"response_diagnostics":     diag, // v6.3: *ResponseDiagnostics，可为 nil
 		},
@@ -1366,6 +1373,11 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 	}
 	if settlement.Status != "completed" && settlement.Status != "failed" && settlement.Status != "cancelled" {
 		return fmt.Errorf("invalid request settlement status %q", settlement.Status)
+	}
+	if settlement.TokenUsage != nil {
+		usage := *settlement.TokenUsage
+		usage.CacheWriteDurations = usage.CacheWriteDurations.clone()
+		settlement.TokenUsage = &usage
 	}
 	if settlement.Duration < 0 {
 		settlement.Duration = 0
@@ -1387,6 +1399,7 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 				req.HTTPStatusKnown = false
 			}
 			if settlement.TokenUsage != nil {
+				req.CacheWriteDurations = settlement.TokenUsage.CacheWriteDurations
 				req.InputTokens = settlement.TokenUsage.InputTokens
 				req.OutputTokens = settlement.TokenUsage.OutputTokens
 				req.CacheCreationTokens = settlement.TokenUsage.CacheCreationTokens
@@ -1396,6 +1409,7 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 				req.UsageKnown = true
 				req.CostKnown = true
 			} else {
+				req.CacheWriteDurations = CacheWriteDurations{}
 				req.UsageKnown = false
 				req.CostKnown = false
 			}
@@ -1407,6 +1421,7 @@ func (ut *UsageTracker) RecordRequestSettlement(requestID string, settlement Req
 					req.RequestFlowJSON = raw
 				}
 			}
+			req.settleBaseCost()
 			req.RequestRevision++
 		})
 		if err == nil {
@@ -1436,6 +1451,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
 			// 更新 Token 信息
+			req.CacheWriteDurations = tokens.CacheWriteDurations.clone()
 			req.InputTokens = tokens.InputTokens
 			req.OutputTokens = tokens.OutputTokens
 			req.CacheCreationTokens = tokens.CacheCreationTokens
@@ -1455,6 +1471,9 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 			// 记录失败原因（不改变状态）
 			if failureReason != "" && req.FailureReason == "" {
 				req.FailureReason = failureReason
+			}
+			if req.EndTime != nil {
+				req.settleBaseCost()
 			}
 			req.RequestRevision++
 		})
@@ -1481,6 +1500,7 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 			CacheCreationTokens:   tokens.CacheCreationTokens,
 			CacheCreation5mTokens: tokens.CacheCreation5mTokens,
 			CacheCreation1hTokens: tokens.CacheCreation1hTokens,
+			CacheWriteDurations:   tokens.CacheWriteDurations.clone(),
 			CacheReadTokens:       tokens.CacheReadTokens,
 			Duration:              duration,
 			FailureReason:         failureReason,
@@ -1504,6 +1524,7 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 	if ut.hotPoolEnabled && ut.hotPool != nil {
 		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
 			// 更新 Token 信息
+			req.CacheWriteDurations = tokens.CacheWriteDurations.clone()
 			req.InputTokens = tokens.InputTokens
 			req.OutputTokens = tokens.OutputTokens
 			req.CacheCreationTokens = tokens.CacheCreationTokens
@@ -1515,6 +1536,9 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 			// 更新模型名（如果有）
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
+			}
+			if req.EndTime != nil {
+				req.settleBaseCost()
 			}
 			req.RequestRevision++
 		})
@@ -1541,6 +1565,7 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 			CacheCreationTokens:   tokens.CacheCreationTokens,
 			CacheCreation5mTokens: tokens.CacheCreation5mTokens,
 			CacheCreation1hTokens: tokens.CacheCreation1hTokens,
+			CacheWriteDurations:   tokens.CacheWriteDurations.clone(),
 			CacheReadTokens:       tokens.CacheReadTokens,
 			Duration:              0, // 不更新时间相关字段
 			HasTokenUsage:         true,
@@ -1563,6 +1588,11 @@ func (ut *UsageTracker) UpdatePricing(pricing map[string]ModelPricing) {
 	ut.mu.Lock()
 	defer ut.mu.Unlock()
 
+	ut.baseRates = nil
+	ut.setPricingLocked(cloneModelPricingMap(pricing))
+}
+
+func (ut *UsageTracker) setPricingLocked(pricing map[string]ModelPricing) {
 	ut.pricing = pricing
 
 	// 同步到 ArchiveManager
@@ -1580,6 +1610,15 @@ func (ut *UsageTracker) UpdateEndpointMultipliers(multipliers map[string]Endpoin
 	defer ut.mu.Unlock()
 
 	ut.endpointMu = cloneEndpointMultiplierMap(multipliers)
+	ut.endpointByID = nil
+	for _, m := range multipliers {
+		if m.EndpointID > 0 {
+			if ut.endpointByID == nil {
+				ut.endpointByID = make(map[int64]EndpointMultiplier)
+			}
+			ut.endpointByID[m.EndpointID] = m
+		}
+	}
 
 	// 同步到 ArchiveManager
 	if ut.archiveManager != nil {
@@ -1875,91 +1914,6 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 	return &stats, nil
 }
 
-// ExportToCSV 导出为CSV格式
-func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time.Time, modelName, requestFamily, upstreamName string) ([]byte, error) {
-	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, requestFamily, upstreamName, 10000, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get request logs for CSV export: %w", err)
-	}
-
-	var output strings.Builder
-	writer := csv.NewWriter(&output)
-	if err := writer.Write([]string{"request_id", "client_ip", "user_agent", "method", "path", "request_family", "start_time", "end_time", "duration_ms", "endpoint_name", "upstream_type", "upstream_source_name", "upstream_name", "upstream_id", "route_mode", "requested_endpoint", "effective_endpoint", "fallback_reason", "model_name", "status", "http_status_code", "retry_count", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "input_cost_usd", "output_cost_usd", "cache_creation_cost_usd", "cache_read_cost_usd", "total_cost_usd", "created_at", "updated_at", "request_source", "request_kind", "usage_known", "cost_known", "request_model", "upstream_model", "response_model", "request_reasoning", "response_reasoning", "session_id"}); err != nil {
-		return nil, err
-	}
-
-	// CSV rows
-	for _, log := range logs {
-		endTime := ""
-		if log.EndTime != nil {
-			endTime = ut.timezonePolicy.FormatDisplay(*log.EndTime)
-		}
-
-		durationMs := ""
-		if log.DurationMs != nil {
-			durationMs = fmt.Sprintf("%d", *log.DurationMs)
-		}
-
-		httpStatus := ""
-		if log.HTTPStatusCode != nil {
-			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
-		}
-		// CSV 没有 NULL 类型，用空单元格加显式 known 标记区别未知与真实零。
-		tokenText := func(value int64) string {
-			if !log.UsageKnown {
-				return ""
-			}
-			return strconv.FormatInt(value, 10)
-		}
-		costText := func(value float64) string {
-			if !log.CostKnown {
-				return ""
-			}
-			return strconv.FormatFloat(value, 'f', 6, 64)
-		}
-
-		if err := writer.Write([]string{
-			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path, log.RequestFamily,
-			ut.timezonePolicy.FormatDisplay(log.StartTime), endTime, durationMs, log.EndpointName,
-			log.UpstreamType, log.UpstreamSourceName, log.UpstreamName, strconv.FormatInt(log.UpstreamID, 10),
-			log.RouteMode, log.RequestedEndpoint, log.EffectiveEndpoint, log.FallbackReason,
-			log.ModelName, log.Status, httpStatus, strconv.Itoa(log.RetryCount),
-			tokenText(log.InputTokens), tokenText(log.OutputTokens), tokenText(log.CacheCreationTokens), tokenText(log.CacheReadTokens),
-			costText(log.InputCostUSD), costText(log.OutputCostUSD), costText(log.CacheCreationCostUSD), costText(log.CacheReadCostUSD), costText(log.TotalCostUSD),
-			ut.timezonePolicy.FormatDisplay(log.CreatedAt), ut.timezonePolicy.FormatDisplay(log.UpdatedAt),
-			log.RequestSource, log.RequestKind, strconv.FormatBool(log.UsageKnown), strconv.FormatBool(log.CostKnown),
-			log.RequestModel, log.UpstreamModel, log.ResponseModel, log.RequestReasoning, log.ResponseReasoning,
-			log.SessionID,
-		}); err != nil {
-			return nil, err
-		}
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		return nil, err
-	}
-	return []byte(output.String()), nil
-}
-
-// ExportToJSON 导出为JSON格式
-func (ut *UsageTracker) ExportToJSON(ctx context.Context, startTime, endTime time.Time, modelName, requestFamily, upstreamName string) ([]byte, error) {
-	logs, err := ut.GetRequestLogs(ctx, startTime, endTime, modelName, requestFamily, upstreamName, 10000, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get request logs for JSON export: %w", err)
-	}
-
-	payload := struct {
-		DisplayTimezone string          `json:"display_timezone"`
-		Requests        []RequestDetail `json:"requests"`
-	}{DisplayTimezone: ut.timezonePolicy.Name(), Requests: logs}
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal logs to JSON: %w", err)
-	}
-
-	return jsonBytes, nil
-}
-
 // processWriteQueue 写操作队列处理器。
 // 收到 writerStop 后排空已入队的写操作再退出；Response 均为容量 1 的缓冲通道，回执不会阻塞。
 func (ut *UsageTracker) processWriteQueue() {
@@ -2166,6 +2120,7 @@ func (ut *UsageTracker) UpdateActiveRequestTokens(requestID string, inputTokens,
 		req.InputTokens = inputTokens
 		req.OutputTokens = outputTokens
 		req.CacheCreationTokens = cacheCreationTokens
+		req.CacheWriteDurations = CacheWriteDurations{}
 		req.CacheReadTokens = cacheReadTokens
 	})
 }
@@ -2249,41 +2204,18 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		routeMode = "auto"
 	}
 
-	// 计算成本（使用公共函数消除重复代码）
-	var cost CostBreakdown
-	if costKnown && req.CostOverrideUSD != nil {
-		cost.TotalCost = *req.CostOverrideUSD
-	} else if costKnown && ut.pricing != nil {
-		pricing, exists := ut.pricing[req.ModelName]
-		if !exists {
-			pricing, exists = ut.pricing["_default"]
+	basis := req.billing
+	var result baseSettlement
+	if req.settled != nil {
+		result = *req.settled
+	} else {
+		if basis.at.IsZero() {
+			basis = ut.snapshotBilling(req.StartTime)
 		}
-		if exists {
-			// 获取端点/账号倍率
-			var multiplier *EndpointMultiplier
-			if req.UpstreamType == "account" {
-				if ut.accountMu != nil {
-					if m, ok := ut.accountMu[req.UpstreamID]; ok {
-						multiplier = &m
-					}
-				}
-			} else if ut.endpointMu != nil {
-				if m, ok := ut.endpointMu[req.EndpointName]; ok {
-					multiplier = &m
-				}
-			}
-
-			usage := &TokenUsage{
-				InputTokens:           req.InputTokens,
-				OutputTokens:          req.OutputTokens,
-				CacheCreationTokens:   req.CacheCreationTokens,
-				CacheCreation5mTokens: req.CacheCreation5mTokens,
-				CacheCreation1hTokens: req.CacheCreation1hTokens,
-				CacheReadTokens:       req.CacheReadTokens,
-			}
-			cost = CalculateCostV2(usage, &pricing, multiplier, req.Path)
-		}
+		result = basis.settle(req)
 	}
+	costKnown = costKnown && result.known
+	cost := result.cost
 
 	return RequestDetail{
 		ID:                      0, // 热池中的请求还没有数据库ID
@@ -2338,9 +2270,12 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		OutputTokens:            req.OutputTokens,
 		CacheCreationTokens:     req.CacheCreationTokens,
 		CacheCreation5mTokens:   req.CacheCreation5mTokens, // v5.0.1+
+		CacheWriteDurations:     req.CacheWriteDurations,
 		CacheCreation1hTokens:   req.CacheCreation1hTokens, // v5.0.1+
 		CacheReadTokens:         req.CacheReadTokens,
 		UsageKnown:              usageKnown,
+		BillingRateID:           result.rateID,
+		BillingDecision:         result.decision,
 		InputCostUSD:            cost.InputCost,
 		OutputCostUSD:           cost.OutputCost,
 		CacheCreationCostUSD:    cost.CacheCreationCost,

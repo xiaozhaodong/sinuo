@@ -54,8 +54,12 @@ const AccountRow = ({
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) ? parsed.toFixed(1) : '1.0';
   };
+  const totalMultiplierRaw = account.cost_multiplier ?? account.costMultiplier;
+  const isSplitMode = isAPIKeyAccount && totalMultiplierRaw != null && String(totalMultiplierRaw).trim() !== '' && Number(totalMultiplierRaw) === 0;
   const multiplierSummary = isAPIKeyAccount
-    ? `倍率 总×${formatMultiplier(account.cost_multiplier ?? account.costMultiplier)} / 入×${formatMultiplier(account.input_cost_multiplier ?? account.inputCostMultiplier)} / 出×${formatMultiplier(account.output_cost_multiplier ?? account.outputCostMultiplier)}`
+    ? (isSplitMode
+      ? `倍率 分项 入×${formatMultiplier(account.input_cost_multiplier ?? account.inputCostMultiplier)} / 出×${formatMultiplier(account.output_cost_multiplier ?? account.outputCostMultiplier)}`
+      : `倍率 总×${formatMultiplier(totalMultiplierRaw)} / 入×${formatMultiplier(account.input_cost_multiplier ?? account.inputCostMultiplier)} / 出×${formatMultiplier(account.output_cost_multiplier ?? account.outputCostMultiplier)}`)
     : '倍率固定 ×1.0';
   const planTypeLabel = toPlanTypeLabel(planType);
   const priority = normalizePriorityValue(account.priority ?? account.Priority);

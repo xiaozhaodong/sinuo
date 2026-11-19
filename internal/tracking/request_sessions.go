@@ -81,15 +81,18 @@ func (ut *UsageTracker) sessionSource(opts *QueryOptions) (string, []interface{}
 			"endpoint_name": req.EndpointName, "upstream_type": req.UpstreamType,
 			"upstream_name": req.UpstreamName, "model_name": req.ModelName,
 			"status": req.Status, "failure_reason": req.FailureReason,
+			// 仅缺少本次结算的旧热池记录，才可以借用同 ID 的归档金额。
+			"read_archived_cost": req.settled == nil && req.CostOverrideUSD == nil,
 		}
 		if req.UsageKnown {
 			row["input_tokens"], row["cache_creation_tokens"] = req.InputTokens, req.CacheCreationTokens
 			row["cache_creation_5m_tokens"], row["cache_creation_1h_tokens"] = req.CacheCreation5mTokens, req.CacheCreation1hTokens
 			row["cache_read_tokens"] = req.CacheReadTokens
 		}
-		// CostKnown 在热池也可能只代表“具备用量、可计算”，不能据此重算历史价。
-		// 显式覆盖已是请求记录的一部分；其余成本从数据库读取，未结算则保留 NULL。
-		if req.CostKnown && req.CostOverrideUSD != nil {
+		// 归档前直接使用同一份已结算金额。
+		if req.settled != nil && req.settled.known {
+			row["total_cost_usd"] = req.settled.cost.TotalCost
+		} else if req.CostKnown && req.CostOverrideUSD != nil {
 			row["total_cost_usd"] = *req.CostOverrideUSD
 		}
 		hot = append(hot, row)
@@ -102,9 +105,10 @@ func (ut *UsageTracker) sessionSource(opts *QueryOptions) (string, []interface{}
 	for i, column := range columns {
 		extracts[i] = "json_extract(value, '$." + column + "') AS " + column
 	}
-	query := `WITH hot_raw AS (SELECT ` + strings.Join(extracts, ", ") + ` FROM json_each(?)),
+	query := `WITH hot_raw AS (SELECT ` + strings.Join(extracts, ", ") + `, json_extract(value, '$.read_archived_cost') AS read_archived_cost FROM json_each(?)),
 		hot AS (SELECT ` + strings.Join(columns[:len(columns)-1], ", ") + `,
-		COALESCE(total_cost_usd, (SELECT total_cost_usd FROM request_logs WHERE request_id = hot_raw.request_id)) AS total_cost_usd FROM hot_raw),
+		CASE WHEN read_archived_cost THEN (SELECT total_cost_usd FROM request_logs WHERE request_id = hot_raw.request_id)
+		ELSE total_cost_usd END AS total_cost_usd FROM hot_raw),
 		session_records AS (
 		SELECT ` + strings.Join(columns, ", ") + `, 0 AS hot_order FROM request_logs
 		WHERE request_id NOT IN (SELECT request_id FROM hot)

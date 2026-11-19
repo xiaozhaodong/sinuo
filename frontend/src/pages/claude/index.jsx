@@ -5,6 +5,7 @@
 // ============================================
 
 import { useState } from 'react';
+import SubscriptionBillingSection from '@components/billing/SubscriptionBillingSection.jsx';
 import ClaudeCodeEntryCard from '@components/claude-code-entry/ClaudeCodeEntryCard.jsx';
 import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
@@ -85,6 +86,7 @@ const ClaudePage = ({ activeTab = 'endpoints', onTabChange }) => {
       >
         <div className="mx-auto max-w-[640px]">
           <ClaudeCodeEntryCard />
+          <SubscriptionBillingSection name="claude-subscription" label="Claude 订阅直通" />
         </div>
       </section>
 

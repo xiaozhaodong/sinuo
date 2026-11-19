@@ -4,6 +4,9 @@
 // ============================================
 // 父组件用 key 在切换模型 / 保存后重挂载本组件，表单初值直接取自 pricing。
 
+import RateSheetDialog from '@components/billing/RateSheetDialog.jsx';
+import { RATE_SOURCE_LABELS, priceColumns } from '@components/billing/billingForms.js';
+import { getRateEditor } from '@components/billing/pricingApi.js';
 import { useEffect, useState } from 'react';
 import { AlertCircle, Sparkles, Star, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
@@ -28,12 +31,24 @@ import {
   validatePricingForm
 } from '../utils/pricingForm.js';
 
-const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelete, onDirtyChange }) => {
+const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelete, onDirtyChange, onPublished }) => {
   const { formatTimestamp } = useTimezone();
   const [base] = useState(() => toPricingForm(isNew ? null : pricing));
   const [form, setForm] = useState(base);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
+  const [rateInfo, setRateInfo] = useState(null);
+  const [rateError, setRateError] = useState('');
+  const [rateOpen, setRateOpen] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const model = pricing?.modelName;
+  useEffect(() => {
+    if (!model) return;
+    let active = true;
+    getRateEditor(model).then(info => { if (active) setRateInfo(info); })
+      .catch(err => { if (active) setRateError(resolveErrorMessage(err, '读取价表失败')); });
+    return () => { active = false; };
+  }, [model, retry]);
   const dirty = isPricingFormDirty(form, base);
 
   useEffect(() => {
@@ -52,12 +67,26 @@ const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelet
     if (Object.keys(nextErrors).length > 0) return;
     setSubmitError(null);
     try {
-      await onSave(toPricingPayload(form));
+      await onSave(toPricingPayload(form, isNew ? null : base));
     } catch (error) {
       setSubmitError(resolveErrorMessage(error, '保存失败'));
     }
   };
 
+  // 数字表单不能表达空价；包含未知缓存价的历史模型也通过价表编辑。
+  const rateRows = rateInfo?.sheet?.rows || [];
+  const basePeriod = rateInfo?.sheet?.periods?.[0]?.name || '';
+  const baseRow = rateRows.find(row => (row.period || '') === basePeriod && !row.tier && !row.fast);
+  const needsSheetEditor = rateInfo?.structured ||
+    (baseRow && [baseRow.cache_5m, baseRow.cache_1h, baseRow.cache_read].some(price => price == null));
+  const rateState = isNew ? 'new'
+    : rateError ? 'error'
+    : !rateInfo ? 'loading'
+    : needsSheetEditor ? 'sheet' : 'legacy';
+  const showEditableFields = rateState === 'new' || rateState === 'legacy';
+  const priceTitle = rateState === 'sheet' && rateRows.length > 1
+    ? '基础价 · USD / 1M tokens'
+    : '价格 · USD / 1M tokens';
   const priceError = PRICE_FIELDS.some(({ key }) => errors[key]);
 
   return (
@@ -106,31 +135,66 @@ const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelet
           </InspectorSection>
 
           <InspectorSection
-            title="价格 · USD / 1M tokens"
-            action={(
+            title={priceTitle}
+            action={showEditableFields && (
               <button type="button" onClick={() => setForm(suggestCachePrices)} className="inline-flex items-center gap-1 text-[11.5px] text-accent hover:text-accent-fg" title="缓存写 5m = 输入 × 1.25，1h = 输入 × 2，读取 = 输入 × 0.1">
                 <Sparkles size={12} />按输入价推算缓存价
               </button>
             )}
           >
-            <PropertyList>
-              {PRICE_FIELDS.map(({ key, label, hint }) => (
-                <Property key={key} label={label} truncate={false}>
-                  <span className="relative inline-flex w-[132px] items-center">
-                    <span className="pointer-events-none absolute left-2 text-xs text-fg-subtle">$</span>
-                    <input
-                      className="desk-field w-full pl-[18px] text-right tabular-nums"
-                      inputMode="decimal"
-                      value={form[key]}
-                      onChange={(event) => update(key, event.target.value)}
-                      aria-invalid={Boolean(errors[key])}
-                      aria-label={`${label}价格`}
-                      title={errors[key] || hint}
-                    />
-                  </span>
-                </Property>
-              ))}
-            </PropertyList>
+            {rateState === 'loading' && <p className="text-xs text-fg-muted">正在读取价表…</p>}
+            {rateState === 'error' && (
+              <div role="alert" className="flex items-center justify-between gap-2 text-xs text-danger">
+                <span className="min-w-0">{rateError}</span>
+                <Button type="button" size="sm" variant="secondary" onClick={() => { setRateError(''); setRetry(n => n + 1); }}>重试</Button>
+              </div>
+            )}
+            {rateState === 'sheet' && (
+              <PropertyList>
+                {priceColumns.map(([key, label]) => (
+                  <Property key={key} label={label}>
+                    <span className="tabular-nums">{baseRow?.[key] == null ? '未配置' : `$${baseRow[key]}`}</span>
+                  </Property>
+                ))}
+              </PropertyList>
+            )}
+            {showEditableFields && (
+              <PropertyList>
+                {PRICE_FIELDS.map(({ key, label, hint }) => (
+                  <Property key={key} label={label} truncate={false}>
+                    <span className="relative inline-flex w-[132px] items-center">
+                      <span className="pointer-events-none absolute left-2 text-xs text-fg-subtle">$</span>
+                      <input
+                        className="desk-field w-full pl-[18px] text-right tabular-nums"
+                        inputMode="decimal"
+                        value={form[key]}
+                        onChange={(event) => update(key, event.target.value)}
+                        aria-invalid={Boolean(errors[key])}
+                        aria-label={`${label}价格`}
+                        title={errors[key] || hint}
+                      />
+                    </span>
+                  </Property>
+                ))}
+              </PropertyList>
+            )}
+            {rateInfo && !rateError && !isNew && (
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="min-w-0 text-xs text-fg-muted">
+                  版本 #{rateInfo.version_id} · {RATE_SOURCE_LABELS[rateInfo.source] || rateInfo.source} · {rateInfo.sheet.rows.length} 条费率
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={dirty || saving}
+                  title={dirty || saving ? '保存或还原当前修改后可编辑价表' : undefined}
+                  onClick={() => setRateOpen(true)}
+                >
+                  编辑价表
+                </Button>
+              </div>
+            )}
             {priceError && <p className="mt-2 pl-[94px] text-[11.5px] text-danger">价格须为不小于 0 的数字</p>}
           </InspectorSection>
 
@@ -143,9 +207,9 @@ const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelet
                 disabled={!isNew && pricing.isDefault}
                 onChange={(event) => update('isDefault', event.target.checked)}
               />
-              未知模型使用此定价
+              设为默认定价
             </label>
-            {!isNew && pricing.isDefault && <p className="mt-1.5 pl-6 text-[11.5px] text-fg-subtle">当前默认定价；把其他模型设为默认后这里会自动取消</p>}
+            <p className="mt-1.5 pl-6 text-[11.5px] text-fg-subtle">未单独定价的模型按默认定价的基础单价估算费用。</p>
             {!isNew && <p className="mt-2 text-[11.5px] text-fg-subtle">更新于 {pricing.updatedAt ? formatTimestamp(pricing.updatedAt) : '—'}</p>}
           </InspectorSection>
         </InspectorBody>
@@ -166,6 +230,19 @@ const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelet
           <Button type="submit" loading={saving} disabled={!isNew && !dirty}>{isNew ? '创建' : '保存'}</Button>
         </InspectorFooter>
       </form>
+      {rateOpen && (
+        <RateSheetDialog
+          model={model}
+          info={rateInfo}
+          onClose={() => setRateOpen(false)}
+          onPublished={async () => {
+            setRateOpen(false);
+            setRateError('');
+            setRetry((n) => n + 1);
+            await onPublished();
+          }}
+        />
+      )}
     </Inspector>
   );
 };

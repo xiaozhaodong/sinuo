@@ -40,6 +40,14 @@ test('新建表单沿用旧默认价，模型名称必填', () => {
   assert.deepEqual(validatePricingForm({ ...form, modelName: 'x' }, { isNew: true }), {});
 });
 
+test('编辑元信息不发布表单投影价格，显式改为零价则发布', () => {
+  const base = toPricingForm(opus);
+  assert.equal(toPricingPayload({ ...base, description: '新说明' }, base).metadataOnly, true);
+  const changed = toPricingPayload({ ...base, cacheReadPrice: '0' }, base);
+  assert.equal(changed.metadataOnly, undefined);
+  assert.equal(changed.cacheReadPrice, 0);
+});
+
 test('价格为空、非数字或负数都判为无效；输入中间态 "0." 合法', () => {
   const form = toPricingForm(opus);
   const errors = validatePricingForm({ ...form, inputPrice: '', outputPrice: 'abc', cacheReadPrice: '-1' }, { isNew: false });

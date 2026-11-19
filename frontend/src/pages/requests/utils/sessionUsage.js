@@ -3,7 +3,14 @@ export const isKnown = (value) => typeof value === 'number' && Number.isFinite(v
 export const isInputSpike = (point) => isKnown(point?.full_input) && isKnown(point?.previous)
   && point.previous > 0 && point.full_input >= point.previous * 2 && point.full_input - point.previous >= 10000;
 export const formatSessionNumber = (value) => isKnown(value) ? value.toLocaleString() : '—';
-export const formatSessionCost = (value) => isKnown(value) ? `$${value.toFixed(4)}` : '—';
+// 固定四位小数，不足 0.00005 的非零金额与请求列表/详情一致写成「<$0.0001」
+const MIN_DISPLAY_COST = 0.00005;
+
+export const formatSessionCost = value => {
+  if (!isKnown(value)) return '—';
+  if (value > 0 && value < MIN_DISPLAY_COST) return '<$0.0001';
+  return `$${value.toFixed(4)}`;
+};
 export const formatSessionRatio = (value) => isKnown(value) ? `${(value * 100).toFixed(1)}%` : '—';
 
 // 分通道淘汰旧响应：排行、走势和定位不能互相抢占，也不能在卸载后回写。

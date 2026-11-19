@@ -16,6 +16,8 @@ import (
 // Detail 复用列表行映射；此结构补足完整阶段字段、调度、隐私摘要与路径完整性。
 type RequestLifecycleData struct {
 	StreamPhases
+	OfficialRecalculation   *OfficialRecalculationAvailability
+	BillingMultipliers      *AppliedBillingMultipliers
 	Detail                  RequestDetail // 弹窗权威行数据（status/timing/tokens/route/failure 等）
 	UpstreamWriteMs         *int64
 	UpstreamFirstDispatchMs *int64
@@ -67,8 +69,16 @@ func (ut *UsageTracker) GetRequestLifecycleData(ctx context.Context, requestID s
 
 func (ut *UsageTracker) hotRequestLifecycleData(snapshot *ActiveRequest) *RequestLifecycleData {
 	flow, integrity := ut.lifecycleFlow(snapshot.RequestID, snapshot.RequestFlowJSON)
+	facts := snapshot.hotOfficialBillingFacts()
+	var multiplier *EndpointMultiplier
+	if facts.settled && snapshot.settled != nil && snapshot.billing.versions != nil && snapshot.CostOverrideUSD == nil {
+		value := snapshot.billing.multiplier(snapshot)
+		multiplier = &value
+	}
 	return &RequestLifecycleData{
 		StreamPhases:            snapshot.StreamPhases.Clone(),
+		OfficialRecalculation:   facts.availability(),
+		BillingMultipliers:      appliedBillingMultipliers(multiplier, facts.usage, facts.path, facts.decision),
 		Detail:                  ut.ActiveRequestToDetail(snapshot),
 		UpstreamWriteMs:         snapshot.UpstreamWriteMs,
 		UpstreamFirstDispatchMs: snapshot.UpstreamFirstDispatchMs,
@@ -86,14 +96,18 @@ func (ut *UsageTracker) hotRequestLifecycleData(snapshot *ActiveRequest) *Reques
 func (ut *UsageTracker) readRequestLifecycleData(ctx context.Context, requestID string) (*RequestLifecycleData, error) {
 	row := ut.readDB.QueryRowContext(ctx, "SELECT "+requestDetailsColumnsBase+`,
     upstream_dispatch_ms, upstream_conn_ms, first_reasoning_ms, reasoning_hidden, upstream_request_id,
-    COALESCE(schedule_snapshot_json, ''), COALESCE(request_flow_json, ''), COALESCE(request_revision, 0)
-    FROM request_logs WHERE request_id = ?`, requestID)
+    COALESCE(schedule_snapshot_json, ''), COALESCE(request_flow_json, ''), COALESCE(request_revision, 0), `+archivedRateColumns+`
+    FROM request_logs q`+archivedRateJoin+` WHERE q.request_id = ?`, requestID)
 
 	var flowJSON string
+	var billing archivedBillingFacts
 	data := &RequestLifecycleData{Source: "database"}
-	detail, err := ut.scanRequestDetailRow(row, &data.PrivacyScanJSON,
+	dest := []any{
 		&data.UpstreamDispatchMs, &data.UpstreamConnMs, &data.FirstReasoningMs, &data.ReasoningHidden,
-		&data.UpstreamRequestID, &data.ScheduleSnapshotJSON, &flowJSON, &data.RequestRevision)
+		&data.UpstreamRequestID, &data.ScheduleSnapshotJSON, &flowJSON, &data.RequestRevision,
+	}
+	dest = append(dest, billing.rate.dest()...)
+	detail, err := ut.scanRequestDetailRow(row, &data.PrivacyScanJSON, &billing, dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -101,6 +115,14 @@ func (ut *UsageTracker) readRequestLifecycleData(ctx context.Context, requestID 
 		return nil, fmt.Errorf("read request lifecycle: %w", err)
 	}
 	data.Detail = detail
+	usage := TokenUsage{CacheWriteDurations: detail.CacheWriteDurations, InputTokens: detail.InputTokens,
+		OutputTokens: detail.OutputTokens, CacheCreationTokens: detail.CacheCreationTokens, CacheReadTokens: detail.CacheReadTokens,
+		CacheCreation5mTokens: detail.CacheCreation5mTokens, CacheCreation1hTokens: detail.CacheCreation1hTokens}
+	facts := billing.officialFacts(detail.Status, detail.EndTime != nil, detail.Path, detail.BillingRateID, &usage)
+	data.OfficialRecalculation = facts.availability()
+	if facts.settled {
+		data.BillingMultipliers = appliedBillingMultipliers(billing.Multiplier, facts.usage, facts.path, facts.decision)
+	}
 	data.FirstContentMs, data.FirstTextMs = detail.FirstContentMs, detail.FirstTextMs
 	data.StreamFlowMs, data.StopReason = detail.StreamFlowMs, detail.StopReason
 	data.UpstreamWriteMs, data.UpstreamFirstDispatchMs = detail.UpstreamWriteMs, detail.UpstreamFirstDispatchMs

@@ -3,6 +3,7 @@ package proxy
 import (
 	"fmt"
 	"log/slog"
+	"sinuo/internal/store"
 	"time"
 
 	"sinuo/internal/endpoint"
@@ -220,6 +221,32 @@ func (rlm *RequestLifecycleManager) RecordUpstreamGetConn(attempt handlers.Upstr
 
 // RecordUpstreamWrite 与最终尝试计时同笔写入首次联系时间与重试数，首响后冻结。
 func (rlm *RequestLifecycleManager) RecordUpstreamWrite(timing handlers.UpstreamWriteTiming) {
+	rlm.recordAttemptWrite(timing, rlm.billingChannel(), 0)
+}
+
+type attemptTrace struct {
+	*RequestLifecycleManager
+	channel  store.BillingChannel
+	sequence uint64
+}
+
+func (rlm *RequestLifecycleManager) billingChannel() store.BillingChannel {
+	rlm.stateMu.RLock()
+	defer rlm.stateMu.RUnlock()
+	return store.BillingChannel{Type: rlm.upstreamType, ID: rlm.upstreamID, Name: rlm.upstreamName, SubscriptionAccount: rlm.subscriptionAccount}
+}
+func (rlm *RequestLifecycleManager) bindAttemptTrace() *attemptTrace {
+	channel := rlm.billingChannel()
+	rlm.timingMu.Lock()
+	defer rlm.timingMu.Unlock()
+	rlm.attemptSequence++
+	return &attemptTrace{rlm, channel, rlm.attemptSequence}
+}
+func (a *attemptTrace) RecordUpstreamWrite(timing handlers.UpstreamWriteTiming) {
+	a.recordAttemptWrite(timing, a.channel, a.sequence)
+}
+
+func (rlm *RequestLifecycleManager) recordAttemptWrite(timing handlers.UpstreamWriteTiming, channel store.BillingChannel, seq uint64) {
 	if timing.WroteAt.IsZero() {
 		return
 	}
@@ -228,12 +255,18 @@ func (rlm *RequestLifecycleManager) RecordUpstreamWrite(timing handlers.Upstream
 		rlm.timingMu.Unlock()
 		return
 	}
+	if seq != 0 && seq < rlm.writtenSequence {
+		rlm.timingMu.Unlock()
+		return
+	}
+	rlm.writtenSequence = seq
 	rlm.firstTokenStartTime = timing.WroteAt
 	if rlm.usageTracker == nil || rlm.requestID == "" {
 		rlm.timingMu.Unlock()
 		return
 	}
 	opts := rlm.contactUpdate(rlm.startTime)
+	opts.BillingChannel = channel
 	opts.FirstTokenStartAt = &timing.WroteAt
 	opts.UpstreamWriteMs = upstreamOffset(rlm.startTime, timing.WroteAt)
 	opts.UpstreamConnMs = upstreamOffset(rlm.startTime, timing.ConnReadyAt)

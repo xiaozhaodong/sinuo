@@ -918,13 +918,6 @@ func normalizeAccountRecord(record *UpstreamAccountRecord) {
 	}
 }
 
-func normalizeMultiplierValue(value float64) float64 {
-	if value <= 0 {
-		return 1.0
-	}
-	return value
-}
-
 func applyAccountCostMultiplierPolicy(record *UpstreamAccountRecord) {
 	if record == nil {
 		return
@@ -940,12 +933,23 @@ func applyAccountCostMultiplierPolicy(record *UpstreamAccountRecord) {
 		return
 	}
 
-	record.CostMultiplier = normalizeMultiplierValue(record.CostMultiplier)
-	record.InputCostMultiplier = normalizeMultiplierValue(record.InputCostMultiplier)
-	record.OutputCostMultiplier = normalizeMultiplierValue(record.OutputCostMultiplier)
-	record.CacheCreationCostMultiplier = normalizeMultiplierValue(record.CacheCreationCostMultiplier)
-	record.CacheCreationCostMultiplier1h = normalizeMultiplierValue(record.CacheCreationCostMultiplier1h)
-	record.CacheReadCostMultiplier = normalizeMultiplierValue(record.CacheReadCostMultiplier)
+	splitConfigured := false
+	for _, v := range []*float64{
+		&record.InputCostMultiplier,
+		&record.OutputCostMultiplier,
+		&record.CacheCreationCostMultiplier,
+		&record.CacheCreationCostMultiplier1h,
+		&record.CacheReadCostMultiplier,
+	} {
+		if *v > 0 {
+			splitConfigured = true
+		} else {
+			*v = 1.0
+		}
+	}
+	if record.CostMultiplier < 0 || (record.CostMultiplier == 0 && !splitConfigured) {
+		record.CostMultiplier = 1.0
+	}
 }
 
 func normalizeBaseURL(baseURL string) string {
@@ -1036,6 +1040,9 @@ func scanAccountRow(scanner rowScanner) (*UpstreamAccountRecord, error) {
 		return nil, fmt.Errorf("parse account cooldown_until: %w", err)
 	}
 	rec.CostMultiplier = parseMultiplierFloat(costMultiplier)
+	if costMultiplier.Valid && costMultiplier.Float64 == 0 && strings.TrimSpace(strings.ToLower(rec.ProviderType)) == "api_key" {
+		rec.CostMultiplier = 0
+	}
 	rec.InputCostMultiplier = parseMultiplierFloat(inputCostMultiplier)
 	rec.OutputCostMultiplier = parseMultiplierFloat(outputCostMultiplier)
 	rec.CacheCreationCostMultiplier = parseMultiplierFloat(cacheCreationMultiplier)

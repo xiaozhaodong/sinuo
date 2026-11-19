@@ -138,6 +138,13 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 		}
 
 		// 构建写操作请求
+		baseRate, err := ut.readEventBaseRate(event)
+		if err != nil {
+			slog.Error("读取请求计费依据失败", "request_id", event.RequestID, "error", err)
+			ut.recordIntegrityIssue(event.RequestID, "build_write_query_failed")
+			continue
+		}
+		event.baseRate = baseRate
 		query, args, err := ut.buildWriteQuery(event)
 		if err != nil {
 			slog.Error("Failed to build write query",
@@ -170,6 +177,9 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 					if _, execErr := tx.ExecContext(ctx, query, args...); execErr != nil {
 						return execErr
 					}
+				}
+				if err := ut.writeEventBilling(ctx, tx, event); err != nil {
+					return err
 				}
 				if len(flowEvents) > 0 || gapCode != "" {
 					var flowErr error
@@ -240,8 +250,10 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		pricing := ut.GetPricing(data.ModelName)
-		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
+		costBreakdown, err := ut.legacyEventCost(event, data.ModelName, tokens, data.Path, false)
+		if err != nil {
+			return "", nil, err
+		}
 
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			end_time = ?,
@@ -251,7 +263,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			output_tokens = ?,
 			cache_creation_tokens = ?,
 			cache_creation_5m_tokens = ?,
-			cache_creation_1h_tokens = ?,
+			cache_creation_1h_tokens = ?, cache_creation_30m_tokens = ?, cache_creation_12h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
@@ -273,7 +285,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.OutputTokens,
 			data.CacheCreationTokens,
 			data.CacheCreation5mTokens,
-			data.CacheCreation1hTokens,
+			data.CacheCreation1hTokens, data.CacheCreation30mTokens, data.CacheCreation12hTokens,
 			data.CacheReadTokens,
 			costBreakdown.InputCost,
 			costBreakdown.OutputCost,
@@ -303,8 +315,10 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		pricing := ut.GetPricing(data.ModelName)
-		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
+		costBreakdown, err := ut.legacyEventCost(event, data.ModelName, tokens, data.Path, false)
+		if err != nil {
+			return "", nil, err
+		}
 
 		// 只更新Token相关字段和成本，不更新状态
 		query := fmt.Sprintf(`UPDATE request_logs SET
@@ -313,7 +327,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			output_tokens = ?,
 			cache_creation_tokens = ?,
 			cache_creation_5m_tokens = ?,
-			cache_creation_1h_tokens = ?,
+			cache_creation_1h_tokens = ?, cache_creation_30m_tokens = ?, cache_creation_12h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
@@ -333,7 +347,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.OutputTokens,
 			data.CacheCreationTokens,
 			data.CacheCreation5mTokens,
-			data.CacheCreation1hTokens,
+			data.CacheCreation1hTokens, data.CacheCreation30mTokens, data.CacheCreation12hTokens,
 			data.CacheReadTokens,
 			costBreakdown.InputCost,
 			costBreakdown.OutputCost,
@@ -364,8 +378,10 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		pricing := ut.GetPricing(data.ModelName)
-		costBreakdown := CalculateCostV2(tokens, &pricing, nil, data.Path)
+		costBreakdown, err := ut.legacyEventCost(event, data.ModelName, tokens, data.Path, false)
+		if err != nil {
+			return "", nil, err
+		}
 
 		// 🔧 专用于恢复场景：更新任何状态的请求的Token字段，因为这是恢复不完整的数据
 		query := fmt.Sprintf(`UPDATE request_logs SET
@@ -374,7 +390,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			output_tokens = ?,
 			cache_creation_tokens = ?,
 			cache_creation_5m_tokens = ?,
-			cache_creation_1h_tokens = ?,
+			cache_creation_1h_tokens = ?, cache_creation_30m_tokens = ?, cache_creation_12h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
@@ -393,7 +409,7 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.OutputTokens,
 			data.CacheCreationTokens,
 			data.CacheCreation5mTokens,
-			data.CacheCreation1hTokens,
+			data.CacheCreation1hTokens, data.CacheCreation30mTokens, data.CacheCreation12hTokens,
 			data.CacheReadTokens,
 			costBreakdown.InputCost,
 			costBreakdown.OutputCost,
@@ -422,10 +438,13 @@ func (ut *UsageTracker) buildSubscriptionSettlementQuery(event RequestEvent) (st
 
 	var input, output, creation, creation5m, creation1h, read interface{}
 	var inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost interface{}
-	if data.TokenUsage != nil {
-		usage := data.TokenUsage
-		pricing := ut.GetPricing(data.ModelName)
-		cost := CalculateCostV2(usage, &pricing, nil, data.Path)
+	cost, err := ut.legacyEventCost(event, data.ModelName, data.TokenUsage, data.Path, false)
+	if err != nil {
+		return "", nil, err
+	}
+	var writes CacheWriteDurations
+	if usage := data.TokenUsage; usage != nil {
+		writes = usage.CacheWriteDurations
 		input, output = usage.InputTokens, usage.OutputTokens
 		creation, creation5m, creation1h = usage.CacheCreationTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens
 		read = usage.CacheReadTokens
@@ -439,7 +458,7 @@ func (ut *UsageTracker) buildSubscriptionSettlementQuery(event RequestEvent) (st
 		model_name = COALESCE(NULLIF(NULLIF(?, ''), 'default'), model_name),
 		failure_reason = ?, last_failure_reason = NULL, http_status_code = ?,
 		input_tokens = ?, output_tokens = ?, cache_creation_tokens = ?,
-		cache_creation_5m_tokens = ?, cache_creation_1h_tokens = ?, cache_read_tokens = ?,
+		cache_creation_5m_tokens = ?, cache_creation_1h_tokens = ?, cache_creation_30m_tokens = ?, cache_creation_12h_tokens = ?, cache_read_tokens = ?,
 		input_cost_usd = ?, output_cost_usd = ?, cache_creation_cost_usd = ?,
 		cache_creation_5m_cost_usd = ?, cache_creation_1h_cost_usd = ?, cache_read_cost_usd = ?, total_cost_usd = ?,
 		%s,
@@ -449,7 +468,7 @@ func (ut *UsageTracker) buildSubscriptionSettlementQuery(event RequestEvent) (st
 	args := []interface{}{
 		timezonepolicy.FormatStorage(event.Timestamp), data.Duration.Milliseconds(), data.Status,
 		data.ModelName, nullStringValue(data.FailureReason), nullIntValue(data.HTTPStatus),
-		input, output, creation, creation5m, creation1h, read,
+		input, output, creation, creation5m, creation1h, writes.CacheCreation30mTokens, writes.CacheCreation12hTokens, read,
 		inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
 	}
 	args = append(args, responseDiagnosticsArgs(data.Diagnostics)...)
@@ -529,6 +548,9 @@ func (ut *UsageTracker) buildStartQuery(event RequestEvent) (string, []interface
 		data.SessionID,
 	}
 	usageKnown := data.UsageKnown || data.RequestSource == "" || requestSource == RequestSourceLegacyProxy
+	if event.billing != nil {
+		usageKnown = false
+	}
 	for i := 0; i < 13; i++ {
 		if usageKnown {
 			args = append(args, 0)
@@ -794,12 +816,10 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 
 	hasTokenUsage := data.HasTokenUsage || data.InputTokens != 0 || data.OutputTokens != 0 ||
 		data.CacheCreationTokens != 0 || data.CacheCreation5mTokens != 0 || data.CacheCreation1hTokens != 0 || data.CacheReadTokens != 0
-	pricing := ut.GetPricing(data.ModelName)
-	multiplier, err := ut.requestAccountMultiplier(event.RequestID)
+	costBreakdown, err := ut.legacyEventCost(event, data.ModelName, tokens, data.Path, true)
 	if err != nil {
 		return "", nil, err
 	}
-	costBreakdown := CalculateCostV2(tokens, &pricing, multiplier, data.Path)
 	if data.CostOverrideUSD != nil {
 		costBreakdown = CostBreakdown{TotalCost: *data.CostOverrideUSD}
 	}
@@ -826,6 +846,8 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		cache_creation_tokens = COALESCE(?, cache_creation_tokens),
 		cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
 		cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+		cache_creation_30m_tokens = CASE WHEN ? THEN ? ELSE cache_creation_30m_tokens END,
+		cache_creation_12h_tokens = CASE WHEN ? THEN ? ELSE cache_creation_12h_tokens END,
 		cache_read_tokens = COALESCE(?, cache_read_tokens),
 		input_cost_usd = COALESCE(?, input_cost_usd),
 		output_cost_usd = COALESCE(?, output_cost_usd),
@@ -851,6 +873,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		creation,
 		creation5m,
 		creation1h,
+		hasTokenUsage, data.CacheCreation30mTokens, hasTokenUsage, data.CacheCreation12hTokens,
 		read,
 		inputCost,
 		outputCost,
@@ -889,6 +912,7 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 	cacheCreation1hTokens, _ := data["cache_creation_1h_tokens"].(int64) // 🔧 [修复] 2025-12-11
 	cacheReadTokens, _ := data["cache_read_tokens"].(int64)
 	hasTokenUsage, _ := data["has_token_usage"].(bool)
+	writes, _ := data["cache_write_durations"].(CacheWriteDurations)
 	diagnostics, _ := data["response_diagnostics"].(*ResponseDiagnostics) // v6.3
 	hasTokenUsage = hasTokenUsage || inputTokens != 0 || outputTokens != 0 || cacheCreationTokens != 0 || cacheCreation5mTokens != 0 || cacheCreation1hTokens != 0 || cacheReadTokens != 0
 	var input, output, creation, creation5m, creation1h, read interface{}
@@ -896,12 +920,10 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 	if hasTokenUsage {
 		usage := &TokenUsage{InputTokens: inputTokens, OutputTokens: outputTokens, CacheCreationTokens: cacheCreationTokens,
 			CacheCreation5mTokens: cacheCreation5mTokens, CacheCreation1hTokens: cacheCreation1hTokens, CacheReadTokens: cacheReadTokens}
-		pricing := ut.GetPricing(modelName)
-		multiplier, err := ut.requestAccountMultiplier(event.RequestID)
+		cost, err := ut.legacyEventCost(event, modelName, usage, ut.lookupRequestPath(event.RequestID), true)
 		if err != nil {
 			return "", nil, err
 		}
-		cost := CalculateCostV2(usage, &pricing, multiplier, ut.lookupRequestPath(event.RequestID))
 		input, output, creation, creation5m, creation1h, read = inputTokens, outputTokens, cacheCreationTokens, cacheCreation5mTokens, cacheCreation1hTokens, cacheReadTokens
 		inputCost, outputCost, creationCost = cost.InputCost, cost.OutputCost, cost.CacheCreationCost
 		creation5mCost, creation1hCost, readCost, totalCost = cost.CacheCreation5mCost, cost.CacheCreation1hCost, cost.CacheReadCost, cost.TotalCost
@@ -924,6 +946,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_tokens = COALESCE(?, cache_creation_tokens),
 			cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
 			cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+		cache_creation_30m_tokens = CASE WHEN ? THEN ? ELSE cache_creation_30m_tokens END,
+		cache_creation_12h_tokens = CASE WHEN ? THEN ? ELSE cache_creation_12h_tokens END,
 			cache_read_tokens = COALESCE(?, cache_read_tokens),
 			input_cost_usd = COALESCE(?, input_cost_usd), output_cost_usd = COALESCE(?, output_cost_usd),
 			cache_creation_cost_usd = COALESCE(?, cache_creation_cost_usd),
@@ -941,7 +965,7 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			reason,     // cancel_reason
 			httpStatus, // http_status_code
 			modelName,  // 🔧 [修复] 2025-12-11: model_name (空字符串和 'unknown' 都会被忽略)
-			input, output, creation, creation5m, creation1h, read,
+			input, output, creation, creation5m, creation1h, hasTokenUsage, writes.CacheCreation30mTokens, hasTokenUsage, writes.CacheCreation12hTokens, read,
 			inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
 		}
 	} else {
@@ -959,6 +983,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			cache_creation_tokens = COALESCE(?, cache_creation_tokens),
 			cache_creation_5m_tokens = COALESCE(?, cache_creation_5m_tokens),
 			cache_creation_1h_tokens = COALESCE(?, cache_creation_1h_tokens),
+		cache_creation_30m_tokens = CASE WHEN ? THEN ? ELSE cache_creation_30m_tokens END,
+		cache_creation_12h_tokens = CASE WHEN ? THEN ? ELSE cache_creation_12h_tokens END,
 			cache_read_tokens = COALESCE(?, cache_read_tokens),
 			input_cost_usd = COALESCE(?, input_cost_usd), output_cost_usd = COALESCE(?, output_cost_usd),
 			cache_creation_cost_usd = COALESCE(?, cache_creation_cost_usd),
@@ -977,7 +1003,7 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			errorDetail, // last_failure_reason
 			httpStatus,  // http_status_code
 			modelName,   // 🔧 [修复] 2025-12-11: model_name (空字符串和 'unknown' 都会被忽略)
-			input, output, creation, creation5m, creation1h, read,
+			input, output, creation, creation5m, creation1h, hasTokenUsage, writes.CacheCreation30mTokens, hasTokenUsage, writes.CacheCreation12hTokens, read,
 			inputCost, outputCost, creationCost, creation5mCost, creation1hCost, readCost, totalCost,
 		}
 	}
@@ -1237,7 +1263,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		output_tokens = ?,
 		cache_creation_tokens = ?,
 		cache_creation_5m_tokens = ?,
-		cache_creation_1h_tokens = ?,
+		cache_creation_1h_tokens = ?, cache_creation_30m_tokens = ?, cache_creation_12h_tokens = ?,
 		cache_read_tokens = ?,
 		input_cost_usd = ?,
 		output_cost_usd = ?,
@@ -1260,7 +1286,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		data.OutputTokens,
 		data.CacheCreationTokens,
 		data.CacheCreation5mTokens,
-		data.CacheCreation1hTokens,
+		data.CacheCreation1hTokens, data.CacheCreation30mTokens, data.CacheCreation12hTokens,
 		data.CacheReadTokens,
 		costBreakdown.InputCost,
 		costBreakdown.OutputCost,
@@ -1288,10 +1314,10 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 		// 记录不存在，创建完整记录
 		insertQuery := `INSERT INTO request_logs (
 			request_id, start_time, end_time, duration_ms, model_name,
-			input_tokens, output_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens,
+			input_tokens, output_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_creation_30m_tokens, cache_creation_12h_tokens, cache_read_tokens,
 			input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd, status, request_revision
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 1)`
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 1)`
 
 		// 使用已计算的 startTime 和 durationMs
 		_, err = tx.ExecContext(ctx, insertQuery,
@@ -1304,7 +1330,7 @@ func (ut *UsageTracker) completeRequest(ctx context.Context, tx *sql.Tx, event R
 			data.OutputTokens,
 			data.CacheCreationTokens,
 			data.CacheCreation5mTokens,
-			data.CacheCreation1hTokens,
+			data.CacheCreation1hTokens, data.CacheCreation30mTokens, data.CacheCreation12hTokens,
 			data.CacheReadTokens,
 			costBreakdown.InputCost,
 			costBreakdown.OutputCost,

@@ -59,11 +59,13 @@ export const isPricingFormDirty = (form, base) => (
   || form.isDefault !== base.isDefault
 );
 
-export const toPricingPayload = (form) => ({
+export const toPricingPayload = (form, original) => ({
   modelName: form.modelName.trim(),
   displayName: form.displayName.trim(),
   description: form.description.trim(),
   ...Object.fromEntries(PRICE_FIELDS.map(({ key }) => [key, Number(form[key])])),
+  ...(original && PRICE_FIELDS.every(({ key }) => Number(form[key]) === Number(original[key]))
+    ? { metadataOnly: true } : {}),
   isDefault: form.isDefault
 });
 

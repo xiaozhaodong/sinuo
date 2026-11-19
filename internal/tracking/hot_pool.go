@@ -11,6 +11,9 @@ import (
 // ActiveRequest 表示一个活跃的请求（完整状态）
 // 请求在内存中保持活跃状态，只有完成时才归档到数据库
 type ActiveRequest struct {
+	CacheWriteDurations
+	billing billingSnapshot
+	settled *baseSettlement
 	StreamPhases
 	FirstContentAt *time.Time `json:"first_content_at,omitempty"` // 只在热池供首个内容与生成位交接，不落库
 	SessionID      string     `json:"session_id,omitempty"`
@@ -269,6 +272,7 @@ func (hp *HotPool) Get(requestID string) (*ActiveRequest, bool) {
 // 不整体拷贝结构体，避免复制 sync.RWMutex（copylocks）与并发 Update 的数据竞争。
 func cloneActiveRequestSummary(req *ActiveRequest) *ActiveRequest {
 	clone := &ActiveRequest{
+		billing: req.billing, settled: req.settled,
 		RequestID:             req.RequestID,
 		SessionID:             req.SessionID,
 		StartTime:             req.StartTime,
@@ -301,6 +305,7 @@ func cloneActiveRequestSummary(req *ActiveRequest) *ActiveRequest {
 		CacheCreationTokens:   req.CacheCreationTokens,
 		CacheCreation5mTokens: req.CacheCreation5mTokens,
 		CacheCreation1hTokens: req.CacheCreation1hTokens,
+		CacheWriteDurations:   req.CacheWriteDurations.clone(),
 		CacheReadTokens:       req.CacheReadTokens,
 		UsageKnown:            req.UsageKnown,
 		CostKnown:             req.CostKnown,

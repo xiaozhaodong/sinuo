@@ -229,6 +229,10 @@ import * as $models from "./models.js";
  */
 
 /**
+ * @typedef {$models.ModelRateSheetEditor} ModelRateSheetEditor
+ */
+
+/**
  * ModelRouteBindingInfo 是一条「模型 → 端点集合」映射的前端视图。
  * 底层的上游组是该模型的专属实现细节，不作为独立概念暴露给 UI。
  * @typedef {$models.ModelRouteBindingInfo} ModelRouteBindingInfo

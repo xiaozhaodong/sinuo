@@ -107,7 +107,8 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.Endp
 		return err
 	}
 
-	// 更新数据库
+	// 使用数据库中已存在的身份，更新表单不负责传递主键。
+	record.ID = existing.ID
 	if err := s.store.Update(ctx, record); err != nil {
 		return fmt.Errorf("更新数据库失败: %w", err)
 	}
@@ -343,9 +344,10 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 	if record.Priority < 0 {
 		return fmt.Errorf("端点优先级不能小于 0")
 	}
-	if record.CostMultiplier <= 0 || record.InputCostMultiplier <= 0 || record.OutputCostMultiplier <= 0 ||
+	record.DefaultCostMultipliers()
+	if record.CostMultiplier < 0 || record.InputCostMultiplier <= 0 || record.OutputCostMultiplier <= 0 ||
 		record.CacheCreationCostMultiplier <= 0 || record.CacheCreationCostMultiplier1h <= 0 || record.CacheReadCostMultiplier <= 0 {
-		return fmt.Errorf("端点成本倍率必须大于 0")
+		return fmt.Errorf("端点总倍率不能小于 0，分项倍率必须大于 0")
 	}
 	for key := range record.Headers {
 		if strings.TrimSpace(key) == "" {
@@ -365,6 +367,7 @@ func (s *EndpointService) validateRecord(record *store.EndpointRecord) error {
 // recordToConfig 将数据库记录转换为配置对象
 func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.EndpointConfig {
 	cfg := config.EndpointConfig{
+		ID:                       record.ID,
 		Name:                     record.Name,
 		URL:                      record.URL,
 		Priority:                 record.Priority,

@@ -821,7 +821,7 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
       >
         {viewMode === 'sessions' && <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-inspector px-3 py-1 text-xs text-fg-muted">
           <span>{sessions.data?.total_requests ?? '—'} 条请求 · {sessions.data?.total ?? '—'} 个会话</span>
-          <span title="包括当前范围内未归组请求的已记录成本；不重新计价">已知估算成本 <b className="font-mono font-medium text-fg-body">{formatSessionCost(sessions.data?.known_cost_usd)}</b>（含未归组）</span>
+          <span title="包括当前范围内未归组请求的已记录成本；不重新计价">已知成本 <b className="font-mono font-medium text-fg-body">{formatSessionCost(sessions.data?.known_cost_usd)}</b>（含未归组）</span>
           {sessions.data?.missing_costs > 0 && <span>另有 {sessions.data.missing_costs} 条成本缺失</span>}
           <span className="flex-1" />
           <button disabled={!sessions.data?.ungrouped || sessions.locating} onClick={() => sessions.navigate(true)} className="text-accent disabled:text-fg-subtle">{sessions.data?.ungrouped ?? '—'} 条未归组 · 查看无 ID 请求</button>

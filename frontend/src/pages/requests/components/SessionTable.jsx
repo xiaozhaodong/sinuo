@@ -6,7 +6,7 @@ import { getRequestFamilyMeta } from '../utils/requestSource.js';
 
 const COLUMNS = [
   { key: 'count', label: '请求数', sortable: true },
-  { key: 'cost', label: '估算成本', sortable: true },
+  { key: 'cost', label: '成本', sortable: true },
   { key: 'missing_costs', label: '费用缺失' },
   { key: 'cache', label: '缓存读取占比', sortable: true },
   { key: 'missing_cache_usage', label: '用量缺失' },

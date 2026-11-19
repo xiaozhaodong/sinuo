@@ -5,10 +5,13 @@ import SoftFailurePolicyFields from '@components/ui/SoftFailurePolicyFields.jsx'
 // 2026-03-07
 // ============================================
 
+import ChannelBillingSection from '@components/billing/ChannelBillingSection.jsx';
+import { validateCostMultipliers } from '@components/billing/billingForms.js';
+import useCostMultiplierMode from '@components/billing/useCostMultiplierMode.js';
 import { useRef, useState } from 'react';
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button, CustomSelect } from '@components/ui';
-import Sheet from '@components/desktop/Sheet.jsx';
+import { ChannelFormSheet } from '@components/billing/ChannelRuleEditor.jsx';
 import Switch from '@components/desktop/Switch.jsx';
 import SegmentedControl from '@components/desktop/SegmentedControl.jsx';
 import { FormFieldRow, FormRow, FormSection } from '@components/desktop/FormSection.jsx';
@@ -23,7 +26,8 @@ import {
   DEFAULT_MODEL_REWRITE_TARGET,
   authMethodToProviderType,
   createDefaultModelRewriteRules,
-  isAPIKeyProviderType
+  isAPIKeyProviderType,
+  resolveAccountId
 } from '../utils.js';
 
 const AccountFormDialog = ({
@@ -49,6 +53,8 @@ const AccountFormDialog = ({
 }) => {
   const [showCredential, setShowCredential] = useState(true);
   const [credentialResetKey, setCredentialResetKey] = useState({ open: null, account: null });
+  const costMode = useCostMultiplierMode(accountForm.costMultiplier);
+  const [multiplierError, setMultiplierError] = useState({ error: '', invalidFields: [] });
   const nameInputRef = useRef(null);
   const handleRequestClose = () => {
     if (!accountSubmitting) onClose();
@@ -58,12 +64,15 @@ const AccountFormDialog = ({
   if (credentialResetKey.open !== open || credentialResetKey.account !== editingAccount) {
     setCredentialResetKey({ open, account: editingAccount });
     setShowCredential(!editingAccount);
+    costMode.reset(accountForm.costMultiplier);
+    setMultiplierError({ error: '', invalidFields: [] });
   }
 
 
   if (!open) return null;
 
   const isAPIKeyAccount = isAPIKeyProviderType(accountForm.provider_type || accountForm.auth_method);
+  const editingAccountId = editingAccount ? (resolveAccountId(editingAccount) || 0) : 0;
   const supportsRequestCompression = isAPIKeyAccount || accountForm.auth_method === 'chatgpt_refresh_token';
   const modelRewriteRules = (() => {
     if (Array.isArray(accountForm.modelRewriteRules) && accountForm.modelRewriteRules.length > 0) {
@@ -103,34 +112,41 @@ const AccountFormDialog = ({
     return maskSessionId(raw);
   })();
 
-  const renderMultiplierInput = (label, key, help = '') => (
-    <FormField label={label}>
-      <div className="space-y-1.5">
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          disabled={!isAPIKeyAccount}
-          value={accountForm[key]}
-          onChange={(event) => setAccountForm(prev => ({ ...prev, [key]: event.target.value }))}
-          className={`desk-field w-24 text-right ${
-            isAPIKeyAccount ? 'border-line' : 'border-line-soft bg-surface-sub text-fg-subtle'
-          }`}
-          placeholder="1.0"
-        />
-        {help ? <div className="text-[11px] text-fg-subtle">{help}</div> : null}
-      </div>
-    </FormField>
-  );
+  const changeCostMode = (next) => {
+    const costMultiplier = String(costMode.select(next, accountForm.costMultiplier));
+    setAccountForm(prev => ({ ...prev, costMultiplier }));
+    setMultiplierError({ error: '', invalidFields: [] });
+  };
+  const changeMultiplier = (key, value) => {
+    setAccountForm(prev => ({ ...prev, [key]: value }));
+    setMultiplierError({ error: '', invalidFields: [] });
+  };
+  // 账号表单留空由后端按 1 处理，统一模式放行留空但拦截非正数，分项模式同样拦截非空且不大于 0。
+  const handleSubmit = (event) => {
+    if (isAPIKeyAccount) {
+      const check = validateCostMultipliers(costMode.mode, accountForm, {
+        allowEmptyUnified: true,
+        channelType: 'account'
+      });
+      if (check.error) {
+        event.preventDefault();
+        setMultiplierError(check);
+        return;
+      }
+    }
+    onSubmit(event);
+  };
 
   return (
-    <Sheet open={open} title={editingAccount ? '编辑账号' : '新增账号'} label={editingAccount ? '编辑账号' : '新增账号'}
-      width={600} onSubmit={onSubmit} onClose={handleRequestClose} closeDisabled={accountSubmitting}
+    <ChannelFormSheet key={editingAccountId} backLabel="返回账号" open={open} title={editingAccount ? '编辑账号' : '新增账号'} label={editingAccount ? '编辑账号' : '新增账号'}
+      billingChannel={{ type: 'account', id: editingAccountId, name: editingAccount?.account_name || editingAccount?.accountName }}
+      width={600} onSubmit={handleSubmit} onClose={handleRequestClose} closeDisabled={accountSubmitting}
       initialFocusRef={nameInputRef}
       footer={<>
         <Button type="button" variant="ghost" onClick={handleRequestClose} disabled={accountSubmitting}>取消</Button>
         <Button type="submit" loading={accountSubmitting}>{editingAccount ? '保存修改' : '创建账号'}</Button>
       </>}>
+      {(billing) => <>
             <FormSection title="基本信息">
 
               <FormField label="账号名称" required>
@@ -155,6 +171,10 @@ const AccountFormDialog = ({
                   ariaLabel="授权方式"
                   onChange={(authMethod) => {
                     const switchingIntoChatGPT = accountForm.auth_method !== 'chatgpt_refresh_token' && authMethod === 'chatgpt_refresh_token';
+                    if (authMethod !== 'api_key') {
+                      costMode.reset('1.0');
+                      setMultiplierError({ error: '', invalidFields: [] });
+                    }
                     setAccountForm(prev => ({
                       ...prev,
                       auth_method: authMethod,
@@ -381,22 +401,20 @@ const AccountFormDialog = ({
               />
             )}
 
-            <FormSection title="成本倍率配置">
-              <div className="px-3.5 py-3 text-xs leading-5 text-fg-muted">
-                {isAPIKeyAccount
-                  ? '仅 API Key 账号支持自定义成本倍率，默认为 1.0。'
-                  : '当前账号类型固定使用默认倍率 1.0，不支持自定义。'}
-              </div>
-              <div className="divide-y divide-line-soft">
-                {renderMultiplierInput('总成本倍率', 'costMultiplier')}
-                {renderMultiplierInput('输入成本倍率', 'inputCostMultiplier')}
-                {renderMultiplierInput('输出成本倍率', 'outputCostMultiplier')}
-                {renderMultiplierInput('缓存读取成本倍率', 'cacheReadCostMultiplier')}
-                {renderMultiplierInput('5分钟缓存创建倍率', 'cacheCreationCostMultiplier', 'Claude / Codex 默认短缓存口径')}
-                {renderMultiplierInput('1小时缓存创建倍率', 'cacheCreationCostMultiplier1h')}
-              </div>
-            </FormSection>
-    </Sheet>
+            <ChannelBillingSection
+              {...billing}
+              disabled={accountSubmitting}
+              fixed={!isAPIKeyAccount}
+              step="0.01"
+              mode={costMode.mode}
+              onModeChange={changeCostMode}
+              values={accountForm}
+              onValueChange={changeMultiplier}
+              error={multiplierError.error}
+              invalidFields={multiplierError.invalidFields}
+            />
+      </>}
+    </ChannelFormSheet>
   );
 };
 export default AccountFormDialog;

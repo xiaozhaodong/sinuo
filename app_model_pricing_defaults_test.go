@@ -3,18 +3,26 @@ package main
 import (
 	"context"
 	"database/sql"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"sinuo/internal/service"
 	"sinuo/internal/store"
+	"sinuo/internal/tracking"
 
 	_ "modernc.org/sqlite"
 )
 
 func TestEnsureGPT56ModelPricing_InsertsOfficialPrices(t *testing.T) {
-	app := newModelPricingDefaultsTestApp(t)
+	app := newUsageStatsTestApp(t)
+	app.modelPricingStore = store.NewSQLiteModelPricingStore(app.usageTracker.GetWriteDB())
+	app.modelPricingService = service.NewModelPricingService(app.modelPricingStore)
 	ctx := context.Background()
 
 	inserted, err := app.ensureGPT56ModelPricing(ctx)
@@ -25,6 +33,7 @@ func TestEnsureGPT56ModelPricing_InsertsOfficialPrices(t *testing.T) {
 		t.Fatalf("expected 4 inserted prices, got %d", inserted)
 	}
 
+	require.NoError(t, app.usageTracker.LoadBaseRates(ctx, app.modelPricingStore))
 	tests := []struct {
 		model      string
 		input      float64
@@ -39,6 +48,15 @@ func TestEnsureGPT56ModelPricing_InsertsOfficialPrices(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
+			rate, err := app.modelPricingStore.CurrentBaseRate(ctx, tt.model)
+			require.NoError(t, err)
+			require.Equal(t, store.RateSourceOfficial, rate.Source)
+			tracker := app.usageTracker
+			tracker.RecordRequestStart(tt.model, "127.0.0.1", "billing-test", "POST", "/v1/responses", false)
+			tracker.RecordRequestSuccessWithDiagnostics(tt.model, tt.model, &tracking.TokenUsage{InputTokens: 100000}, time.Second, "", nil)
+			ref, err := tracker.RecalculateOfficialCost(ctx, tt.model)
+			require.NoError(t, err)
+			require.InDelta(t, tt.input/10, ref.TotalCost, 1e-12)
 			record, err := app.modelPricingService.GetPricing(ctx, tt.model)
 			if err != nil {
 				t.Fatalf("get pricing failed: %v", err)
@@ -81,6 +99,9 @@ func TestEnsureGPT56ModelPricing_PreservesExistingUserPrice(t *testing.T) {
 		t.Fatalf("expected only 3 missing prices to be inserted, got %d", inserted)
 	}
 
+	rate, err := app.modelPricingStore.CurrentBaseRate(ctx, "gpt-5.6-terra")
+	require.NoError(t, err)
+	require.Equal(t, store.RateSourceCustom, rate.Source)
 	record, err := app.modelPricingService.GetPricing(ctx, "gpt-5.6-terra")
 	if err != nil {
 		t.Fatalf("get custom pricing failed: %v", err)
@@ -120,4 +141,49 @@ func newModelPricingDefaultsTestApp(t *testing.T) *App {
 		modelPricingStore:   pricingStore,
 		modelPricingService: service.NewModelPricingService(pricingStore),
 	}
+}
+
+func TestEnsureGPT56ModelPricing_UpgradesOfficialFlatRateOnce(t *testing.T) {
+	app := newModelPricingDefaultsTestApp(t)
+	ctx := t.Context()
+	p := gpt56ModelPricingDefaults()[3]
+	_, err := app.modelPricingStore.Create(ctx, p)
+	require.NoError(t, err)
+	previous, err := app.modelPricingStore.CurrentBaseRate(ctx, p.ModelName)
+	require.NoError(t, err)
+	require.Nil(t, previous.Sheet)
+	_, err = app.ensureGPT56ModelPricing(ctx)
+	require.NoError(t, err)
+	current, err := app.modelPricingStore.CurrentBaseRate(ctx, p.ModelName)
+	require.NoError(t, err)
+	require.NotEqual(t, previous.ID, current.ID)
+	require.Equal(t, 1.25, *current.Sheet.Rows[0].Cache30m)
+	require.Equal(t, 2.50, *current.Sheet.Rows[0].Cache12h)
+	_, err = app.ensureGPT56ModelPricing(ctx)
+	require.NoError(t, err)
+	after, err := app.modelPricingStore.CurrentBaseRate(ctx, p.ModelName)
+	require.NoError(t, err)
+	require.Equal(t, current.ID, after.ID)
+}
+
+func TestInitDefaultModelPricing_MarksOfficialModelsAndNilStoreSyncSafe(t *testing.T) {
+	app := newModelPricingDefaultsTestApp(t)
+	app.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := t.Context()
+	app.initDefaultModelPricing(ctx)
+
+	for _, model := range []string{
+		"claude-sonnet-4-20250514",
+		"claude-opus-4-20250514",
+		"claude-3-5-sonnet-20241022",
+		"claude-sonnet-4-5-20250929",
+	} {
+		rate, err := app.modelPricingStore.CurrentBaseRate(ctx, model)
+		require.NoError(t, err, model)
+		require.Equal(t, store.RateSourceOfficial, rate.Source, model)
+	}
+
+	nilStoreApp := newUsageStatsTestApp(t)
+	nilStoreApp.modelPricingStore = nil
+	require.NoError(t, nilStoreApp.syncPricingToTracker(ctx))
 }

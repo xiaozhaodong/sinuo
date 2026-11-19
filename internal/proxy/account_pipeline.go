@@ -224,7 +224,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		if modelRouted {
 			upstreamSource = "model-routing"
 		}
-		lifecycleManager.SetUpstream("account", upstreamSource, accountName, acc.ID)
+		lifecycleManager.setUpstream("account", upstreamSource, accountName, acc.ID, accountauth.IsChatGPTOAuthProvider(acc.ProviderType))
 		lifecycleManager.SetEndpoint(accountName)
 		lifecycleManager.UpdateStatus("forwarding", idx, 0)
 		attemptStartedAt := time.Now()
@@ -792,7 +792,7 @@ func (h *Handler) forwardRequestToAccount(ctx context.Context, r *http.Request, 
 	}
 	var recorder handlers.UpstreamTraceRecorder
 	if attempt != nil {
-		recorder = attempt.lifecycle
+		recorder = attempt.lifecycle.bindAttemptTrace()
 	}
 	requestCtx, traceState := handlers.WithUpstreamTrace(requestCtx, recorder)
 

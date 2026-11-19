@@ -17,6 +17,7 @@ import (
 )
 
 var (
+	responsesUsageObjectRe           = regexp.MustCompile(`"usage"\s*:\s*\{`)
 	responsesUsageInputTokensRe      = regexp.MustCompile(`"input_tokens"\s*:\s*(\d+)`)
 	responsesUsageOutputTokensRe     = regexp.MustCompile(`"output_tokens"\s*:\s*(\d+)`)
 	responsesUsageCachedTokensRe     = regexp.MustCompile(`"cached_tokens"\s*:\s*(\d+)`)
@@ -712,8 +713,7 @@ func parseResponsesEventPayload(eventType string, payload map[string]interface{}
 // 旧解析结果仍保留 TokenUsage 指针，新增入口只在此标记为真时持久化用量。
 func responsesUsageReported(usage map[string]interface{}) bool {
 	for _, key := range []string{"input_tokens", "output_tokens"} {
-		value, ok := usage[key].(float64)
-		if ok && value >= 0 && value < float64(1<<63) && value == float64(int64(value)) {
+		if reportedTokenCount(usage[key]) != nil {
 			return true
 		}
 	}
@@ -728,10 +728,23 @@ func tokenUsageFromResponsesUsageMap(usageMap map[string]interface{}) *tracking.
 	}
 	if inputDetails, ok := usageMap["input_tokens_details"].(map[string]interface{}); ok {
 		usage.CacheReadTokens = parseInt64Field(inputDetails["cached_tokens"])
-		// Responses 只报告写入总量；不虚构 Claude 的 5m / 1h 分项。
+		// 写入总量与两种时长分别保留，结算时按选中的历史价表校验。
 		usage.CacheCreationTokens = parseInt64Field(inputDetails["cache_write_tokens"])
+		if writes, ok := inputDetails["cache_write_tokens_details"].(map[string]interface{}); ok {
+			usage.CacheCreation30mTokens = reportedTokenCount(writes["ttl_30m_tokens"])
+			usage.CacheCreation12hTokens = reportedTokenCount(writes["ttl_12h_tokens"])
+		}
 	}
 	return usage
+}
+
+func reportedTokenCount(raw any) *int64 {
+	v, ok := raw.(float64)
+	if !ok || v < 0 || v >= float64(1<<63) || v != float64(int64(v)) {
+		return nil
+	}
+	n := int64(v)
+	return &n
 }
 
 func responsesIncompleteReason(payload map[string]interface{}) string {
@@ -1028,6 +1041,16 @@ func extractResponsesModelFromRawJSON(raw string) string {
 }
 
 func extractResponsesUsageFromRawJSON(raw string) (*tracking.TokenUsage, bool) {
+	// 有完整 usage 对象时复用正常解析器，避免从不同事件拼接写入分项；倒序跳过末尾截断或非 usage 片段。
+	if matches := responsesUsageObjectRe.FindAllStringIndex(raw, -1); len(matches) > 0 {
+		for i := len(matches) - 1; i >= 0; i-- {
+			var usage map[string]any
+			start := matches[i][1] - 1
+			if json.NewDecoder(strings.NewReader(raw[start:])).Decode(&usage) == nil && responsesUsageReported(usage) {
+				return tokenUsageFromResponsesUsageMap(usage), true
+			}
+		}
+	}
 	inputTokens, okInput := extractLastInt64ByRegexp(raw, responsesUsageInputTokensRe)
 	outputTokens, okOutput := extractLastInt64ByRegexp(raw, responsesUsageOutputTokensRe)
 	cachedTokens, okCached := extractLastInt64ByRegexp(raw, responsesUsageCachedTokensRe)

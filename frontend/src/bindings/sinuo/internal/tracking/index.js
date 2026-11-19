@@ -5,6 +5,25 @@
 import * as $models from "./models.js";
 
 /**
+ * AppliedBillingMultipliers 表示当次结算的有效渠道倍率。分项模式只展示有用量的分项。
+ * @typedef {$models.AppliedBillingMultipliers} AppliedBillingMultipliers
+ */
+
+/**
+ * BillingDecision 留下选行事实。行号从 1 起，与 billing_rate_id 组成不可变引用。
+ * @typedef {$models.BillingDecision} BillingDecision
+ */
+
+/**
+ * OfficialRecalculationAvailability 描述历史事实是否足够支持按官方价复算。
+ * @typedef {$models.OfficialRecalculationAvailability} OfficialRecalculationAvailability
+ */
+
+/**
+ * @typedef {$models.OfficialReferenceCost} OfficialReferenceCost
+ */
+
+/**
  * RequestFlow 保存单条请求的有界持久化执行路径与交付里程碑。
  * @typedef {$models.RequestFlow} RequestFlow
  */

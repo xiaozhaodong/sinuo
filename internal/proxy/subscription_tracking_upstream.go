@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"log/slog"
+	"sinuo/internal/store"
 	"time"
 
 	"sinuo/internal/events"
@@ -64,6 +65,7 @@ func (t *subscriptionRequestTracking) MarkOutbound(requestBytes int64, timing ha
 	opts.UpstreamWriteMs = upstreamOffset(t.startedAt, at)
 	opts.UpstreamConnMs = upstreamOffset(t.startedAt, timing.ConnReadyAt)
 	opts.UpstreamDispatchMs = upstreamOffset(t.startedAt, timing.ConnStartAt)
+	opts.BillingChannel = store.BillingChannel{Type: "subscription", Name: subscriptionTrackingUpstreamName}
 	opts.FirstTokenStartAt = &at
 	t.observer.tracker.RecordRequestUpdate(t.requestID, opts)
 	t.persistedContacts = t.upstreamContacts

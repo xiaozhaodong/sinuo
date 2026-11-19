@@ -27,6 +27,9 @@ import * as service$0 from "./internal/service/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as store$0 from "./internal/store/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as tracking$0 from "./internal/tracking/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -342,6 +345,33 @@ export function GetAppUpdateStatus() {
 }
 
 /**
+ * GetBuiltinModelRateSheet 供已有自定义价格的模型显式采用官方价表。
+ * @param {string} model
+ * @returns {$CancellablePromise<store$0.RateSheet>}
+ */
+export function GetBuiltinModelRateSheet(model) {
+    return $Call.ByID(1840493476, model);
+}
+
+/**
+ * @param {store$0.BillingChannel} channel
+ * @param {string} model
+ * @returns {$CancellablePromise<store$0.ChannelModelRule>}
+ */
+export function GetChannelModelRule(channel, model) {
+    return $Call.ByID(3214279973, channel, model);
+}
+
+/**
+ * GetChannelModelRules 返回编辑页展示的当前渠道模型规则。
+ * @param {store$0.BillingChannel} channel
+ * @returns {$CancellablePromise<{ [_ in string]?: store$0.ChannelModelRule } | null>}
+ */
+export function GetChannelModelRules(channel) {
+    return $Call.ByID(4012533346, channel);
+}
+
+/**
  * GetClaudeCodeEntryStatus 返回入口配置与运行态
  * @returns {$CancellablePromise<$models.ClaudeCodeEntryInfo>}
  */
@@ -514,6 +544,23 @@ export function GetModelPricings() {
 }
 
 /**
+ * @param {string} model
+ * @returns {$CancellablePromise<store$0.RateSheet | null>}
+ */
+export function GetModelRateSheet(model) {
+    return $Call.ByID(3393295273, model);
+}
+
+/**
+ * GetModelRateSheetEditor 一次读取当前版本、来源及各档单价。旧基础价保持 NULL 与零的区别。
+ * @param {string} model
+ * @returns {$CancellablePromise<$models.ModelRateSheetEditor>}
+ */
+export function GetModelRateSheetEditor(model) {
+    return $Call.ByID(120216476, model);
+}
+
+/**
  * @returns {$CancellablePromise<$models.ModelRoutingSettingsInfo>}
  */
 export function GetModelRoutingSettings() {
@@ -584,6 +631,14 @@ export function GetRecentLogs(limit) {
  */
 export function GetRequestLifecycleDetail(requestID) {
     return $Call.ByID(2926341005, requestID);
+}
+
+/**
+ * @param {string} requestID
+ * @returns {$CancellablePromise<tracking$0.OfficialReferenceCost>}
+ */
+export function GetRequestOfficialCost(requestID) {
+    return $Call.ByID(4245756604, requestID);
 }
 
 /**
@@ -890,6 +945,17 @@ export function PreviewPrivacyConfigSourceImport(sourceID) {
 }
 
 /**
+ * PublishModelRateSheet 发布完整价表，已有请求继续引用旧版本。
+ * @param {string} model
+ * @param {string} source
+ * @param {store$0.RateSheet} sheet
+ * @returns {$CancellablePromise<void>}
+ */
+export function PublishModelRateSheet(model, source, sheet) {
+    return $Call.ByID(1803578114, model, source, sheet);
+}
+
+/**
  * RefreshClaudeSubscriptionRateLimit 手动查询官方额度；冷却中、正在查询或没有凭据时返回错误，查询失败写在 last_error
  * @returns {$CancellablePromise<$models.ClaudeSubscriptionRateLimitInfo | null>}
  */
@@ -965,6 +1031,16 @@ export function RevealPrivacyRestoreValue(token, entryID) {
  */
 export function RotateCodexSubscriptionProxyAccess(expectedRevision) {
     return $Call.ByID(434172654, expectedRevision);
+}
+
+/**
+ * @param {store$0.BillingChannel} channel
+ * @param {string} model
+ * @param {store$0.ChannelModelRule} rule
+ * @returns {$CancellablePromise<void>}
+ */
+export function SaveChannelModelRule(channel, model, rule) {
+    return $Call.ByID(1296028966, channel, model, rule);
 }
 
 /**

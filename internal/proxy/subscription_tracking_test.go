@@ -8,8 +8,11 @@ import (
 
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/reasoning"
+	"sinuo/internal/store"
 	timezonepolicy "sinuo/internal/timezone"
 	"sinuo/internal/tracking"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSubscriptionHTTPTrackingKnownAndUnknownSettlement(t *testing.T) {
@@ -299,5 +302,36 @@ func TestSubscriptionTrackingPublishesTimingEvents(t *testing.T) {
 	}
 	if ms, ok := completed[0].Data["completion_ms"].(int64); !ok || ms < 0 {
 		t.Fatalf("completion_ms = %#v", completed[0].Data["completion_ms"])
+	}
+}
+
+func TestSubscriptionWSBillingUsesEachSubmissionWriteTime(t *testing.T) {
+	tr := newSubscriptionUnitTracker(t)
+	prices := store.NewSQLiteModelPricingStore(tr.GetWriteDB())
+	n := func(v float64) *float64 { return &v }
+	sheet := store.RateSheet{Timezone: "UTC", Periods: []store.RatePeriod{{Name: "valley", StartMinute: 0}, {Name: "peak", StartMinute: 8 * 60}},
+		Rows: []store.RateRow{{Period: "peak", Input: n(2), Output: n(0)}, {Period: "peak", Fast: true, Input: n(4), Output: n(0)},
+			{Period: "valley", Input: n(1), Output: n(0)}, {Period: "valley", Fast: true, Input: n(3), Output: n(0)}}}
+	require.NoError(t, prices.PublishRateSheet(t.Context(), "ws-priced", store.RateSourceOfficial, sheet))
+	require.NoError(t, tr.LoadBaseRates(t.Context(), prices))
+	observer := newSubscriptionTrackingObserver(tr, nil)
+	state := newTestSubscriptionSubmissionState(context.Background(), "billing-connection", observer)
+	next := time.Now().UTC().AddDate(0, 0, 2)
+	midnight := time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{midnight.Add(-2 * time.Second), midnight.Add(5 * time.Second)} {
+		sub, ok := beginTestSubscriptionCreate(t, state, []byte(`{"type":"response.create","model":"ws-priced","service_tier":"priority","input":"x"}`))
+		require.True(t, ok)
+		observer.SubmissionOutbound(sub, 128, at)
+		state.handleUpstream([]byte(`{"type":"response.completed","response":{"model":"ws-priced","service_tier":"default","usage":{"input_tokens":100000,"output_tokens":0}}}`))
+		d := waitSubscriptionDetail(t, tr, sub.RequestID)
+		require.True(t, d.CostKnown)
+		require.NotNil(t, d.BillingDecision)
+		require.True(t, d.BillingDecision.Estimated)
+		require.Equal(t, at.UnixNano(), d.BillingDecision.SentAtNS)
+		require.InDelta(t, []float64{.4, .3}[i], d.TotalCostUSD, 1e-9)
+		ref, err := tr.RecalculateOfficialCost(t.Context(), sub.RequestID)
+		require.NoError(t, err)
+		require.True(t, ref.Decision.Estimated)
+		require.InDelta(t, d.TotalCostUSD, ref.TotalCost, 1e-9)
 	}
 }

@@ -13,6 +13,10 @@ import (
 // ModelPricingRecord 表示数据库中的模型定价记录
 type ModelPricingRecord struct {
 	ID int64 `json:"id"`
+	// RateSource 仅在发布时指定；旧库已有的报价保留原来源。
+	RateSource string `json:"-"`
+	// MetadataOnly 只用于 Update，保留当前单价及其版本。
+	MetadataOnly bool `json:"-"`
 
 	// 模型信息
 	ModelName string `json:"model_name"` // 模型名称（如 claude-sonnet-4-20250514）
@@ -36,6 +40,16 @@ type ModelPricingRecord struct {
 
 // ModelPricingStore 定义模型定价存储接口
 type ModelPricingStore interface {
+	CurrentBaseRate(context.Context, string) (BaseRateVersion, error)
+	CurrentRateSheet(context.Context, string) (*RateSheet, error)
+	CurrentChannelRule(context.Context, BillingChannel, string) (ChannelModelRule, error)
+	SeedRateSheet(context.Context, string, RateSheet) error
+	SeedResponsesRateSheet(context.Context, *ModelPricingRecord, RateSheet) (bool, error)
+	ReadPricingCatalog(context.Context) ([]BaseRateVersion, []ChannelRuleVersion, error)
+	ListChannelRules(context.Context) ([]ChannelRuleVersion, error)
+	PublishRateSheet(context.Context, string, string, RateSheet) error
+	SaveChannelModelRule(context.Context, BillingChannel, string, ChannelModelRule) error
+	ListBaseRates(context.Context) ([]BaseRateVersion, error)
 	// CRUD 操作
 	Create(ctx context.Context, record *ModelPricingRecord) (*ModelPricingRecord, error)
 	Get(ctx context.Context, modelName string) (*ModelPricingRecord, error)
@@ -88,65 +102,41 @@ func (s *SQLiteModelPricingStore) Create(ctx context.Context, record *ModelPrici
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 设置默认值
-	if record.InputPrice == 0 {
-		record.InputPrice = 3.0
-	}
-	if record.OutputPrice == 0 {
-		record.OutputPrice = 15.0
-	}
-	if record.CacheCreationPrice5m == 0 {
-		record.CacheCreationPrice5m = record.InputPrice * 1.25
-	}
-	if record.CacheCreationPrice1h == 0 {
-		record.CacheCreationPrice1h = record.InputPrice * 2.0
-	}
-	if record.CacheReadPrice == 0 {
-		record.CacheReadPrice = record.InputPrice * 0.1
-	}
-
-	query := `
-		INSERT INTO model_pricing (
-			model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.ModelName, record.InputPrice, record.OutputPrice,
-		record.CacheCreationPrice5m, record.CacheCreationPrice1h, record.CacheReadPrice,
-		record.DisplayName, record.Description, boolToInt(record.IsDefault),
-	)
+	created := *record
+	err := s.writeTransaction(ctx, func(tx *sql.Tx) error {
+		result, err := writePricing(ctx, tx, insertPricingSQL, &created)
+		if err != nil {
+			return err
+		}
+		created.ID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		return clearOtherPricingDefaults(ctx, tx, &created)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("创建模型定价失败: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("获取插入 ID 失败: %w", err)
-	}
-
-	record.ID = id
-	record.CreatedAt = time.Now()
-	record.UpdatedAt = time.Now()
-
+	created.CreatedAt = time.Now()
+	created.UpdatedAt = created.CreatedAt
+	*record = created
 	return record, nil
 }
+
+// 旧表的可空缓存单价只在数值型展示接口中显示为 0。
+const selectModelPricing = `
+	SELECT id, model_name, input_price, output_price,
+		COALESCE(cache_creation_price_5m, 0), COALESCE(cache_creation_price_1h, 0), COALESCE(cache_read_price, 0),
+		display_name, description, is_default,
+		CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+	FROM model_pricing`
 
 // Get 根据模型名称获取定价
 func (s *SQLiteModelPricingStore) Get(ctx context.Context, modelName string) (*ModelPricingRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `
-		SELECT id, model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default,
-			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
-		FROM model_pricing WHERE model_name = ?
-	`
-
+	query := selectModelPricing + " WHERE model_name = ?"
 	return s.scanModelPricing(s.getQuerier().QueryRowContext(ctx, query, modelName))
 }
 
@@ -155,14 +145,7 @@ func (s *SQLiteModelPricingStore) GetByID(ctx context.Context, id int64) (*Model
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `
-		SELECT id, model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default,
-			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
-		FROM model_pricing WHERE id = ?
-	`
-
+	query := selectModelPricing + " WHERE id = ?"
 	return s.scanModelPricing(s.getQuerier().QueryRowContext(ctx, query, id))
 }
 
@@ -171,15 +154,7 @@ func (s *SQLiteModelPricingStore) List(ctx context.Context) ([]*ModelPricingReco
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `
-		SELECT id, model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default,
-			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
-		FROM model_pricing
-		ORDER BY is_default DESC, model_name ASC
-	`
-
+	query := selectModelPricing + " ORDER BY is_default DESC, model_name ASC"
 	return s.scanModelPricings(ctx, query)
 }
 
@@ -188,197 +163,49 @@ func (s *SQLiteModelPricingStore) Update(ctx context.Context, record *ModelPrici
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	query := `
-		UPDATE model_pricing SET
-			input_price = ?, output_price = ?,
-			cache_creation_price_5m = ?, cache_creation_price_1h = ?, cache_read_price = ?,
-			display_name = ?, description = ?, is_default = ?
-		WHERE model_name = ?
-	`
+	return s.writeTransaction(ctx, func(tx *sql.Tx) error {
+		if _, err := writePricing(ctx, tx, updatePricingSQL, record); err != nil {
+			return err
+		}
+		return clearOtherPricingDefaults(ctx, tx, record)
+	})
+}
 
-	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.InputPrice, record.OutputPrice,
-		record.CacheCreationPrice5m, record.CacheCreationPrice1h, record.CacheReadPrice,
-		record.DisplayName, record.Description, boolToInt(record.IsDefault),
-		record.ModelName,
-	)
+// clearOtherPricingDefaults 与设置新默认的单条写入共用事务。
+func clearOtherPricingDefaults(ctx context.Context, tx *sql.Tx, record *ModelPricingRecord) error {
+	if !record.IsDefault {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE model_pricing SET is_default = 0 WHERE is_default = 1 AND model_name <> ?", record.ModelName)
 	if err != nil {
-		return fmt.Errorf("更新模型定价失败: %w", err)
+		return fmt.Errorf("清除旧默认定价失败: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("获取影响行数失败: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("模型定价不存在: %s", record.ModelName)
-	}
-
 	return nil
 }
 
-// Delete 删除模型定价
+// Delete 移除当前配置，并关闭该模型当前费率行的生效区间。
 func (s *SQLiteModelPricingStore) Delete(ctx context.Context, modelName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	query := `DELETE FROM model_pricing WHERE model_name = ?`
-
-	result, err := s.getQuerier().ExecContext(ctx, query, modelName)
-	if err != nil {
-		return fmt.Errorf("删除模型定价失败: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("获取影响行数失败: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("模型定价不存在: %s", modelName)
-	}
-
-	return nil
+	return s.writeTransaction(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, "DELETE FROM model_pricing WHERE model_name = ?", modelName)
+		if err != nil {
+			return err
+		}
+		if err := requirePricingRow(result, modelName); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, closeBaseRateSQL, time.Now().UnixNano(), modelName)
+		return err
+	})
 }
 
-// BatchCreate 批量创建模型定价
 func (s *SQLiteModelPricingStore) BatchCreate(ctx context.Context, records []*ModelPricingRecord) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if len(records) == 0 {
-		return nil
-	}
-
-	// 使用事务
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("开始事务失败: %w", err)
-	}
-	defer tx.Rollback()
-
-	query := `
-		INSERT INTO model_pricing (
-			model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	stmt, err := tx.PrepareContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("准备语句失败: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, record := range records {
-		// 设置默认值
-		if record.InputPrice == 0 {
-			record.InputPrice = 3.0
-		}
-		if record.OutputPrice == 0 {
-			record.OutputPrice = 15.0
-		}
-		if record.CacheCreationPrice5m == 0 {
-			record.CacheCreationPrice5m = record.InputPrice * 1.25
-		}
-		if record.CacheCreationPrice1h == 0 {
-			record.CacheCreationPrice1h = record.InputPrice * 2.0
-		}
-		if record.CacheReadPrice == 0 {
-			record.CacheReadPrice = record.InputPrice * 0.1
-		}
-
-		_, err = stmt.ExecContext(ctx,
-			record.ModelName, record.InputPrice, record.OutputPrice,
-			record.CacheCreationPrice5m, record.CacheCreationPrice1h, record.CacheReadPrice,
-			record.DisplayName, record.Description, boolToInt(record.IsDefault),
-		)
-		if err != nil {
-			return fmt.Errorf("插入模型定价 %s 失败: %w", record.ModelName, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务失败: %w", err)
-	}
-
-	return nil
+	return s.writePricingBatch(ctx, insertPricingSQL, records)
 }
 
-// BatchUpsert 批量创建或更新模型定价
 func (s *SQLiteModelPricingStore) BatchUpsert(ctx context.Context, records []*ModelPricingRecord) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if len(records) == 0 {
-		return nil
-	}
-
-	// 使用事务
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("开始事务失败: %w", err)
-	}
-	defer tx.Rollback()
-
-	query := `
-		INSERT INTO model_pricing (
-			model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(model_name) DO UPDATE SET
-			input_price = excluded.input_price,
-			output_price = excluded.output_price,
-			cache_creation_price_5m = excluded.cache_creation_price_5m,
-			cache_creation_price_1h = excluded.cache_creation_price_1h,
-			cache_read_price = excluded.cache_read_price,
-			display_name = excluded.display_name,
-			description = excluded.description,
-			is_default = excluded.is_default
-	`
-
-	stmt, err := tx.PrepareContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("准备语句失败: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, record := range records {
-		// 设置默认值
-		if record.InputPrice == 0 {
-			record.InputPrice = 3.0
-		}
-		if record.OutputPrice == 0 {
-			record.OutputPrice = 15.0
-		}
-		if record.CacheCreationPrice5m == 0 {
-			record.CacheCreationPrice5m = record.InputPrice * 1.25
-		}
-		if record.CacheCreationPrice1h == 0 {
-			record.CacheCreationPrice1h = record.InputPrice * 2.0
-		}
-		if record.CacheReadPrice == 0 {
-			record.CacheReadPrice = record.InputPrice * 0.1
-		}
-
-		_, err = stmt.ExecContext(ctx,
-			record.ModelName, record.InputPrice, record.OutputPrice,
-			record.CacheCreationPrice5m, record.CacheCreationPrice1h, record.CacheReadPrice,
-			record.DisplayName, record.Description, boolToInt(record.IsDefault),
-		)
-		if err != nil {
-			return fmt.Errorf("upsert 模型定价 %s 失败: %w", record.ModelName, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务失败: %w", err)
-	}
-
-	return nil
+	return s.writePricingBatch(ctx, upsertPricingSQL, records)
 }
 
 // GetDefault 获取默认定价
@@ -386,14 +213,7 @@ func (s *SQLiteModelPricingStore) GetDefault(ctx context.Context) (*ModelPricing
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `
-		SELECT id, model_name, input_price, output_price,
-			cache_creation_price_5m, cache_creation_price_1h, cache_read_price,
-			display_name, description, is_default,
-			CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
-		FROM model_pricing WHERE is_default = 1 LIMIT 1
-	`
-
+	query := selectModelPricing + " WHERE is_default = 1 LIMIT 1"
 	return s.scanModelPricing(s.getQuerier().QueryRowContext(ctx, query))
 }
 

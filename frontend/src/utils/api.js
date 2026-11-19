@@ -448,6 +448,10 @@ export const fetchRequestLifecycleDetail = async (requestId) => {
     upstreamRequestId: detail?.upstream_request_id ?? '',
     scheduleSnapshot: safeParseJson(detail?.schedule_snapshot_json),
     privacyScan: safeParseJson(detail?.privacy_scan_json),
+    billingRateId: detail?.billing_rate_id ?? 0,
+    billingDecision: detail?.billing_decision ?? null,
+    officialRecalculation: detail?.official_recalculation ?? null,
+    billingMultipliers: detail?.billing_multipliers ?? null,
     requestRevision: Number(detail?.request_revision ?? detail?.requestRevision ?? 0) || 0,
     flow: detail?.flow ?? null,
     integrity: detail?.integrity ?? null
@@ -654,6 +658,7 @@ export const formatNumber = (num) => {
 };
 
 export const formatCost = (cost) => {
+  if (cost > 0 && cost < 0.00005) return '<$0.0001';
   if (cost >= 1) return `$${cost.toFixed(2)}`;
   if (cost >= 0.01) return `$${cost.toFixed(3)}`;
   return `$${cost.toFixed(4)}`;

@@ -7,6 +7,7 @@
 // ⚠️ 这里从 request 上读的每个字段都必须在 mergeRequestRows 的 COMPARED_FIELDS 里（静态扫描用例锁定），
 //    否则该字段变化会被行引用复用吃掉，面板首帧显示过期值。
 
+import RequestBilling from './RequestBilling.jsx';
 import { AlertCircle, Copy, MousePointerClick, RefreshCw, Waves, X } from 'lucide-react';
 import { InspectorEmpty, Property, PropertyList } from '@components/desktop/Inspector.jsx';
 import { formatCost } from '@utils/api.js';
@@ -135,9 +136,8 @@ const TokenFigure = ({ label, value, title, tone }) => (
 /**
  * 「Token 与成本」。未知用量与成本显示占位符（与列表同口径）：在途时后端还没写这几个字段，
  * 终态但没收到 usage 时同理 —— 0 是「还不知道」而不是「用了 0 个」。
- * Codex 缓存写入只细分统计，仍包含在 input − cache_read 的计费输入中。
  */
-const TokenSection = ({ request }) => {
+const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   const usageKnown = !pending && request.usageKnown !== false;
   const costKnown = !pending && request.costKnown !== false;
@@ -150,10 +150,16 @@ const TokenSection = ({ request }) => {
   const cacheCreationTokens = request.cacheCreationTokens || 0;
   const inputIncludesCache = requestInputIncludesCache(request.requestFamily, request.path);
   const fullInput = fullInputTokens(inputIncludesCache, inputTokens, cacheCreationTokens, cacheReadTokens);
-  const billableInput = inputIncludesCache ? Math.max(inputTokens - cacheReadTokens, 0) : inputTokens;
-  const billableHint = inputIncludesCache
-    ? '输入 − 缓存读取；缓存写入已包含在内，继续按输入单价计算'
-    : '普通输入；缓存读写单独计费';
+  const waitingWriteSplit = inputIncludesCache && usageKnown && cacheCreationTokens > 0 && lifecycleLoading && !decision;
+  const separateWrites = decision?.separate_cache_writes;
+  const billableInput = inputIncludesCache
+    ? Math.max(inputTokens - cacheReadTokens - (separateWrites ? cacheCreationTokens : 0), 0)
+    : inputTokens;
+  const billableHint = waitingWriteSplit
+    ? '正在确认缓存写入计费口径'
+    : inputIncludesCache
+      ? (separateWrites ? '输入扣除缓存读取和缓存写入' : '输入扣除缓存读取')
+      : '普通输入；缓存读写单独计费';
   const totalHint = inputIncludesCache
     ? '输入 + 输出；缓存读写已包含在输入中'
     : '输入 + 输出 + 缓存创建 + 缓存读取';
@@ -167,7 +173,13 @@ const TokenSection = ({ request }) => {
       <TokenFigure label="输入" value={formatUsage(request.inputTokens)} tone={usageTone} />
       <TokenFigure label="输出" value={formatUsage(request.outputTokens)} tone={usageTone} />
       <TokenFigure label="缓存读取" value={formatUsage(request.cacheReadTokens)} tone={usageTone} />
-      <TokenFigure label="缓存创建" value={formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已计入输入总量和输入费用' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
+      <TokenFigure label="缓存创建" value={formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已包含在输入总量中' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
+      {inputIncludesCache && (separateWrites || request.cacheCreation30mTokens != null || request.cacheCreation12hTokens != null) && (
+        <>
+          <TokenFigure label="创建 30m" value={request.cacheCreation30mTokens == null ? '—' : formatUsage(request.cacheCreation30mTokens)} tone={usageTone} />
+          <TokenFigure label="创建 12h" value={request.cacheCreation12hTokens == null ? '—' : formatUsage(request.cacheCreation12hTokens)} tone={usageTone} />
+        </>
+      )}
       {!inputIncludesCache && (
         <>
           <TokenFigure label="创建 5m" value={formatUsage(request.cacheCreation5mTokens)} tone={usageTone} />
@@ -178,7 +190,7 @@ const TokenSection = ({ request }) => {
         <TokenFigure label="推理" value={(Number(reasoningTokens) || 0).toLocaleString()} title="推理 Token，含在输出 Token 内" tone="text-fg" />
       )}
       <TokenFigure label="合计" value={fullInput === null ? '—' : formatUsage(fullInput + outputTokens)} title={totalHint} tone={usageTone} />
-      <TokenFigure label="计费输入" value={formatUsage(billableInput)} title={billableHint} tone={usageTone} />
+      <TokenFigure label="计费输入" value={waitingWriteSplit ? '—' : formatUsage(billableInput)} title={billableHint} tone={waitingWriteSplit ? 'text-fg-subtle' : usageTone} />
       <TokenFigure label="成本" value={costKnown ? formatCost(request.cost) : '—'} tone={costKnown ? 'font-medium text-warn' : 'text-fg-subtle'} />
     </div>
   );
@@ -345,7 +357,14 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
               <ModelConsistencySection request={request} />
             </PaneSection>
             <PaneSection title="Token 与成本" className="pt-1">
-              <TokenSection request={request} />
+              <TokenSection request={request} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
+              <div className="mt-3 border-t border-line-soft pt-3 empty:hidden">
+                {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
+                  <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}
+                    id={request.requestId} usageKnown={request.usageKnown !== false} version={lifecycle?.billingRateId} decision={lifecycle?.billingDecision}
+                    officialRecalculation={lifecycle?.officialRecalculation} billingMultipliers={lifecycle?.billingMultipliers}
+                    pending={UNSETTLED_STATUSES.has(request.status)} />}
+              </div>
             </PaneSection>
           </div>
         </div>

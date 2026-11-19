@@ -59,6 +59,8 @@ const DETAIL_ONLY_FIELDS = [
   'upstreamRequestId',
   'cacheCreation5mTokens',
   'cacheCreation1hTokens',
+  'cacheCreation30mTokens',
+  'cacheCreation12hTokens',
   'effectiveEndpoint',
   'requestedEndpoint',
   'routeMode',

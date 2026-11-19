@@ -354,7 +354,9 @@ export const CustomSelect = ({
   size = 'sm',
   placeholder = '请选择',
   disabled = false,
-  className = ''
+  className = '',
+  ariaLabel,
+  'aria-label': ariaLabelAttr
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0, isUpward: false });
@@ -437,6 +439,9 @@ export const CustomSelect = ({
       <button
         ref={buttonRef}
         type="button"
+        aria-label={ariaLabel ?? ariaLabelAttr}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className={`
@@ -465,6 +470,8 @@ export const CustomSelect = ({
       {isOpen && (
         <div
           ref={dropdownRef}
+          role="listbox"
+          aria-label={ariaLabel ?? ariaLabelAttr}
           className={`
             fixed z-[9999] bg-surface border border-line
             rounded-lg shadow-xl ring-1 ring-hairline overflow-hidden motion-popover

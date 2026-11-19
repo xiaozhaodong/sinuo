@@ -7,6 +7,9 @@
 import * as endpoint$0 from "./internal/endpoint/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as store$0 from "./internal/store/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as tracking$0 from "./internal/tracking/models.js";
 
 /**
@@ -365,6 +368,7 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * @property {number} cache_creation_price_1h
  * @property {number} cache_read_price
  * @property {boolean} is_default
+ * @property {boolean} [metadata_only] - 仅更新时使用
  */
 
 /**
@@ -610,6 +614,15 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * @property {boolean} enabled - 是否启用
  * @property {number} total_count - 定价总数
  * @property {boolean} has_default - 是否有默认定价
+ */
+
+/**
+ * @typedef {Object} ModelRateSheetEditor
+ * @property {number} version_id
+ * @property {string} source
+ * @property {boolean} structured
+ * @property {store$0.RateSheet} sheet
+ * @property {store$0.RateSheet | null} [builtin]
  */
 
 /**
@@ -995,6 +1008,10 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * RequestLifecycleDetail 请求生命周期详情（弹窗权威数据源）。
  * 内容计时与首次取连接偏移同时供列表使用；思考信号与上游请求ID仅详情返回。
  * @typedef {Object} RequestLifecycleDetail
+ * @property {tracking$0.OfficialRecalculationAvailability | null} [official_recalculation]
+ * @property {tracking$0.AppliedBillingMultipliers | null} [billing_multipliers]
+ * @property {number} [billing_rate_id]
+ * @property {tracking$0.BillingDecision | null} [billing_decision]
  * @property {number | null} first_reasoning_ms - 首个可见思考偏移（毫秒），只写一次
  * @property {boolean | null} reasoning_hidden - 是否观测到不可见思考，只写一次
  * @property {string | null} upstream_request_id - 最终尝试响应头请求ID
@@ -1042,6 +1059,8 @@ import * as tracking$0 from "./internal/tracking/models.js";
 /**
  * RequestRecord 请求记录
  * @typedef {Object} RequestRecord
+ * @property {number | null} [cache_creation_30m_tokens]
+ * @property {number | null} [cache_creation_12h_tokens]
  * @property {string[] | null} [privacy_warnings]
  * @property {number | null} upstream_write_ms - 最终尝试写完偏移（毫秒），列表首字起点
  * @property {number | null} first_content_ms - 首个内容偏移（毫秒），只写一次

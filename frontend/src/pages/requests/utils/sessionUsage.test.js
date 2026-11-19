@@ -10,6 +10,9 @@ test('突增需翻倍且至少增加10000，前值必须已知且大于零', () 
 
 test('真实零与未知独立显示，同ID不同请求族独立选中', () => {
   assert.equal(formatSessionCost(0), '$0.0000');
+  assert.equal(formatSessionCost(0.10000007 + 0.20000009), '$0.3000');
+  assert.equal(formatSessionCost(0.00001), '<$0.0001');
+  assert.equal(formatSessionCost(0.00005), '$0.0001');
   assert.equal(formatSessionCost(null), '—');
   assert.equal(formatSessionRatio(0), '0.0%');
   assert.equal(formatSessionRatio(null), '—');

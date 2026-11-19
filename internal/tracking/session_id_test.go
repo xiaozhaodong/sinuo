@@ -2,9 +2,7 @@ package tracking
 
 import (
 	"context"
-	"encoding/csv"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,30 +34,8 @@ func TestSessionIDPersistsWithAndWithoutHotPool(t *testing.T) {
 			if err != nil || len(rows) != 1 || rows[0].SessionID != sessionID || rows[0].RequestReasoning != "speed:priority" || rows[0].ResponseReasoning != "speed:default" {
 				t.Fatalf("落库读取不一致: rows=%+v err=%v", rows, err)
 			}
-			assertSessionCSV(t, tracker, sessionID)
 		})
 	}
-}
-
-func assertSessionCSV(t *testing.T, tracker *UsageTracker, sessionID string) {
-	t.Helper()
-	data, err := tracker.ExportToCSV(context.Background(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour), "", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, err := csv.NewReader(strings.NewReader(string(data))).ReadAll()
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("CSV rows=%v err=%v", rows, err)
-	}
-	for i, column := range rows[0] {
-		if column == "session_id" {
-			if rows[1][i] != sessionID {
-				t.Fatal("CSV 会话列与行未对齐")
-			}
-			return
-		}
-	}
-	t.Fatal("CSV 缺少会话列")
 }
 
 func TestSessionFilterListCountAndAggregateCompensation(t *testing.T) {

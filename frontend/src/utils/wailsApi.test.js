@@ -9,6 +9,7 @@ import { visibleRetryCount } from '../pages/requests/utils/retryTiming.js';
 
 import {
   buildEndpointRecordPayload,
+  buildModelPricingPayload,
   buildSessionQueryParams,
   buildUpstreamAccountPayload,
   isWailsEnvironment,
@@ -20,6 +21,14 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.resolve(__dirname, './wailsApi.js');
+
+test('桌面定价保存区分显式免费、未提供和非法单价', () => {
+  const free = buildModelPricingPayload({ inputPrice: '0', outputPrice: 0 });
+  assert.deepEqual([free.input_price, free.output_price], [0, 0]);
+  const defaults = buildModelPricingPayload({});
+  assert.deepEqual([defaults.input_price, defaults.output_price], [3, 15]);
+  assert.throws(() => buildModelPricingPayload({ inputPrice: 'abc' }), /单价/);
+});
 
 test('会话排行与走势适配保留完整筛选和显式false，不截断会话ID', () => {
   const params = buildSessionQueryParams({ start_date:'2026-11-02T16:00:00Z',end_date:'2026-11-03T16:00:00Z',request_family:'codex',source_view:'subscription',upstream_name:'synthetic',model:'m',status:'failed',session_id:'full-session-id',session_missing:false,include_compaction:false,page:3,pageSize:20,sort_by:'cache',sort_order:'asc' });
@@ -180,6 +189,18 @@ test('Codex metadata account normalization mirrors aliases and defaults to false
   }
   assert.equal(normalizeUpstreamAccount({}).stripCodexInternalMetadata, false);
   assert.equal(normalizeUpstreamAccount({ strip_codex_internal_metadata: 'false' }).stripCodexInternalMetadata, false);
+});
+
+test('端点和 API Key 账号的零总倍率经过读取和保存后仍进入分项计费', () => {
+  const input = { cost_multiplier: 0, input_cost_multiplier: 0.5 };
+  const endpoint = buildEndpointRecordPayload(mapEndpointRecord(input));
+  const account = buildUpstreamAccountPayload(normalizeUpstreamAccount({ ...input, provider_type: 'api_key' }));
+  for (const result of [endpoint, account]) {
+    assert.equal(result.cost_multiplier, 0);
+    assert.equal(result.input_cost_multiplier, 0.5);
+  }
+  assert.equal(buildEndpointRecordPayload({}).cost_multiplier, 1);
+  assert.equal(buildUpstreamAccountPayload({ provider_type: 'chatgpt_refresh_token', costMultiplier: 0 }).cost_multiplier, 1);
 });
 
 test('mapEndpointRecord preserves cacheCreationCostMultiplier1h from detail payload', () => {

@@ -66,7 +66,7 @@ export default function SessionDetailPane({ sessions, onClose }) {
                         return <button key={p.request_id} type="button" data-chart-point={p.request_id}
                         aria-pressed={selected}
                         aria-label={`第 ${p.ordinal} 次请求，完整输入 ${formatSessionNumber(p.full_input)} Token${inputSpike ? '，输入突增' : ''}`}
-                        title={`${p.request_id}\n完整输入 ${formatSessionNumber(p.full_input)} Token · 估算成本 ${formatSessionCost(p.cost)}`}
+                        title={`${p.request_id}\n完整输入 ${formatSessionNumber(p.full_input)} Token · 成本 ${formatSessionCost(p.cost)}`}
                         onClick={() => sessions.choosePoint(p)} className="group relative flex h-full min-w-[10px] flex-1 items-end justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-accent-ring">
                         <span className={`block w-full max-w-12 rounded-t-sm transition-colors duration-150 motion-reduce:transition-none ${unknown ? 'border border-dashed border-fg-subtle/60 bg-transparent group-hover:border-accent-ring' : inputSpike ? 'bg-warn-solid group-hover:bg-warn-solid/80' : selected ? 'bg-accent-ring' : 'bg-accent-ring/45 group-hover:bg-accent-ring/65'} ${selected ? 'ring-2 ring-accent-ring ring-offset-1 ring-offset-surface' : ''}`}
                           style={{ height: unknown ? 8 : Math.max(2, p.full_input / ceiling * 100) + '%' }} />
@@ -81,7 +81,7 @@ export default function SessionDetailPane({ sessions, onClose }) {
                     <button type="button" title="更晚的请求" disabled={trend.page * trend.page_size >= trend.total} onClick={() => sessions.loadTrend(trend.page + 1)} className="disabled:opacity-30"><ChevronRight size={14} /></button>
                   </div>
                   <div data-session-scroll tabIndex={0} onKeyDown={navigate} aria-label="会话请求明细" className="min-h-0 flex-1 overflow-auto outline-none">
-                    <table className="desk-table desk-dense text-[11px]"><thead><tr><th>#</th><th>时间 / 请求 ID</th><th className="text-right">完整输入</th><th className="text-right">估算成本</th></tr></thead>
+                    <table className="desk-table desk-dense text-[11px]"><thead><tr><th>#</th><th>时间 / 请求 ID</th><th className="text-right">完整输入</th><th className="text-right">成本</th></tr></thead>
                       <tbody>{points.map((p) => <tr key={p.request_id} data-row-id={p.request_id} aria-selected={point?.request_id === p.request_id} onClick={() => sessions.choosePoint(p)}>
                         <td className="font-mono text-fg-muted">{p.ordinal}</td><td title={p.request_id}><span className="text-fg-muted">{formatListTimestamp(p.start_time)}</span><span className="ml-2 font-mono">{p.request_id.slice(0, 14)}</span>
                           {(p.full_input === null || p.cache_read === null) && <span className="ml-2 text-[10px] text-fg-subtle" title={`${p.full_input === null ? '完整输入未记录；' : ''}${p.cache_read === null ? '缓存读取未记录；' : ''}未计入缓存读取占比`}>用量未记录</span>}
@@ -97,7 +97,7 @@ export default function SessionDetailPane({ sessions, onClose }) {
                   <dl className="grid grid-cols-[72px_minmax(0,1fr)] gap-y-1.5">
                     <dt className="text-fg-muted">完整输入</dt><dd className="font-mono">{formatSessionNumber(point?.full_input)} Token</dd>
                     <dt className="text-fg-muted">缓存读取</dt><dd className="font-mono">{formatSessionNumber(point?.cache_read)} Token</dd>
-                    <dt className="text-fg-muted">估算成本</dt><dd className="font-mono">{formatSessionCost(point?.cost)}</dd>
+                    <dt className="text-fg-muted">成本</dt><dd className="font-mono">{formatSessionCost(point?.cost)}</dd>
                     <dt className="text-fg-muted">模型</dt><dd className="truncate" title={request?.model}>{request?.model || (lifecycleLoading ? '加载中…' : '—')}</dd>
                     <dt className="text-fg-muted">上游</dt><dd className="truncate">{request?.upstreamName || request?.endpoint || '—'}</dd>
                   </dl>

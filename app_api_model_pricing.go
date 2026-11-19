@@ -43,6 +43,7 @@ type CreateModelPricingInput struct {
 	CacheCreationPrice1h float64 `json:"cache_creation_price_1h"`
 	CacheReadPrice       float64 `json:"cache_read_price"`
 	IsDefault            bool    `json:"is_default"`
+	MetadataOnly         bool    `json:"metadata_only,omitempty"` // 仅更新时使用
 }
 
 // ModelPricingStorageStatus 模型定价存储状态
@@ -138,23 +139,6 @@ func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
 		return fmt.Errorf("模型定价服务未启用")
 	}
 
-	// 设置默认值
-	if input.InputPrice == 0 {
-		input.InputPrice = 3.0
-	}
-	if input.OutputPrice == 0 {
-		input.OutputPrice = 15.0
-	}
-	if input.CacheCreationPrice5m == 0 {
-		input.CacheCreationPrice5m = input.InputPrice * 1.25
-	}
-	if input.CacheCreationPrice1h == 0 {
-		input.CacheCreationPrice1h = input.InputPrice * 2.0
-	}
-	if input.CacheReadPrice == 0 {
-		input.CacheReadPrice = input.InputPrice * 0.1
-	}
-
 	record := &store.ModelPricingRecord{
 		ModelName:            input.ModelName,
 		DisplayName:          input.DisplayName,
@@ -176,7 +160,9 @@ func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
 	}
 
 	// 成本计算读取的是 UsageTracker 的定价快照，写库后需立即同步，否则要重启才生效
-	a.syncPricingToTracker(ctx)
+	if err := a.syncPricingToTracker(ctx); err != nil {
+		return fmt.Errorf("定价已保存，加载基础费率失败: %w", err)
+	}
 
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已创建", "model", input.ModelName)
@@ -196,6 +182,7 @@ func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput
 
 	record := &store.ModelPricingRecord{
 		ModelName:            modelName, // 使用参数中的 modelName
+		MetadataOnly:         input.MetadataOnly,
 		DisplayName:          input.DisplayName,
 		Description:          input.Description,
 		InputPrice:           input.InputPrice,
@@ -213,7 +200,10 @@ func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput
 		return fmt.Errorf("更新模型定价失败: %w", err)
 	}
 
-	a.syncPricingToTracker(ctx)
+	// 仅编辑元信息也可能切换默认定价。
+	if err := a.syncPricingToTracker(ctx); err != nil {
+		return fmt.Errorf("定价已保存，加载基础费率失败: %w", err)
+	}
 
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已更新", "model", modelName)
@@ -238,7 +228,9 @@ func (a *App) DeleteModelPricing(modelName string) error {
 		return fmt.Errorf("删除模型定价失败: %w", err)
 	}
 
-	a.syncPricingToTracker(ctx)
+	if err := a.syncPricingToTracker(ctx); err != nil {
+		return fmt.Errorf("定价已保存，加载基础费率失败: %w", err)
+	}
 
 	if a.logger != nil {
 		a.logger.Info("✅ 模型定价已删除", "model", modelName)
@@ -261,6 +253,9 @@ func (a *App) SetDefaultModelPricing(modelName string) error {
 
 	if err := a.modelPricingService.SetDefaultPricing(ctx, modelName); err != nil {
 		return fmt.Errorf("设置默认定价失败: %w", err)
+	}
+	if err := a.syncPricingToTracker(ctx); err != nil {
+		return fmt.Errorf("默认定价已保存，加载基础费率失败: %w", err)
 	}
 
 	if a.logger != nil {

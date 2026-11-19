@@ -91,6 +91,12 @@ export const getWailsMethod = (methodName, { optional = false } = {}) => {
   throw new Error(`当前后端版本暂未提供 ${methodName}，请升级后端后重试`);
 };
 
+// 总倍率 0 启用分项模式，省略时仍使用默认统一倍率。
+const totalMultiplier = value => {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
+};
+
 const parseEntityId = (id) => {
   if (id === null || id === undefined) return null;
   if (typeof id === 'number') {
@@ -642,7 +648,7 @@ export const normalizeUpstreamAccount = (account = {}) => {
     ['soft_failure_threshold', 'softFailureThreshold', failurePolicy.soft_failure_threshold],
     ['enable_request_compression', 'enableRequestCompression', pickAccountValue(account, ['enable_request_compression', 'enableRequestCompression', 'EnableRequestCompression'], false) === true],
     ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', pickAccountValue(account, ['strip_codex_internal_metadata', 'stripCodexInternalMetadata', 'StripCodexInternalMetadata'], false) === true],
-    ['cost_multiplier', 'costMultiplier', Number.parseFloat(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0)) || 1.0],
+    ['cost_multiplier', 'costMultiplier', totalMultiplier(pickAccountValue(account, ['cost_multiplier', 'costMultiplier', 'CostMultiplier'], 1.0))],
     ['input_cost_multiplier', 'inputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['input_cost_multiplier', 'inputCostMultiplier', 'InputCostMultiplier'], 1.0)) || 1.0],
     ['output_cost_multiplier', 'outputCostMultiplier', Number.parseFloat(pickAccountValue(account, ['output_cost_multiplier', 'outputCostMultiplier', 'OutputCostMultiplier'], 1.0)) || 1.0],
     ['cache_creation_cost_multiplier', 'cacheCreationCostMultiplier', Number.parseFloat(pickAccountValue(account, ['cache_creation_cost_multiplier', 'cacheCreationCostMultiplier', 'CacheCreationCostMultiplier'], 1.0)) || 1.0],
@@ -731,7 +737,7 @@ export const buildUpstreamAccountPayload = (input = {}) => {
     base_url: input.base_url || input.baseURL || '',
     model_rewrite_rules: isAPIKeyAccount ? serializeModelRewriteRules(input.model_rewrite_rules ?? input.modelRewriteRules ?? '') : '',
     enable_request_compression: supportsRequestCompression && Boolean(input.enable_request_compression ?? input.enableRequestCompression),
-    cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cost_multiplier ?? input.costMultiplier) : 1.0,
+    cost_multiplier: isAPIKeyAccount ? totalMultiplier(input.cost_multiplier ?? input.costMultiplier) : 1.0,
     input_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.input_cost_multiplier ?? input.inputCostMultiplier) : 1.0,
     output_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.output_cost_multiplier ?? input.outputCostMultiplier) : 1.0,
     cache_creation_cost_multiplier: isAPIKeyAccount ? normalizeMultiplier(input.cache_creation_cost_multiplier ?? input.cacheCreationCostMultiplier) : 1.0,
@@ -1390,6 +1396,8 @@ export const getRequests = async (params = {}) => {
     input_tokens: r.input_tokens,
     output_tokens: r.output_tokens,
     cache_creation_tokens: r.cache_creation_tokens,
+    cache_creation_30m_tokens: r.cache_creation_30m_tokens,
+    cache_creation_12h_tokens: r.cache_creation_12h_tokens,
     cache_creation_5m_tokens: r.cache_creation_5m_tokens,  // v5.0.1+
     cache_creation_1h_tokens: r.cache_creation_1h_tokens,  // v5.0.1+
     cache_read_tokens: r.cache_read_tokens,
@@ -1708,7 +1716,7 @@ export const buildEndpointRecordPayload = (input = {}, fallbackName = '') => ({
   timeout_seconds: parseInt(input.timeoutSeconds) || 300,
   supports_count_tokens: input.supportsCountTokens || false,
   model_rewrite_rules: String(input.modelRewriteRules || '').trim(),
-  cost_multiplier: parseFloat(input.costMultiplier) || 1.0,
+  cost_multiplier: totalMultiplier(input.costMultiplier),
   input_cost_multiplier: parseFloat(input.inputCostMultiplier) || 1.0,
   output_cost_multiplier: parseFloat(input.outputCostMultiplier) || 1.0,
   cache_creation_cost_multiplier: parseFloat(input.cacheCreationCostMultiplier) || 1.0,
@@ -1889,6 +1897,29 @@ export const getModelPricing = async (modelName) => {
   };
 };
 
+// 数字表单只在省略单价时使用默认值，显式的 0 原样传给版本化定价接口。
+export const buildModelPricingPayload = (input, modelName = '') => {
+  const price = (value, defaultPrice) => {
+    if (value == null) return defaultPrice;
+    const amount = Number(value);
+    if (String(value).trim() === '' || !Number.isFinite(amount) || amount < 0) {
+      throw new Error('单价必须为非负有限数');
+    }
+    return amount;
+  };
+  return {
+    model_name: input.modelName || modelName,
+    display_name: input.displayName || '',
+    description: input.description || '',
+    input_price: price(input.inputPrice, 3),
+    output_price: price(input.outputPrice, 15),
+    cache_creation_price_5m: price(input.cacheCreationPrice5m, 0),
+    cache_creation_price_1h: price(input.cacheCreationPrice1h, 0),
+    cache_read_price: price(input.cacheReadPrice, 0),
+    is_default: input.isDefault || false
+  };
+};
+
 /**
  * 创建模型定价
  * @param {Object} input - 定价配置
@@ -1898,20 +1929,7 @@ export const createModelPricing = async (input) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  // 转换为后端期望的格式
-  const record = {
-    model_name: input.modelName || '',
-    display_name: input.displayName || '',
-    description: input.description || '',
-    input_price: parseFloat(input.inputPrice) || 3.0,
-    output_price: parseFloat(input.outputPrice) || 15.0,
-    cache_creation_price_5m: parseFloat(input.cacheCreationPrice5m) || 0,
-    cache_creation_price_1h: parseFloat(input.cacheCreationPrice1h) || 0,
-    cache_read_price: parseFloat(input.cacheReadPrice) || 0,
-    is_default: input.isDefault || false
-  };
-
-  await WailsApp.CreateModelPricing(record);
+  await WailsApp.CreateModelPricing(buildModelPricingPayload(input));
   return { success: true };
 };
 
@@ -1925,20 +1943,10 @@ export const updateModelPricing = async (modelName, input) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
-  // 转换为后端期望的格式
-  const record = {
-    model_name: input.modelName || modelName,
-    display_name: input.displayName || '',
-    description: input.description || '',
-    input_price: parseFloat(input.inputPrice) || 3.0,
-    output_price: parseFloat(input.outputPrice) || 15.0,
-    cache_creation_price_5m: parseFloat(input.cacheCreationPrice5m) || 0,
-    cache_creation_price_1h: parseFloat(input.cacheCreationPrice1h) || 0,
-    cache_read_price: parseFloat(input.cacheReadPrice) || 0,
-    is_default: input.isDefault || false
-  };
-
-  await WailsApp.UpdateModelPricing(modelName, record);
+  await WailsApp.UpdateModelPricing(modelName, {
+    ...buildModelPricingPayload(input, modelName),
+    metadata_only: input.metadataOnly === true
+  });
   return { success: true };
 };
 

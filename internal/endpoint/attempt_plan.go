@@ -28,6 +28,7 @@ type EndpointAttemptPlan struct {
 // EndpointAttemptTarget 是 admission 时生成的不可变出站快照。
 // 字段保持私有；Config 每次返回独立副本，调用方无法修改已取得的快照。
 type EndpointAttemptTarget struct {
+	id                       int64
 	name                     string
 	url                      string
 	priority                 int
@@ -84,6 +85,7 @@ func (t *EndpointAttemptTarget) Config() config.EndpointConfig {
 		return config.EndpointConfig{}
 	}
 	return config.EndpointConfig{
+		ID:                       t.id,
 		Name:                     t.name,
 		URL:                      t.url,
 		Priority:                 t.priority,
@@ -170,6 +172,7 @@ func (m *Manager) AcquireEndpointAttempt(plan EndpointAttemptPlan) (*AttemptAdmi
 		return reject("config_changed_during_admission")
 	}
 	target := &EndpointAttemptTarget{
+		id:                       configSnapshot.ID,
 		name:                     configSnapshot.Name,
 		url:                      configSnapshot.URL,
 		priority:                 configSnapshot.Priority,

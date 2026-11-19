@@ -2,7 +2,6 @@ package tracking
 
 import (
 	"context"
-	"encoding/csv"
 	"strings"
 	"testing"
 	"time"
@@ -51,39 +50,6 @@ func TestRequestKindsFilterAndUnknownUsageAcrossSummaryPaths(t *testing.T) {
 	}
 	if len(unknown) != 1 || unknown[0].UsageKnown || unknown[0].CostKnown {
 		t.Fatalf("unknown detail = %+v", unknown)
-	}
-	startExport, endExport := time.Now().Add(-48*time.Hour), time.Now().Add(48*time.Hour)
-	exported, err := tracker.ExportToCSV(ctx, startExport, endExport, "", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cells, err := csv.NewReader(strings.NewReader(string(exported))).ReadAll()
-	if err != nil {
-		t.Fatal(err)
-	}
-	indices := make(map[string]int)
-	for index, header := range cells[0] {
-		indices[header] = index
-	}
-	foundUnknown := false
-	for _, row := range cells[1:] {
-		if row[indices["request_id"]] != "unknown-generation" {
-			continue
-		}
-		foundUnknown = true
-		for key, want := range map[string]string{
-			"input_tokens": "", "total_cost_usd": "", "http_status_code": "",
-			"request_source": RequestSourceCodexSubscriptionProxy, "request_kind": RequestKindGeneration,
-			"usage_known": "false", "cost_known": "false",
-		} {
-			index, present := indices[key]
-			if !present || row[index] != want {
-				t.Fatalf("CSV %s=%q, want %q", key, row[index], want)
-			}
-		}
-	}
-	if !foundUnknown {
-		t.Fatal("CSV omitted unknown request")
 	}
 
 	generationKinds := GenerationMetricRequestKinds()
@@ -569,115 +535,6 @@ func TestPaginateUsageSummariesMatchesCacheQuerySemantics(t *testing.T) {
 	}
 }
 
-func TestExportOperations(t *testing.T) {
-	config := &Config{
-		Enabled:         true,
-		DatabasePath:    ":memory:",
-		BufferSize:      100,
-		BatchSize:       10,
-		FlushInterval:   50 * time.Millisecond,
-		MaxRetry:        3,
-		CleanupInterval: 24 * time.Hour,
-		RetentionDays:   30,
-		ModelPricing: map[string]ModelPricing{
-			"test-model": {
-				Input:  1.00,
-				Output: 5.00,
-			},
-		},
-	}
-
-	tracker, err := NewUsageTracker(config)
-	if err != nil {
-		t.Fatalf("Failed to create usage tracker: %v", err)
-	}
-	defer tracker.Close()
-
-	// Create test data
-	for i := 0; i < 3; i++ {
-		requestID := time.Now().Format("req-export-20060102150405") + string(rune('0'+i))
-
-		tracker.RecordRequestStart(requestID, "127.0.0.1", "export-agent", "POST", "/v1/messages", false)
-
-		opts := UpdateOptions{
-			EndpointName: stringPtr("export-endpoint"),
-			UpstreamName: stringPtr("export-endpoint"),
-			Status:       stringPtr("success"),
-			RetryCount:   intPtr(0),
-			HttpStatus:   intPtr(200),
-		}
-		tracker.RecordRequestUpdate(requestID, opts)
-
-		tokens := &TokenUsage{
-			InputTokens:  100 + int64(i*10),
-			OutputTokens: 50 + int64(i*5),
-		}
-
-		tracker.RecordRequestSuccess(requestID, "test-model", tokens, time.Duration(500+i*100)*time.Millisecond)
-	}
-
-	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
-
-	ctx := context.Background()
-
-	// Test CSV export
-	t.Run("CSVExport", func(t *testing.T) {
-		csvData, err := tracker.ExportToCSV(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", "", "")
-		if err != nil {
-			t.Fatalf("Failed to export to CSV: %v", err)
-		}
-
-		if len(csvData) == 0 {
-			t.Error("Expected CSV data, got empty")
-		}
-
-		// Check that CSV contains header
-		csvStr := string(csvData)
-		if !stringContains(csvStr, "request_id") {
-			t.Error("CSV should contain header with request_id")
-		}
-
-		if !stringContains(csvStr, "model_name") {
-			t.Error("CSV should contain header with model_name")
-		}
-
-		// Check that CSV contains data
-		if !stringContains(csvStr, "test-model") {
-			t.Error("CSV should contain test data")
-		}
-	})
-
-	// Test JSON export
-	t.Run("JSONExport", func(t *testing.T) {
-		jsonData, err := tracker.ExportToJSON(ctx, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1), "", "", "")
-		if err != nil {
-			t.Fatalf("Failed to export to JSON: %v", err)
-		}
-
-		if len(jsonData) == 0 {
-			t.Error("Expected JSON data, got empty")
-		}
-
-		// Check that JSON is valid
-		jsonStr := string(jsonData)
-		if !stringContains(jsonStr, "request_id") {
-			t.Error("JSON should contain request_id field")
-		}
-
-		if !stringContains(jsonStr, "test-model") {
-			t.Error("JSON should contain test data")
-		}
-
-		if !stringStartsWith(jsonStr, "{") || !stringEndsWith(jsonStr, "}") {
-			t.Error("JSON should include export metadata")
-		}
-		if !stringContains(jsonStr, `"display_timezone":"Asia/Shanghai"`) {
-			t.Error("JSON should declare display_timezone")
-		}
-	})
-}
-
 func TestCleanupOperations(t *testing.T) {
 	config := &Config{
 		Enabled:         true,
@@ -747,26 +604,4 @@ func TestCleanupOperations(t *testing.T) {
 	if stats.TotalRequests != 4 { // Should still be 4 (data not old enough to clean)
 		t.Errorf("Expected 4 requests after cleanup, got %d", stats.TotalRequests)
 	}
-}
-
-// Helper functions for string operations (moved to avoid conflicts)
-func stringContains(s, substr string) bool {
-	return len(s) >= len(substr) && findSubstring(s, substr) >= 0
-}
-
-func stringStartsWith(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
-}
-
-func stringEndsWith(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
-}
-
-func findSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

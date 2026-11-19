@@ -170,7 +170,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		// 不再触碰 Manager 内的可变 Endpoint。
 		ep := &endpoint.Endpoint{Config: target.Config()}
 
-		lifecycleManager.SetEndpointAttempt(ep.Config.Name, target.Revision())
+		lifecycleManager.SetEndpointAttempt(ep.Config.Name, ep.Config.ID, target.Revision())
 		h.endpointManager.RecordEndpointScheduleAttempt(connID, ep.Config.Name, endpoint.EndpointScheduleRuntimeAttempting, "")
 		routeDecision := h.endpointManager.NoteRouteDecisionForScope(scope, ep.Config.Name, "")
 		lifecycleManager.SetRouteDecision(routeDecision, ep.Config.Name)
@@ -184,7 +184,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
-			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
+			ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.bindAttemptTrace())
 		recordEndpointUpstreamModel(lifecycleManager, traceState)
 		lifecycleManager.SetUpstreamResponse(resp)
 		releaseUpstream := func() {
@@ -234,7 +234,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 								ep = &endpoint.Endpoint{Config: target.Config()}
 								slog.Info(fmt.Sprintf("🔁 [429短重试] [%s] 端点 %s 等待 %s 后同端点重试", connID, ep.Config.Name, delay+pacedWait))
 								resp, upstreamCancel, traceState, forwardErr = h.forwarder.ForwardForPipeline(
-									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager)
+									ctx, r, bodyBytes, target, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.bindAttemptTrace())
 								recordEndpointUpstreamModel(lifecycleManager, traceState)
 								lifecycleManager.SetUpstreamResponse(resp)
 								releaseUpstream = func() {

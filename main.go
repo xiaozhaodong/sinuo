@@ -349,13 +349,3 @@ func getGoroutineID() int {
 	}
 	return id
 }
-
-// ============================================================
-// 配置转换函数 (从原 main.go 保留)
-// ============================================================
-
-// v5.0+ 注意：convertModelPricing 和 convertModelPricingSingle 已移除
-// 模型定价现在从 SQLite model_pricing 表加载，不再依赖 config.yaml
-// 相关代码参见：
-//   - app.go: syncPricingToTracker()
-//   - internal/service/model_pricing.go: ToTrackingPricing()

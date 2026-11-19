@@ -95,6 +95,15 @@ func TestResponsesCacheWriteTokens_CompatibilityRecovery(t *testing.T) {
 		t.Fatal("尾部完整响应未被恢复")
 	}
 	assertResponsesCacheWriteUsage(t, parser.GetFinalUsage(), written)
+
+	withTrailingBroken := `{"type":"response.completed","response":{"usage":{"input_tokens":12000,"output_tokens":50,"input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}}} {"delta":"\"usage\": {truncated`
+	recovered, ok := extractResponsesUsageFromRawJSON(withTrailingBroken)
+	if !ok || recovered == nil || recovered.InputTokens != 12000 || recovered.OutputTokens != 50 ||
+		recovered.CacheReadTokens != 4000 || recovered.CacheCreationTokens != 7000 ||
+		recovered.CacheCreation30mTokens == nil || *recovered.CacheCreation30mTokens != 3000 ||
+		recovered.CacheCreation12hTokens == nil || *recovered.CacheCreation12hTokens != 4000 {
+		t.Fatalf("尾部截断片段不应掩盖前一个完整 usage 对象：ok=%v usage=%+v", ok, recovered)
+	}
 }
 
 func TestResponsesCacheWriteTokens_LegacyMonitorUsageIncludesCache(t *testing.T) {

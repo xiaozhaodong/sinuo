@@ -48,21 +48,17 @@ func (s *ModelPricingService) CreatePricing(ctx context.Context, record *store.M
 		return nil, fmt.Errorf("模型定价 '%s' 已存在", record.ModelName)
 	}
 
-	// 如果设置为默认，先清除其他默认标记
-	if record.IsDefault {
-		if err := s.clearDefaultFlag(ctx); err != nil {
-			return nil, err
-		}
-	}
-
 	// 创建记录
 	created, err := s.store.Create(ctx, record)
 	if err != nil {
 		return nil, fmt.Errorf("创建模型定价失败: %w", err)
 	}
 
-	// 更新缓存
-	s.updateCache(created)
+	if created.IsDefault {
+		s.clearCache()
+	} else {
+		s.updateCache(created)
+	}
 
 	slog.Info(fmt.Sprintf("✅ [ModelPricingService] 创建模型定价: %s", record.ModelName))
 	return created, nil
@@ -114,17 +110,13 @@ func (s *ModelPricingService) GetDefaultPricing(ctx context.Context) *store.Mode
 
 	// 从数据库获取
 	record, err := s.store.GetDefault(ctx)
-	if err != nil || record == nil {
-		// 返回硬编码的默认值
-		return &store.ModelPricingRecord{
-			ModelName:            "_default",
-			InputPrice:           3.0,
-			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75, // input * 1.25
-			CacheCreationPrice1h: 6.0,  // input * 2.0
-			CacheReadPrice:       0.30, // input * 0.1
-			IsDefault:            true,
+	if err == nil && record == nil {
+		if fallback, err := s.store.Get(ctx, "_default"); err == nil && fallback != nil {
+			return fallback
 		}
+	}
+	if err != nil || record == nil {
+		return store.BuiltinDefaultPricing()
 	}
 
 	s.cacheMu.Lock()
@@ -159,20 +151,13 @@ func (s *ModelPricingService) UpdatePricing(ctx context.Context, record *store.M
 		return fmt.Errorf("模型定价 '%s' 不存在", record.ModelName)
 	}
 
-	// 如果设置为默认，先清除其他默认标记
-	if record.IsDefault && !existing.IsDefault {
-		if err := s.clearDefaultFlag(ctx); err != nil {
-			return err
-		}
-	}
-
 	// 更新数据库
 	if err := s.store.Update(ctx, record); err != nil {
 		return fmt.Errorf("更新模型定价失败: %w", err)
 	}
 
-	// 更新缓存
-	s.updateCache(record)
+	// 重新加载实际保存的价格与元信息。
+	s.clearCache()
 
 	slog.Info(fmt.Sprintf("✅ [ModelPricingService] 更新模型定价: %s", record.ModelName))
 	return nil
@@ -244,7 +229,6 @@ func (s *ModelPricingService) ImportFromYAML(ctx context.Context, modelPricing m
 	defaultRecord := &store.ModelPricingRecord{
 		ModelName:            "_default",
 		DisplayName:          "默认定价",
-		Description:          "未知模型使用的默认定价",
 		InputPrice:           defaultPricing.Input,
 		OutputPrice:          defaultPricing.Output,
 		CacheCreationPrice5m: defaultPricing.CacheCreation,
@@ -277,6 +261,7 @@ func (s *ModelPricingService) LoadCache(ctx context.Context) error {
 	defer s.cacheMu.Unlock()
 
 	s.cache = make(map[string]*store.ModelPricingRecord)
+	s.defaultPricing = nil
 	for _, record := range records {
 		s.cache[record.ModelName] = record
 		if record.IsDefault {
@@ -293,22 +278,13 @@ func (s *ModelPricingService) GetPricingCount(ctx context.Context) (int, error) 
 	return s.store.Count(ctx)
 }
 
-// ToTrackingPricing 转换为 tracking.ModelPricing 格式（兼容现有代码）
-// 注意：CacheCreation 对应 5m 价格；CacheCreation1h 为 0 时由 CalculateCostV2 回退为 2x input
-func (s *ModelPricingService) ToTrackingPricing(record *store.ModelPricingRecord) tracking.ModelPricing {
-	return tracking.ModelPricing{
-		Input:           record.InputPrice,
-		Output:          record.OutputPrice,
-		CacheCreation:   record.CacheCreationPrice5m,
-		CacheCreation1h: record.CacheCreationPrice1h,
-		CacheRead:       record.CacheReadPrice,
-	}
-}
-
 // validateRecord 验证模型定价记录
 func (s *ModelPricingService) validateRecord(record *store.ModelPricingRecord) error {
-	if record.ModelName == "" {
+	if record == nil || record.ModelName == "" {
 		return fmt.Errorf("模型名称不能为空")
+	}
+	if record.MetadataOnly {
+		return nil
 	}
 	if record.InputPrice < 0 {
 		return fmt.Errorf("输入价格不能为负数")
@@ -316,25 +292,6 @@ func (s *ModelPricingService) validateRecord(record *store.ModelPricingRecord) e
 	if record.OutputPrice < 0 {
 		return fmt.Errorf("输出价格不能为负数")
 	}
-	return nil
-}
-
-// clearDefaultFlag 清除所有默认标记
-func (s *ModelPricingService) clearDefaultFlag(ctx context.Context) error {
-	records, err := s.store.List(ctx)
-	if err != nil {
-		return fmt.Errorf("获取定价列表失败: %w", err)
-	}
-
-	for _, record := range records {
-		if record.IsDefault {
-			record.IsDefault = false
-			if err := s.store.Update(ctx, record); err != nil {
-				return fmt.Errorf("清除默认标记失败: %w", err)
-			}
-		}
-	}
-
 	return nil
 }
 

@@ -43,57 +43,59 @@ type RetryContext struct {
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
-	usageTracker         *tracking.UsageTracker        // 使用跟踪器
-	monitoringMiddleware MonitoringMiddlewareInterface // 监控中间件
-	errorRecovery        *ErrorRecoveryManager         // 错误恢复管理器
-	eventBus             events.EventBus               // EventBus事件总线
-	endpointManager      *endpoint.Manager             // 端点管理器（用于失败追踪）
-	requestID            string                        // 请求唯一标识符
-	startTime            time.Time                     // 请求开始时间
-	modelMu              sync.RWMutex                  // 保护模型字段的读写锁
-	stateMu              sync.RWMutex                  // 保护生命周期状态字段
-	modelName            string                        // 模型名称（计费模型）
-	requestModel         string                        // v6.3 客户端原始请求模型
-	requestReasoning     string                        // v6.3 客户端请求思考配置（归一化串）
-	clientSessionID      string                        // 客户端原始会话，随开始记录写入
-	upstreamModel        string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
-	responseModel        string                        // v6.3 仅由响应解析写入的模型
-	responseReasoning    string                        // v6.3 响应侧思考信息（归一化串）
-	requestFamily        string                        // 请求类型 claude/codex/image/other
-	requestSource        string                        // 入口来源 legacy_proxy/codex_subscription_proxy
-	requestKind          string                        // legacy/generation/compaction
-	endpointName         string                        // 端点名称
-	endpointRevision     int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
-	upstreamType         string                        // 上游类型：endpoint/account
-	upstreamSourceName   string                        // 上游来源名（订阅源等）
-	upstreamName         string                        // 上游名称（账号或端点）
-	upstreamID           int64                         // 上游ID（账号ID，可空）
-	routeMode            string                        // 本请求最近一次端点路由模式
-	requestedEndpoint    string                        // 本请求手动指定端点
-	effectiveEndpoint    string                        // 本请求实际选中端点
-	fallbackReason       string                        // 本请求 fallback/阻塞原因
-	routeDecisionAt      time.Time                     // 本请求最近一次路由决策时间
-	retryCount           int                           // 重试计数
-	lastStatus           string                        // 最后状态
-	lastError            error                         // 最后一次错误
-	finalStatusCode      int                           // 最终状态码
-	modelUpdatedInDB     bool                          // 标记是否已在数据库中更新过模型
-	modelUpdateMu        sync.Mutex                    // 保护模型更新标记
-	firstTokenOnce       sync.Once                     // 确保首响耗时仅记录一次
-	firstTokenStartTime  time.Time                     // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
-	firstTokenAt         time.Time                     // 首个有效响应到达时间
-	upstreamContactState                               // 在 timingMu 下维护首次联系时间与联系次数
-	phaseCollector       *StreamPhaseCollector         // 在timingMu下采集；不保留流内容
-	phaseRequestID       *string                       // 最终尝试响应头请求ID，在 timingMu 下覆盖
-	phaseStopReason      *string                       // 上游结束原因原文，在 timingMu 下维护
-	phasesRecorded       bool                          // 阶段快照已落定，在 timingMu 下拒绝后续采集
-	timingMu             sync.RWMutex                  // 保护首响计时字段
-	attemptCounter       int                           // 内部尝试计数器（语义修复：统一重试计数）
-	attemptMu            sync.Mutex                    // 保护尝试计数器的互斥锁
-	pendingErrorContext  *ErrorContext                 // 预先计算的错误上下文，仅对下一个HandleError有效
-	pendingErrorOriginal error                         // 预先计算上下文对应的原始错误，用于校验匹配
-	pendingErrorMu       sync.Mutex                    // 保护预先计算错误上下文的互斥锁
-	flowState            lifecycleFlowState            // 请求轨迹与下游交付状态
+	usageTracker                     *tracking.UsageTracker        // 使用跟踪器
+	monitoringMiddleware             MonitoringMiddlewareInterface // 监控中间件
+	errorRecovery                    *ErrorRecoveryManager         // 错误恢复管理器
+	eventBus                         events.EventBus               // EventBus事件总线
+	endpointManager                  *endpoint.Manager             // 端点管理器（用于失败追踪）
+	requestID                        string                        // 请求唯一标识符
+	startTime                        time.Time                     // 请求开始时间
+	modelMu                          sync.RWMutex                  // 保护模型字段的读写锁
+	stateMu                          sync.RWMutex                  // 保护生命周期状态字段
+	modelName                        string                        // 模型名称（计费模型）
+	requestModel                     string                        // v6.3 客户端原始请求模型
+	requestReasoning                 string                        // v6.3 客户端请求思考配置（归一化串）
+	clientSessionID                  string                        // 客户端原始会话，随开始记录写入
+	upstreamModel                    string                        // v6.3 最终 attempt 实际发给上游的模型（空 = 与请求相同）
+	responseModel                    string                        // v6.3 仅由响应解析写入的模型
+	responseReasoning                string                        // v6.3 响应侧思考信息（归一化串）
+	requestFamily                    string                        // 请求类型 claude/codex/image/other
+	requestSource                    string                        // 入口来源 legacy_proxy/codex_subscription_proxy
+	requestKind                      string                        // legacy/generation/compaction
+	endpointName                     string                        // 端点名称
+	endpointRevision                 int64                         // AttemptPlan 配置 revision；0 表示非端点快照链路
+	upstreamType                     string                        // 上游类型：endpoint/account
+	upstreamSourceName               string                        // 上游来源名（订阅源等）
+	upstreamName                     string                        // 上游名称（账号或端点）
+	subscriptionAccount              bool
+	upstreamID                       int64                 // 上游ID（账号ID，可空）
+	routeMode                        string                // 本请求最近一次端点路由模式
+	requestedEndpoint                string                // 本请求手动指定端点
+	effectiveEndpoint                string                // 本请求实际选中端点
+	fallbackReason                   string                // 本请求 fallback/阻塞原因
+	routeDecisionAt                  time.Time             // 本请求最近一次路由决策时间
+	retryCount                       int                   // 重试计数
+	lastStatus                       string                // 最后状态
+	lastError                        error                 // 最后一次错误
+	finalStatusCode                  int                   // 最终状态码
+	modelUpdatedInDB                 bool                  // 标记是否已在数据库中更新过模型
+	modelUpdateMu                    sync.Mutex            // 保护模型更新标记
+	firstTokenOnce                   sync.Once             // 确保首响耗时仅记录一次
+	attemptSequence, writtenSequence uint64                // timingMu 保护，迟到的旧尝试不能覆盖已写出的新尝试。
+	firstTokenStartTime              time.Time             // 首响计时起点，默认请求开始；账号链路可改为上游请求写完
+	firstTokenAt                     time.Time             // 首个有效响应到达时间
+	upstreamContactState                                   // 在 timingMu 下维护首次联系时间与联系次数
+	phaseCollector                   *StreamPhaseCollector // 在timingMu下采集；不保留流内容
+	phaseRequestID                   *string               // 最终尝试响应头请求ID，在 timingMu 下覆盖
+	phaseStopReason                  *string               // 上游结束原因原文，在 timingMu 下维护
+	phasesRecorded                   bool                  // 阶段快照已落定，在 timingMu 下拒绝后续采集
+	timingMu                         sync.RWMutex          // 保护首响计时字段
+	attemptCounter                   int                   // 内部尝试计数器（语义修复：统一重试计数）
+	attemptMu                        sync.Mutex            // 保护尝试计数器的互斥锁
+	pendingErrorContext              *ErrorContext         // 预先计算的错误上下文，仅对下一个HandleError有效
+	pendingErrorOriginal             error                 // 预先计算上下文对应的原始错误，用于校验匹配
+	pendingErrorMu                   sync.Mutex            // 保护预先计算错误上下文的互斥锁
+	flowState                        lifecycleFlowState    // 请求轨迹与下游交付状态
 }
 
 type lifecycleStateSnapshot struct {
@@ -419,12 +421,12 @@ func (rlm *RequestLifecycleManager) analyzeResponseType(responseContent string) 
 
 // SetEndpoint 设置端点或账号显示名。
 func (rlm *RequestLifecycleManager) SetEndpoint(endpointName string) {
-	rlm.setEndpoint(endpointName, 0)
+	rlm.setEndpoint(endpointName, 0, 0)
 }
 
 // SetEndpointAttempt 设置由 AttemptPlan 选中的端点，并保存配置 revision 供成功结算 fencing。
-func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName string, revision int64) {
-	rlm.setEndpoint(endpointName, revision)
+func (rlm *RequestLifecycleManager) SetEndpointAttempt(endpointName string, id, revision int64) {
+	rlm.setEndpoint(endpointName, id, revision)
 }
 
 // SetRouteDecision 保存本请求自己的路由决策快照。
@@ -454,14 +456,15 @@ func (rlm *RequestLifecycleManager) SetRouteDecision(route endpoint.RouteOverrid
 	rlm.stateMu.Unlock()
 }
 
-func (rlm *RequestLifecycleManager) setEndpoint(endpointName string, revision int64) {
+func (rlm *RequestLifecycleManager) setEndpoint(endpointName string, id, revision int64) {
 	rlm.stateMu.Lock()
 	rlm.endpointName = endpointName
 	rlm.endpointRevision = revision
 	if rlm.upstreamType == "" {
 		rlm.upstreamType = "endpoint"
 	}
-	if rlm.upstreamName == "" {
+	if rlm.upstreamType == "endpoint" {
+		rlm.upstreamID = id
 		rlm.upstreamName = endpointName
 	}
 	upstreamType := rlm.upstreamType
@@ -505,10 +508,15 @@ func (rlm *RequestLifecycleManager) SetRequestKind(requestKind string) {
 
 // SetUpstream 设置上游来源维度信息（账号链路/端点链路通用）
 func (rlm *RequestLifecycleManager) SetUpstream(upstreamType, sourceName, upstreamName string, upstreamID int64) {
+	rlm.setUpstream(upstreamType, sourceName, upstreamName, upstreamID, false)
+}
+
+func (rlm *RequestLifecycleManager) setUpstream(upstreamType, sourceName, upstreamName string, upstreamID int64, subscriptionAccount bool) {
 	if upstreamType == "" {
 		upstreamType = "endpoint"
 	}
 	rlm.stateMu.Lock()
+	rlm.subscriptionAccount = subscriptionAccount
 	rlm.upstreamType = upstreamType
 	rlm.upstreamSourceName = sourceName
 	rlm.upstreamName = upstreamName

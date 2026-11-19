@@ -252,7 +252,7 @@ func TestRouteDecisionAt_IsRequestScoped(t *testing.T) {
 	requestB.StartRequest("127.0.0.1", "test-agent", "POST", "/v1/messages", true)
 
 	decisionA := time.Now()
-	requestA.SetEndpointAttempt("fallback-a", 1)
+	requestA.SetEndpointAttempt("fallback-a", 10, 1)
 	requestA.SetRouteDecision(endpoint.RouteOverrideState{
 		Mode:           endpoint.RouteModeManualPreferred,
 		EndpointName:   "preferred-a",
@@ -260,7 +260,7 @@ func TestRouteDecisionAt_IsRequestScoped(t *testing.T) {
 	}, "fallback-a")
 
 	decisionB := decisionA.Add(25 * time.Millisecond)
-	requestB.SetEndpointAttempt("endpoint-b", 2)
+	requestB.SetEndpointAttempt("endpoint-b", 20, 2)
 	requestB.SetRouteDecision(endpoint.RouteOverrideState{
 		Mode:           endpoint.RouteModeAuto,
 		LastDecisionAt: decisionB,

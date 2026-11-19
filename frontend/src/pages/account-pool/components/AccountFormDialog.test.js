@@ -12,10 +12,11 @@ const formHookPath = path.resolve(__dirname, '../hooks/useAccountPoolForm.js');
 test('AccountFormDialog supports 0.01 multiplier precision for api_key accounts', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
+  // 倍率输入框搬进了共用的 ChannelBillingSection，账号表单通过 step 参数传入 0.01
   assert.match(
     source,
-    /step="0\.01"/,
-    'expected multiplier inputs to use step="0.01" so values like 0.05 are not rejected by native form validation'
+    /<ChannelBillingSection[\s\S]*?step="0\.01"/,
+    'expected account multiplier inputs to use step="0.01" so values like 0.05 are not rejected by native form validation'
   );
 });
 

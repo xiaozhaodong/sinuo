@@ -81,8 +81,9 @@ type App struct {
 	cooldownPersistPending map[string]cooldownPersistPendingEntry
 
 	// v5.0+ 模型定价存储 (SQLite)
-	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
-	modelPricingService *service.ModelPricingService // 模型定价业务服务
+	multiplierLoadMu    sync.Mutex                     // 串行读取并发布渠道倍率，保证保存返回后新请求可见。
+	modelPricingStore   *store.SQLiteModelPricingStore // 模型定价数据持久化
+	modelPricingService *service.ModelPricingService   // 模型定价业务服务
 
 	// v5.1+ 系统设置存储 (SQLite)
 	settingsStore    store.SettingsStore      // 设置数据持久化
@@ -235,8 +236,12 @@ func (a *App) startOperationalComponentsLocked(ctx context.Context) {
 	a.setupModelRoutingService(ctx)
 
 	// 7.6 同步端点倍率到 UsageTracker（用于成本计算）
-	a.syncEndpointMultipliersToTracker(ctx)
-	a.syncAccountMultipliersToTracker(ctx)
+	if err := a.syncEndpointMultipliersToTracker(ctx); err != nil {
+		a.logger.Error("发布端点倍率失败", "error", err)
+	}
+	if err := a.syncAccountMultipliersToTracker(ctx); err != nil {
+		a.logger.Error("发布账号倍率失败", "error", err)
+	}
 
 	// 7.9 恢复 Claude 手动路由状态
 	a.loadClaudeRoutingOverride(ctx)
@@ -639,6 +644,9 @@ func (a *App) setupModelPricingStore() {
 		a.initDefaultModelPricing(ctx)
 	}
 
+	if err := a.seedModelRateSheets(ctx); err != nil {
+		a.logger.Error("加载内置分档价表失败", "error", err)
+	}
 	inserted, err := a.ensureGPT56ModelPricing(ctx)
 	if err != nil {
 		a.logger.Warn("⚠️ 补齐 GPT-5.6 模型定价失败", "error", err)
@@ -652,7 +660,10 @@ func (a *App) setupModelPricingStore() {
 	}
 
 	// 同步定价到 UsageTracker（用于成本计算）
-	a.syncPricingToTracker(ctx)
+	if err := a.syncPricingToTracker(ctx); err != nil {
+		a.logger.Error("加载模型基础费率版本失败", "error", err)
+		return
+	}
 	if latestCount, countErr := a.modelPricingService.GetPricingCount(ctx); countErr == nil {
 		count = latestCount
 	}
@@ -665,21 +676,11 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 	// Claude 官方定价 (2025年最新)
 	// 5分钟缓存: input * 1.25, 1小时缓存: input * 2.0, 读取: input * 0.1
 	defaultPricings := []*store.ModelPricingRecord{
-		// 默认定价
-		{
-			ModelName:            "_default",
-			DisplayName:          "默认定价",
-			Description:          "未知模型使用的默认定价",
-			InputPrice:           3.0,
-			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75, // 3.0 * 1.25
-			CacheCreationPrice1h: 6.0,  // 3.0 * 2.0
-			CacheReadPrice:       0.30, // 3.0 * 0.1
-			IsDefault:            true,
-		},
+		store.BuiltinDefaultPricing(),
 		// Claude Sonnet 4
 		{
 			ModelName:            "claude-sonnet-4-20250514",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude Sonnet 4",
 			Description:          "Claude Sonnet 4 (2025-05-14)",
 			InputPrice:           3.0,
@@ -691,6 +692,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude 3.5 Sonnet
 		{
 			ModelName:            "claude-3-5-sonnet-20241022",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude 3.5 Sonnet",
 			Description:          "Claude 3.5 Sonnet (2024-10-22)",
 			InputPrice:           3.0,
@@ -702,6 +704,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude 3.5 Haiku
 		{
 			ModelName:            "claude-3-5-haiku-20241022",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude 3.5 Haiku",
 			Description:          "Claude 3.5 Haiku (2024-10-22)",
 			InputPrice:           0.80,
@@ -713,6 +716,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude Opus 4
 		{
 			ModelName:            "claude-opus-4-20250514",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude Opus 4",
 			Description:          "Claude Opus 4 (2025-05-14)",
 			InputPrice:           15.0,
@@ -725,6 +729,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude Sonnet 4.5
 		{
 			ModelName:            "claude-sonnet-4-5-20250929",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude Sonnet 4.5",
 			Description:          "Claude Sonnet 4.5 (2025-09-29)",
 			InputPrice:           3.0,
@@ -736,6 +741,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude Haiku 4.5
 		{
 			ModelName:            "claude-haiku-4-5-20251001",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude Haiku 4.5",
 			Description:          "Claude Haiku 4.5 (2025-10-01)",
 			InputPrice:           1.0,
@@ -747,6 +753,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// Claude Opus 4.5
 		{
 			ModelName:            "claude-opus-4-5-20251101",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude Opus 4.5",
 			Description:          "Claude Opus 4.5 (2025-11-01)",
 			InputPrice:           5.0,
@@ -758,6 +765,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		// ========== 旧版本兼容 ==========
 		{
 			ModelName:            "claude-3-opus-20240229",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude 3 Opus",
 			Description:          "Claude 3 Opus (2024-02-29)",
 			InputPrice:           15.0,
@@ -768,6 +776,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		},
 		{
 			ModelName:            "claude-3-sonnet-20240229",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude 3 Sonnet",
 			Description:          "Claude 3 Sonnet (2024-02-29)",
 			InputPrice:           3.0,
@@ -778,6 +787,7 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 		},
 		{
 			ModelName:            "claude-3-haiku-20240307",
+			RateSource:           store.RateSourceOfficial,
 			DisplayName:          "Claude 3 Haiku",
 			Description:          "Claude 3 Haiku (2024-03-07)",
 			InputPrice:           0.25,
@@ -797,45 +807,32 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 }
 
 // syncPricingToTracker 同步模型定价到 UsageTracker
-func (a *App) syncPricingToTracker(ctx context.Context) {
-	if a.usageTracker == nil || a.modelPricingService == nil {
-		return
+func (a *App) syncPricingToTracker(ctx context.Context) error {
+	if a.usageTracker == nil || a.modelPricingStore == nil {
+		return nil
 	}
-
-	records, err := a.modelPricingService.ListPricings(ctx)
-	if err != nil {
-		a.logger.Warn("⚠️ 获取模型定价列表失败", "error", err)
-		return
-	}
-
-	// 转换为 tracking.ModelPricing 格式
-	pricing := make(map[string]tracking.ModelPricing)
-	for _, r := range records {
-		pricing[r.ModelName] = a.modelPricingService.ToTrackingPricing(r)
-	}
-
-	// 更新 UsageTracker 的定价缓存
-	a.usageTracker.UpdatePricing(pricing)
-	a.logger.Debug("已同步模型定价到 UsageTracker", "count", len(pricing))
+	return a.usageTracker.LoadBaseRates(ctx, a.modelPricingStore)
 }
 
 // syncEndpointMultipliersToTracker 同步端点倍率到 UsageTracker
 // 成本计算公式：模型基础定价 * 端点倍率
-func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
+func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) error {
+	a.multiplierLoadMu.Lock()
+	defer a.multiplierLoadMu.Unlock()
 	if a.usageTracker == nil || a.endpointStore == nil {
-		return
+		return nil
 	}
 
 	endpoints, err := a.endpointStore.List(ctx)
 	if err != nil {
-		a.logger.Warn("⚠️ 获取端点列表失败", "error", err)
-		return
+		return fmt.Errorf("同步端点倍率: %w", err)
 	}
 
 	// 转换为 tracking.EndpointMultiplier 格式
 	multipliers := make(map[string]tracking.EndpointMultiplier)
 	for _, ep := range endpoints {
 		multipliers[ep.Name] = tracking.EndpointMultiplier{
+			EndpointID:                    ep.ID,
 			CostMultiplier:                ep.CostMultiplier,
 			InputCostMultiplier:           ep.InputCostMultiplier,
 			OutputCostMultiplier:          ep.OutputCostMultiplier,
@@ -848,19 +845,21 @@ func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
 	// 更新 UsageTracker 的端点倍率缓存
 	a.usageTracker.UpdateEndpointMultipliers(multipliers)
 	a.logger.Debug("已同步端点倍率到 UsageTracker", "count", len(multipliers))
+	return nil
 }
 
 // syncAccountMultipliersToTracker 同步账号倍率到 UsageTracker
 // 成本计算公式：模型基础定价 * 账号倍率
-func (a *App) syncAccountMultipliersToTracker(ctx context.Context) {
+func (a *App) syncAccountMultipliersToTracker(ctx context.Context) error {
+	a.multiplierLoadMu.Lock()
+	defer a.multiplierLoadMu.Unlock()
 	if a.usageTracker == nil || a.accountPoolStore == nil {
-		return
+		return nil
 	}
 
 	accounts, err := a.accountPoolStore.ListAccounts(ctx, true)
 	if err != nil {
-		a.logger.Warn("⚠️ 获取账号池列表失败", "error", err)
-		return
+		return fmt.Errorf("同步账号倍率: %w", err)
 	}
 
 	multipliers := make(map[int64]tracking.EndpointMultiplier)
@@ -883,19 +882,7 @@ func (a *App) syncAccountMultipliersToTracker(ctx context.Context) {
 
 	a.usageTracker.UpdateAccountMultipliers(multipliers)
 	a.logger.Debug("已同步账号倍率到 UsageTracker", "count", len(multipliers))
-}
-
-func (a *App) syncAccountMultipliersToTrackerAsync() {
-	go func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				if a != nil && a.logger != nil {
-					a.logger.Error("❌ 同步账号倍率到 UsageTracker 发生 panic", "panic", recovered)
-				}
-			}
-		}()
-		a.syncAccountMultipliersToTracker(context.Background())
-	}()
+	return nil
 }
 
 // setupUsageTracker 设置使用追踪

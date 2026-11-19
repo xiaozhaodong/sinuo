@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     request_family TEXT NOT NULL DEFAULT 'other'
         CHECK (request_family IN ('claude', 'codex', 'image', 'other')),
     endpoint_name TEXT,                     -- Claude 生命周期兼容字段
+    billing_rate_id INTEGER REFERENCES model_base_rates(id),
+    billing_basis TEXT,                     -- 原调用定价时间和有效渠道倍率
     model_name TEXT,                        -- 计费模型：有响应模型用响应模型，否则回退请求模型
     request_model TEXT DEFAULT '',          -- v6.3: 客户端原始请求模型（随 start 事件写入）
     upstream_model TEXT DEFAULT '',         -- v6.3: 最终 attempt 实际发给上游的模型；空 = 与 request_model 相同
@@ -85,6 +87,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     output_tokens INTEGER DEFAULT 0,       -- 输出token数
     cache_creation_tokens INTEGER DEFAULT 0, -- 缓存创建token数（总计，向后兼容）
     cache_creation_5m_tokens INTEGER DEFAULT 0, -- 5分钟缓存创建token数 (v5.0.1+)
+    cache_creation_30m_tokens INTEGER, -- Responses 缓存写入分项，NULL 表示未报告
+    cache_creation_12h_tokens INTEGER,
     cache_creation_1h_tokens INTEGER DEFAULT 0, -- 1小时缓存创建token数 (v5.0.1+)
     cache_read_tokens INTEGER DEFAULT 0,   -- 缓存读取token数
 
@@ -245,7 +249,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
 
     -- ========== 成本倍率 ==========
     cost_multiplier REAL NOT NULL DEFAULT 1.0
-        CHECK (cost_multiplier > 0),                 -- 总成本倍率
+        CHECK (cost_multiplier >= 0),                 -- 总成本倍率
     input_cost_multiplier REAL NOT NULL DEFAULT 1.0
         CHECK (input_cost_multiplier > 0),           -- 输入成本倍率
     output_cost_multiplier REAL NOT NULL DEFAULT 1.0
@@ -320,6 +324,20 @@ CREATE TABLE IF NOT EXISTS model_pricing (
     created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
+
+-- 已发布的基础单价保留稳定行 ID。关闭生效区间不改变该行的计量口径。
+CREATE TABLE IF NOT EXISTS model_base_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_name TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('legacy','custom','official')),
+    effective_from_ns INTEGER NOT NULL,
+    effective_until_ns INTEGER CHECK (effective_until_ns > effective_from_ns),
+    input_price REAL NOT NULL, output_price REAL NOT NULL,
+    cache_creation_price_5m REAL, cache_creation_price_1h REAL, cache_read_price REAL,
+    UNIQUE(model_name, effective_from_ns)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_model_base_rates_current
+    ON model_base_rates(model_name) WHERE effective_until_ns IS NULL;
 
 -- 模型定价表索引
 CREATE INDEX IF NOT EXISTS idx_model_pricing_model_name ON model_pricing(model_name);
@@ -614,3 +632,20 @@ CREATE TRIGGER IF NOT EXISTS update_model_routing_assignments_timestamp
 BEGIN
     UPDATE model_routing_assignments SET updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z', 'now') WHERE id = NEW.id;
 END;
+
+-- 价表随基础价版本发布，行号在整个版本生命周期不变。
+CREATE TABLE IF NOT EXISTS model_rate_sheets (
+    version_id INTEGER PRIMARY KEY REFERENCES model_base_rates(id),
+    sheet TEXT NOT NULL
+);
+-- 出站快照记录可见的最大配置 ID，补报可恢复当时所有模型的规则。
+CREATE TABLE IF NOT EXISTS channel_model_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_type TEXT NOT NULL,
+    channel_id INTEGER NOT NULL,
+    channel_name TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    rule TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_model_rules_lookup
+    ON channel_model_rules(channel_type,channel_id,channel_name,model_name,id);

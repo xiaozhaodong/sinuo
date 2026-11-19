@@ -260,6 +260,7 @@ const PricingPage = () => {
           isNew={isNew}
           saving={saving}
           onSave={handleSave}
+          onPublished={loadData}
           onCancelNew={() => {
             dirtyRef.current = false;
             setSelectedId(null);

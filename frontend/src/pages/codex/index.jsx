@@ -5,6 +5,7 @@
 // ============================================
 
 import { useState } from 'react';
+import SubscriptionBillingSection from '@components/billing/SubscriptionBillingSection.jsx';
 import CodexSubscriptionProxyCard from '@components/codex-access/CodexSubscriptionProxyCard.jsx';
 import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
@@ -119,7 +120,12 @@ const CodexPage = ({ activeTab = 'accounts', onTabChange }) => {
         className="min-h-0 flex-1 overflow-y-auto bg-pane px-7 pb-12"
       >
         <div className="mx-auto max-w-[640px]">
-          {clientAccessVisited && <CodexSubscriptionProxyCard />}
+          {clientAccessVisited && (
+            <>
+              <CodexSubscriptionProxyCard />
+              <SubscriptionBillingSection name="chatgpt-subscription" label="Codex 订阅直通" />
+            </>
+          )}
         </div>
       </section>
     </div>

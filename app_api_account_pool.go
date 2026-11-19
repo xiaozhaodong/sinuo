@@ -588,8 +588,7 @@ func (a *App) CreateUpstreamAccount(input CreateUpstreamAccountInput) error {
 	if err != nil {
 		return fmt.Errorf("创建账号失败: %w", err)
 	}
-	a.syncAccountMultipliersToTrackerAsync()
-	return nil
+	return a.syncAccountMultipliersToTracker(ctx)
 }
 
 // UpdateUpstreamAccount 更新账号
@@ -641,8 +640,7 @@ func (a *App) UpdateUpstreamAccount(id int64, input CreateUpstreamAccountInput) 
 	if a.codexModelRoutingService != nil {
 		a.codexModelRoutingService.ClearNegativeHits(id)
 	}
-	a.syncAccountMultipliersToTrackerAsync()
-	return nil
+	return a.syncAccountMultipliersToTracker(ctx)
 }
 
 // DeleteUpstreamAccount 删除账号
@@ -668,8 +666,7 @@ func (a *App) DeleteUpstreamAccount(id int64) error {
 	if a.codexModelRoutingService != nil {
 		a.codexModelRoutingService.ClearNegativeHits(id)
 	}
-	a.syncAccountMultipliersToTrackerAsync()
-	return nil
+	return a.syncAccountMultipliersToTracker(ctx)
 }
 
 // ToggleUpstreamAccount 启停账号

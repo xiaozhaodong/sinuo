@@ -222,10 +222,6 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	if input.TimeoutSeconds == 0 {
 		input.TimeoutSeconds = 300
 	}
-	if input.CostMultiplier == 0 {
-		input.CostMultiplier = 1.0
-	}
-	defaultEndpointMultipliers(&input)
 	availabilityEnabled := true
 	if input.AvailabilityEnabled != nil {
 		availabilityEnabled = *input.AvailabilityEnabled
@@ -269,10 +265,7 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	// v5.0: endpointService.CreateEndpoint 已经将端点添加到内存并触发健康检测
 	// 不需要再次调用 AddEndpoint，否则会导致 "端点已存在" 错误
 
-	// v5.0: 创建成功后，异步同步端点倍率到 UsageTracker
-	go a.syncEndpointMultipliersToTracker(context.Background())
-
-	return nil
+	return a.syncEndpointMultipliersToTracker(ctx)
 }
 
 // UpdateEndpointRecord 更新端点
@@ -304,7 +297,6 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	if err != nil {
 		return err
 	}
-	defaultEndpointMultipliers(&input)
 
 	record := &store.EndpointRecord{
 		Name:                          name, // 使用 URL 参数中的 name
@@ -351,11 +343,7 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		a.logger.Info("✅ 端点已更新", "name", name)
 	}
 
-	// v5.0: 更新成功后，异步同步端点倍率到 UsageTracker
-	// 确保成本计算使用最新的倍率配置
-	go a.syncEndpointMultipliersToTracker(context.Background())
-
-	return nil
+	return a.syncEndpointMultipliersToTracker(ctx)
 }
 
 // DeleteEndpointRecord 删除端点
@@ -423,10 +411,7 @@ func (a *App) DeleteEndpointRecord(name string) error {
 	// 删除成功：按名清理孤儿 pending 标记（同名重建端点不继承旧标记）
 	a.removeCooldownPersistPending(name)
 
-	// v5.0: 删除成功后，异步同步端点倍率到 UsageTracker
-	go a.syncEndpointMultipliersToTracker(context.Background())
-
-	return nil
+	return a.syncEndpointMultipliersToTracker(ctx)
 }
 
 // recordToInfo 将数据库记录转换为前端 Info 结构
@@ -478,25 +463,6 @@ func resolveSecretEdit(current, replacement string, clear bool, field string) (s
 		return current, nil
 	}
 	return replacement, nil
-}
-
-func defaultEndpointMultipliers(input *CreateEndpointInput) {
-	if input == nil {
-		return
-	}
-	values := []*float64{
-		&input.CostMultiplier,
-		&input.InputCostMultiplier,
-		&input.OutputCostMultiplier,
-		&input.CacheCreationCostMultiplier,
-		&input.CacheCreationCostMultiplier1h,
-		&input.CacheReadCostMultiplier,
-	}
-	for _, value := range values {
-		if *value == 0 {
-			*value = 1
-		}
-	}
 }
 
 // maskToken Token 脱敏显示

@@ -164,6 +164,18 @@ func (s *SQLiteAdapter) InitSchema() error {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
+	if err := migrateEndpointMultiplier(ctx, s.db); err != nil {
+		return fmt.Errorf("升级端点总倍率约束: %w", err)
+	}
+
+	// 只给当前配置建立首个版本；历史请求不回填。重启不会重复发布。
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO model_base_rates
+		(model_name, source, effective_from_ns, input_price, output_price, cache_creation_price_5m, cache_creation_price_1h, cache_read_price)
+		SELECT model_name, 'legacy', ?, input_price, output_price, cache_creation_price_5m, cache_creation_price_1h, cache_read_price
+		FROM model_pricing p WHERE NOT EXISTS (SELECT 1 FROM model_base_rates r WHERE r.model_name = p.model_name)`, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("初始化现有模型定价版本失败: %w", err)
+	}
+
 	s.logger.Info("✅ SQLite数据库Schema初始化完成")
 	return nil
 }
@@ -179,6 +191,8 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		alterSQL    string
 		description string
 	}{
+		{table: "request_logs", checkColumn: "billing_rate_id", alterSQL: "ALTER TABLE request_logs ADD COLUMN billing_rate_id INTEGER REFERENCES model_base_rates(id)", description: "基础费率行"},
+		{table: "request_logs", checkColumn: "billing_basis", alterSQL: "ALTER TABLE request_logs ADD COLUMN billing_basis TEXT", description: "原调用计费配置"},
 		{
 			table:       "request_logs",
 			checkColumn: "first_token_ms",
@@ -274,6 +288,18 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			checkColumn: "request_kind",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (request_kind IN ('legacy', 'generation', 'compaction'))",
 			description: "请求种类字段",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "cache_creation_30m_tokens",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_30m_tokens INTEGER",
+			description: "Responses 30m 缓存写入量",
+		},
+		{
+			table:       "request_logs",
+			checkColumn: "cache_creation_12h_tokens",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_12h_tokens INTEGER",
+			description: "Responses 12h 缓存写入量",
 		},
 		{
 			table:       "request_logs",

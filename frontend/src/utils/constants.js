@@ -17,7 +17,6 @@ export const API_ENDPOINTS = {
   USAGE_REQUESTS: '/api/v1/usage/requests',
   USAGE_STATS: '/api/v1/usage/stats',
   USAGE_MODELS: '/api/v1/usage/models',
-  USAGE_EXPORT: '/api/v1/usage/export',
 
   // 实时流
   STREAM: '/api/v1/stream',

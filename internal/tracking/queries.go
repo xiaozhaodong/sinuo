@@ -91,7 +91,7 @@ const FailedRequestStatusesSQLList = "'failed', 'error', 'auth_error', 'rate_lim
 
 const requestDetailsOrderBy = "start_time DESC, request_id DESC"
 
-const requestDetailsColumnsBase = `id, request_id,
+const requestDetailsUsageColumns = `id, request_id,
 	COALESCE(client_ip, '') as client_ip,
 	COALESCE(user_agent, '') as user_agent,
 	method, path, CAST(start_time AS TEXT), CAST(end_time AS TEXT), duration_ms, first_token_ms, completion_ms,
@@ -122,13 +122,14 @@ const requestDetailsColumnsBase = `id, request_id,
 	COALESCE(last_failure_reason, '') as last_failure_reason,
 	COALESCE(cancel_reason, '') as cancel_reason,
 	input_tokens, output_tokens,
-	cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
+	cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_creation_30m_tokens, cache_creation_12h_tokens,
 	cache_read_tokens,
 	input_cost_usd, output_cost_usd, cache_creation_cost_usd,
 	cache_read_cost_usd, total_cost_usd,
-	CAST(created_at AS TEXT), CAST(updated_at AS TEXT), COALESCE(privacy_scan_json, '')`
+	CAST(created_at AS TEXT), CAST(updated_at AS TEXT), COALESCE(billing_rate_id, 0), `
 
-const requestDetailsSelectBase = "SELECT " + requestDetailsColumnsBase + "\n\tFROM request_logs WHERE 1=1"
+const requestDetailsPrivacyColumn = `, COALESCE(privacy_scan_json, '')`
+const requestDetailsColumnsBase = requestDetailsUsageColumns + `COALESCE(billing_basis,'')` + requestDetailsPrivacyColumn
 
 func resolveRequestQuerySource(upstreamType string) requestQuerySource {
 	switch upstreamType {
@@ -251,10 +252,6 @@ func appendRequestQueryFilters(query string, args []interface{}, opts *QueryOpti
 	return query, args
 }
 
-func requestDetailsBaseSelectForSource(source requestQuerySource) string {
-	return requestDetailsSelectBase
-}
-
 func requestCountBaseQueryForSource(source requestQuerySource) string {
 	return "SELECT COUNT(*) FROM request_logs WHERE 1=1"
 }
@@ -277,8 +274,9 @@ type requestDetailRowScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, privacySummary *string, extraDest ...interface{}) (RequestDetail, error) {
+func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, privacySummary *string, billing *archivedBillingFacts, extraDest ...interface{}) (RequestDetail, error) {
 	var detail RequestDetail
+	var rawBasis string
 	var startAt, createdAt, updatedAt timezonepolicy.DBTime
 	var endAt, routeDecisionAt timezonepolicy.NullDBTime
 	var input, output, creation, creation5m, creation1h, read sql.NullInt64
@@ -302,15 +300,31 @@ func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, pr
 		&detail.UpstreamWriteMs, &detail.FirstContentMs, &detail.FirstTextMs, &detail.StreamFlowMs, &detail.StopReason,
 		&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
 		&input, &output,
-		&creation, &creation5m, &creation1h, &read,
+		&creation, &creation5m, &creation1h, &detail.CacheCreation30mTokens, &detail.CacheCreation12hTokens, &read,
 		&inputCost, &outputCost,
 		&creationCost, &readCost, &totalCost,
-		&createdAt, &updatedAt,
+		&createdAt, &updatedAt, &detail.BillingRateID, &rawBasis,
 		privacySummary,
 	}
 	dest = append(dest, extraDest...)
 	if err := scanner.Scan(dest...); err != nil {
 		return RequestDetail{}, fmt.Errorf("failed to scan request detail: %w", err)
+	}
+	if billing != nil {
+		billing.usageKnown = input.Valid
+		if err := billing.readBasis(rawBasis); err != nil {
+			slog.Warn("无法展示请求的计费依据", "request_id", detail.RequestID, "error", err)
+		}
+		detail.BillingDecision = billing.Decision
+	} else if rawBasis != "" {
+		var b struct {
+			Decision *BillingDecision `json:"decision"`
+		}
+		if err := json.Unmarshal([]byte(rawBasis), &b); err != nil {
+			slog.Warn("无法展示请求的计费依据", "request_id", detail.RequestID, "error", err)
+		} else {
+			detail.BillingDecision = b.Decision
+		}
 	}
 	detail.StartTime = startAt.Time.UTC()
 	detail.PrivacyWarnings = privacy.WarningsFromSummary(*privacySummary)
@@ -365,7 +379,7 @@ func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, pr
 func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail, error) {
 	var details []RequestDetail
 	for rows.Next() {
-		detail, err := ut.scanRequestDetailRow(rows, nil)
+		detail, err := ut.scanRequestDetailRow(rows, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -379,7 +393,20 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 }
 
 func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) ([]RequestDetail, error) {
-	query := requestDetailsBaseSelectForSource(source)
+	rows, err := openRequestDetailRows(ctx, ut.readDB, opts, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ut.scanRequestDetailsRows(rows)
+}
+
+func openRequestDetailRows(ctx context.Context, db *sql.DB, opts *QueryOptions, source requestQuerySource) (*sql.Rows, error) {
+	columns := requestDetailsColumnsBase
+	if opts != nil && opts.SkipArchivedBillingBasis {
+		columns = requestDetailsUsageColumns + "''" + requestDetailsPrivacyColumn
+	}
+	query := "SELECT " + columns + " FROM request_logs WHERE 1=1"
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
 	query += " ORDER BY " + requestDetailsOrderBy
@@ -395,13 +422,11 @@ func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *Q
 		}
 	}
 
-	rows, err := ut.readDB.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query request details: %w", err)
 	}
-	defer rows.Close()
-
-	return ut.scanRequestDetailsRows(rows)
+	return rows, nil
 }
 
 func (ut *UsageTracker) countRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (int, error) {
@@ -452,20 +477,21 @@ func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Cont
 
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
-	SessionMissing bool
-	SessionID      string
-	RequestID      string
-	StartDate      *time.Time
-	EndDate        *time.Time
-	ModelName      string
-	RequestFamily  string
-	EndpointName   string
-	UpstreamName   string
-	UpstreamType   string
-	Status         string
-	RequestKinds   []string
-	Limit          int
-	Offset         int
+	SkipArchivedBillingBasis bool // 列表查询无需读取归档计费 JSON。
+	SessionMissing           bool
+	SessionID                string
+	RequestID                string
+	StartDate                *time.Time
+	EndDate                  *time.Time
+	ModelName                string
+	RequestFamily            string
+	EndpointName             string
+	UpstreamName             string
+	UpstreamType             string
+	Status                   string
+	RequestKinds             []string
+	Limit                    int
+	Offset                   int
 }
 
 // UsageSummary represents a summary of usage data
@@ -497,7 +523,10 @@ type UsageSummary struct {
 
 // RequestDetail represents a detailed request record
 type RequestDetail struct {
-	PrivacyWarnings []string `json:"privacy_warnings,omitempty"`
+	CacheWriteDurations
+	BillingDecision *BillingDecision `json:"billing_decision,omitempty"`
+	BillingRateID   int64            `json:"billing_rate_id,omitempty"`
+	PrivacyWarnings []string         `json:"privacy_warnings,omitempty"`
 
 	SessionID string `json:"session_id"`
 	ID        int64  `json:"id"`

@@ -5,6 +5,8 @@ import path from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // 在构建时读取 IANA 时区列表，旧版桌面 WebView 也能提供完整下拉选项。
+  define: { 'import.meta.env.IANA_TIME_ZONES': JSON.stringify(Intl.supportedValuesOf('timeZone')) },
   plugins: [
     react(),
     tailwindcss()

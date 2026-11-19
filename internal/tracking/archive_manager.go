@@ -336,12 +336,12 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			failure_reason, cancel_reason,
 			is_streaming,
 			input_tokens, output_tokens,
-			cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
+			cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, cache_creation_30m_tokens, cache_creation_12h_tokens,
 			cache_read_tokens,
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd,
-			request_flow_json, request_revision
+			billing_rate_id, billing_basis, request_flow_json, request_revision
 		) VALUES (
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -355,12 +355,12 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			?, ?,
 			?,
 			?, ?,
-			?, ?, ?,
+			?, ?, ?, ?, ?,
 			?,
 			?, ?,
 			?, ?, ?,
 			?, ?,
-			?, ?
+			?, ?, ?, ?
 		)
 		ON CONFLICT(request_id) DO UPDATE SET
 			client_ip = EXCLUDED.client_ip,
@@ -416,6 +416,8 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			cache_creation_tokens = EXCLUDED.cache_creation_tokens,
 			cache_creation_5m_tokens = EXCLUDED.cache_creation_5m_tokens,
 			cache_creation_1h_tokens = EXCLUDED.cache_creation_1h_tokens,
+			cache_creation_30m_tokens = EXCLUDED.cache_creation_30m_tokens,
+			cache_creation_12h_tokens = EXCLUDED.cache_creation_12h_tokens,
 			cache_read_tokens = EXCLUDED.cache_read_tokens,
 			input_cost_usd = EXCLUDED.input_cost_usd,
 			output_cost_usd = EXCLUDED.output_cost_usd,
@@ -424,6 +426,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			cache_creation_1h_cost_usd = EXCLUDED.cache_creation_1h_cost_usd,
 			cache_read_cost_usd = EXCLUDED.cache_read_cost_usd,
 			total_cost_usd = EXCLUDED.total_cost_usd,
+			billing_rate_id = EXCLUDED.billing_rate_id, billing_basis = EXCLUDED.billing_basis,
 			request_flow_json = COALESCE(EXCLUDED.request_flow_json, request_logs.request_flow_json),
 			request_revision = MAX(COALESCE(request_logs.request_revision, 0), COALESCE(EXCLUDED.request_revision, 0))
 	`)
@@ -490,7 +493,16 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 	}
 
 	// v5.0.1+: 只有上游明确报告用量时才计算并持久化成本。
-	costBreakdown := am.calculateCostV2(req)
+	settled := req.settled
+	if settled == nil {
+		value := am.archiveSettlement(req)
+		settled = &value
+	}
+	costBreakdown := settled.cost
+	basis, err := req.persistedBillingBasis(settled)
+	if err != nil {
+		return err
+	}
 
 	// 格式化时间
 	startTime := am.formatTime(req.StartTime)
@@ -520,7 +532,7 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		requestKind = RequestKindLegacy
 	}
 	usageKnown := req.UsageKnown || legacyCompatibility
-	costKnown := req.CostKnown || legacyCompatibility
+	costKnown := settled.known
 
 	flowMarshaledNow := false
 	if req.RequestFlow != nil && req.RequestFlowJSON == "" {
@@ -535,7 +547,7 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		req.RequestRevision++
 	}
 
-	_, err := requestStmt.ExecContext(ctx,
+	_, err = requestStmt.ExecContext(ctx,
 		req.RequestID,
 		req.ClientIP,
 		req.UserAgent,
@@ -590,6 +602,7 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		nullableInt64(req.CacheCreationTokens, usageKnown),
 		nullableInt64(req.CacheCreation5mTokens, usageKnown),
 		nullableInt64(req.CacheCreation1hTokens, usageKnown),
+		req.CacheCreation30mTokens, req.CacheCreation12hTokens,
 		nullableInt64(req.CacheReadTokens, usageKnown),
 		nullableFloat64(costBreakdown.InputCost, costKnown),
 		nullableFloat64(costBreakdown.OutputCost, costKnown),
@@ -598,7 +611,7 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 		nullableFloat64(costBreakdown.CacheCreation1hCost, costKnown),
 		nullableFloat64(costBreakdown.CacheReadCost, costKnown),
 		nullableFloat64(costBreakdown.TotalCost, costKnown),
-		nullString(req.RequestFlowJSON),
+		nullInt64(settled.rateID), basis, nullString(req.RequestFlowJSON),
 		req.RequestRevision,
 	)
 	if err != nil {
@@ -610,51 +623,17 @@ func (am *ArchiveManager) insertRequestEventLocked(ctx context.Context, requestS
 
 // calculateCostV2 计算请求成本（v5.0.1+: 支持分开的 5m/1h 缓存）
 func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
-	if req != nil && req.CostOverrideUSD != nil {
-		return CostBreakdown{TotalCost: *req.CostOverrideUSD}
+	return am.archiveSettlement(req).cost
+}
+
+func (am *ArchiveManager) archiveSettlement(req *ActiveRequest) baseSettlement {
+	if !req.billing.at.IsZero() {
+		return req.billing.settle(req)
 	}
 	am.cacheMu.RLock()
 	defer am.cacheMu.RUnlock()
-
-	if am.pricing == nil {
-		return CostBreakdown{}
-	}
-
-	// 查找模型定价，不存在则回退到 _default 定价
-	pricing, exists := am.pricing[req.ModelName]
-	if !exists {
-		pricing, exists = am.pricing["_default"]
-		if !exists {
-			return CostBreakdown{}
-		}
-	}
-
-	// 获取端点/账号倍率
-	var multiplier *EndpointMultiplier
-	if req.UpstreamType == "account" {
-		if am.accountMultipliers != nil {
-			if m, ok := am.accountMultipliers[req.UpstreamID]; ok {
-				multiplier = &m
-			}
-		}
-	} else if am.endpointMultipliers != nil {
-		if m, ok := am.endpointMultipliers[req.EndpointName]; ok {
-			multiplier = &m
-		}
-	}
-
-	// 构建 TokenUsage 对象
-	usage := &TokenUsage{
-		InputTokens:           req.InputTokens,
-		OutputTokens:          req.OutputTokens,
-		CacheCreationTokens:   req.CacheCreationTokens,
-		CacheCreation5mTokens: req.CacheCreation5mTokens,
-		CacheCreation1hTokens: req.CacheCreation1hTokens,
-		CacheReadTokens:       req.CacheReadTokens,
-	}
-
-	// 调用公共成本计算函数（v5.0.1+）
-	return CalculateCostV2(usage, &pricing, multiplier, req.Path)
+	basis := billingSnapshot{prices: am.pricing, endpoints: am.endpointMultipliers, accounts: am.accountMultipliers}
+	return basis.settle(req)
 }
 
 func cloneModelPricingMap(src map[string]ModelPricing) map[string]ModelPricing {

@@ -239,6 +239,7 @@ type AccountPoolFailureCooldownsConfig struct {
 }
 
 type EndpointConfig struct {
+	ID                       int64             `yaml:"-" json:"-"` // 来自端点记录，不从配置文件导入
 	Name                     string            `yaml:"name"`
 	URL                      string            `yaml:"url"`
 	Priority                 int               `yaml:"priority"`

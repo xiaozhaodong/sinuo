@@ -136,24 +136,8 @@ func (s *SQLiteEndpointStore) Create(ctx context.Context, record *EndpointRecord
 	}
 
 	// 设置默认值
-	if record.CostMultiplier == 0 {
-		record.CostMultiplier = 1.0
-	}
-	if record.InputCostMultiplier == 0 {
-		record.InputCostMultiplier = 1.0
-	}
-	if record.OutputCostMultiplier == 0 {
-		record.OutputCostMultiplier = 1.0
-	}
-	if record.CacheCreationCostMultiplier == 0 {
-		record.CacheCreationCostMultiplier = 1.0
-	}
-	if record.CacheCreationCostMultiplier1h == 0 {
-		record.CacheCreationCostMultiplier1h = 1.0
-	}
-	if record.CacheReadCostMultiplier == 0 {
-		record.CacheReadCostMultiplier = 1.0
-	}
+
+	record.DefaultCostMultipliers()
 	if record.TimeoutSeconds == 0 {
 		record.TimeoutSeconds = 300
 	}
@@ -425,24 +409,8 @@ func (s *SQLiteEndpointStore) BatchCreate(ctx context.Context, records []*Endpoi
 
 	for _, record := range records {
 		// 设置默认值
-		if record.CostMultiplier == 0 {
-			record.CostMultiplier = 1.0
-		}
-		if record.InputCostMultiplier == 0 {
-			record.InputCostMultiplier = 1.0
-		}
-		if record.OutputCostMultiplier == 0 {
-			record.OutputCostMultiplier = 1.0
-		}
-		if record.CacheCreationCostMultiplier == 0 {
-			record.CacheCreationCostMultiplier = 1.0
-		}
-		if record.CacheCreationCostMultiplier1h == 0 {
-			record.CacheCreationCostMultiplier1h = 1.0
-		}
-		if record.CacheReadCostMultiplier == 0 {
-			record.CacheReadCostMultiplier = 1.0
-		}
+
+		record.DefaultCostMultipliers()
 		if record.TimeoutSeconds == 0 {
 			record.TimeoutSeconds = 300
 		}
@@ -655,4 +623,20 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// DefaultCostMultipliers 保留无配置时的统一 ×1；总倍率 0 且提供任一分项时进入分项模式。
+func (r *EndpointRecord) DefaultCostMultipliers() {
+	values := []*float64{&r.InputCostMultiplier, &r.OutputCostMultiplier, &r.CacheCreationCostMultiplier, &r.CacheCreationCostMultiplier1h, &r.CacheReadCostMultiplier}
+	configured := false
+	for _, v := range values {
+		if *v == 0 {
+			*v = 1
+		} else {
+			configured = true
+		}
+	}
+	if r.CostMultiplier == 0 && !configured {
+		r.CostMultiplier = 1
+	}
 }

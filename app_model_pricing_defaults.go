@@ -8,10 +8,11 @@ import (
 )
 
 // gpt56ModelPricingDefaults 返回 OpenAI GPT-5.6 标准层定价（USD / 1M tokens）。
-// OpenAI 只提供统一的缓存写入价格，因此两个历史缓存时长字段使用同一价格。
+// 两个历史字段保留原有基础价展示，Responses 写入按版本行的 30m / 12h 单价结算。
 func gpt56ModelPricingDefaults() []*store.ModelPricingRecord {
 	return []*store.ModelPricingRecord{
 		{
+			RateSource:           store.RateSourceOfficial,
 			ModelName:            "gpt-5.6",
 			DisplayName:          "GPT-5.6",
 			Description:          "GPT-5.6 别名（路由到 GPT-5.6 Sol）官方标准定价",
@@ -22,6 +23,7 @@ func gpt56ModelPricingDefaults() []*store.ModelPricingRecord {
 			CacheReadPrice:       0.50,
 		},
 		{
+			RateSource:           store.RateSourceOfficial,
 			ModelName:            "gpt-5.6-sol",
 			DisplayName:          "GPT-5.6 Sol",
 			Description:          "GPT-5.6 Sol 官方标准定价",
@@ -32,6 +34,7 @@ func gpt56ModelPricingDefaults() []*store.ModelPricingRecord {
 			CacheReadPrice:       0.50,
 		},
 		{
+			RateSource:           store.RateSourceOfficial,
 			ModelName:            "gpt-5.6-terra",
 			DisplayName:          "GPT-5.6 Terra",
 			Description:          "GPT-5.6 Terra 官方标准定价",
@@ -42,6 +45,7 @@ func gpt56ModelPricingDefaults() []*store.ModelPricingRecord {
 			CacheReadPrice:       0.25,
 		},
 		{
+			RateSource:           store.RateSourceOfficial,
 			ModelName:            "gpt-5.6-luna",
 			DisplayName:          "GPT-5.6 Luna",
 			Description:          "GPT-5.6 Luna 官方标准定价",
@@ -54,25 +58,27 @@ func gpt56ModelPricingDefaults() []*store.ModelPricingRecord {
 	}
 }
 
-// ensureGPT56ModelPricing 只插入缺失的内置定价，保留用户已有的自定义价格。
+func gpt56RateSheet(p *store.ModelPricingRecord) store.RateSheet {
+	write30m, write12h := 1.25*p.InputPrice, 2.5*p.InputPrice
+	return store.RateSheet{Rows: []store.RateRow{{
+		Input: &p.InputPrice, Output: &p.OutputPrice, CacheRead: &p.CacheReadPrice,
+		Cache5m: &p.CacheCreationPrice5m, Cache1h: &p.CacheCreationPrice1h, Cache30m: &write30m, Cache12h: &write12h,
+	}}}
+}
+
 func (a *App) ensureGPT56ModelPricing(ctx context.Context) (int, error) {
-	if a == nil || a.modelPricingService == nil {
+	if a == nil || a.modelPricingStore == nil {
 		return 0, fmt.Errorf("模型定价服务未启用")
 	}
-
 	inserted := 0
-	for _, pricing := range gpt56ModelPricingDefaults() {
-		existing, err := a.modelPricingService.GetPricing(ctx, pricing.ModelName)
+	for _, p := range gpt56ModelPricingDefaults() {
+		created, err := a.modelPricingStore.SeedResponsesRateSheet(ctx, p, gpt56RateSheet(p))
 		if err != nil {
-			return inserted, fmt.Errorf("检查模型定价 %s 失败: %w", pricing.ModelName, err)
+			return inserted, fmt.Errorf("初始化模型价表 %s: %w", p.ModelName, err)
 		}
-		if existing != nil {
-			continue
+		if created {
+			inserted++
 		}
-		if _, err := a.modelPricingService.CreatePricing(ctx, pricing); err != nil {
-			return inserted, fmt.Errorf("创建模型定价 %s 失败: %w", pricing.ModelName, err)
-		}
-		inserted++
 	}
 	return inserted, nil
 }

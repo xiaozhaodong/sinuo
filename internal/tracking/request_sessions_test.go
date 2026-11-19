@@ -336,6 +336,24 @@ func TestRequestSessions_StatsReplaceHotIDsBeforeFiltering(t *testing.T) {
 	}
 }
 
+func TestRequestSessions_SettledUnknownSupersedesOldArchiveCost(t *testing.T) {
+	tr := newModelUsageTestTracker(t)
+	now := time.Now()
+	seedSessionRequest(t, tr, "overlap", "codex", "changing", now, 100, 0, 0, 1.5)
+	err := tr.hotPool.Add(&ActiveRequest{RequestID: "overlap", RequestFamily: "codex", SessionID: "changing", StartTime: now,
+		Status: "completed", UsageKnown: true, InputTokens: 100, settled: &baseSettlement{known: false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tr.QueryRequestSessions(t.Context(), &QueryOptions{SessionID: "changing"}, 1, 30, "recent", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0].TotalCostUSD != nil || result.MissingCosts != 1 {
+		t.Fatalf("本次结算缺价应保留未知，旧快照金额不能计入会话：%+v", result)
+	}
+}
+
 func TestRequestSessions_HotCostsUseRecordedValues(t *testing.T) {
 	tr := newModelUsageTestTracker(t)
 	now := time.Now()

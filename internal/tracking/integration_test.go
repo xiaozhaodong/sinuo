@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -68,47 +67,6 @@ func (m *MockWebServer) handleUsageStats(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(stats)
 }
 
-func (m *MockWebServer) handleUsageExport(w http.ResponseWriter, r *http.Request) {
-	if m.usageTracker == nil || !m.usageTracker.config.Enabled {
-		http.Error(w, "Usage tracking not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	format := r.URL.Query().Get("format")
-	if format == "" {
-		format = "csv"
-	}
-
-	ctx := r.Context()
-	startTime := time.Now().AddDate(0, 0, -7)
-	endTime := time.Now()
-
-	var data []byte
-	var err error
-	var contentType string
-	var filename string
-
-	switch format {
-	case "json":
-		data, err = m.usageTracker.ExportToJSON(ctx, startTime, endTime, "", "", "")
-		contentType = "application/json"
-		filename = "usage_export.json"
-	default: // csv
-		data, err = m.usageTracker.ExportToCSV(ctx, startTime, endTime, "", "", "")
-		contentType = "text/csv"
-		filename = "usage_export.csv"
-	}
-
-	if err != nil {
-		http.Error(w, "Failed to export data", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-	w.Write(data)
-}
-
 func (m *MockWebServer) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if m.usageTracker == nil {
 		w.WriteHeader(http.StatusOK)
@@ -162,7 +120,6 @@ func TestWebIntegration(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/usage/summary", webServer.handleUsageSummary)
 	mux.HandleFunc("/api/v1/usage/stats", webServer.handleUsageStats)
-	mux.HandleFunc("/api/v1/usage/export", webServer.handleUsageExport)
 	mux.HandleFunc("/health/usage-tracker", webServer.handleHealthCheck)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -306,51 +263,6 @@ func TestWebIntegration(t *testing.T) {
 		}
 	})
 
-	// Test CSV export
-	t.Run("CSVExport", func(t *testing.T) {
-		resp, err := http.Get(server.URL + "/api/v1/usage/export?format=csv")
-		if err != nil {
-			t.Fatalf("Failed to export CSV: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType != "text/csv" {
-			t.Errorf("Expected Content-Type text/csv, got %s", contentType)
-		}
-
-		disposition := resp.Header.Get("Content-Disposition")
-		if !strings.Contains(disposition, "usage_export.csv") {
-			t.Errorf("Expected CSV filename in Content-Disposition, got %s", disposition)
-		}
-	})
-
-	// Test JSON export
-	t.Run("JSONExport", func(t *testing.T) {
-		resp, err := http.Get(server.URL + "/api/v1/usage/export?format=json")
-		if err != nil {
-			t.Fatalf("Failed to export JSON: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType != "application/json" {
-			t.Errorf("Expected Content-Type application/json, got %s", contentType)
-		}
-
-		disposition := resp.Header.Get("Content-Disposition")
-		if !strings.Contains(disposition, "usage_export.json") {
-			t.Errorf("Expected JSON filename in Content-Disposition, got %s", disposition)
-		}
-	})
 }
 
 func TestWebIntegrationDisabled(t *testing.T) {
@@ -412,7 +324,6 @@ func TestWebIntegrationErrors(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/usage/summary", webServer.handleUsageSummary)
 	mux.HandleFunc("/api/v1/usage/stats", webServer.handleUsageStats)
-	mux.HandleFunc("/api/v1/usage/export", webServer.handleUsageExport)
 	mux.HandleFunc("/health/usage-tracker", webServer.handleHealthCheck)
 
 	server := httptest.NewServer(mux)
@@ -425,7 +336,6 @@ func TestWebIntegrationErrors(t *testing.T) {
 	}{
 		{"Summary", "/api/v1/usage/summary"},
 		{"Stats", "/api/v1/usage/stats"},
-		{"Export", "/api/v1/usage/export"},
 		{"Health", "/health/usage-tracker"},
 	}
 

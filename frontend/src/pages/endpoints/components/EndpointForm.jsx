@@ -1,9 +1,12 @@
+import ChannelBillingSection from '@components/billing/ChannelBillingSection.jsx';
+import { validateCostMultipliers } from '@components/billing/billingForms.js';
+import useCostMultiplierMode from '@components/billing/useCostMultiplierMode.js';
 import SoftFailurePolicyFields from '@components/ui/SoftFailurePolicyFields.jsx';
 
 import { useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff, Plus, Save, Trash2 } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Plus, Save, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
-import Sheet from '@components/desktop/Sheet.jsx';
+import { ChannelFormSheet } from '@components/billing/ChannelRuleEditor.jsx';
 import Switch from '@components/desktop/Switch.jsx';
 import { FormBlock, FormFieldRow, FormRow, FormSection } from '@components/desktop/FormSection.jsx';
 import { createEmptyEndpointModelRewriteRule } from '../utils/modelRewrite.js';
@@ -88,7 +91,7 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
   const isEditMode = Boolean(endpoint);
   const [state, setState] = useState(() => createEndpointFormState(endpoint));
   const [errors, setErrors] = useState({});
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const costMode = useCostMultiplierMode(endpoint?.costMultiplier);
   const nameInputRef = useRef(null);
   const urlInputRef = useRef(null);
 
@@ -135,9 +138,26 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
     clearRuleError();
   };
 
+  const changeCostMode = (next) => {
+    const costMultiplier = costMode.select(next, state.costMultiplier);
+    setState((current) => ({ ...current, costMultiplier }));
+    setErrors((current) => ({ ...current, costMultiplier: undefined, invalidMultiplierFields: undefined }));
+  };
+
+  const changeMultiplier = (name, value) => {
+    setState((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, costMultiplier: undefined, invalidMultiplierFields: undefined }));
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     const nextErrors = validateEndpointFormState(state);
+    // numericValue('') 会得到 0，统一模式下留空也要拦住，否则会悄悄变成分项模式；分项模式也拦截非空且不大于 0。
+    const multiplierCheck = validateCostMultipliers(costMode.mode, state, { channelType: 'endpoint' });
+    if (multiplierCheck.error) {
+      nextErrors.costMultiplier = multiplierCheck.error;
+      nextErrors.invalidMultiplierFields = multiplierCheck.invalidFields;
+    }
     const rules = Array.isArray(state.modelRewriteRules) ? state.modelRewriteRules : [];
     if (state.modelRewriteEnabled && (
       rules.length === 0
@@ -155,7 +175,8 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
   };
 
   return (
-    <Sheet title={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'}
+    <ChannelFormSheet key={endpoint?.id || 0} backLabel="返回端点" title={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'}
+      billingChannel={{ type: 'endpoint', id: endpoint?.id || 0, name: endpoint?.name }}
       label={isEditMode ? '编辑 Claude 端点' : '新建 Claude 端点'} width={600}
       subtitle="一个端点对应一组固定认证信息；凭据始终以掩码展示。"
       onClose={requestClose} closeDisabled={loading} onSubmit={submit}
@@ -165,6 +186,7 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
         <Button type="button" variant="ghost" onClick={requestClose} disabled={loading}>取消</Button>
         <Button type="submit" icon={Save} loading={loading}>{isEditMode ? '保存修改' : '创建端点'}</Button>
       </>}>
+      {(billing) => <>
       <FormSection title="连接">
         <FormInput label="名称" name="name" inputRef={nameInputRef} value={state.name} onChange={change} disabled={isEditMode} placeholder="claude-primary" help={isEditMode ? '稳定唯一标识，编辑时不可修改' : '保存后作为请求上游名称'} error={errors.name} />
         <FormInput label="URL" name="url" inputRef={urlInputRef} value={state.url} onChange={change} placeholder="https://api.example.com" help="仅接受不含账号密码的 HTTP(S) URL" error={errors.url} />
@@ -222,13 +244,18 @@ const EndpointForm = ({ endpoint = null, onSave, onCancel, loading = false }) =>
           </FormBlock>
         )}
       </FormSection>
-      <FormSection title="高级" actions={<Button type="button" variant="ghost" size="sm" icon={showAdvanced ? ChevronUp : ChevronDown} onClick={() => setShowAdvanced((current) => !current)}>成本倍率</Button>}>
-        {showAdvanced && [
-          ['costMultiplier', '总成本倍率'], ['inputCostMultiplier', '输入倍率'], ['outputCostMultiplier', '输出倍率'],
-          ['cacheCreationCostMultiplier', '5 分钟缓存创建'], ['cacheCreationCostMultiplier1h', '1 小时缓存创建'], ['cacheReadCostMultiplier', '缓存读取倍率']
-        ].map(([name, label]) => <FormInput key={name} label={label} name={name} value={state[name]} onChange={change} type="number" min="0" step="0.1" />)}
-      </FormSection>
-    </Sheet>
+      <ChannelBillingSection
+        {...billing}
+        disabled={loading}
+        mode={costMode.mode}
+        onModeChange={changeCostMode}
+        values={state}
+        onValueChange={changeMultiplier}
+        error={errors.costMultiplier}
+        invalidFields={errors.invalidMultiplierFields}
+      />
+      </>}
+    </ChannelFormSheet>
   );
 };
 

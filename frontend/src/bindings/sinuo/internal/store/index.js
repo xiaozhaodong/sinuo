@@ -5,6 +5,32 @@
 import * as $models from "./models.js";
 
 /**
+ * BillingChannel 是实际出站目标。端点和账号按数据库 ID 匹配，订阅直通按固定名称匹配。
+ * @typedef {$models.BillingChannel} BillingChannel
+ */
+
+/**
+ * @typedef {$models.ChannelModelRule} ChannelModelRule
+ */
+
+/**
+ * @typedef {$models.ChannelTier} ChannelTier
+ */
+
+/**
  * PrivacyConfigSourceRecord 仅保存来源位置和同步摘要，不含文件内容或敏感值。
  * @typedef {$models.PrivacyConfigSourceRecord} PrivacyConfigSourceRecord
+ */
+
+/**
+ * @typedef {$models.RatePeriod} RatePeriod
+ */
+
+/**
+ * @typedef {$models.RateRow} RateRow
+ */
+
+/**
+ * RateSheet 的行号从 1 开始，与已发布的版本 ID 共同唯一标识历史费率行。
+ * @typedef {$models.RateSheet} RateSheet
  */
