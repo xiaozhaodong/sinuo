@@ -29,45 +29,63 @@ const compiled = await build({
 const { default: LifecyclePanel } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const render = (request) => renderToStaticMarkup(createElement(LifecyclePanel, { request }));
 
-const renderFlow = (flow) => renderToStaticMarkup(createElement(LifecyclePanel, {
-  request: { requestId: 'test', status: 'completed' }, lifecycle: { flow }
+const renderFlow = (flow, status = 'completed') => renderToStaticMarkup(createElement(LifecyclePanel, {
+  request: { requestId: 'test', status }, lifecycle: { flow }
 }));
+const textOf = (markup) => markup.replace(/<[^>]*>/g, '');
 
-test('单次 WS 请求默认收起，成功也能展开看真实毫秒时间线', () => {
+test('单次 WS 请求展示上游和交付节点，分别展开可见毫秒级时间点', () => {
   const html = renderFlow({
     transport: 'ws', legs: [{ leg_seq: 1, target_snapshot: { upstream_name: 'chatgpt-subscription' } }],
-    contacts: [{ leg_seq: 1, contact_seq: 1, write_done_offset_ms: 0, first_upstream_byte_offset_ms: 642 }],
+    contacts: [{
+      leg_seq: 1, contact_seq: 1, start_offset_ms: 0, write_done_offset_ms: 0,
+      first_upstream_byte_offset_ms: 642, end_offset_ms: 3280, outcome_code: 'completed'
+    }],
     first_client_write_offset_ms: 646, upstream_terminal_offset_ms: 3280, downstream_delivery_done_offset_ms: 3283,
     downstream_delivery_outcome: 'delivered', downstream_bytes_written: 249549
   });
-  const [summary, detail] = html.split('<details');
-  assert.match(summary, /链路轨迹[\s\S]*WS[\s\S]*chatgpt-subscription[\s\S]*已完整交付[\s\S]*243\.7 KB/);
-  assert.doesNotMatch(summary, /1 段选路|1 次联系/);
-  assert.doesNotMatch(detail.split('>')[0], /\bopen\b/);
-  const text = detail.replace(/<[^>]*>/g, '');
-  assert.match(text, /查看轨迹.*距请求开始.*发往上游0 ms.*收到上游首帧642 ms.*首次写给客户端646 ms.*收到上游终态3\.280 s.*下行交付结束3\.283 s/);
-  assert.doesNotMatch(text, /上游尝试|HTTP 200/);
-  assert.doesNotMatch(renderFlow(null), /链路轨迹|查看轨迹/);
+  assert.match(textOf(html), /链路轨迹.*WS.*chatgpt-subscription.*已完整交付.*243\.7 KB/);
+  assert.doesNotMatch(textOf(html), /1 段选路|1 次联系|HTTP 200/);
+  assert.doesNotMatch(html, /<details\b[^>]*\sopen(?:\s|=|>)/);
+  const [contact, delivery] = html.match(/<details\b[\s\S]*?<\/details>/g).map(textOf);
+  assert.match(contact, /响应完成.*本次耗时3\.280 s.*距请求开始.*写完请求\+0 ms.*上游首帧\+642 ms/);
+  assert.match(delivery, /已完整交付.*首次下行\+646 ms.*上游终态\+3\.280 s.*交付结束\+3\.283 s/);
+  assert.doesNotMatch(renderFlow(null), /链路轨迹|请求执行顺序/);
 });
 
-test('单次联系失败可展开查看原因或 HTTP 错误，正常联系保持紧凑', () => {
+test('单次联系失败可展开查看原因代码或实际 HTTP 状态', () => {
   const renderContact = (contact) => renderFlow({
     transport: 'http', contacts: [{ leg_seq: 1, contact_seq: 1, ...contact }]
   });
-  for (const [contact, expected] of [
-    [{ outcome_code: 'write_error' }, '读写错误'],
-    [{ http_status_code: 200, outcome_code: 'timeout' }, '超时'],
-    [{ http_status_code: 503 }, 'HTTP 503']
+  for (const [contact, label, reason] of [
+    [{ outcome_code: 'write_error' }, '读写错误', 'write_error'],
+    [{ http_status_code: 200, outcome_code: 'timeout' }, '超时', 'timeout'],
+    [{ http_status_code: 429 }, '限流', 'HTTP 429'],
+    [{ http_status_code: 503 }, 'HTTP 503', 'HTTP 503'],
+    [{ http_status_code: 503, outcome_code: 'completed' }, '失败', 'HTTP 503']
   ]) {
     const html = renderContact(contact);
-    const details = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
-    assert.ok(details.includes('查看轨迹') && details.includes(expected), expected);
+    const [detail] = html.match(/<details\b[\s\S]*?<\/details>/g);
+    assert.ok(textOf(detail.split('</summary>')[0]).includes(label));
+    assert.ok(textOf(detail).includes(`失败原因${reason}`));
+    assert.doesNotMatch(detail, /响应完成/);
   }
-  for (const outcome_code of [undefined, 'completed', 'success', 'ok']) {
-    const [summary, detail] = renderContact({ http_status_code: 200, outcome_code }).split('<details');
-    assert.doesNotMatch(summary, /HTTP 200/);
-    assert.match(detail, /HTTP 200/);
+  for (const outcome_code of ['completed', 'success', 'ok']) {
+    assert.match(textOf(renderContact({ http_status_code: 200, outcome_code })), /响应完成HTTP 200/);
   }
+});
+
+test('仅收到响应头的请求保持联系中，已写出的下行可单独查看', () => {
+  const flow = {
+    transport: 'http',
+    contacts: [{ leg_seq: 1, contact_seq: 1, start_offset_ms: 0, response_headers_offset_ms: 17, end_offset_ms: null, http_status_code: 200 }],
+    first_client_write_offset_ms: 20,
+    downstream_bytes_written: 92
+  };
+  const active = textOf(renderFlow(flow, 'processing'));
+  assert.match(active, /联系中HTTP 200.*收到响应头\+17 ms.*交付中.*下行 92 B.*首次下行\+20 ms/);
+  assert.doesNotMatch(active, /响应完成|本次尝试耗时|已完整交付/);
+  assert.match(textOf(renderFlow(flow)), /结果未记录HTTP 200.*交付结果未记录/);
 });
 
 test('同账号重试及换号按实际联系顺序展开，裁剪后仍显示真实总数', () => {
@@ -75,8 +93,8 @@ test('同账号重试及换号按实际联系顺序展开，裁剪后仍显示�
     transport: 'http', total_legs: 6, total_contacts: 9, truncated: true,
     legs: [
       { leg_seq: 1, target_snapshot: { upstream_name: '候选' } },
-      { leg_seq: 2, target_snapshot: { upstream_name: '账号甲' } },
-      { leg_seq: 6, target_snapshot: { upstream_name: '账号乙' } }
+      { leg_seq: 2, target_snapshot: { upstream_type: 'account', upstream_id: 21, upstream_name: '账号甲' } },
+      { leg_seq: 6, target_snapshot: { upstream_type: 'account', upstream_id: 42, upstream_name: '账号乙' } }
     ],
     contacts: [
       { leg_seq: 2, contact_seq: 1, http_status_code: 429, outcome_code: 'rate_limited', start_offset_ms: 0, end_offset_ms: 100 },
@@ -84,11 +102,9 @@ test('同账号重试及换号按实际联系顺序展开，裁剪后仍显示�
       { leg_seq: 6, contact_seq: 9, http_status_code: 200, outcome_code: 'completed' }
     ]
   });
-  assert.match(html, /6 段选路 · 9 次联系/);
-  const attempts = html.match(/<details\b[\s\S]*?<\/details>/)?.[0] || '';
-  assert.match(attempts, /上游尝试/);
-  assert.doesNotMatch(attempts, /候选/);
-  assert.match(attempts, /#1[\s\S]*?账号甲[\s\S]*?429[\s\S]*?限流[\s\S]*?100 ms[\s\S]*?#2[\s\S]*?账号甲[\s\S]*?503[\s\S]*?传输重发[\s\S]*?#9[\s\S]*?账号乙[\s\S]*?200/);
+  const text = textOf(html);
+  assert.match(text, /6 段选路 · 9 次联系.*账号甲限流HTTP 429.*100 ms.*账号甲失败HTTP 503传输重发.*6 次联系未展示.*账号乙响应完成HTTP 200/);
+  assert.doesNotMatch(text, /候选|切换账号/);
 });
 
 test('按实际联系的账号 ID 统计换号，最后一段尚未发出时保留真实事件', () => {
@@ -100,12 +116,13 @@ test('按实际联系的账号 ID 统计换号，最后一段尚未发出时保�
     contact_seq: i + 1, leg_seq, first_upstream_byte_offset_ms: 20 + i * 50
   }));
   const renderTrace = (ls, cs) => renderFlow({ transport: 'http', legs: ls, contacts: cs });
-  assert.match(renderTrace(legs.slice(0, 1), contacts.slice(0, 2)), /同一账号 · 联系 2 次/);
-  assert.match(renderTrace(legs.slice(0, 2), contacts), /收到上游首字节[\s\S]*120 ms/);
+  const repeated = textOf(renderTrace(legs.slice(0, 1), contacts.slice(0, 2)));
+  assert.match(repeated, /同一账号 · 联系 2 次.*同账号重试/);
   const html = renderTrace(legs, contacts);
-  assert.match(html, /换号 1 次 · 联系 3 次/);
-  assert.match(html, /选定上游[\s\S]*200 ms/);
-  assert.doesNotMatch(html, /收到上游首字节|发往同名账号|undefined/);
+  assert.match(textOf(html), /换号 1 次 · 联系 3 次.*切换账号.*上游首字节\+120 ms/);
+  const selection = textOf(html.match(/<details\b[\s\S]*?<\/details>/g).find((node) => node.includes('已选定上游')));
+  assert.match(selection, /同名账号已选定上游.*选定上游\+200 ms/);
+  assert.doesNotMatch(selection, /上游首字节|本次耗时|undefined/);
 });
 
 test('本地拒绝和不完整交付只列已记录的时刻，按实际发生顺序排列', () => {
@@ -114,10 +131,13 @@ test('本地拒绝和不完整交付只列已记录的时刻，按实际发生�
     downstream_delivery_done_offset_ms: 852, downstream_delivery_outcome: 'partial_or_failed',
     downstream_flush_error: true
   });
-  assert.match(html, /服务端续推[\s\S]*交付不完整[\s\S]*Flush 异常/);
-  assert.match(html, /下行交付结束[\s\S]*852 ms[\s\S]*收到上游终态[\s\S]*900 ms/);
-  assert.doesNotMatch(html, /发往上游|收到上游首帧|首次写给客户端/);
-  assert.match(renderFlow({ transport: 'http', origin: 'client_request' }), /查看轨迹[\s\S]*暂无已记录的时间点/);
+  const text = textOf(html);
+  assert.match(text, /服务端续推.*交付不完整.*Flush 异常/);
+  assert.match(text, /交付结束\+852 ms.*上游终态\+900 ms/);
+  assert.doesNotMatch(text, /上游首帧|上游首字节|首次下行/);
+  const missing = renderFlow({ transport: 'http', origin: 'client_request' });
+  assert.match(textOf(missing), /交付结果未记录/);
+  assert.doesNotMatch(missing, /<details\b/);
 });
 
 test('详情明细：按条上的顺序显示段名、耗时、说明与总耗时', () => {
