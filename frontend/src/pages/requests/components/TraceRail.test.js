@@ -5,7 +5,19 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { buildLifecycleSegments, railSegmentColors, lifecycleSegmentColors } from '../utils/lifecycle.js';
+import { carryLiveTiming } from '../utils/liveTiming.js';
 import { TABLE_COLUMNS, DEFAULT_VISIBLE_COLUMNS, UNSETTLED_STATUSES } from '../utils/constants.js';
+import {
+  formatTraceElapsedBadge,
+  getSettledRailSegments,
+  getTraceRailPhase,
+  quantizeSegmentsToCells,
+  resolveAsymptoticFilledCells,
+  resolveLiveRailState,
+  TRACE_RAIL_CELLS,
+  TRACE_RAIL_HALF_SATURATION_MS,
+  TRACE_RAIL_MAX_LIVE_FILLED
+} from '../utils/traceRail.js';
 import { STATUS_CONFIG } from '../../../utils/constants.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -24,35 +36,215 @@ const stripComments = (source) => source
 const RAIL_CODE = stripComments(RAIL_SOURCE);
 const TABLE_CODE = stripComments(TABLE_SOURCE);
 
-// 轨道视觉档位。timeout / error 归入 failed —— 都是「没跑完」，
-// 差异交给状态文字与详情面板。
-const VARIANTS = ['pending', 'forwarding', 'processing', 'retry', 'suspended', 'completed', 'failed', 'cancelled'];
 const IN_FLIGHT = ['pending', 'forwarding', 'processing', 'retry'];
 
-const parseMap = (source, constName) => {
-  const body = source.match(new RegExp(`const ${constName} = \\{([\\s\\S]*?)\\n\\};`))?.[1];
-  assert.ok(body, `${constName} 未找到，测试与实现已脱节`);
-  return body;
-};
-
-test('RAIL_VARIANT 覆盖 STATUS_CONFIG 的全部状态', () => {
-  const body = parseMap(RAIL_SOURCE, 'RAIL_VARIANT');
+test('阶段游标只用于正在执行的请求', () => {
   for (const status of Object.keys(STATUS_CONFIG)) {
-    assert.match(body, new RegExp(`\\b${status}:`),
-      `状态 ${status} 没有轨道档位，会掉进 || 'pending' 的兜底而显示成「在跑」`);
+    assert.equal(Boolean(getTraceRailPhase({ status })), IN_FLIGHT.includes(status), status);
   }
 });
 
-test('终态都有末端符号，进行中都没有', () => {
-  const body = parseMap(RAIL_SOURCE, 'CAP_ICON');
-  for (const variant of VARIANTS) {
-    const hasCap = new RegExp(`\\b${variant}:`).test(body);
-    if (IN_FLIGHT.includes(variant)) {
-      assert.equal(hasCap, false, `${variant} 是进行中，轨道右端必须空着表示「还没到终点」`);
-    } else {
-      assert.equal(hasCap, true, `${variant} 是终态，必须有不依赖颜色的末端符号`);
+test('准备、转发、首响、生成和收尾按记录推进', () => {
+  const timestamp = '2026-11-19T02:00:00Z';
+  const sentAt = '2026-11-19T02:00:01Z';
+  for (const [request, key, color] of [
+    [{ status: 'pending' }, 'preparing', 'queue'],
+    [{ status: 'forwarding' }, 'forwarding', 'send'],
+    [{ status: 'processing', upstreamFirstDispatchMs: 0 }, 'forwarding', 'send'],
+    [{ status: 'processing', firstTokenStartAt: sentAt, duration: 900000 }, 'first', 'first'],
+    [{ status: 'processing', upstreamWriteMs: 0 }, 'first', 'first'],
+    [{ status: 'processing', firstTokenMs: 0 }, 'stream', 'stream'],
+    [{ status: 'processing', completionMs: 0 }, 'settling', 'tail']
+  ]) {
+    const phase = getTraceRailPhase({ timestamp, ...request });
+    assert.equal(phase.key, key);
+    assert.equal(phase.color, color);
+  }
+});
+
+test('重试起点晚于上次写出时标为重试，收到本次实际写出后进入首响阶段', () => {
+  const request = {
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00Z',
+    firstTokenStartAt: '2026-11-19T02:00:01Z',
+    retryStartedAt: '2026-11-19T02:00:02Z',
+    upstreamWriteMs: 1000
+  };
+  assert.equal(getTraceRailPhase(request).color, 'retry');
+  assert.equal(getTraceRailPhase({ ...request, status: 'forwarding' }).color, 'retry');
+  assert.equal(getTraceRailPhase({ ...request, firstTokenStartAt: '2026-11-19T02:00:03Z' }).color, 'first');
+  assert.equal(getTraceRailPhase({ ...request, status: 'suspended' }), null);
+});
+
+test('已记录的首响和收尾优先于未更新的重试等待信息', () => {
+  for (const status of ['processing', 'retry']) {
+    for (const firstTokenStartAt of [undefined, '2026-11-19T02:00:01Z']) {
+      const request = { status, firstTokenStartAt, retryStartedAt: '2026-11-19T02:00:02Z' };
+      assert.equal(getTraceRailPhase(request).color, 'retry');
+      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0 }).color, 'stream');
+      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0, completionMs: 200 }).color, 'tail');
     }
   }
+});
+
+test('渐近生长时间尺随耗时单调增长且永不顶爆，始终留 1 格游标', () => {
+  assert.equal(TRACE_RAIL_CELLS, 21);
+  assert.equal(TRACE_RAIL_MAX_LIVE_FILLED, 20);
+  assert.equal(resolveAsymptoticFilledCells(0), 0);
+  assert.equal(resolveAsymptoticFilledCells(-100), 0);
+  assert.equal(resolveAsymptoticFilledCells(TRACE_RAIL_HALF_SATURATION_MS), 10);
+
+  let prev = 0;
+  for (const ms of [400, 1500, 4000, 8000, 15000, 30000, 120000, 600000, 3600000]) {
+    const filled = resolveAsymptoticFilledCells(ms);
+    assert.ok(filled >= prev, `${ms}ms 的格数 ${filled} 不应小于前档 ${prev}`);
+    assert.ok(filled <= TRACE_RAIL_MAX_LIVE_FILLED, `${ms}ms 超过进行中上限`);
+    prev = filled;
+  }
+  assert.equal(resolveAsymptoticFilledCells(3600000), TRACE_RAIL_MAX_LIVE_FILLED);
+});
+
+test('整格量化严格输出 21 格，0ms 终态与失败保底均不丢失', () => {
+  // 0ms 失败整条满红
+  const zeroFail = quantizeSegmentsToCells(
+    getSettledRailSegments({ status: 'failed', failureReason: 'no_available_providers', duration: 0 }, 0)
+  );
+  assert.equal(zeroFail.length, TRACE_RAIL_CELLS);
+  assert.ok(zeroFail.every((key) => key === 'failure'));
+
+  // 已知阶段占满总耗时时，0ms 失败段保底至少 2 格
+  const midFail = quantizeSegmentsToCells(
+    getSettledRailSegments({
+      status: 'failed',
+      failureReason: 'rate_limited: status=429',
+      duration: 300000,
+      firstTokenMs: 200,
+      completionMs: 299800,
+      isStreaming: true
+    }, 300000)
+  );
+  assert.equal(midFail.length, TRACE_RAIL_CELLS);
+  assert.ok(midFail.filter((key) => key === 'failure').length >= 2);
+  assert.ok(midFail.includes('first') && midFail.includes('stream'));
+
+  // 含重试的多段长耗时，每段至少 1 整格且总和严格 21
+  const longMulti = quantizeSegmentsToCells([
+    { key: 'queue', ms: 400 },
+    { key: 'retry', ms: 18100 },
+    { key: 'send', ms: 470 },
+    { key: 'first', ms: 223000 },
+    { key: 'stream', ms: 69600 }
+  ]);
+  assert.equal(longMulti.length, TRACE_RAIL_CELLS);
+  for (const key of ['queue', 'retry', 'send', 'first', 'stream']) {
+    assert.ok(longMulti.includes(key), `分段 ${key} 至少应占 1 整格`);
+  }
+});
+
+test('进行中状态快照支持弹性阶段占比与慢首响预警，进入生成后恢复首响紫', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00Z');
+  const base = {
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00Z',
+    upstreamWriteMs: 300,
+    firstTokenStartAt: '2026-11-19T02:00:00.300Z'
+  };
+
+  // 常规等首响（3s）
+  const normalWait = resolveLiveRailState(base, 'processing', 3000, startMs + 3000);
+  assert.equal(normalWait.cells.length, TRACE_RAIL_CELLS);
+  assert.equal(normalWait.cursorIndex, normalWait.filled);
+  assert.equal(normalWait.cursorColorKey, 'first');
+  assert.equal(normalWait.cells[normalWait.cursorIndex], 'first');
+
+  // 慢首响 >8s -> 琥珀预警（retry）
+  const warnWait = resolveLiveRailState(base, 'processing', 9500, startMs + 9500);
+  assert.equal(warnWait.cursorColorKey, 'retry');
+  assert.ok(warnWait.filled > normalWait.filled, '等待越久已生长格数应越多');
+
+  // 极慢首响 >15s -> 玫瑰红预警（failure）
+  const critWait = resolveLiveRailState(base, 'processing', 18000, startMs + 18000);
+  assert.equal(critWait.cursorColorKey, 'failure');
+
+  // 收到首响进入生成 -> 首响定格紫罗兰，游标与新增部分为翠绿
+  const streaming = resolveLiveRailState(
+    { ...base, firstTokenMs: 14000, firstTokenAt: '2026-11-19T02:00:14.300Z' },
+    'processing',
+    22000,
+    startMs + 22000
+  );
+  assert.equal(streaming.cursorColorKey, 'stream');
+  assert.ok(streaming.cells.slice(0, streaming.filled).includes('first'));
+  assert.ok(streaming.cells.slice(0, streaming.filled).includes('stream'));
+});
+
+test('最新一次写完距今很短时，滞后的 firstTokenStartAt 不会误报慢首响', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00Z');
+  const state = resolveLiveRailState({
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00Z',
+    // 旧的写入时间戳停在 100ms 处，但最新一次写完已是 16000ms，距今才 100ms
+    firstTokenStartAt: '2026-11-19T02:00:00.100Z',
+    upstreamWriteMs: 16000
+  }, 'processing', 16100, startMs + 16100);
+  assert.equal(state.cursorColorKey, 'first');
+  assert.equal(state.cells[state.cursorIndex], 'first');
+});
+
+test('查询已带回重试后的最新写出偏移而行内残留旧写出时间时，进入等待首响且不误报慢首响', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00Z');
+  // 前一帧行对象：0.2s 首次写完、18s 触发重试
+  const prevRow = {
+    requestId: 'req-retry-carry',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    status: 'retry',
+    firstTokenStartAt: '2026-11-19T02:00:00.200Z',
+    retryStartedAt: '2026-11-19T02:00:18.000Z',
+    retryCount: 1
+  };
+  // 查询返回最新记录：29.9s 已写完（库里无 firstTokenStartAt / retryStartedAt）
+  const queryRow = {
+    requestId: 'req-retry-carry',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    status: 'forwarding',
+    upstreamWriteMs: 29900,
+    retryCount: 1
+  };
+  const [merged] = carryLiveTiming([prevRow], [queryRow]);
+  const state = resolveLiveRailState(merged, merged.status, 30000, startMs + 30000);
+  assert.equal(state.phase.key, 'first');
+  assert.equal(state.cursorColorKey, 'first');
+  const byKey = Object.fromEntries(state.segments.map((seg) => [seg.key, seg.ms]));
+  assert.equal(byKey.retry, 29900);
+  assert.equal(byKey.first, 100);
+});
+
+test('重试后首响事件先到且写入时间未刷新时，优先按 firstTokenAt 分配生成段与重试段', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00Z');
+  // 第 1 次写出停在 200ms，18s 后重试并于 20s 收到首响（首响 1.2s），当前 25s（实际生成 5s）
+  const state = resolveLiveRailState({
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00Z',
+    upstreamWriteMs: 200,
+    firstTokenStartAt: '2026-11-19T02:00:00.200Z',
+    retryStartedAt: '2026-11-19T02:00:18.000Z',
+    firstTokenMs: 1200,
+    firstTokenAt: '2026-11-19T02:00:20.000Z'
+  }, 'processing', 25000, startMs + 25000);
+
+  const byKey = Object.fromEntries(state.segments.map((seg) => [seg.key, seg.ms]));
+  assert.equal(byKey.retry, 18800);
+  assert.equal(byKey.first, 1200);
+  assert.equal(byKey.stream, 5000);
+});
+
+test('状态列总耗时进行中降频，终态保持与 timing 同口径', () => {
+  assert.equal(formatTraceElapsedBadge(37, { live: true }), '0ms');
+  assert.equal(formatTraceElapsedBadge(382, { live: true }), '350ms');
+  assert.equal(formatTraceElapsedBadge(1432, { live: true }), '1.4s');
+  assert.equal(formatTraceElapsedBadge(12340, { live: true }), '12.3s');
+  assert.equal(formatTraceElapsedBadge(1432, { live: false }), '1.43s');
+  assert.equal(formatTraceElapsedBadge(0, { live: false }), '0ms');
 });
 
 test('railSegmentColors 覆盖 buildLifecycleSegments 可能产出的全部 key', () => {
@@ -93,7 +285,7 @@ test('两套分段配色的 key 完全一致', () => {
   );
 });
 
-test('轨道版配色不使用深色阶 —— 3px 细线上会读成「没渲染出来」', () => {
+test('格状轨道在深浅主题使用可辨别的亮色', () => {
   for (const [key, value] of Object.entries(railSegmentColors)) {
     assert.doesNotMatch(value, /bg-\w+-(700|800|900)/,
       `${key} 的轨道色 ${value} 太深；需要压深的是详情条那套（${lifecycleSegmentColors[key]}），它要承载浅色标签文字`);
@@ -103,27 +295,12 @@ test('轨道版配色不使用深色阶 —— 3px 细线上会读成「没渲�
   assert.ok(deepInDetail.length > 0, '详情条配色里没有深色阶，两套配色的分叉理由已不成立');
 });
 
-test('进行中与已挂起都不产出分段 —— 不伪造进度', () => {
-  // 这条锁的是 TraceRail 的核心契约：请求没结束前谁也不知道总时长。
-  // suspended 尤其容易漏 —— 它不在 IN_FLIGHT 里（不该有流光），
-  // 但请求同样没结束，照 duration 画分段等于伪造一条不存在的时间线。
-  assert.match(RAIL_SOURCE, /const settled = !inFlight && variant !== 'suspended'/,
-    'settled 的判据必须同时排除进行中与已挂起');
-  assert.match(RAIL_SOURCE, /settled \? buildLifecycleSegments\(request\) : null/,
-    '任何按 duration 画比例的写法都是编数据');
-
-  // suspended 的半程条只能是静态装饰（flow），不能走 fill —— fill 承载的是
-  // 按真实耗时算出来的分段比例，而那份数据此刻还不存在。
-  assert.doesNotMatch(CSS_SOURCE, /trace-rail--suspended \.trace-rail__fill/,
-    'suspended 不该给 fill 上样式，它没有可信的分段数据');
-});
-
-test('落位动画只在「亲眼看着它跑完」时播', () => {
-  // 首屏与翻页拿到的终态行是历史数据，全表一起闪一遍毫无意义。
-  assert.match(RAIL_SOURCE, /IN_FLIGHT_STATUSES\.has\(prev\)/,
-    '判据必须包含「上一帧还在跑」，只看当前是不是终态会让首屏全表齐闪');
-  assert.match(RAIL_SOURCE, /variant === 'cancelled'/,
-    '取消是用户自己发起的，不需要终态反馈');
+test('运行中复用共享时钟原地更新格子，终态与挂起停止订阅', () => {
+  assert.match(RAIL_CODE, /resolveLiveRailState\(/);
+  assert.match(RAIL_CODE, /resolveElapsedMs\(currentStart, 0, now\)/);
+  assert.match(RAIL_CODE, /subscribeElapsedTick\(paint\)/);
+  assert.match(RAIL_CODE, /if \(!isLive\) \{[\s\S]*?return undefined;/);
+  assert.doesNotMatch(RAIL_CODE, /useState|setInterval/);
 });
 
 test('renderCell 每个分支都返回单一根元素', () => {
@@ -215,59 +392,37 @@ test('旧的整行扫光与逐列接力已彻底移除', () => {
   assert.doesNotMatch(TABLE_SOURCE, /--col-index/, '逐列接力已移除，--col-index 不应再下发');
 });
 
-test('落位动画有限次、流光无限次 —— 两者搞反表格就再也静不下来', () => {
-  const declOf = (name) => CSS_SOURCE.match(new RegExp(`animation: ${name}[^;]*;`))?.[0];
-
-  // 终态落位是一次性反馈：播完整张表必须回到完全安静。
-  for (const name of ['trace-rail-fill', 'trace-rail-cap-pop', 'trace-rail-settle-flash']) {
-    const decl = declOf(name);
-    assert.ok(decl, `${name} 未被任何规则使用`);
-    assert.doesNotMatch(decl, /infinite/, `${name} 是落位反馈，不能无限循环`);
-  }
-
-  // 进行中的流光反过来必须无限循环，否则播一轮就停在轨道外，
-  // 「还在跑」这条信息会在几秒后凭空消失。
-  for (const name of ['trace-rail-shoot', 'trace-rail-rewind', 'trace-rail-dot-breathe', 'trace-rail-dot-pulse']) {
-    const decl = declOf(name);
-    assert.ok(decl, `${name} 未被任何规则使用`);
-    assert.match(decl, /infinite/, `${name} 表达「进行中」，必须无限循环`);
-  }
+test('21 格独立网格无亚像素，生长前沿游标独立呼吸', () => {
+  const rail = CSS_SOURCE.match(/\.trace-rail \{[^}]*\}/)?.[0];
+  assert.match(rail, /grid-template-columns: repeat\(21, 4px\)/);
+  assert.match(rail, /gap: 2px/);
+  assert.match(rail, /width: 124px/);
+  assert.match(rail, /height: 4px/);
+  const cursor = CSS_SOURCE.match(/\.trace-rail__cell--cursor \{[^}]*\}/)?.[0];
+  assert.match(cursor, /animation: trace-rail-cursor [^;]*infinite/);
+  // 空槽背景必须使用独立类，不能写在基础 .trace-rail__cell 上覆盖 Tailwind bg-*
+  const baseCell = CSS_SOURCE.match(/\.trace-rail__cell \{[^}]*\}/)?.[0];
+  assert.doesNotMatch(baseCell, /background/);
+  assert.doesNotMatch(RAIL_CODE, /key=\{request\.timestamp\}/);
 });
 
-test('减弱动效下进行中仍可读，且终态不会被误读成在跑', () => {
+test('减弱动效保留静态生长前沿，关闭呼吸与过渡动画', () => {
   const reducedBlock = CSS_SOURCE.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n}\n/)?.[0];
   assert.ok(reducedBlock, 'reduced-motion 段落未找到');
-
-  // 流光停下会留在轨道外，等于没有任何「进行中」标识 —— 必须有静态色带兜底
-  for (const variant of IN_FLIGHT) {
-    assert.match(reducedBlock, new RegExp(`trace-rail--${variant} \\.trace-rail__flow`),
-      `${variant} 在减弱动效下没有静态色带兜底，状态会读不出来`);
-  }
-  // 终态的 fill 已经画了真实分段，再叠色带会读成「还在跑」
-  for (const variant of ['completed', 'failed', 'cancelled', 'suspended']) {
-    assert.doesNotMatch(reducedBlock, new RegExp(`trace-rail--${variant} \\.trace-rail__flow`),
-      `${variant} 是终态，不该在减弱动效下显示流光色带`);
-  }
+  assert.match(reducedBlock, /\.trace-rail__cell--cursor,[^}]*animation: none/);
+  assert.match(reducedBlock, /\.trace-rail--live \.trace-rail__cell \{[^}]*transition: none/);
+  assert.match(reducedBlock, /\.trace-rail__cell--cursor \{ opacity: \.68; \}/);
+  assert.match(RAIL_CODE, /!prefersReducedMotion\(\)/);
 });
 
-test('注释里写的轨道宽度与 CSS 实际宽度一致', () => {
-  // 这条不是洁癖：轨道宽度决定了状态列要占多宽，是调布局时第一个要查的数。
-  // 注释写 44px 而 CSS 是 74px 的话，下次调尺寸的人会照着错的数算。
-  const railBlock = CSS_SOURCE.match(/\.trace-rail \{[\s\S]*?\n\}/)?.[0];
-  assert.ok(railBlock, '.trace-rail 规则未找到');
-  const actualWidth = railBlock.match(/width:\s*(\d+)px/)?.[1];
-  assert.ok(actualWidth, '.trace-rail 没有显式宽度');
-
-  const mentions = [...RAIL_SOURCE.matchAll(/(\d+)px\s*轨道/g), ...CSS_SOURCE.matchAll(/(\d+)px\s*轨道/g)];
-  assert.ok(mentions.length > 0, '没有一处注释提到轨道宽度，这条断言已失去意义');
-  for (const [text, width] of mentions) {
-    assert.equal(width, actualWidth, `注释「${text}」与 CSS 的 ${actualWidth}px 不一致`);
-  }
+test('状态和轨道排在原有 32px 表格行高之内', () => {
+  assert.match(RAIL_CODE, /inline-flex w-\[124px\] h-6 flex-col/);
+  assert.match(CSS_SOURCE, /\.trace-rail \{[^}]*width: 124px;[^}]*height: 4px;/);
+  assert.match(CSS_SOURCE, /\.desk-table td \{[^}]*height: 32px;/);
 });
 
 test('轨道退出可访问性树 —— 状态不能被读屏念两遍', () => {
-  // 轨道右边紧挨着同一状态的可见文字。给轨道再挂 aria-label，
-  // 读屏会先念图形的名字再念文字，同一个状态出现两次。
+  // 独立的状态文字和计时承担可访问内容，格子退出可访问性树。
   assert.match(RAIL_CODE, /aria-hidden="true"/, '轨道必须 aria-hidden');
   assert.doesNotMatch(RAIL_CODE, /role="img"/, 'aria-hidden 之后 role 已无意义，留着会误导');
   assert.doesNotMatch(RAIL_CODE, /aria-label/, '可访问名由旁边的可见文字承担');

@@ -583,7 +583,7 @@
  * 分工：新行入场表达「刚到」，轨道表达「在跑 / 跑完了」，别的一概不动。
  * 同一条信息不叠两个动画 —— 轨道在动时，状态图标一律静止。
  *
- * 动区收敛是这轮的主线：进行中的标识从「整行扫光」收到 74px 轨道。
+ * 进行中的动效集中在状态列的 124px 轨道。
  * 整行呼吸/扫光在多行并发时会同时刷亮每一行，噪音远大于信息量；
  * 轨道只占一列，十几行同时在跑也不会糊成一片。
  *
@@ -635,223 +635,55 @@
   animation-delay: var(--enter-delay, 0ms);
 }
 
-/* ------------------------------------------------------------
- * TraceRail：74px 的独立轨道
- *
- * 做在行内 <span> 里，不受 <tr>/<td> 的 table 布局限制，
- * transform / scaleX / 伪元素全部可用 —— 上面那两个坑在这里都不存在。
- * ------------------------------------------------------------ */
+/* 21 个 4×4px 独立色格与 20 道 2px 间隙精确排满 124px（零亚像素、零半格劈色）。
+   未到达底槽略压淡，读作底轨刻度而非「剩余进度」。 */
 .trace-rail {
-  /* 「进行中」的活跃色，与 lifecycle.js 里 railSegmentColors.first 的
-     bg-violet-400 是同一个色 —— 处理中的流光与终态的「首字」段必须同色，
-     它们是同一条时间线的两个阶段。改一处要改两处。
-     不写 var(--color-violet-400)：Tailwind v4 的 theme 变量只在被 utility
-     引用时才保证输出，直接 var() 可能拿到空值。 */
-  --rail-active: #a78bfa;
+  --trace-cell-empty: color-mix(in srgb, var(--app-line) 74%, transparent);
 
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  width: 74px;
-  flex: none;
-}
-
-.trace-rail__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex: none;
-  background: var(--app-fg-subtle);
-}
-
-.trace-rail__track {
-  position: relative;
-  flex: 1;
-  height: 3px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: transparent;
-}
-
-/* indeterminate 流光。进行中才可见 —— 终态的 fill 已经画了真实分段，
-   再叠一条流光会把「已完成」看成「还在跑」。 */
-.trace-rail__flow {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 40%;
-  border-radius: 999px;
-  opacity: 0;
-}
-
-/* 终态分段容器。补满走 scaleX 而非 width：scaleX 在合成层上跑，
-   不触发 reflow，而这一列有十几行会同时落位。 */
-.trace-rail__fill {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  transform-origin: left center;
-  transform: scaleX(0);
-}
-
-.trace-rail__fill > i { display: block; height: 100%; }
-.trace-rail__fill > i:first-child { border-radius: 999px 0 0 999px; }
-.trace-rail__fill > i:last-child { border-radius: 0 999px 999px 0; }
-
-.trace-rail__cap {
-  width: 12px;
-  height: 12px;
-  flex: none;
   display: grid;
-  place-items: center;
-  color: transparent;
+  grid-template-columns: repeat(21, 4px);
+  gap: 2px;
+  flex: none;
+  width: 124px;
+  height: 4px;
 }
 
-/* 位置区间按 px = p × (轨道宽 − 光带宽) 反推：起点须 ≤ −100% 才能让光带
-   完整停在左侧外，终点须 ≥ 260% 才能完整扫出右侧，否则光带会凭空出现在
-   轨道中间、又在扫完前消失。 */
-@keyframes trace-rail-shoot {
-  from { transform: translateX(-105%); }
-  to   { transform: translateX(265%); }
+.trace-rail__cell {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
 }
 
-@keyframes trace-rail-rewind {
-  from { transform: translateX(265%); }
-  to   { transform: translateX(-105%); }
+/* 独立空槽类与 Tailwind bg-* 互斥，避免在非 @layer 中压过 @layer utilities */
+.trace-rail__cell--empty {
+  background-color: var(--trace-cell-empty);
 }
 
-@keyframes trace-rail-dot-breathe {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: .3; }
+.trace-rail--live .trace-rail__cell {
+  transition: background-color 180ms ease-out;
 }
 
-@keyframes trace-rail-dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: .45; transform: scale(.72); }
+.trace-rail__cell--cursor {
+  animation: trace-rail-cursor 1350ms ease-in-out infinite;
 }
 
-/* 等待中：虚线轨道 + 呼吸点。轨道空着 —— 它真的还没开始跑。 */
-.trace-rail--pending .trace-rail__dot {
-  background: var(--app-accent-ring);
-  animation: trace-rail-dot-breathe 1900ms ease-in-out infinite;
+@keyframes trace-rail-cursor {
+  0%, 100% { opacity: .35; }
+  50%      { opacity: 1; }
 }
 
-.trace-rail--pending .trace-rail__track {
-  background-image: repeating-linear-gradient(90deg, var(--app-fg-subtle) 0 2px, transparent 2px 6px);
-  opacity: .5;
+.trace-rail[data-settling] .trace-rail__cell {
+  animation: trace-rail-settle 300ms cubic-bezier(.22, 1, .36, 1) backwards;
+  animation-delay: calc(var(--cell-index, 0) * 8ms);
 }
 
-/* 转发中：一颗光点向右飞过，表达「请求正在离开本地」。 */
-.trace-rail--forwarding .trace-rail__dot { background: var(--app-accent-ring); }
-.trace-rail--forwarding .trace-rail__track { background: color-mix(in srgb, var(--app-accent-ring) 30%, transparent); }
-
-.trace-rail--forwarding .trace-rail__flow {
-  opacity: 1;
-  width: 36%;
-  background: linear-gradient(90deg, transparent, var(--app-accent-ring), transparent);
-  animation: trace-rail-shoot 1150ms cubic-bezier(.45,0,.35,1) infinite;
+@keyframes trace-rail-settle {
+  from {
+    opacity: .45;
+    transform: scaleY(1.16);
+  }
 }
-
-/* 处理中：更慢更宽的连续流光，色相推进到 violet —— 与终态里「首字 / 生成」
-   两段同色系，视觉上是同一条时间线在往前走。 */
-.trace-rail--processing .trace-rail__dot { background: var(--rail-active); }
-.trace-rail--processing .trace-rail__track { background: color-mix(in srgb, var(--rail-active) 30%, transparent); }
-
-.trace-rail--processing .trace-rail__flow {
-  opacity: 1;
-  width: 52%;
-  background: linear-gradient(90deg, transparent, var(--rail-active), transparent);
-  animation: trace-rail-shoot 1750ms ease-in-out infinite;
-}
-
-/* 重试中：amber 点脉冲 + 光点反向回跑。不用 spin —— 旋转读不出方向，
-   而「退回重来」的方向感正是这个状态唯一要传达的信息。 */
-.trace-rail--retry .trace-rail__dot {
-  background: var(--app-warn-solid);
-  animation: trace-rail-dot-pulse 900ms ease-in-out infinite;
-}
-
-.trace-rail--retry .trace-rail__track { background: color-mix(in srgb, var(--app-warn-solid) 24%, transparent); }
-
-.trace-rail--retry .trace-rail__flow {
-  opacity: 1;
-  width: 36%;
-  background: linear-gradient(90deg, transparent, var(--app-warn-solid), transparent);
-  animation: trace-rail-rewind 950ms cubic-bezier(.4,0,.6,1) infinite;
-}
-
-/* 终态：轨道填满，末端出符号，全部静止 */
-.trace-rail--completed .trace-rail__dot { background: var(--app-success-solid); }
-.trace-rail--completed .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
-.trace-rail--completed .trace-rail__fill { transform: scaleX(1); }
-.trace-rail--completed .trace-rail__cap { color: var(--app-success-solid); }
-
-.trace-rail--failed .trace-rail__dot { background: var(--app-danger-solid); }
-.trace-rail--failed .trace-rail__track { background: color-mix(in srgb, var(--app-danger-solid) 16%, transparent); }
-.trace-rail--failed .trace-rail__fill { transform: scaleX(1); }
-.trace-rail--failed .trace-rail__cap { color: var(--app-danger-solid); }
-
-.trace-rail--cancelled .trace-rail__dot { background: var(--app-fg-subtle); }
-.trace-rail--cancelled .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
-.trace-rail--cancelled .trace-rail__fill { transform: scaleX(1); opacity: .75; }
-.trace-rail--cancelled .trace-rail__cap { color: var(--app-fg-subtle); }
-
-/* 已挂起：停在半程且完全静止。它在等人工干预，任何动效都会误导成「在跑」。
-   半程条走 flow 而非 fill —— 请求并没有结束，fill 里那份按真实耗时算的分段
-   还不存在，这里只是一个「卡在中途」的静态记号。 */
-.trace-rail--suspended .trace-rail__dot { background: var(--app-fg-subtle); }
-.trace-rail--suspended .trace-rail__track { background: color-mix(in srgb, var(--app-fg-subtle) 16%, transparent); }
-.trace-rail--suspended .trace-rail__cap { color: var(--app-fg-subtle); }
-
-.trace-rail--suspended .trace-rail__flow {
-  opacity: .55;
-  width: 45%;
-  background: var(--app-fg-subtle);
-}
-
-/* ------------------------------------------------------------
- * 终态落位：一次性反馈，播完即静止
- *
- * 与旧版扫光的关键区别 —— 那条是 infinite，只能靠摘 class 硬停；
- * 这里全部是有限次动画，播完表格回到完全安静。
- *
- * cancelled 刻意不在此列：取消是用户自己发起的，不需要被通知。
- * 它直接落位，这个「没有反馈」本身就是与 completed / failed 的区分。
- * ------------------------------------------------------------ */
-@keyframes trace-rail-fill { from { transform: scaleX(0); } }
-
-@keyframes trace-rail-cap-pop {
-  from { opacity: 0; transform: scale(.35); }
-  to   { opacity: 1; transform: scale(1); }
-}
-
-@keyframes trace-rail-settle-flash {
-  from { opacity: .9; }
-  to   { opacity: 0; }
-}
-
-.trace-rail.is-settling .trace-rail__fill {
-  animation: trace-rail-fill 360ms cubic-bezier(.22,1,.36,1);
-}
-
-.trace-rail.is-settling .trace-rail__cap {
-  animation: trace-rail-cap-pop 300ms cubic-bezier(.22,1,.36,1) backwards;
-  animation-delay: 170ms;
-}
-
-/* 整条轨道被终态色盖满一次再退去。460ms 给出「确认感」而不拖沓。 */
-.trace-rail--completed.is-settling .trace-rail__track::after,
-.trace-rail--failed.is-settling .trace-rail__track::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  animation: trace-rail-settle-flash 460ms ease-out forwards;
-}
-
-.trace-rail--completed.is-settling .trace-rail__track::after { background: var(--app-success-solid); }
-.trace-rail--failed.is-settling .trace-rail__track::after { background: var(--app-danger-solid); }
 
 /* 首响位「尚未发到上游」的等待点（PendingSendPill）。超过 1 秒才挂 --waiting：
    三个点错开依次变暗再亮回，读起来是一道从左往右的波，不做整体呼吸。
@@ -895,28 +727,18 @@
 @media (prefers-reduced-motion: reduce) {
   .request-row-enter > td > *,
   .request-row-enter > td:first-child::before,
-  .trace-rail__dot,
-  .trace-rail__flow,
-  .trace-rail.is-settling .trace-rail__fill,
-  .trace-rail.is-settling .trace-rail__cap,
+  .trace-rail__cell--cursor,
+  .trace-rail[data-settling] .trace-rail__cell,
   .pending-send-dots--waiting > i,
   .kpi-value-flash {
     animation: none;
   }
 
-  .trace-rail.is-settling .trace-rail__track::after { display: none; }
-
-  /* 流光停下后会留在轨道外，等于没有任何「进行中」标识。
-     改用一条静止色带兜底，保证减弱动效下仍读得出哪些行在跑。
-     只给进行中 —— 终态的 fill 已经画了真实分段，再叠色带会读成「还在跑」。 */
-  .trace-rail--pending .trace-rail__flow,
-  .trace-rail--forwarding .trace-rail__flow,
-  .trace-rail--processing .trace-rail__flow,
-  .trace-rail--retry .trace-rail__flow {
-    opacity: 1;
-    width: 55%;
-    transform: translateX(0);
+  .trace-rail--live .trace-rail__cell {
+    transition: none;
   }
+
+  .trace-rail__cell--cursor { opacity: .68; }
 
   /* 关掉滑动后留一条静止满宽条，仍能表达「正在刷新」 */
   .indeterminate-bar {

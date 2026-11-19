@@ -18,11 +18,11 @@ export const STATUS_OPTIONS = {
 };
 
 // 「进行中」的状态集合，与上面的 STATUS_OPTIONS 状态机对齐。
-// suspended（已挂起）不算进行中：它在等人工干预 —— 轨道对它不给流光，
+// suspended（已挂起）不算进行中：它在等人工干预，轨道显示静态灰格，
 // 耗时列对它不跑秒，两处都靠这一份集合判定。
 export const IN_FLIGHT_STATUSES = new Set(['pending', 'forwarding', 'processing', 'retry']);
 
-// 「还没落定」的状态。比 IN_FLIGHT 多一个 suspended —— 它不该有流光和跑秒
+// 「还没落定」的状态。比 IN_FLIGHT 多一个 suspended —— 它保持静止
 // （在等人工干预，不是在工作），但请求确实还没结束。
 // 用途：token 与成本只在终态被写入，这些状态下那几列的 0 是「还不知道」
 // 而不是「用了 0 个」，必须渲染成占位符。

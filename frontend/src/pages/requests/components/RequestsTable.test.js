@@ -35,6 +35,49 @@ const compiled = await build({
   }]
 });
 const { default: RequestsTable } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+
+const renderStatus = (fields) => renderToStaticMarkup(createElement(RequestsTable, {
+  requests: [normalizeRequest({ request_id: 'status-row', ...fields })],
+  visibleColumns: ['status'], columnConfigs: TABLE_COLUMNS
+}));
+
+const countMatches = (html, pattern) => [...html.matchAll(pattern)].length;
+
+test('0ms 结束记录显示带颜色和说明的 21 格满宽轨道，挂起显示占位与空槽', () => {
+  for (const [fields, title, color] of [
+    [{ status: 'failed', failure_reason: 'no_available_providers' }, '无可用上游', 'bg-rose-400'],
+    [{ status: 'cancelled' }, '已取消', 'bg-slate-300'],
+    [{ status: 'completed' }, '总耗时', 'bg-slate-300'],
+    [{ status: 'completed', first_token_ms: 0, completion_ms: 0 }, '总耗时', 'bg-slate-300']
+  ]) {
+    const html = renderStatus({ ...fields, duration_ms: 0 });
+    assert.match(html, />0ms<\/span>/);
+    assert.ok(html.includes(`title="${title} 0ms"`), html);
+    assert.equal(countMatches(html, new RegExp(`class="trace-rail__cell ${color}[^"]*"`, 'g')), 21);
+  }
+
+  const suspended = renderStatus({ status: 'suspended', duration_ms: 0 });
+  assert.match(suspended, />—<\/span>/);
+  assert.doesNotMatch(suspended, /trace-rail--live|trace-rail__cell--cursor/);
+  assert.equal(countMatches(suspended, /class="trace-rail__cell trace-rail__cell--empty"/g), 21);
+});
+
+test('已知阶段占满总耗时时按整格量化保留 0ms 失败和取消段', () => {
+  const timing = { duration_ms: 300000, first_token_ms: 200, completion_ms: 299800, is_streaming: true };
+  for (const [fields, title, color, minCells] of [
+    [{ status: 'failed', failure_reason: 'rate_limited: status=429' }, '限流 429', 'bg-rose-400', 2],
+    [{ status: 'cancelled' }, '已取消', 'bg-slate-300', 1]
+  ]) {
+    const html = renderStatus({ ...timing, ...fields });
+    assert.ok(html.includes(`title="首响 200ms · 流式输出 299.8s · ${title} 0ms"`), html);
+    assert.equal(countMatches(html, /class="trace-rail__cell /g), 21);
+    assert.ok(
+      countMatches(html, new RegExp(`class="trace-rail__cell ${color}[^"]*"`, 'g')) >= minCells,
+      `${title} 至少应占 ${minCells} 整格`
+    );
+  }
+});
+
 test('缓存率使用完整输入，可区分零命中、未知用量与在途请求', () => {
   const markup = (raw, visible = true) => renderToStaticMarkup(createElement(RequestsTable, {
     requests: [normalizeRequest({ request_id: 'cache', status: 'completed', ...raw })],
