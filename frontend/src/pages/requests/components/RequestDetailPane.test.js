@@ -88,7 +88,7 @@ test('三栏配平：中栏含概要与模型与思考，右栏顶置成本与�
   }));
 
   // 顶栏常驻摘要锚点
-  assert.match(html, /data-header-anchor[\s\S]*?7\.42s[\s\S]*?\$0\.048/);
+  assert.match(html, /data-header-anchor[\s\S]*?7\.42s[\s\S]*?>\$0\.0482<\/span>/);
   // 三栏分隔使用明确 bg-line，三栏独立纵向滚动且挂 data-detail-scroll
   assert.match(html, /gap-px bg-line @xl:grid-cols-2 @4xl:h-full @4xl:grid-cols-\[1\.35fr_1fr_1\.05fr\]/);
   assert.equal((html.match(/data-detail-scroll/g) || []).length, 3);
@@ -100,7 +100,7 @@ test('三栏配平：中栏含概要与模型与思考，右栏顶置成本与�
   assert.match(html, /font-mono text-xs font-medium tabular-nums text-success">200<\/span>/);
   // 缓存命中率：30000 / (4000 + 6000 + 30000) = 75.0%
   assert.match(html, /text-success[^>]*>缓存命中 75\.0%<\/span>/);
-  assert.match(textOf(html), /本次成本\$0\.048.*合计 Token41,000/);
+  assert.match(textOf(html), /本次成本\$0\.0482合计 Token41,000/);
   assert.match(textOf(html), /缓存创建6,000/);
 });
 
@@ -160,6 +160,14 @@ test('缓存创建只在两项分档齐全时可还原；Responses 的合计直�
     assert.ok(text.includes(`缓存创建${creation}`));
     assert.ok(text.includes(`合计 Token${total}`));
   }
+});
+
+test('详情顶栏与本次成本均显示查询返回的原始小额费用', () => {
+  const row = normalizeRequest({ request_id: 'tiny-cost', status: 'completed', cost: 0 });
+  const detail = normalizeRequest({ ...row, total_cost_usd: 0.00023 });
+  const html = renderPane(row, { lifecycle: { request: detail }, lifecycleLoading: false });
+  assert.match(html, /data-header-anchor[\s\S]*?>\$0\.00023<\/span>/);
+  assert.match(textOf(html), /本次成本\$0\.00023合计 Token/);
 });
 
 test('滚动复位仅跟随切换后的请求 ID，不因同请求实时刷新跳回顶部', () => {

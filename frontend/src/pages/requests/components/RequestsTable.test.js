@@ -43,6 +43,25 @@ const renderStatus = (fields) => renderToStaticMarkup(createElement(RequestsTabl
 
 const countMatches = (html, pattern) => [...html.matchAll(pattern)].length;
 
+test('成本列保留三位小数，悬停显示原金额，未结算或缺失的费用不透露金额', () => {
+  const renderCost = (raw) => renderToStaticMarkup(createElement(RequestsTable, {
+    requests: [normalizeRequest({ request_id: 'cost-row', status: 'completed', ...raw })],
+    visibleColumns: ['cost'], columnConfigs: TABLE_COLUMNS
+  }));
+  for (const [cost, display, exact] of [
+    [0, '$0.000', '$0'], [0.00023, '&lt;$0.001', '$0.00023'], [0.0009999, '&lt;$0.001', '$0.0009999'],
+    [0.001, '$0.001', '$0.001'], [0.02375, '$0.024', '$0.02375'], [2, '$2.000', '$2'],
+    [1.2345, '$1.235', '$1.2345'], [2.3e-9, '&lt;$0.001', '$0.0000000023']
+  ]) {
+    assert.ok(renderCost({ total_cost_usd: cost }).includes(`title="${exact}">${display}</span>`));
+  }
+  for (const raw of [{}, { total_cost_usd: null }, { cost: 0, cost_known: false }, { cost: 0.123, status: 'processing' }]) {
+    const html = renderCost(raw);
+    assert.match(html, />—<\/span>/);
+    assert.doesNotMatch(html, /\$/);
+  }
+});
+
 test('减少动态效果时，实时新增仍用于滚动锚定，行本身无需入场', (t) => {
   const previousWindow = globalThis.window;
   globalThis.window = { matchMedia: () => ({ matches: true }) };

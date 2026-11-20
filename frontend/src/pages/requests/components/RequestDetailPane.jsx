@@ -11,14 +11,13 @@ import { useEffect, useRef } from 'react';
 import RequestBilling from './RequestBilling.jsx';
 import { AlertCircle, Copy, MousePointerClick, RefreshCw, Waves, X } from 'lucide-react';
 import { InspectorEmpty, Property, PropertyList } from '@components/desktop/Inspector.jsx';
-import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import RequestStatusBadge from './RequestStatusBadge.jsx';
 import LifecyclePanel from './LifecyclePanel.jsx';
 import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
-import { formatRouteMode, getRequestPresentation } from '../utils/requestPresentation.js';
+import { formatExactRequestCost, formatRouteMode, getRequestPresentation, getSettledRequestCost } from '../utils/requestPresentation.js';
 import { fullInputTokens, requestInputIncludesCache } from '../utils/requestInputUsage.js';
 import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
@@ -147,10 +146,9 @@ const TokenPairRow = ({ left, right }) => (
  * 「Token 与成本」。未知用量与成本显示占位符（与列表同口径）：在途时后端还没写这几个字段，
  * 终态但没收到 usage 时同理 —— 0 是「还不知道」而不是「用了 0 个」。
  */
-const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
+const TokenSection = ({ request, costText, decision, lifecycleLoading = false }) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   const usageKnown = !pending && request.usageKnown !== false;
-  const costKnown = !pending && request.costKnown !== false;
   const usageTone = usageKnown ? 'text-fg' : 'text-fg-subtle';
   const formatUsage = (value) => (usageKnown ? (value || 0).toLocaleString() : '—');
 
@@ -186,7 +184,6 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
     ? parseReasoning(request.responseReasoning).reasoning_tokens
     : undefined;
   const totalDisplay = fullInput === null ? '—' : formatUsage(fullInput + outputTokens);
-  const costDisplay = costKnown ? formatCost(request.cost) : '—';
   const showCodexCacheSplit = inputIncludesCache && (separateWrites || request.cacheCreation30mTokens != null || request.cacheCreation12hTokens != null);
 
   return (
@@ -207,8 +204,8 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
       <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface px-3 py-2">
         <div className="min-w-0">
           <div className="text-[11.5px] text-fg-muted">本次成本</div>
-          <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight tabular-nums ${costKnown ? 'text-warn' : 'text-fg-subtle'}`}>
-            {costDisplay}
+          <div className={`selectable mt-0.5 break-all font-mono text-[15px] font-semibold leading-tight tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`}>
+            {costText ?? '—'}
           </div>
         </div>
         <div className="min-w-0 border-l border-line-soft pl-3" title={totalHint}>
@@ -367,10 +364,9 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
   );
 };
 
-const PaneHeader = ({ request, presentation, timestampText, onClose }) => {
+const PaneHeader = ({ request, costText, presentation, timestampText, onClose }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
   const settled = !UNSETTLED_STATUSES.has(request.status);
-  const costKnown = settled && request.costKnown !== false;
   return (
     <div className="@container flex h-[36px] shrink-0 items-center gap-2.5 border-b border-line bg-surface-sub/80 pl-4 pr-2.5">
       <span className="inline-flex min-w-0 items-center gap-1">
@@ -393,8 +389,8 @@ const PaneHeader = ({ request, presentation, timestampText, onClose }) => {
           {settled ? formatTimingBadge(request.duration) : '进行中'}
         </span>
         <span className="h-3 w-px bg-line" aria-hidden="true" />
-        <span className={`font-mono font-semibold tabular-nums ${costKnown ? 'text-warn' : 'text-fg-subtle'}`}>
-          {costKnown ? formatCost(request.cost) : '—'}
+        <span className={`max-w-[24ch] truncate font-mono font-semibold tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`} title={costText ?? undefined}>
+          {costText ?? '—'}
         </span>
       </span>
       <span className="shrink-0 text-xs tabular-nums text-fg-muted">{timestampText}</span>
@@ -443,10 +439,12 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     }
     : initialRequest;
   const presentation = getRequestPresentation(request);
+  const cost = getSettledRequestCost(request);
+  const costText = cost === null ? null : formatExactRequestCost(cost);
 
   return (
     <>
-      <PaneHeader request={request} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
+      <PaneHeader request={request} costText={costText} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
       {/* 列间 1px 清晰分隔：桌面三栏独立纵向滚动，窄屏退回整区滚动 */}
       <div ref={scrollRootRef} className="@container min-h-0 flex-1 overflow-y-auto @4xl:overflow-hidden">
         <div className="grid min-h-full grid-cols-1 gap-px bg-line @xl:grid-cols-2 @4xl:h-full @4xl:grid-cols-[1.35fr_1fr_1.05fr]">
@@ -463,7 +461,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
             </div>
           </section>
           <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @xl:col-span-2 @4xl:col-span-1 @4xl:min-h-0 @4xl:overflow-y-auto">
-            <TokenSection request={request} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
+            <TokenSection request={request} costText={costText} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
             <div className="mt-3.5 border-t border-line pt-3 empty:hidden">
               {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
                 <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}

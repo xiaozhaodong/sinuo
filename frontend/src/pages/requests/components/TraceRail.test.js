@@ -332,8 +332,6 @@ test('在途时 token 与成本显示占位符而不是 0', () => {
   // 失败/取消记录，0 是「还不知道」而不是「用了 0 个」。
   assert.match(TABLE_CODE, /const usagePending = pending \|\| request\.usageKnown === false/,
     'usage_known=false 的记录必须显示占位符');
-  assert.match(TABLE_CODE, /const costPending = pending \|\| request\.costKnown === false/,
-    'cost_known=false 的记录必须显示占位符');
 
   for (const col of ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens', 'cost']) {
     assert.match(TABLE_CODE, new RegExp(`case '${col}':[\\s\\S]{0,160}?<ValueCell`),

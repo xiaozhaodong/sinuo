@@ -3,7 +3,7 @@ export const isKnown = (value) => typeof value === 'number' && Number.isFinite(v
 export const isInputSpike = (point) => isKnown(point?.full_input) && isKnown(point?.previous)
   && point.previous > 0 && point.full_input >= point.previous * 2 && point.full_input - point.previous >= 10000;
 export const formatSessionNumber = (value) => isKnown(value) ? value.toLocaleString() : '—';
-// 固定四位小数，不足 0.00005 的非零金额与请求列表/详情一致写成「<$0.0001」
+// 会话用量固定四位小数，不足 0.00005 的正金额记为「<$0.0001」。
 const MIN_DISPLAY_COST = 0.00005;
 
 export const formatSessionCost = value => {

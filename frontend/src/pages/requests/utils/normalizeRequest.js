@@ -77,7 +77,7 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   completionMs: pick(request, ['completion_ms', 'completionMs'], null),
   ...normalizeInputUsage(request),
   outputTokens: pick(request, ['output_tokens', 'outputTokens'], 0),
-  cost: pick(request, ['total_cost_usd', 'cost'], 0),
+  cost: pick(request, ['total_cost_usd', 'cost'], null),
   isStreaming: pick(request, ['is_streaming', 'isStreaming'], false),
   routeMode: pick(request, ['route_mode', 'routeMode'], 'auto'),
   requestedEndpoint: pick(request, ['requested_endpoint', 'requestedEndpoint'], ''),

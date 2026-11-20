@@ -8,7 +8,6 @@
 import React from 'react';
 import { Waves, RefreshCw } from 'lucide-react';
 import { LoadingSpinner } from '@components/ui';
-import { formatCost } from '@utils/api.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { RequestTraceCell } from './TraceRail.jsx';
 import RequestTimingCell from './RequestTimingCell.jsx';
@@ -17,6 +16,7 @@ import PrivacyWarningBadge from './PrivacyWarningBadge.jsx';
 import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { formatSessionRatio } from '../utils/sessionUsage.js';
+import { formatExactRequestCost, formatRequestListCost, getSettledRequestCost } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { assignStableZebraParity, NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import { prefersReducedMotion } from '@utils/motion.js';
@@ -69,7 +69,6 @@ const renderCell = (columnId, request, formatTime, enterAnimation) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
   const usagePending = pending || request.usageKnown === false;
-  const costPending = pending || request.costKnown === false;
   const usageHint = isCodexSearchRequest(request) ? CODEX_SEARCH_USAGE_HINT : undefined;
 
   switch (columnId) {
@@ -108,8 +107,14 @@ const renderCell = (columnId, request, formatTime, enterAnimation) => {
       return <ValueCell pending={usagePending || request.cacheReadTokens == null} tone="text-fg-muted" title={usageHint}>{request.cacheReadTokens}</ValueCell>;
     case 'cacheRatio':
       return <ValueCell pending={usagePending || request.cacheRatio == null} tone="text-fg-body" title={usageHint || '按本行记录的 Token 计算：缓存读取 ÷ 完整输入'}>{formatSessionRatio(request.cacheRatio)}</ValueCell>;
-    case 'cost':
-      return <ValueCell pending={costPending} tone="text-warn font-medium" title={usageHint}>{formatCost(request.cost)}</ValueCell>;
+    case 'cost': {
+      const cost = getSettledRequestCost(request);
+      return (
+        <ValueCell pending={cost === null} tone="text-warn font-medium" title={cost === null ? usageHint : formatExactRequestCost(cost)}>
+          {cost !== null && formatRequestListCost(cost)}
+        </ValueCell>
+      );
+    }
     default:
       return null;
   }

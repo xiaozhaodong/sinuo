@@ -1,3 +1,5 @@
+import { UNSETTLED_STATUSES } from './constants.js';
+
 // 请求列表、详情和生命周期共用的展示分类。保留原始 status，不能由模糊 EOF 推断续接。
 export const getRequestPresentation = (request = {}) => {
   const reason = request.failureReason ?? request.failure_reason ?? '';
@@ -26,3 +28,19 @@ const ROUTE_MODE_LABELS = {
 };
 
 export const formatRouteMode = (mode) => ROUTE_MODE_LABELS[mode] || '自动';
+
+const listDollars = new Intl.NumberFormat('en-US', {
+  useGrouping: false, minimumFractionDigits: 3, maximumFractionDigits: 3
+});
+// API 返回双精度数值。保留其有效数字，同时让极小金额以普通十进制可读。
+const exactDollars = new Intl.NumberFormat('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
+
+export const getSettledRequestCost = (request) => {
+  if (UNSETTLED_STATUSES.has(request.status) || request.costKnown === false) return null;
+  return Number.isFinite(request.cost) ? request.cost : null;
+};
+
+export const formatRequestListCost = (cost) =>
+  cost > 0 && cost < 0.001 ? '<$0.001' : `$${listDollars.format(cost)}`;
+
+export const formatExactRequestCost = (cost) => `$${exactDollars.format(cost)}`;
