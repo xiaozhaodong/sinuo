@@ -43,6 +43,37 @@ const renderStatus = (fields) => renderToStaticMarkup(createElement(RequestsTabl
 
 const countMatches = (html, pattern) => [...html.matchAll(pattern)].length;
 
+test('减少动态效果时，实时新增仍用于滚动锚定，行本身无需入场', (t) => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { matchMedia: () => ({ matches: true }) };
+  t.after(() => { globalThis.window = previousWindow; });
+
+  const html = renderToStaticMarkup(createElement(RequestsTable, {
+    requests: [{ requestId: 'incoming', status: 'completed' }],
+    enterAnimations: new Map([['incoming', { delayMs: 0 }]]),
+    visibleColumns: ['requestId'], columnConfigs: TABLE_COLUMNS
+  }));
+  assert.match(html, /<table [^>]*data-live-arrivals=""/);
+  assert.doesNotMatch(html, /request-row-enter|--enter-delay/);
+});
+
+test('动态列只在模型列启用行内尺寸隔离，并保留长模型名和一致性告警', () => {
+  const model = 'claude-opus-4-6-20260401';
+  const requests = [
+    { requestId: 'short', model: 'gpt-5.4', status: 'completed' },
+    { requestId: 'long', model, requestModel: model, responseModel: 'claude-sonnet-4-6', status: 'completed' }
+  ];
+  const markup = (visibleColumns) => renderToStaticMarkup(createElement(RequestsTable, {
+    requests, visibleColumns, columnConfigs: TABLE_COLUMNS
+  }));
+
+  const withModel = markup(['model', 'requestFamily']);
+  assert.equal(countMatches(withModel, /class="flex \[contain:inline-size\]"/g), requests.length);
+  assert.match(withModel, /class="min-w-0 truncate">claude-opus-4-6-20260401</);
+  assert.match(withModel, /data-model-alert="mismatch"/);
+  assert.doesNotMatch(markup(['requestFamily']), /contain:inline-size|claude-opus-4-6-20260401|data-model-alert/);
+});
+
 test('0ms 结束记录显示带颜色和说明的 21 格满宽轨道，挂起显示占位与空槽', () => {
   for (const [fields, title, color] of [
     [{ status: 'failed', failure_reason: 'no_available_providers' }, '无可用上游', 'bg-rose-400'],

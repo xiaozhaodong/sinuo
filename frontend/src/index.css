@@ -591,48 +591,42 @@
  * ============================================================ */
 
 /* ------------------------------------------------------------
- * 新行入场：200ms 位移 + 淡入
+ * 新行入场：220ms 顺向轻落 + 淡入
  *
- * 位移挂在 `> td > *`（单元格内容的根元素）上，不挂 <tr> 也不挂 <td>：
- *   - <tr> 横移会被 overflow-x 容器裁掉首列文字、右缘露出底色；
- *   - <td> 是 table-cell，transform 对它无效。
- * 因此 renderCell 的每个分支都必须返回单一根元素，返回 Fragment 会静默失效
- * —— 这条由 RequestsTable 的静态扫描用例锁定。
- *
- * 不再做逐列接力：位移本身已有方向感（自下而上），再叠一个从左到右的
- * 接力就是第三个方向维度，反而读不出主次。
+ * 请求表格的内容、底色和点击区域随整行同向移动。入场使用独立的 translate，
+ * 可与使用 transform 的让位叠加。下方已有行让位时，新行延后 65ms 起跑。
  * ------------------------------------------------------------ */
 @keyframes request-row-rise {
-  from { opacity: 0; transform: translateY(5px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; translate: 0 -8px; }
+  to   { opacity: 1; translate: 0 0; }
 }
 
-.request-row-enter > td > * {
-  animation: request-row-rise 200ms cubic-bezier(.22,1,.36,1) backwards;
+.requests-table tr.request-row-enter,
+:where(table:not(.requests-table)) .request-row-enter > td > * {
+  animation: request-row-rise 220ms cubic-bezier(.22,1,.36,1) backwards;
   animation-delay: var(--enter-delay, 0ms);
 }
 
-/* 左缘一道细亮线亮一次再退去，代替旧版铺满整行的高亮底。
-   它是整套入场里收尾最晚的一条（620ms），摘 class 必须等它 —— 见
-   RequestsTable 的 handleAnimationEnd。 */
-@keyframes request-row-edge-tick {
-  from { opacity: 1; }
-  55%  { opacity: 1; }
-  to   { opacity: 0; }
+/* 实时插入时，由 RequestsTable 按当前滚动位置一次性补偿。 */
+:is(.overflow-auto, .overflow-y-auto):has(> .requests-table[data-live-arrivals]) {
+  overflow-anchor: none;
 }
 
-.request-row-enter > td:first-child { position: relative; }
+/* 请求追踪表统一使用灰度抗锯齿，防止 macOS 下 <tr> 进出 GPU 合成层导致全表字体粗细闪烁；
+   不给 td 背景色加过渡，配合行身份稳定斑马纹（data-zebra）杜绝新行插入时全屏反色频闪。 */
+.requests-table {
+  -webkit-font-smoothing: antialiased;
+}
 
-.request-row-enter > td:first-child::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--app-accent-ring);
-  animation: request-row-edge-tick 620ms ease-out backwards;
-  animation-delay: var(--enter-delay, 0ms);
+/* 既有行让位下移（FLIP）：在可见 <tr> 上切换位移。 */
+.requests-table tbody tr[data-row-shift="prep"] {
+  transition: none;
+  transform: translateY(var(--row-shift-y, 0px));
+}
+
+.requests-table tbody tr[data-row-shift="run"] {
+  transform: translateY(0);
+  transition: transform 220ms cubic-bezier(.22, 1, .36, 1);
 }
 
 /* 21 个 4×4px 独立色格与 20 道 2px 间隙精确排满 124px（零亚像素、零半格劈色）。
@@ -661,7 +655,7 @@
 }
 
 .trace-rail--live .trace-rail__cell {
-  transition: background-color 180ms ease-out;
+  transition: background-color 180ms ease-out, opacity 180ms ease-out;
 }
 
 .trace-rail__cell--cursor {
@@ -673,16 +667,15 @@
   50%      { opacity: 1; }
 }
 
+/* 收尾延展期：拉长色块过渡至 220ms，配合 rAF 逐格推进形成柔和羽化波前，
+   同时让左侧既有分段边界在重算到 21 格时顺滑右移变色，不出现闪暗与硬切。 */
 .trace-rail[data-settling] .trace-rail__cell {
-  animation: trace-rail-settle 300ms cubic-bezier(.22, 1, .36, 1) backwards;
-  animation-delay: calc(var(--cell-index, 0) * 8ms);
+  transition: background-color 220ms cubic-bezier(.22, 1, .36, 1), opacity 180ms ease-out;
 }
 
-@keyframes trace-rail-settle {
-  from {
-    opacity: .45;
-    transform: scaleY(1.16);
-  }
+/* 状态文字与耗时胶囊（灰 → 语义彩）统一柔和过渡，与轨道收尾同频 */
+.trace-rail__label {
+  transition: color 240ms ease-out;
 }
 
 /* 首响位「尚未发到上游」的等待点（PendingSendPill）。超过 1 秒才挂 --waiting：
@@ -725,16 +718,21 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .request-row-enter > td > *,
-  .request-row-enter > td:first-child::before,
+  .requests-table tr.request-row-enter,
+  :where(table:not(.requests-table)) .request-row-enter > td > *,
   .trace-rail__cell--cursor,
-  .trace-rail[data-settling] .trace-rail__cell,
   .pending-send-dots--waiting > i,
   .kpi-value-flash {
     animation: none;
   }
 
   .trace-rail--live .trace-rail__cell {
+    transition: none;
+  }
+
+  .trace-rail[data-settling] .trace-rail__cell,
+  .trace-rail__label,
+  .requests-table tbody tr[data-row-shift="run"] {
     transition: none;
   }
 
@@ -894,12 +892,18 @@ input[type="number"]::-webkit-outer-spin-button {
   .desk-table.desk-dense :is(th, td):first-child { padding-left: 12px; }
   .desk-table.desk-dense :is(th, td):last-child { padding-right: 12px; }
 
-  .desk-table tbody tr:nth-child(even of :not(.desk-group)) > td {
+  /* 请求追踪表使用按行身份绑定的稳定斑马纹（data-zebra），避免实时插入顶部行时全屏奇偶反色 */
+  .desk-table:not(.requests-table) tbody tr:nth-child(even of :not(.desk-group)) > td {
+    background-color: var(--app-zebra);
+  }
+
+  .desk-table.requests-table tbody tr[data-zebra="1"] > td {
     background-color: var(--app-zebra);
   }
 
   .desk-table tbody tr[aria-selected="true"] > td,
-  .desk-table tbody tr[aria-selected="true"]:nth-child(even of :not(.desk-group)) > td {
+  .desk-table tbody tr[aria-selected="true"]:nth-child(even of :not(.desk-group)) > td,
+  .desk-table.requests-table tbody tr[aria-selected="true"][data-zebra="1"] > td {
     background-color: var(--app-row-selected);
   }
 

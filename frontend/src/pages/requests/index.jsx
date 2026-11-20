@@ -68,7 +68,6 @@ import {
 } from './utils/liveTiming.js';
 import { buildRowEnterAnimations, collectRequestIds, NO_ROW_ANIMATIONS } from './utils/rowEnterAnimation.js';
 import { buildUpstreamFilterOptions, resolveUpstreamFilterOption } from './utils/requestSource.js';
-import { prefersReducedMotion } from '@utils/motion.js';
 import { resolveErrorMessage } from '@utils/errors.js';
 import { codexBindingDisplayName, isCodexSearchBinding } from '../codex/routing/codexRoutingView.js';
 import { consumePendingRequestsFilters } from '@utils/overviewHandoff.js';
@@ -276,11 +275,9 @@ const RequestsPage = ({ onOpenClaudeModelRouting, onOpenCodexModelRouting, onNav
     //
     // 入场动画只在第 1 页成立：停在第 2 页时，本页「新出现的 requestId」多半是
     // 被上一页挤下来的旧请求 —— 每来一条新请求就误报一次，动效会持续说谎。
-    // reduced-motion 也在这里拦掉，而不是只靠 CSS 的 animation:none：
-    // 后者会让 animationend 永不触发，行上的 class 与 --enter-delay 内联变量
-    // 就再也摘不掉了。
-    const canAnimateEnter = live && pagination.page === 1 && !prefersReducedMotion();
-    setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, canAnimateEnter));
+    // 减少动态效果时也要识别实时新增行，让表格保留滚动锚点。
+    const trackLiveArrivals = live && pagination.page === 1;
+    setRowEnterAnimations(buildRowEnterAnimations(nextRequests, prevRequestIdsRef.current, trackLiveArrivals));
     prevRequestIdsRef.current = collectRequestIds(nextRequests);
     // 未变化的行复用旧引用，让 RequestRow 的 memo 生效。
     // 查询可能早于计时事件发出，先补回事件已经给过的计时，免得跑秒被冲回去重跑；

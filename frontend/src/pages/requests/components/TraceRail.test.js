@@ -3,20 +3,30 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { build } from 'esbuild';
 
 import { buildLifecycleSegments, railSegmentColors, lifecycleSegmentColors } from '../utils/lifecycle.js';
 import { carryLiveTiming } from '../utils/liveTiming.js';
 import { TABLE_COLUMNS, DEFAULT_VISIBLE_COLUMNS, UNSETTLED_STATUSES } from '../utils/constants.js';
 import {
+  applyLiveEnterRamp,
+  easeTraceRailSettle,
   formatTraceElapsedBadge,
   getSettledRailSegments,
   getTraceRailPhase,
   quantizeSegmentsToCells,
   resolveAsymptoticFilledCells,
+  resolveEffectiveLiveElapsed,
   resolveLiveRailState,
+  resolveTraceRailSettleCells,
+  resolveTraceRailSettleDuration,
   TRACE_RAIL_CELLS,
+  TRACE_RAIL_ENTER_RAMP_MS,
   TRACE_RAIL_HALF_SATURATION_MS,
-  TRACE_RAIL_MAX_LIVE_FILLED
+  TRACE_RAIL_MAX_LIVE_FILLED,
+  TRACE_RAIL_SETTLE_BASE_MS,
+  TRACE_RAIL_SETTLE_PER_CELL_MS,
+  TRACE_RAIL_TAIL_GRACE_MS
 } from '../utils/traceRail.js';
 import { STATUS_CONFIG } from '../../../utils/constants.js';
 
@@ -303,35 +313,11 @@ test('运行中复用共享时钟原地更新格子，终态与挂起停止订�
   assert.doesNotMatch(RAIL_CODE, /useState|setInterval/);
 });
 
-test('renderCell 每个分支都返回单一根元素', () => {
-  // 入场位移挂在 `> td > *` 上（<tr> 横移会被 overflow-x 裁掉首列，
-  // <td> 是 table-cell 吃不下 transform）。返回 Fragment 会让该列静默失去动画。
-  const body = TABLE_SOURCE.match(/const renderCell = [\s\S]*?\n};/)?.[0];
-  assert.ok(body, 'renderCell 未找到，测试与实现已脱节');
-
-  assert.doesNotMatch(body, /return\s*\(\s*<>/, 'renderCell 不能返回 Fragment');
-  assert.doesNotMatch(body, /return\s*<>/, 'renderCell 不能返回 Fragment');
-  assert.doesNotMatch(body, /return\s*\[/, 'renderCell 不能返回数组');
-});
-
-test('单元格根元素不能是裸行内盒 —— transform 对它无效', () => {
-  // 入场位移动的是 transform，而 transform 对非替换的行内元素完全无效。
-  // 写成裸 <span> 那一列就只会淡入、不会跟着上浮，且失效是静默的。
-  const body = TABLE_CODE.match(/const renderCell = [\s\S]*?\n};/)?.[0];
-  assert.ok(body, 'renderCell 未找到，测试与实现已脱节');
-  const valueCell = TABLE_CODE.match(/const ValueCell = [\s\S]*?\n\);/)?.[0];
-  assert.ok(valueCell, 'ValueCell 未找到，测试与实现已脱节');
-
-  // 只认根元素（return 后紧跟的那个），嵌套的 span 不受这条约束
-  const roots = [
-    ...body.matchAll(/return <span className=(?:\{`|")([^`"]*)/g),
-    ...valueCell.matchAll(/<span className=(?:\{`|")([^`"]*)/g)
-  ].map(match => match[1]);
-  assert.ok(roots.length >= 4, `只扫到 ${roots.length} 个根 span，正则与实现已脱节`);
-
-  for (const cls of roots) {
-    assert.match(cls, /\b(?:inline-block|inline-flex|block|flex)\b/,
-      `「${cls}」是裸行内盒，入场只会淡入不会上浮`);
+test('入场与让位作用于整行，叠加位移并保留整行背景和事件命中', () => {
+  assert.match(CSS_SOURCE, /^\.requests-table tr\.request-row-enter,\n[^{}]+\{\s*animation: request-row-rise/m);
+  assert.match(CSS_SOURCE, /@keyframes request-row-rise \{\s*from \{[^}]*translate: 0 -8px/);
+  for (const phase of ['prep', 'run']) {
+    assert.match(CSS_SOURCE, new RegExp(`^\\.requests-table tbody tr\\[data-row-shift="${phase}"\\] \\{[^}]*transform: translateY`, 'm'));
   }
 });
 
@@ -366,21 +352,19 @@ test('在途时 token 与成本显示占位符而不是 0', () => {
   }
 });
 
-test('入场 class 的摘除认 animationName，且与 CSS 里的名字对得上', () => {
+test('入场 class 的摘除认 animationName，且已移除左缘 2px 闪动亮线并接入 65ms 让位错峰', () => {
   const finalName = TABLE_SOURCE.match(/const FINAL_ENTER_ANIMATION = '([^']+)'/)?.[1];
-  assert.ok(finalName, 'FINAL_ENTER_ANIMATION 未找到');
+  assert.equal(finalName, 'request-row-rise');
 
   // 必须是 CSS 里真实存在的 @keyframes，否则 animationend 永不匹配，
   // class 只能靠 setTimeout 兜底摘掉。
   assert.match(CSS_SOURCE, new RegExp(`@keyframes ${finalName}\\b`),
     `${finalName} 在 index.css 里没有对应的 @keyframes`);
-
-  // 且必须是收尾最晚的那条：认早结束的动画会把亮线截断在半路。
-  const riseMs = Number(CSS_SOURCE.match(/animation: request-row-rise (\d+)ms/)?.[1]);
-  const tickMs = Number(CSS_SOURCE.match(/animation: request-row-edge-tick (\d+)ms/)?.[1]);
-  assert.ok(Number.isFinite(riseMs) && Number.isFinite(tickMs), '两条入场动画的时长未能解析');
-  assert.ok(tickMs > riseMs,
-    `摘 class 认的是 ${finalName}，但它 ${tickMs}ms 并不比单元格位移 ${riseMs}ms 晚结束`);
+  assert.doesNotMatch(CSS_SOURCE, /request-row-edge-tick/, '左缘 2px 亮线会造成硬闪，应彻底移除');
+  assert.doesNotMatch(TABLE_SOURCE, /request-row-edge-tick/, 'RequestsTable 不应再引用已移除的左缘亮线');
+  assert.match(TABLE_SOURCE, /const ROW_ENTER_SHIFT_LEAD_MS = 65;/);
+  assert.match(TABLE_SOURCE, /const ROW_SHIFT_FLIP_MS = 220;/);
+  assert.match(CSS_SOURCE, /animation: request-row-rise 220ms/);
 });
 
 test('旧的整行扫光与逐列接力已彻底移除', () => {
@@ -469,4 +453,726 @@ test('状态列宽度写死 —— 它一抖后面每一列都跟着右移', () 
     'RequestTraceCell 外层必须有固定宽度');
   assert.match(RAIL_CODE, /truncate/,
     '标签必须能被截住，否则未知状态的原始串会把整列撑开');
+});
+
+test('收尾延展缓动柔和起步并单调收敛到 1，自适应时长按剩余空槽计算', () => {
+  assert.equal(easeTraceRailSettle(0), 0);
+  assert.equal(easeTraceRailSettle(1), 1);
+  // 首帧（~5% 进度）柔和起速，避免像 easeOutExpo 一样单帧猛跳多格
+  assert.ok(easeTraceRailSettle(0.05) < 0.05, '起速过猛会在首帧产生跳跃感');
+  assert.ok(easeTraceRailSettle(0.5) > 0.7, '中后段应平稳减速贴近终态');
+
+  let prev = 0;
+  for (let i = 1; i <= 20; i += 1) {
+    const val = easeTraceRailSettle(i / 20);
+    assert.ok(val >= prev && val <= 1);
+    prev = val;
+  }
+
+  assert.equal(resolveTraceRailSettleDuration(TRACE_RAIL_CELLS), 0);
+  assert.equal(
+    resolveTraceRailSettleDuration(0),
+    TRACE_RAIL_SETTLE_BASE_MS + TRACE_RAIL_CELLS * TRACE_RAIL_SETTLE_PER_CELL_MS
+  );
+  assert.ok(resolveTraceRailSettleDuration(4) > resolveTraceRailSettleDuration(16));
+});
+
+test('收尾中间帧只填充前 visibleCount 格，右侧未扫过格保持空槽并顺滑推移分段边界', () => {
+  const segments = [
+    { key: 'first', ms: 1400 },
+    { key: 'stream', ms: 2600 }
+  ];
+  const settled = quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS);
+
+  const empty = resolveTraceRailSettleCells(segments, settled, 0);
+  assert.equal(empty.length, TRACE_RAIL_CELLS);
+  assert.ok(empty.every((cell) => cell === null));
+
+  const mid = resolveTraceRailSettleCells(segments, settled, 9);
+  assert.equal(mid.length, TRACE_RAIL_CELLS);
+  assert.ok(mid.slice(0, 9).every((cell) => cell !== null));
+  assert.ok(mid.slice(9).every((cell) => cell === null));
+  assert.ok(mid.slice(0, 9).includes('first') && mid.slice(0, 9).includes('stream'));
+
+  const full = resolveTraceRailSettleCells(segments, settled, TRACE_RAIL_CELLS);
+  assert.deepEqual(full, settled);
+});
+
+test('短防抖尾窗内锁定流式结束耗时并保留流式绿游标，真实慢尾段再切灰恢复计秒', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00.000Z');
+  const req = {
+    status: 'processing',
+    isStreaming: true,
+    timestamp: '2026-11-19T02:00:00.000Z',
+    firstTokenAt: '2026-11-19T02:00:02.000Z',
+    firstTokenMs: 1800,
+    completionMs: 3000
+  };
+  const phase = getTraceRailPhase(req, 'processing');
+  assert.equal(phase.key, 'settling');
+
+  // 250ms 防抖窗口内（超过 streamEndOffset=5000ms 仅 220ms <= 350ms）
+  const inGrace = resolveEffectiveLiveElapsed(req, phase, 5220, startMs);
+  assert.equal(inGrace.elapsedMs, 5000);
+  assert.equal(inGrace.keepStreamCursor, true);
+
+  // 超过宽限窗口（滞后 500ms > 350ms）：确属真实慢收尾，恢复计秒并允许游标切灰
+  const slowTail = resolveEffectiveLiveElapsed(req, phase, 5000 + TRACE_RAIL_TAIL_GRACE_MS + 150, startMs);
+  assert.equal(slowTail.elapsedMs, 5000 + TRACE_RAIL_TAIL_GRACE_MS + 150);
+  assert.equal(slowTail.keepStreamCursor, false);
+});
+
+test('真实首响的 0ms 生成耗时，仅流式请求可在短尾窗保留绿游标', () => {
+  const timestamp = '2026-11-19T02:00:00.000Z';
+  const startMs = Date.parse(timestamp);
+  const request = {
+    status: 'processing', timestamp, firstTokenMs: 1800,
+    firstTokenAt: '2026-11-19T02:00:02.000Z', completionMs: 0
+  };
+  for (const isStreaming of [false, true]) {
+    const req = { ...request, isStreaming };
+    const phase = getTraceRailPhase(req);
+    assert.equal(phase.key, 'settling');
+    assert.deepEqual(resolveEffectiveLiveElapsed(req, phase, 2220, startMs), {
+      elapsedMs: isStreaming ? 2000 : 2220,
+      keepStreamCursor: isStreaming
+    });
+  }
+});
+
+test('新入场在途行在前 240ms 内从 0 格顺滑追上真实格数，避免挂载首帧跳格', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00.000Z');
+  const liveState = resolveLiveRailState({
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    upstreamWriteMs: 180,
+    firstTokenStartAt: '2026-11-19T02:00:00.180Z'
+  }, 'processing', 2400, startMs + 2400);
+  assert.ok(liveState.filled >= 4);
+
+  const atZero = applyLiveEnterRamp(liveState, 0, TRACE_RAIL_ENTER_RAMP_MS);
+  assert.equal(atZero.filled, 0);
+  assert.equal(atZero.cursorIndex, 0);
+
+  const atMid = applyLiveEnterRamp(liveState, TRACE_RAIL_ENTER_RAMP_MS * 0.4, TRACE_RAIL_ENTER_RAMP_MS);
+  assert.ok(atMid.filled > 0 && atMid.filled <= liveState.filled);
+
+  const atEnd = applyLiveEnterRamp(liveState, TRACE_RAIL_ENTER_RAMP_MS, TRACE_RAIL_ENTER_RAMP_MS);
+  assert.equal(atEnd, liveState);
+});
+
+test('轨道与耗时节点恒定不卸载重建，收尾走平滑色块过渡而非闪暗关键帧', () => {
+  assert.doesNotMatch(RAIL_CODE, /key=\{isLive \? 'live' : 'static'\}/, '切换终态不能卸载重建轨道 DOM');
+  assert.doesNotMatch(RAIL_CODE, /key=\{canTick \? 'live' : 'static'\}/, '切换终态不能卸载重建耗时节点');
+  assert.doesNotMatch(CSS_SOURCE, /@keyframes trace-rail-settle\b/, '旧版闪暗+缩放关键帧应彻底移除');
+  assert.match(CSS_SOURCE, /\.trace-rail\[data-settling\] \.trace-rail__cell \{[^}]*transition: background-color 220ms/);
+  assert.match(CSS_SOURCE, /\.trace-rail__label \{[^}]*transition: color/);
+  assert.match(TABLE_CODE, /<RequestTraceCell request=\{request\} enterAnimation=\{enterAnimation\} \/>/);
+  assert.match(TABLE_CODE, /useRowShiftFlip\(/);
+  const reducedBlock = CSS_SOURCE.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n}\n/)?.[0];
+  assert.match(reducedBlock, /\.trace-rail\[data-settling\] \.trace-rail__cell[\s\S]*?transition: none/);
+  assert.match(reducedBlock, /\.requests-table tbody tr\[data-row-shift="run"\][\s\S]*?transition: none/);
+  // 防整屏闪烁约束：请求表使用行身份稳定斑马纹与统一灰度抗锯齿，禁止 td 背景色过渡反色频闪
+  assert.match(CSS_SOURCE, /\.requests-table \{\s*-webkit-font-smoothing: antialiased;\s*\}/);
+  assert.doesNotMatch(CSS_SOURCE, /\.requests-table tbody tr > td \{[^}]*transition: background-color/);
+  assert.match(CSS_SOURCE, /\.desk-table\.requests-table tbody tr\[data-zebra="1"\] > td \{/);
+});
+
+// ============================================================
+// 运行时回归测试：直接编译生产 Hook，验证轨道与表格的动效边界
+// ============================================================
+
+const sameDeps = (left, right) => Boolean(left && right && left.length === right.length && left.every((val, idx) => Object.is(val, right[idx])));
+
+function createHookRunner() {
+  const slots = [];
+  const effects = [];
+  let cursor = 0;
+
+  const hooks = {
+    useRef(initialValue) {
+      const idx = cursor++;
+      if (!(idx in slots)) slots[idx] = { current: initialValue };
+      return slots[idx];
+    },
+    useCallback(fn, deps) {
+      const idx = cursor++;
+      const prev = slots[idx];
+      if (!prev || !sameDeps(prev.deps, deps)) {
+        slots[idx] = { fn, deps };
+      }
+      return slots[idx].fn;
+    },
+    useLayoutEffect(cb, deps) {
+      const idx = cursor++;
+      effects[idx] = { kind: 'layout', cb, deps, prevDeps: effects[idx]?.prevDeps, cleanup: effects[idx]?.cleanup };
+    },
+    useEffect(cb, deps) {
+      const idx = cursor++;
+      effects[idx] = { kind: 'effect', cb, deps, prevDeps: effects[idx]?.prevDeps, cleanup: effects[idx]?.cleanup };
+    }
+  };
+
+  const render = (fn) => {
+    cursor = 0;
+    const result = fn();
+    for (const slot of effects) {
+      if (!slot) continue;
+      if (!sameDeps(slot.prevDeps, slot.deps)) {
+        slot.cleanup?.();
+        slot.prevDeps = slot.deps;
+        slot.cleanup = slot.cb?.() || undefined;
+      }
+    }
+    return result;
+  };
+
+  const simulateStrictRemount = () => {
+    for (const slot of effects) {
+      if (!slot) continue;
+      slot.cleanup?.();
+      slot.cleanup = undefined;
+    }
+    for (const slot of effects) {
+      if (!slot) continue;
+      slot.cleanup = slot.cb?.() || undefined;
+    }
+  };
+
+  const unmount = () => {
+    for (const slot of effects) {
+      if (!slot) continue;
+      slot.cleanup?.();
+      slot.cleanup = undefined;
+    }
+  };
+
+  return { hooks, render, simulateStrictRemount, unmount };
+}
+
+let compiledTraceHook;
+async function loadTraceRailHook() {
+  if (compiledTraceHook) return compiledTraceHook;
+  const compiled = await build({
+    stdin: {
+      contents: `${RAIL_SOURCE}\nexport { useTraceRail };`,
+      loader: 'jsx',
+      resolveDir: HERE
+    },
+    bundle: true,
+    write: false,
+    platform: 'node',
+    format: 'esm',
+    jsx: 'automatic',
+    alias: {
+      '@utils': join(HERE, '../../../utils')
+    },
+    plugins: [{
+      name: 'trace-hook-env',
+      setup(builder) {
+        builder.onResolve({ filter: /^react$/ }, () => ({ path: 'react', namespace: 'trace-hook' }));
+        builder.onLoad({ filter: /.*/, namespace: 'trace-hook' }, () => ({
+          contents: ['useRef', 'useCallback', 'useLayoutEffect', 'useEffect']
+            .map((name) => `export const ${name} = (...args) => globalThis.__traceHookHost.${name}(...args);`)
+            .join('\n')
+        }));
+      }
+    }]
+  });
+  compiledTraceHook = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+  return compiledTraceHook;
+}
+
+let compiledFlipHook;
+async function loadRowShiftFlipHook() {
+  if (compiledFlipHook) return compiledFlipHook;
+  const compiled = await build({
+    stdin: {
+      contents: `${TABLE_SOURCE}\nexport { useRowShiftFlip };`,
+      loader: 'jsx',
+      resolveDir: HERE
+    },
+    bundle: true,
+    write: false,
+    platform: 'node',
+    format: 'esm',
+    jsx: 'automatic',
+    alias: {
+      '@components': join(HERE, '../../../components'),
+      '@utils': join(HERE, '../../../utils'),
+      '@contexts': join(HERE, '../../../contexts')
+    },
+    plugins: [{
+      name: 'flip-hook-env',
+      setup(builder) {
+        builder.onResolve({ filter: /^react$/ }, () => ({ path: 'react', namespace: 'flip-hook' }));
+        builder.onResolve({ filter: /^(lucide-react|@components\/ui|@contexts\/TimezoneContext\.jsx|@utils\/api\.js|\.\/TraceRail\.jsx|\.\/RequestTimingCell\.jsx|\.\/ModelTag\.jsx|\.\/PrivacyWarningBadge\.jsx)$/ }, ({ path }) => ({
+          path, namespace: 'flip-stub'
+        }));
+        builder.onLoad({ filter: /.*/, namespace: 'flip-hook' }, () => ({
+          contents: 'export default { useRef: (...a) => globalThis.__flipHookHost.useRef(...a), useLayoutEffect: (...a) => globalThis.__flipHookHost.useLayoutEffect(...a), useEffect: (...a) => globalThis.__flipHookHost.useEffect(...a), useCallback: (...a) => a[0], useState: (v) => [typeof v === "function" ? v() : v, () => {}], useMemo: (fn) => fn(), memo: (c) => c };'
+        }));
+        builder.onLoad({ filter: /.*/, namespace: 'flip-stub' }, ({ path }) => ({
+          contents: path === 'lucide-react'
+            ? 'export const Waves = () => null; export const RefreshCw = () => null;'
+            : path === '@components/ui'
+              ? 'export const LoadingSpinner = () => null;'
+              : path === '@contexts/TimezoneContext.jsx'
+                ? 'export const useTimezone = () => ({ formatListTimestamp: (v) => v });'
+                : path === '@utils/api.js'
+                  ? 'export const formatCost = (v) => String(v);'
+                  : 'export const RequestTraceCell = () => null; export default () => null;'
+        }));
+      }
+    }]
+  });
+  compiledFlipHook = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+  return compiledFlipHook;
+}
+
+function createFakeBrowserEnv(t) {
+  let perfNow = 1000;
+  let nextId = 1;
+  const rafQueue = new Map();
+  const timers = new Map();
+  const origWindow = globalThis.window;
+  const origPerf = globalThis.performance;
+  const origDOMMatrix = globalThis.DOMMatrixReadOnly;
+
+  const fakeWindow = {
+    innerHeight: 640,
+    matchMedia: () => ({ matches: false }),
+    requestAnimationFrame: (cb) => {
+      const id = nextId++;
+      rafQueue.set(id, cb);
+      return id;
+    },
+    cancelAnimationFrame: (id) => {
+      rafQueue.delete(id);
+    },
+    setTimeout: (cb, ms = 0) => {
+      const id = nextId++;
+      timers.set(id, { cb, at: perfNow + ms });
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+    getComputedStyle: () => ({ transform: 'none' })
+  };
+
+  globalThis.window = fakeWindow;
+  Object.defineProperty(globalThis, 'performance', {
+    configurable: true,
+    value: { now: () => perfNow }
+  });
+  globalThis.DOMMatrixReadOnly = class FakeDOMMatrix {
+    constructor(value) {
+      const match = String(value).match(/translateY\(([-\d.]+)px\)/);
+      this.m42 = match ? Number(match[1]) : 0;
+    }
+  };
+
+  t.after(() => {
+    globalThis.window = origWindow;
+    Object.defineProperty(globalThis, 'performance', { configurable: true, value: origPerf });
+    globalThis.DOMMatrixReadOnly = origDOMMatrix;
+  });
+
+  return {
+    window: fakeWindow,
+    advanceRaf(deltaMs) {
+      perfNow += deltaMs;
+      const pending = [...rafQueue.entries()];
+      rafQueue.clear();
+      for (const [, cb] of pending) cb(perfNow);
+    },
+    flushTimers(deltaMs) {
+      perfNow += deltaMs;
+      for (const [id, entry] of [...timers.entries()]) {
+        if (entry.at <= perfNow) {
+          timers.delete(id);
+          entry.cb();
+        }
+      }
+    }
+  };
+}
+
+function createFakeRailNode() {
+  return {
+    dataset: {},
+    children: Array.from({ length: TRACE_RAIL_CELLS }, () => ({ className: 'trace-rail__cell trace-rail__cell--empty' }))
+  };
+}
+
+test('计时数据晚到（收尾刚铺满进入过渡窗或中途补入）时，轨道立即更新为最新分段配色不残留灰格', async (t) => {
+  const runner = createHookRunner();
+  globalThis.__traceHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__traceHookHost;
+  });
+  const env = createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+
+  const rail = createFakeRailNode();
+  const timeNode = { textContent: '' };
+  const bindRefs = (result) => {
+    result.railRef.current = rail;
+    result.timeRef.current = timeNode;
+  };
+
+  const renderReq = (req) => {
+    const status = req.status;
+    const isLive = Boolean(getTraceRailPhase(req, status));
+    const finalMs = !UNSETTLED_STATUSES.has(status) && Number.isFinite(req.duration) ? req.duration : null;
+    const segments = isLive ? [] : getSettledRailSegments(req, finalMs);
+    const settledCellKeys = segments.length > 0 ? quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS) : Array.from({ length: TRACE_RAIL_CELLS }, () => null);
+    runner.render(() => {
+      const refs = useTraceRail({
+        request: req,
+        status,
+        startedAt: isLive ? Date.parse(req.timestamp) : undefined,
+        isLive,
+        hasSegments: segments.length > 0,
+        segments,
+        settledCellKeys,
+        enterAnimation: null
+      });
+      bindRefs(refs);
+    });
+  };
+
+  // 1. 先在途运行，再以仅含总耗时（全灰）的状态落定
+  renderReq({ requestId: 'req-late', status: 'processing', timestamp: '2026-11-19T02:00:00.000Z' });
+  renderReq({ requestId: 'req-late', status: 'completed', timestamp: '2026-11-19T02:00:00.000Z', duration: 1000 });
+  assert.equal(rail.dataset.settling, '');
+
+  // 2. 推完收尾 rAF（进入 260ms 尾段混合窗，teardownTimer 尚未触发）
+  env.advanceRaf(1000);
+  assert.equal(rail.dataset.settling, '', '应仍处于尾段色块混合窗');
+  assert.equal(rail.children.filter((n) => n.className.includes('bg-slate-300')).length, 21);
+
+  // 3. 此时补入首响 200ms + 流式输出 800ms（应为 5 格紫 + 16 格绿）
+  renderReq({
+    requestId: 'req-late',
+    status: 'completed',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    duration: 1000,
+    firstTokenMs: 200,
+    completionMs: 800,
+    isStreaming: true
+  });
+  assert.equal(rail.children.filter((n) => n.className.includes('bg-violet-400')).length, 5);
+  assert.equal(rail.children.filter((n) => n.className.includes('bg-emerald-400')).length, 16);
+
+  // 4. 过渡窗结束后，21 格依然保持 5 紫 + 16 绿，绝不回退全灰
+  env.flushTimers(400);
+  assert.equal(rail.dataset.settling, undefined);
+  assert.equal(rail.children.filter((n) => n.className.includes('bg-violet-400')).length, 5);
+  assert.equal(rail.children.filter((n) => n.className.includes('bg-emerald-400')).length, 16);
+});
+
+test('React StrictMode 双跑 effect 时，极速新请求不会跳过从 0 到 21 格的收尾动画', async (t) => {
+  const runner = createHookRunner();
+  globalThis.__traceHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__traceHookHost;
+  });
+  const env = createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+
+  const rail = createFakeRailNode();
+  const fastReq = {
+    requestId: 'req-fast-strict',
+    status: 'completed',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    duration: 180,
+    firstTokenMs: 60,
+    completionMs: 120,
+    isStreaming: true
+  };
+  const segments = getSettledRailSegments(fastReq, 180);
+  const settledCellKeys = quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS);
+
+  runner.render(() => {
+    const refs = useTraceRail({
+      request: fastReq,
+      status: 'completed',
+      startedAt: undefined,
+      isLive: false,
+      hasSegments: true,
+      segments,
+      settledCellKeys,
+      enterAnimation: { delayMs: 0 }
+    });
+    refs.railRef.current = rail;
+  });
+
+  // 模拟 StrictMode：在浏览器触发 rAF 之前同步执行 cleanup + 重新执行 effect
+  runner.simulateStrictRemount();
+
+  assert.equal(rail.dataset.settling, '', 'StrictMode 重挂后仍应保持收尾动画激活');
+  assert.equal(
+    rail.children.filter((n) => n.className.includes('trace-rail__cell--empty')).length,
+    21,
+    'StrictMode 重挂首帧应从全空槽起步，而不是直接跳成满格'
+  );
+
+  // 推进 rAF 到中段与终点：应先部分填充，再满格落位
+  env.advanceRaf(220);
+  const midFilled = rail.children.filter((n) => !n.className.includes('trace-rail__cell--empty')).length;
+  assert.ok(midFilled > 0 && midFilled < 21, `中段应处于平滑推进中，实际 ${midFilled} 格`);
+
+  env.advanceRaf(600);
+  assert.equal(rail.children.filter((n) => !n.className.includes('trace-rail__cell--empty')).length, 21);
+  env.flushTimers(300);
+  assert.equal(rail.dataset.settling, undefined);
+
+  // 播完后即便再次模拟重跑 effect，也不应重播收尾动画
+  runner.simulateStrictRemount();
+  assert.equal(rail.dataset.settling, undefined);
+});
+
+async function createRowShiftFixture(t, { scrolling = false, height = 640 } = {}) {
+  const runner = createHookRunner();
+  globalThis.__flipHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__flipHookHost;
+  });
+  const env = createFakeBrowserEnv(t);
+  const { useRowShiftFlip } = await loadRowShiftFlipHook();
+
+  const ops = [];
+  const scroller = {
+    scrollTop: 0,
+    scrollTo({ top }) {
+      ops.push('scrollTo');
+      this.scrollTop = top;
+    },
+    matches: () => true,
+    getBoundingClientRect: () => ({ top: 0, bottom: height })
+  };
+  const metrics = { styleReads: [], flushes: 0, activeOffsetY: 0 };
+
+  env.window.getComputedStyle = (tr) => {
+    metrics.styleReads.push(tr.dataset.rowId);
+    ops.push('read:style');
+    return { transform: metrics.activeOffsetY ? `translateY(${metrics.activeOffsetY}px)` : 'none' };
+  };
+
+  const makeRow = (id, index, entering = false) => {
+    const props = new Map();
+    return {
+      dataset: { rowId: id },
+      className: entering ? 'group request-row-enter' : 'group',
+      index,
+      offsetHeight: 32,
+      get offsetTop() { return 28 + this.index * 32; },
+      style: {
+        getPropertyValue: (key) => props.get(key),
+        setProperty: (k, v) => {
+          ops.push('write:var');
+          props.set(k, v);
+        },
+        removeProperty: (k) => {
+          props.delete(k);
+        }
+      }
+    };
+  };
+
+  let rowNodes = Array.from({ length: 100 }, (_, i) => makeRow(`r-${i}`, i));
+  const tbody = {
+    parentElement: { parentElement: scrolling ? scroller : null, tHead: { offsetHeight: 28 } },
+    getBoundingClientRect: () => ({ top: 28 - scroller.scrollTop }),
+    querySelectorAll: () => rowNodes,
+    get offsetHeight() {
+      metrics.flushes += 1;
+      ops.push('flush');
+      return 3200;
+    }
+  };
+  const tbodyRef = { current: tbody };
+  const render = (enterAnimations) => runner.render(() => useRowShiftFlip(
+    tbodyRef, rowNodes.map((n) => n.dataset.rowId).join('|'), enterAnimations,
+    enterAnimations.size > 0 && !env.window.matchMedia().matches
+  ));
+  render(new Map());
+
+  const insert = (id, index) => {
+    const newRow = makeRow(id, index, true);
+    rowNodes = [...rowNodes.slice(0, index), newRow, ...rowNodes.slice(index, 99)];
+    rowNodes.forEach((row, rowIndex) => { row.index = rowIndex; });
+    render(new Map([[id, { delayMs: 0 }]]));
+    return newRow;
+  };
+
+  return {
+    env, ops, metrics, scroller,
+    get rows() { return rowNodes; },
+    viewportTop: (row) => row.offsetTop - scroller.scrollTop,
+    insert,
+    prepend: (id) => insert(id, 0),
+    remove(indices, nativeScrollTop = scroller.scrollTop) {
+      rowNodes = rowNodes.filter((_, rowIndex) => !indices.includes(rowIndex));
+      rowNodes.forEach((row, rowIndex) => { row.index = rowIndex; });
+      scroller.scrollTop = nativeScrollTop;
+      render(new Map());
+    }
+  };
+}
+
+test('大页只让视口附近的整行让位，连续插入时批量读取残余位移', async (t) => {
+  const table = await createRowShiftFixture(t);
+  const { ops, metrics } = table;
+  assert.equal(metrics.flushes, 0);
+
+  table.prepend('new-1');
+  assert.equal(metrics.styleReads.length, 0, '常规插入不应调用 getComputedStyle');
+  assert.equal(metrics.flushes, 1, '整表应仅触发一次同步 flush');
+  const shiftedCount = table.rows.filter((row) => row.dataset.rowShift === 'run').length;
+  assert.ok(shiftedCount > 0 && shiftedCount <= 24, `应只给视口附近可见行做移位，实际 ${shiftedCount} 行`);
+  assert.equal(table.rows[60].dataset.rowShift, undefined, '屏外行不应挂让位动画');
+
+  ops.length = 0;
+  metrics.flushes = 0;
+  metrics.activeOffsetY = -12;
+  table.prepend('new-2');
+
+  assert.ok(metrics.styleReads.length > 0 && metrics.styleReads.length <= 24);
+  assert.equal(new Set(metrics.styleReads).size, metrics.styleReads.length, '每条正在移动的行最多读一次');
+  assert.equal(table.rows[2].style.getPropertyValue('--row-shift-y'), '-44px', '承接上轮 -12px 残余位移');
+  assert.equal(metrics.flushes, 1);
+  const lastReadIdx = ops.lastIndexOf('read:style');
+  const firstWriteIdx = ops.findIndex((op) => op.startsWith('write:'));
+  assert.ok(lastReadIdx < firstWriteIdx, '所有样式读取必须严格先于写操作，严禁循环内交替读写');
+});
+
+test('用户滚动后插入顶部，锚点首帧留在原处且不重复让位', async (t) => {
+  const table = await createRowShiftFixture(t, { scrolling: true });
+  table.scroller.scrollTop = 30 * 32;
+  const readingRow = table.rows[30];
+  const previousTop = table.viewportTop(readingRow);
+  table.prepend('new-1');
+  assert.equal(table.scroller.scrollTop, 31 * 32);
+  assert.equal(table.viewportTop(readingRow), previousTop);
+  assert.equal(table.metrics.flushes, 0);
+  assert.ok(table.rows.every((row) => row.dataset.rowShift === undefined));
+
+  // 滚动位置取本轮提交的值，且关闭动效后仍保留阅读锚点。
+  table.env.window.matchMedia = () => ({ matches: true });
+  table.scroller.scrollTop = 40 * 32;
+  const nextReadingRow = table.rows[40];
+  const nextPreviousTop = table.viewportTop(nextReadingRow);
+  table.prepend('new-2');
+  assert.equal(table.scroller.scrollTop, 41 * 32);
+  assert.equal(table.viewportTop(nextReadingRow), nextPreviousTop);
+  assert.equal(table.metrics.flushes, 0);
+});
+
+test('上一批入场未结束时，仍从原视觉位置让位且可独立退出入场', async (t) => {
+  const table = await createRowShiftFixture(t);
+  const stillEntering = table.prepend('new-1');
+  table.env.flushTimers(260);
+  table.prepend('new-2');
+  assert.match(stillEntering.className, /request-row-enter/);
+  assert.equal(stillEntering.dataset.rowShift, 'run');
+  assert.equal(stillEntering.style.getPropertyValue('--row-shift-y'), '-32px');
+  stillEntering.className = 'group';
+  assert.equal(stillEntering.dataset.rowShift, 'run');
+  table.env.flushTimers(260);
+  assert.equal(stillEntering.dataset.rowShift, undefined);
+  assert.equal(stillEntering.style.getPropertyValue('--row-shift-y'), undefined);
+});
+
+test('顶部插入新行时既有行斑马纹归属零翻转（含顶部让位与滚动锚定两种场景）', async (t) => {
+  const table = await createRowShiftFixture(t, { scrolling: true });
+  const initialRow0 = table.rows[0];
+  const initialRow1 = table.rows[1];
+  const initialRow30 = table.rows[30];
+  assert.equal(initialRow0.dataset.zebra, '0');
+  assert.equal(initialRow1.dataset.zebra, '1');
+  assert.equal(initialRow30.dataset.zebra, '0');
+
+  // 在顶部（scrollTop=0）插入 1 行：既有行斑马纹全部保持原值，新行自动取反色
+  const new1 = table.prepend('new-1');
+  assert.equal(new1.dataset.zebra, '1');
+  assert.equal(initialRow0.dataset.zebra, '0');
+  assert.equal(initialRow1.dataset.zebra, '1');
+  assert.equal(initialRow30.dataset.zebra, '0');
+
+  // 滚动到下方阅读时再插入 1 行：阅读中的既有行底色与视口坐标均纹丝不动
+  table.scroller.scrollTop = 30 * 32;
+  const new2 = table.prepend('new-2');
+  assert.equal(new2.dataset.zebra, '0');
+  assert.equal(new1.dataset.zebra, '1');
+  assert.equal(initialRow0.dataset.zebra, '0');
+  assert.equal(initialRow30.dataset.zebra, '0');
+  for (let i = 1; i < table.rows.length; i += 1) {
+    assert.notEqual(table.rows[i].dataset.zebra, table.rows[i - 1].dataset.zebra, `第 ${i} 行应与上一行交替`);
+  }
+});
+
+test('完成筛选中途补入旧请求时，视口上方增删保留阅读区底色并严格交替', async (t) => {
+  const table = await createRowShiftFixture(t, { scrolling: true, height: 28 + 8 * 32 });
+  table.scroller.scrollTop = 30 * 32;
+  const readingRows = table.rows.slice(30, 38);
+  const readingStripe = () => readingRows.map((row) => row.dataset.zebra);
+  const readingPositions = () => readingRows.map(table.viewportTop);
+  const assertAlternating = () => {
+    for (let i = 1; i < table.rows.length; i += 1) {
+      assert.notEqual(table.rows[i].dataset.zebra, table.rows[i - 1].dataset.zebra);
+    }
+  };
+  const initialStripe = readingStripe();
+
+  let positions = readingPositions();
+  table.insert('completed-late', 2);
+  assert.deepEqual(readingPositions(), positions);
+  assert.deepEqual(readingStripe(), initialStripe);
+  assertAlternating();
+
+  table.remove([2]);
+  assert.deepEqual(readingStripe(), initialStripe);
+  assertAlternating();
+
+  table.env.window.matchMedia = () => ({ matches: true });
+  table.scroller.scrollTop = 30 * 32;
+  positions = readingPositions();
+  table.insert('completed-late-reduced-motion', 2);
+  assert.deepEqual(readingPositions(), positions);
+  assert.deepEqual(readingStripe(), initialStripe);
+  assert.equal(table.metrics.flushes, 0);
+  assertAlternating();
+});
+
+test('原生滚动锚定已补偿视口上方批量删除时，保留当前阅读区底色', async (t) => {
+  const table = await createRowShiftFixture(t, { scrolling: true, height: 28 + 8 * 32 });
+  table.scroller.scrollTop = 35 * 32;
+  const readingRows = table.rows.slice(35, 43);
+  const positions = readingRows.map(table.viewportTop);
+  const stripes = readingRows.map((row) => row.dataset.zebra);
+
+  table.remove([2, 4, 31, 32, 33], 30 * 32);
+
+  assert.deepEqual(readingRows.map(table.viewportTop), positions);
+  assert.deepEqual(readingRows.map((row) => row.dataset.zebra), stripes);
+  assert.equal(table.ops.includes('scrollTo'), false);
+  assert.equal(table.metrics.flushes, 0);
+});
+
+test('阅读区只能看到半行时，仍使用该旧行作为滚动和斑马纹锚点', async (t) => {
+  const table = await createRowShiftFixture(t, { scrolling: true, height: 28 + 10 });
+  table.scroller.scrollTop = 30 * 32 + 16;
+  const readingRow = table.rows[30];
+  const previousStripe = readingRow.dataset.zebra;
+  const previousTop = table.viewportTop(readingRow);
+
+  table.insert('completed-late', 2);
+  assert.equal(readingRow.dataset.zebra, previousStripe);
+  assert.equal(table.viewportTop(readingRow), previousTop);
 });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  assignStableZebraParity,
   buildRowEnterAnimations,
   collectRequestIds,
   STAGGER_STEP_MS,
@@ -73,4 +74,22 @@ test('collectRequestIds 去重并跳过脏数据', () => {
 
   assert.deepEqual([...ids].sort(), ['a', 'b']);
   assert.equal(collectRequestIds(null).size, 0);
+});
+
+test('assignStableZebraParity 顶部插入新行时既有行奇偶零翻转，相邻行始终严格交替', () => {
+  // 首次加载按奇偶 0, 1, 0, 1
+  const initial = assignStableZebraParity(rows('r1', 'r2', 'r3', 'r4'), null);
+  assert.deepEqual([...initial.entries()], [['r1', 0], ['r2', 1], ['r3', 0], ['r4', 1]]);
+
+  // 顶部插入 1 条新行：既有行全部保持原底色，新行取反色 1
+  const afterOne = assignStableZebraParity(rows('n1', 'r1', 'r2', 'r3', 'r4'), initial);
+  assert.deepEqual([...afterOne.entries()], [['n1', 1], ['r1', 0], ['r2', 1], ['r3', 0], ['r4', 1]]);
+
+  // 再连续插入 3 条新行：既有行依然保持原底色，整表严格白灰交替
+  const afterThree = assignStableZebraParity(rows('n4', 'n3', 'n2', 'n1', 'r1', 'r2'), afterOne);
+  assert.deepEqual([...afterThree.entries()], [['n4', 0], ['n3', 1], ['n2', 0], ['n1', 1], ['r1', 0], ['r2', 1]]);
+
+  // 翻页/切筛选（无交集）：重新按 0, 1, 0 分配
+  const nextPage = assignStableZebraParity(rows('p1', 'p2', 'p3'), afterThree);
+  assert.deepEqual([...nextPage.entries()], [['p1', 0], ['p2', 1], ['p3', 0]]);
 });

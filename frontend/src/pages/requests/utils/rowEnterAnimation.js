@@ -67,4 +67,37 @@ export const collectRequestIds = (rows) => {
   return ids;
 };
 
+/**
+ * 按行身份维护稳定斑马纹奇偶（0 / 1）：
+ *   - 优先保持阅读区内锚点行的底色；没有阅读锚点时，以第一个仍在的旧行为准；
+ *   - 没有旧行时，从奇偶 0 开始。整表始终按相邻行交替。
+ *
+ * @param {Array<{requestId?: string}>} rows 当前页有序行数组
+ * @param {Map<string, 0|1>|null} prevParityMap 上一批行的奇偶映射
+ * @param {string} [anchorId] 阅读区内仍在列表的旧行 ID
+ * @returns {Map<string, 0|1>} 本批次每行的稳定奇偶映射
+ */
+export const assignStableZebraParity = (rows, prevParityMap, anchorId) => {
+  const next = new Map();
+  if (!Array.isArray(rows) || rows.length === 0) return next;
+
+  let anchorIdx = prevParityMap?.has(anchorId)
+    ? rows.findIndex((row) => row?.requestId === anchorId)
+    : -1;
+  if (anchorIdx === -1 && prevParityMap?.size > 0) {
+    anchorIdx = rows.findIndex((row) => prevParityMap.has(row?.requestId));
+  }
+  const anchorParity = anchorIdx === -1 ? 0 : prevParityMap.get(rows[anchorIdx].requestId);
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const id = rows[i]?.requestId;
+    if (!id) continue;
+    const parity = anchorIdx === -1
+      ? (i % 2)
+      : ((anchorParity + Math.abs(i - anchorIdx)) % 2);
+    next.set(id, parity);
+  }
+  return next;
+};
+
 export default buildRowEnterAnimations;

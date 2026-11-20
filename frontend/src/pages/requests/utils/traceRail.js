@@ -8,6 +8,107 @@ export const TRACE_RAIL_CELLS = 21;
 export const TRACE_RAIL_MAX_LIVE_FILLED = TRACE_RAIL_CELLS - 1;
 // 渐近生长半饱和点（与首响警告阈值对齐：8s 刚好长到一半）。
 export const TRACE_RAIL_HALF_SATURATION_MS = TIMING_THRESHOLDS_MS.first.warning;
+// 短防抖尾窗：流式生成完成事件先于列表刷新 ~250ms 到达，
+// 350ms 内锁住预期流式结束耗时并保留绿色游标，仅真实尾段拖延超限时才切入灰游标并恢复计秒。
+export const TRACE_RAIL_TAIL_GRACE_MS = 350;
+// 新在途行因刷新防抖进表时可能已跑了几百毫秒，前 240ms 内从第 0 格顺滑长到当前真实格数。
+export const TRACE_RAIL_ENTER_RAMP_MS = 240;
+// 收尾连续延展参数（标准节奏）：随剩余空槽数自适应时长，配合 220ms 色块过渡形成羽化波前。
+export const TRACE_RAIL_SETTLE_BASE_MS = 220;
+export const TRACE_RAIL_SETTLE_PER_CELL_MS = 15;
+export const TRACE_RAIL_SETTLE_BLEND_MS = 220;
+// 首现即终态的极速新请求：配合行入场略微滞后 35ms 再开始铺满，观感更从容。
+export const TRACE_RAIL_FRESH_SETTLE_LEAD_MS = 35;
+
+// 柔和起速 + 绵长减速的 S-Out 贝塞尔曲线（cubic-bezier(0.26, 0, 0.14, 1)）：
+// 从游标自然起步不突兀，中段顺畅铺开，末尾轻柔制动贴合第 21 格。
+function createCubicBezier(x1, y1, x2, y2) {
+  const sampleX = (t) => ((3 * x1 - 3 * x2 + 1) * t + (3 * x2 - 6 * x1)) * t * t + 3 * x1 * t;
+  const sampleY = (t) => ((3 * y1 - 3 * y2 + 1) * t + (3 * y2 - 6 * y1)) * t * t + 3 * y1 * t;
+  return (x) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 12; i += 1) {
+      const mid = (lo + hi) * 0.5;
+      if (sampleX(mid) < x) lo = mid;
+      else hi = mid;
+    }
+    return sampleY((lo + hi) * 0.5);
+  };
+}
+
+export const easeTraceRailSettle = createCubicBezier(0.26, 0.0, 0.14, 1.0);
+
+/**
+ * 按当前已亮格数计算收尾推满时长：剩余空槽越多越从容，已满格（21 格）时返回 0。
+ */
+export function resolveTraceRailSettleDuration(startCount) {
+  const clamped = Math.max(0, Math.min(TRACE_RAIL_CELLS, Math.round(startCount || 0)));
+  const remaining = TRACE_RAIL_CELLS - clamped;
+  return remaining > 0 ? TRACE_RAIL_SETTLE_BASE_MS + remaining * TRACE_RAIL_SETTLE_PER_CELL_MS : 0;
+}
+
+/**
+ * 计算收尾延展中间帧的 21 格配色：前 visibleCount 格按终态分段实时量化，
+ * 右侧未扫过格继续保持 null（空槽底色），避免第 0ms 瞬间涂满。
+ */
+export function resolveTraceRailSettleCells(segments, settledCellKeys, visibleCount) {
+  if (visibleCount >= TRACE_RAIL_CELLS) return settledCellKeys;
+  if (visibleCount <= 0) return Array.from({ length: TRACE_RAIL_CELLS }, () => null);
+  const partialKeys = quantizeSegmentsToCells(segments, visibleCount);
+  return Array.from({ length: TRACE_RAIL_CELLS }, (_, idx) => (idx < partialKeys.length ? partialKeys[idx] : null));
+}
+
+/**
+ * 解析进行中展示用的有效耗时：
+ * 流式生成耗时（completionMs）先于终态查询到达后的短尾窗内，
+ * 锁定在「首响时刻 + 生成耗时」并保留流式绿游标，避免 250ms 内闪灰与总耗时超跑回跳。
+ */
+export function resolveEffectiveLiveElapsed(request, phase, rawElapsedMs, startedAt) {
+  if (phase?.key !== 'settling' || request?.isStreaming !== true || !hasTiming(request.completionMs)) {
+    return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
+  }
+  const firstTokenAt = parseTimestampOrNull(request.firstTokenAt)?.getTime();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(firstTokenAt)) {
+    return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
+  }
+  const streamEndOffset = Math.max(0, firstTokenAt - startedAt) + Math.max(0, request.completionMs);
+  const tailLag = Math.max(0, rawElapsedMs - streamEndOffset);
+  if (tailLag <= TRACE_RAIL_TAIL_GRACE_MS) {
+    return { elapsedMs: streamEndOffset, keepStreamCursor: true };
+  }
+  return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
+}
+
+/**
+ * 新入场的在途行在前 240ms 内从第 0 格顺滑追上真实渐近格数，
+ * 避免刷新防抖导致挂载首帧突然亮出多格。
+ */
+export function applyLiveEnterRamp(state, sinceMountMs, rampMs = TRACE_RAIL_ENTER_RAMP_MS) {
+  if (!state || rampMs <= 0 || sinceMountMs >= rampMs) return state;
+  const progress = sinceMountMs <= 0 ? 0 : easeTraceRailSettle(sinceMountMs / rampMs);
+  const rampedFilled = Math.min(state.filled, Math.round(state.filled * progress));
+  const bodyKeys = rampedFilled > 0
+    ? quantizeSegmentsToCells(
+        state.segments.length > 0 ? state.segments : [{ key: state.cursorColorKey, ms: 1 }],
+        rampedFilled
+      )
+    : [];
+  const cells = Array.from({ length: TRACE_RAIL_CELLS }, () => null);
+  for (let i = 0; i < bodyKeys.length; i += 1) {
+    cells[i] = bodyKeys[i];
+  }
+  const cursorIndex = Math.min(rampedFilled, TRACE_RAIL_CELLS - 1);
+  cells[cursorIndex] = state.cursorColorKey;
+  return {
+    ...state,
+    filled: rampedFilled,
+    cursorIndex,
+    cells
+  };
+}
 
 const PHASE = {
   preparing: { key: 'preparing', label: '准备发送', color: 'queue' },
