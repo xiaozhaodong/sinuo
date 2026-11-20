@@ -147,13 +147,13 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
   const inputTokens = request.inputTokens || 0;
   const outputTokens = request.outputTokens || 0;
   const cacheReadTokens = request.cacheReadTokens || 0;
-  const cacheCreationTokens = request.cacheCreationTokens || 0;
+  const cacheCreationTokens = request.cacheCreationTokens;
   const inputIncludesCache = requestInputIncludesCache(request.requestFamily, request.path);
   const fullInput = fullInputTokens(inputIncludesCache, inputTokens, cacheCreationTokens, cacheReadTokens);
   const waitingWriteSplit = inputIncludesCache && usageKnown && cacheCreationTokens > 0 && lifecycleLoading && !decision;
   const separateWrites = decision?.separate_cache_writes;
   const billableInput = inputIncludesCache
-    ? Math.max(inputTokens - cacheReadTokens - (separateWrites ? cacheCreationTokens : 0), 0)
+    ? Math.max(inputTokens - cacheReadTokens - (separateWrites ? (cacheCreationTokens ?? 0) : 0), 0)
     : inputTokens;
   const billableHint = waitingWriteSplit
     ? '正在确认缓存写入计费口径'
@@ -173,7 +173,7 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
       <TokenFigure label="输入" value={formatUsage(request.inputTokens)} tone={usageTone} />
       <TokenFigure label="输出" value={formatUsage(request.outputTokens)} tone={usageTone} />
       <TokenFigure label="缓存读取" value={formatUsage(request.cacheReadTokens)} tone={usageTone} />
-      <TokenFigure label="缓存创建" value={formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已包含在输入总量中' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
+      <TokenFigure label="缓存创建" value={cacheCreationTokens == null ? '—' : formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已包含在输入总量中' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
       {inputIncludesCache && (separateWrites || request.cacheCreation30mTokens != null || request.cacheCreation12hTokens != null) && (
         <>
           <TokenFigure label="创建 30m" value={request.cacheCreation30mTokens == null ? '—' : formatUsage(request.cacheCreation30mTokens)} tone={usageTone} />

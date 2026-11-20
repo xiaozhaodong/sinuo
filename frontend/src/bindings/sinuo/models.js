@@ -1100,9 +1100,9 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * @property {string} [first_token_at] - 首个事件到达时刻，只有进行中的热池请求才有，供旧口径生成位跑秒起算
  * @property {number} input_tokens
  * @property {number} output_tokens
- * @property {number} cache_creation_tokens - 总缓存创建（向后兼容）
- * @property {number} cache_creation_5m_tokens - v5.0.1: 5分钟缓存
- * @property {number} cache_creation_1h_tokens - v5.0.1: 1小时缓存
+ * @property {number | null} cache_creation_tokens - 总缓存创建（向后兼容）
+ * @property {number | null} cache_creation_5m_tokens - v5.0.1: 5分钟缓存
+ * @property {number | null} cache_creation_1h_tokens - v5.0.1: 1小时缓存
  * @property {number} cache_read_tokens
  * @property {number} response_time
  * @property {number | null} first_token_ms

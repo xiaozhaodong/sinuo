@@ -281,9 +281,9 @@ type RequestRecord struct {
 	FirstTokenAt            string  `json:"first_token_at,omitempty"`       // 首个事件到达时刻，只有进行中的热池请求才有，供旧口径生成位跑秒起算
 	InputTokens             int64   `json:"input_tokens"`
 	OutputTokens            int64   `json:"output_tokens"`
-	CacheCreationTokens     int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
-	CacheCreation5mTokens   int64   `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
-	CacheCreation1hTokens   int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
+	CacheCreationTokens     *int64  `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
+	CacheCreation5mTokens   *int64  `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
+	CacheCreation1hTokens   *int64  `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
 	CacheReadTokens         int64   `json:"cache_read_tokens"`
 	ResponseTime            int64   `json:"response_time"`
 	FirstTokenMs            *int64  `json:"first_token_ms"`
@@ -478,10 +478,7 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		CostKnown:               r.CostKnown,
 		InputTokens:             r.InputTokens,
 		OutputTokens:            r.OutputTokens,
-		CacheCreationTokens:     r.CacheCreationTokens,
-		CacheCreation5mTokens:   r.CacheCreation5mTokens, // v5.0.1+
 		CacheWriteDurations:     r.CacheWriteDurations,
-		CacheCreation1hTokens:   r.CacheCreation1hTokens, // v5.0.1+
 		CacheReadTokens:         r.CacheReadTokens,
 		IsStreaming:             r.IsStreaming,
 		Cost:                    r.TotalCostUSD,
@@ -494,6 +491,7 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 	}
 
 	// 处理指针字段
+	record.CacheCreationTokens, record.CacheCreation5mTokens, record.CacheCreation1hTokens = r.CacheCreationCounts()
 	record.HTTPStatus = r.HTTPStatusCode
 	if r.DurationMs != nil {
 		record.ResponseTime = *r.DurationMs

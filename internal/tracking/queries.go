@@ -345,15 +345,9 @@ func (ut *UsageTracker) scanRequestDetailRow(scanner requestDetailRowScanner, pr
 	if output.Valid {
 		detail.OutputTokens = output.Int64
 	}
-	if creation.Valid {
-		detail.CacheCreationTokens = creation.Int64
-	}
-	if creation5m.Valid {
-		detail.CacheCreation5mTokens = creation5m.Int64
-	}
-	if creation1h.Valid {
-		detail.CacheCreation1hTokens = creation1h.Int64
-	}
+	detail.CacheCreationTokens, detail.cacheCreationMissing = creation.Int64, !creation.Valid
+	detail.CacheCreation5mTokens, detail.cacheCreation5mMissing = creation5m.Int64, !creation5m.Valid
+	detail.CacheCreation1hTokens, detail.cacheCreation1hMissing = creation1h.Int64, !creation1h.Valid
 	if read.Valid {
 		detail.CacheReadTokens = read.Int64
 	}
@@ -591,6 +585,11 @@ type RequestDetail struct {
 	CacheReadTokens       int64 `json:"cache_read_tokens"`
 	UsageKnown            bool  `json:"usage_known"`
 
+	// 归档记录的三个缓存创建字段可以各自为 NULL。
+	cacheCreationMissing   bool
+	cacheCreation5mMissing bool
+	cacheCreation1hMissing bool
+
 	InputCostUSD         float64 `json:"input_cost_usd"`
 	OutputCostUSD        float64 `json:"output_cost_usd"`
 	CacheCreationCostUSD float64 `json:"cache_creation_cost_usd"`
@@ -600,6 +599,22 @@ type RequestDetail struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CacheCreationCounts 保留请求详情里的缺失分项；热池用量按整条记录标记是否已知。
+func (d *RequestDetail) CacheCreationCounts() (total, fiveMinutes, oneHour *int64) {
+	if !d.UsageKnown {
+		return nil, nil, nil
+	}
+	count := func(value int64, missing bool) *int64 {
+		if missing {
+			return nil
+		}
+		return &value
+	}
+	return count(d.CacheCreationTokens, d.cacheCreationMissing),
+		count(d.CacheCreation5mTokens, d.cacheCreation5mMissing),
+		count(d.CacheCreation1hTokens, d.cacheCreation1hMissing)
 }
 
 // UsageStats represents aggregated usage statistics
