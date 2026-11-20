@@ -108,14 +108,14 @@ test('色阶跟着跑秒一起走 —— 卡住的请求会自己变黄变红', 
     '生成位不该套用首响的阈值');
 });
 
-test('跑秒落在当前正在进行的那一段上', () => {
+test('跑秒落在当前正在进行的那一段上，定稿时复用同一胶囊 DOM 节点', () => {
   // 首字未到 -> 首响位从上游请求写完开始跑（threshold="first"，无 baseMs）；还没写完只放等待点
-  assert.match(TABLE_SOURCE, /<LiveElapsedPill timestamp=\{request\.firstTokenStartAt\} threshold="first" \/>/);
+  assert.match(TABLE_SOURCE, /<LiveElapsedPill[\s\S]{0,120}timestamp=\{request\.firstTokenStartAt\}[\s\S]{0,80}threshold="first"/);
   assert.match(TABLE_SOURCE, /firstResponseWait\(request\)[\s\S]{0,100}<PendingSendPill \{\.\.\.waiting\} \/>/);
   // 生成耗时随事件先到时计时格先定格，不等状态刷新
   assert.match(TABLE_SOURCE, /timingRunning = running && !Number\.isFinite\(request\.completionMs\)/);
-  // 首字已到 -> 生成位接过跑秒，起算点由 resolveGenerationTickAnchor 给出
-  assert.match(TABLE_SOURCE, /\.\.\.resolveGenerationTickAnchor\(request, firstResponseMs\)\}[\s\S]{0,40}threshold="duration"/);
+  // 首字已到 -> 生成位接过跑秒，起算点由 resolveGenerationTickAnchor 给出，定稿与跑秒共享同一 LiveElapsedPill 节点
+  assert.match(TABLE_SOURCE, /resolveGenerationTickAnchor\(request, firstResponseMs\)[\s\S]{0,100}<LiveElapsedPill[\s\S]{0,200}threshold="duration"/);
 });
 
 test('等待点 1 秒内静止，超过 1 秒才动，再久变黄 / 变红', () => {

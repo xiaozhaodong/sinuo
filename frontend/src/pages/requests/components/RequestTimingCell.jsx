@@ -96,30 +96,40 @@ const timingCellData = (request, running, first) => {
   return { first, completion, stop, retryCount, items, notes };
 };
 
-// 首响位从上游写完开始跑，在首个事件定格；定格与跑秒共用同一起点。
+// 首响位从上游写完开始跑，在首个事件定格；定格与跑秒共用同一 DOM 节点以触发灰→彩平滑过渡。
 // 尚未发到上游时首响计时没有开始，只放等待点、不给数字；重试等待规则也由此复用。
-const RunningFirstResponsePill = ({ request }) => {
-  const waiting = firstResponseWait(request);
-  return waiting
-    ? <PendingSendPill {...waiting} />
-    : <LiveElapsedPill timestamp={request.firstTokenStartAt} threshold="first" />;
-};
-
 const FirstTimingPill = ({ request, data, timingRunning }) => {
-  if (Number.isFinite(data.first)) {
-    return <TimingPill value={data.first} threshold="first" />;
+  const hasFirst = Number.isFinite(data.first);
+  if (!hasFirst) {
+    if (!timingRunning) return null;
+    const waiting = firstResponseWait(request);
+    if (waiting) return <PendingSendPill {...waiting} />;
   }
-  return timingRunning ? <RunningFirstResponsePill request={request} /> : null;
+  return (
+    <LiveElapsedPill
+      live={!hasFirst && timingRunning}
+      timestamp={request.firstTokenStartAt}
+      value={data.first}
+      threshold="first"
+    />
+  );
 };
 
 // 收到首个事件时，首响位定格、生成位从同一事件时刻起跑；首内容不参与交接。
-// 首响未到时不画生成位，避免把“还没开始”画成“-”；完成计时到达就定格。
+// 首响未到时不画生成位，避免把“还没开始”画成“-”；完成计时到达就在原地定格过渡到语义色。
 const GenerationTimingPill = ({ request, data, timingRunning, firstResponseMs }) => {
-  if (!timingRunning) {
-    return <TimingPill value={data.completion} threshold="duration" fallback={request.duration} />;
-  }
-  if (!Number.isFinite(data.first)) return null;
-  return <LiveElapsedPill {...resolveGenerationTickAnchor(request, firstResponseMs)} threshold="duration" />;
+  if (timingRunning && !Number.isFinite(data.first)) return null;
+  const anchor = timingRunning ? resolveGenerationTickAnchor(request, firstResponseMs) : null;
+  return (
+    <LiveElapsedPill
+      live={timingRunning}
+      timestamp={anchor?.timestamp}
+      baseMs={anchor?.baseMs}
+      value={data.completion}
+      fallback={request.duration}
+      threshold="duration"
+    />
+  );
 };
 
 const RequestTimingCell = ({ request }) => {

@@ -678,6 +678,13 @@
   transition: color 240ms ease-out;
 }
 
+.timing-pill-transition {
+  transition:
+    background-color 260ms cubic-bezier(.22, 1, .36, 1),
+    border-color 260ms cubic-bezier(.22, 1, .36, 1),
+    color 260ms cubic-bezier(.22, 1, .36, 1);
+}
+
 /* 首响位「尚未发到上游」的等待点（PendingSendPill）。超过 1 秒才挂 --waiting：
    三个点错开依次变暗再亮回，读起来是一道从左往右的波，不做整体呼吸。
    起止都是不透明，从静止切进来、发出后被跑秒替换时都不会跳一下。 */
@@ -732,6 +739,7 @@
 
   .trace-rail[data-settling] .trace-rail__cell,
   .trace-rail__label,
+  .timing-pill-transition,
   .requests-table tbody tr[data-row-shift="run"] {
     transition: none;
   }
