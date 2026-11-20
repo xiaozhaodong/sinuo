@@ -133,44 +133,96 @@ test('本地拒绝和不完整交付只列已记录的时刻，按实际发生�
   });
   const text = textOf(html);
   assert.match(text, /服务端续推.*交付不完整.*Flush 异常/);
+  assert.match(html, /text-warn[^>]*>Flush 异常<\/span>/);
   assert.match(text, /交付结束\+852 ms.*上游终态\+900 ms/);
-  assert.doesNotMatch(text, /上游首帧|上游首字节|首次下行/);
+  assert.doesNotMatch(text, /0 段选路|0 次联系|上游首帧|上游首字节|首次下行/);
   const missing = renderFlow({ transport: 'http', origin: 'client_request' });
   assert.match(textOf(missing), /交付结果未记录/);
+  assert.doesNotMatch(textOf(missing), /0 段选路|0 次联系/);
   assert.doesNotMatch(missing, /<details\b/);
+  // 单段选路尚未联系上游（如本地鉴权失败）同样不展示「1 段选路 · 0 次联系」
+  const singleSelected = renderFlow({
+    transport: 'http',
+    legs: [{ leg_seq: 1, selected_offset_ms: 2, target_snapshot: { upstream_name: 'claude-subscription' } }],
+    contacts: [],
+    downstream_delivery_outcome: 'delivered'
+  }, 'failed');
+  assert.doesNotMatch(textOf(singleSelected), /1 段选路|0 次联系/);
+  // 失败请求写回错误响应时不给绿色成功圆标
+  assert.doesNotMatch(singleSelected, /border-success-line/);
 });
 
-test('详情明细：按条上的顺序显示段名、耗时、说明与总耗时', () => {
+test('客户端取消或断开走中性态和结束原因，无429限流与Flush异常保持警告色', () => {
+  const disconnected = renderFlow({
+    transport: 'http',
+    contacts: [{ leg_seq: 1, contact_seq: 1, outcome_code: 'subscription_client_disconnected' }],
+    downstream_delivery_outcome: 'aborted'
+  }, 'cancelled');
+  assert.match(textOf(disconnected), /已中断.*结束原因subscription_client_disconnected/);
+  assert.doesNotMatch(textOf(disconnected), /失败原因/);
+  assert.doesNotMatch(disconnected, /border-danger-line/);
+
+  const cancelled = renderFlow({
+    transport: 'http',
+    contacts: [{ leg_seq: 1, contact_seq: 1, outcome_code: 'cancelled' }]
+  }, 'cancelled');
+  assert.match(textOf(cancelled), /已取消.*结束原因cancelled/);
+  assert.doesNotMatch(cancelled, /border-danger-line/);
+
+  // 无 HTTP 429 时 rate_limited 仍用警告色；兜底码显示中文标签；delivered + flush 异常降级警告色
+  const warnFlow = renderFlow({
+    transport: 'http',
+    contacts: [
+      { leg_seq: 1, contact_seq: 1, outcome_code: 'rate_limited', start_offset_ms: 0, end_offset_ms: 50 },
+      { leg_seq: 1, contact_seq: 2, outcome_code: 'attempt_failed' },
+      { leg_seq: 1, contact_seq: 3, outcome_code: 'leg_switched' }
+    ],
+    downstream_delivery_outcome: 'delivered',
+    downstream_bytes_written: 128,
+    downstream_flush_error: true
+  });
+  assert.match(warnFlow, /border-warn-line[\s\S]*?限流/);
+  assert.match(textOf(warnFlow), /尝试失败.*切换上游/);
+  assert.doesNotMatch(warnFlow, /border-success-line/);
+  assert.match(warnFlow, /text-warn[^>]*>Flush 异常<\/span>/);
+  // sr-only 不能嵌在 .font-mono 内避免复制时间时混入读屏前缀
+  assert.doesNotMatch(warnFlow, /font-mono[^>]*><span class="sr-only/);
+});
+
+test('详情明细：按条上的顺序显示段名、耗时、说明，总耗时置顶在标题行右侧', () => {
   const html = render({
     status: 'completed', duration: 5000, isStreaming: true,
     upstreamDispatchMs: 100, upstreamConnMs: 300, upstreamWriteMs: 600,
     firstTokenMs: 400, completionMs: 4000
   });
-  const details = html.slice(html.indexOf('mt-1.5 flex flex-wrap'));
+  const legendStart = html.indexOf('data-lifecycle-legend');
+  assert.ok(legendStart > -1, '应渲染图例区');
+  const legend = html.slice(legendStart, html.indexOf('data-timing-summary'));
   let previous = -1;
   for (const [label, value] of [['本地处理', '100ms'], ['建连', '200ms'], ['发送', '300ms'], ['首响', '400ms'], ['流式输出', '4.00s']]) {
-    const at = details.indexOf(`>${label}</span><span class="font-mono">${value}</span>`);
+    const at = legend.indexOf(`>${label}</span><span class="font-mono tabular-nums text-fg-body">${value}</span>`);
     assert.ok(at > previous, `${label} 应依次显示准确耗时`);
     previous = at;
   }
-  assert.match(details, /title="写出请求头与请求体/);
-  assert.match(details, /font-semibold[^>]*><span>总耗时<\/span><span class="font-mono">5\.00s<\/span>/);
+  assert.match(legend, /title="写出请求头与请求体/);
+  assert.doesNotMatch(legend, /总耗时/, '总耗时已置顶到区段右上角，图例区不再重复');
+  assert.match(html, /data-lifecycle-total[^>]*>.*?总耗时.*?font-mono tabular-nums">5\.00s<\/span>/);
 });
 
 test('进行中明细只列已知阶段，总耗时显示进行中而非数字', () => {
   const html = render({ status: 'processing', duration: 0, upstreamConnMs: 200, upstreamWriteMs: 500, isStreaming: true });
-  const details = html.slice(html.indexOf('mt-1.5 flex flex-wrap'));
-  assert.match(details, />建连<\/span><span class="font-mono">200ms/);
-  assert.match(details, />发送<\/span><span class="font-mono">300ms/);
-  assert.match(details, /text-fg-subtle[^>]*><span>总耗时<\/span><span>进行中<\/span>/);
-  assert.doesNotMatch(details, />首响<\/span>|>流式输出<\/span>|总耗时<\/span><span class="font-mono">/);
+  const legend = html.slice(html.indexOf('data-lifecycle-legend'), html.indexOf('data-timing-summary'));
+  assert.match(legend, />建连<\/span><span class="font-mono tabular-nums text-fg-body">200ms/);
+  assert.match(legend, />发送<\/span><span class="font-mono tabular-nums text-fg-body">300ms/);
+  assert.match(html, /data-lifecycle-total[^>]*text-fg-subtle[^>]*>.*?总耗时.*?<span>进行中<\/span>/);
+  assert.doesNotMatch(legend, />首响<\/span>|>流式输出<\/span>/);
+  assert.doesNotMatch(html, /data-lifecycle-total[^>]*>.*?font-mono/);
 });
 
 test('尚无计时的进行中请求不显示伪造的总耗时分段', () => {
   const html = render({ status: 'pending', duration: 0, isStreaming: true });
-  const details = html.slice(html.indexOf('mt-1.5 flex flex-wrap'));
-  assert.doesNotMatch(details, /rounded-sm|>0ms<\/span>/);
-  assert.match(details, /<span>总耗时<\/span><span>进行中<\/span>/);
+  assert.doesNotMatch(html, /data-lifecycle-legend|>0ms<\/span>/);
+  assert.match(html, /data-lifecycle-total[^>]*>.*?总耗时.*?<span>进行中<\/span>/);
 });
 
 test('重试属性：新数据显示次数，旧数据不显示不可信的1', () => {
@@ -178,7 +230,7 @@ test('重试属性：新数据显示次数，旧数据不显示不可信的1', (
   assert.doesNotMatch(legacy, />重试</);
   const current = render({ status: 'completed', duration: 1000, retryCount: 1, upstreamFirstDispatchMs: 0 });
   assert.match(current, />重试</);
-  assert.match(current, /font-mono">1<\/span> 次/);
+  assert.match(current, /font-mono tabular-nums">1<\/span> 次/);
 });
 
 test('旧数据保留换号与故障转移标记，无标记时隐藏整行', () => {
@@ -188,6 +240,8 @@ test('旧数据保留换号与故障转移标记，无标记时隐藏整行', ()
   }));
   assert.match(account, /换号 1 次/);
   assert.doesNotMatch(account, />99</);
+  assert.match(account, /候选决策（2）/);
+  assert.doesNotMatch(account, /ml-\[94px\]/, '候选决策应内联到调度行，不再依赖固定左边距');
   const failover = render({ status: 'completed', duration: 1000, retryCount: 99, requestedEndpoint: 'a', effectiveEndpoint: 'b' });
   assert.match(failover, /故障转移/);
   assert.doesNotMatch(failover, />99</);
@@ -198,13 +252,13 @@ test('S2/C2/R1：思考品红、速度与首内容口径、结束原因文字、
     upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
     firstContentMs: 1000, firstTextMs: 1000, reasoningHidden: true, streamFlowMs: 1500,
     outputTokens: 300, stopReason: 'max_tokens', upstreamRequestId: 'synthetic-upstream-request-id' });
-  assert.match(html, /bg-fuchsia-200 dark:bg-fuchsia-800/);
-  assert.match(html, /tone-violet[^>]*title="写完请求到上游第一个事件（受理、排队）">首响 100ms/);
-  assert.match(html, /首字 900ms/);
-  assert.match(html, /tone-fuchsia[^>]*title="写完请求到首个内容（含思考或等待）">首字 900ms/);
-  assert.match(html, /tone-emerald[^>]*title="上游第一个事件到流完成">生成 2\.00s/);
-  assert.match(html, /速度 250 tok\/s/);
-  assert.match(html, /生成吞吐 150 tok\/s/);
+  const text = textOf(html);
+  assert.match(html, /bg-fuchsia-300 dark:bg-fuchsia-400/);
+  assert.match(html, /data-timing-metric="first"[^>]*title="写完请求到上游第一个事件（受理、排队）"><span>首响<\/span><span[^>]*>100ms<\/span>/);
+  assert.match(html, /data-timing-metric="content"[^>]*title="写完请求到首个内容（含思考或等待）"><span>首字<\/span><span[^>]*>900ms<\/span>/);
+  assert.match(html, /data-timing-metric="completion"[^>]*title="上游第一个事件到流完成"><span>生成<\/span><span[^>]*>2\.00s<\/span>/);
+  assert.match(text, /流式输出速度250 tok\/s/);
+  assert.match(text, /生成吞吐150 tok\/s/);
   assert.match(html, /text-amber-700 dark:text-amber-300/);
   assert.match(html, /title="max_tokens">达到输出上限/);
   assert.match(html, /title="synthetic-upstream-request-id"/);
@@ -213,14 +267,15 @@ test('S2/C2/R1：思考品红、速度与首内容口径、结束原因文字、
   assert.doesNotMatch(render({ status: 'completed' }), /上游请求 ID/);
 });
 
-test('一次性下发给琥珀标签，不给虚假速度', () => {
+test('一次性下发给琥珀警示，不给虚假速度', () => {
   const html = render({ status: 'completed', isStreaming: true, duration: 2200,
     upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
     firstContentMs: 1000, firstTextMs: 1000, streamFlowMs: 1, outputTokens: 300 });
-  assert.match(html, /tone-amber[^>]*title="内容集中到达/);
-  assert.match(html, /流式输出速度 —（集中下发）<\/span>/);
-  assert.match(html, /生成吞吐 150 tok\/s/);
-  assert.doesNotMatch(html, /速度 250|TPS /);
+  const text = textOf(html);
+  assert.match(html, /data-timing-metric="流式输出速度"[^>]*text-warn[^>]*title="内容集中到达/);
+  assert.match(text, /流式输出速度—（集中下发）/);
+  assert.match(text, /生成吞吐150 tok\/s/);
+  assert.doesNotMatch(text, /速度250|TPS /);
 });
 
 test('Codex无正文计时仍显示生成吞吐，缺少生成耗时不回退到请求总耗时', () => {
@@ -229,57 +284,57 @@ test('Codex无正文计时仍显示生成吞吐，缺少生成耗时不回退到
     firstContentMs: 6504, firstTextMs: null, streamFlowMs: 1747, reasoningHidden: true,
     outputTokens: 380, responseReasoning: 'reasoning_tokens:73' };
   const html = render(request);
-  assert.match(html, /生成吞吐 69\.9 tok\/s/);
-  assert.match(html, /流式输出速度 —（缺少计时）/);
+  assert.match(textOf(html), /生成吞吐69\.9 tok\/s/);
+  assert.match(textOf(html), /流式输出速度—（缺少计时）/);
   assert.match(html, /title="上游报告了推理 token，但未采集到正文增量时间/);
-  assert.doesNotMatch(html, /39\.5 tok\/s|平均吞吐|TPS /);
-  const legacy = render({ ...request, firstContentMs: null });
-  assert.match(legacy, /生成吞吐 69\.9 tok\/s/);
-  assert.match(legacy, /流式输出速度 —（缺少计时）/);
-  const regular = render({ ...request, isStreaming: false, completionMs: 0 });
+  assert.doesNotMatch(textOf(html), /39\.5 tok\/s|平均吞吐|TPS /);
+  const legacy = textOf(render({ ...request, firstContentMs: null }));
+  assert.match(legacy, /生成吞吐69\.9 tok\/s/);
+  assert.match(legacy, /流式输出速度—（缺少计时）/);
+  const regular = textOf(render({ ...request, isStreaming: false, completionMs: 0 }));
   assert.doesNotMatch(regular, /生成吞吐|流式输出速度/);
-  assert.match(render({ ...request, completionMs: null }), /生成吞吐 —（缺少计时）/);
-  assert.doesNotMatch(render({ ...request, status: 'processing' }), /生成吞吐|流式输出速度/);
+  assert.match(textOf(render({ ...request, completionMs: null })), /生成吞吐—（缺少计时）/);
+  assert.doesNotMatch(textOf(render({ ...request, status: 'processing' })), /生成吞吐|流式输出速度/);
 });
 
 test('生成吞吐拒绝1ms整段返回，在详情标签悬停解释原因', () => {
   const html = render({ status: 'completed', requestFamily: 'claude', isStreaming: true,
     duration: 10000, upstreamWriteMs: 1000, firstTokenMs: 8999, completionMs: 1,
     outputTokens: 628, usageKnown: true });
-  assert.match(html, /title="输出时间窗口不足 100ms，无法可靠测速。">生成吞吐 —（时间过短）/);
-  assert.doesNotMatch(html, /628000|生成吞吐 [\d.]+ tok\/s/);
+  assert.match(html, /title="输出时间窗口不足 100ms，无法可靠测速。"><span>生成吞吐<\/span><span[^>]*>—（时间过短）<\/span>/);
+  assert.doesNotMatch(textOf(html), /628000|生成吞吐[\d.]+ tok\/s/);
 });
 
 test('详情仅成功流式请求显示速度，其余状态与非流式保持隐藏', () => {
   const request = { status: 'completed', requestFamily: 'claude', isStreaming: true,
     duration: 2200, upstreamWriteMs: 100, firstTokenMs: 100, completionMs: 2000,
     firstContentMs: 1000, firstTextMs: 1000, streamFlowMs: 1500, outputTokens: 300, usageKnown: true };
-  assert.match(render(request), /生成吞吐 150 tok\/s/);
-  assert.match(render(request), /流式输出速度 250 tok\/s/);
+  assert.match(textOf(render(request)), /生成吞吐150 tok\/s/);
+  assert.match(textOf(render(request)), /流式输出速度250 tok\/s/);
   for (const fields of [
     ...['pending', 'forwarding', 'processing', 'retry', 'suspended', 'failed', 'cancelled', 'interrupted'].map((status) => ({ status })),
     { isStreaming: false }, { requestFamily: 'image' }
   ]) {
-    assert.doesNotMatch(render({ ...request, ...fields }), /生成吞吐|流式输出速度/);
+    assert.doesNotMatch(textOf(render({ ...request, ...fields })), /生成吞吐|流式输出速度/);
   }
-  const missing = render({ ...request, usageKnown: false });
-  assert.match(missing, /生成吞吐 —（缺少用量）/);
-  assert.match(missing, /流式输出速度 —（缺少用量）/);
+  const missing = textOf(render({ ...request, usageKnown: false }));
+  assert.match(missing, /生成吞吐—（缺少用量）/);
+  assert.match(missing, /流式输出速度—（缺少用量）/);
 });
 
 test('复审顶部标签：图像首响用旧口径，无内容完成事件立即显示完整计时', () => {
   const image = render({ status: 'processing', requestFamily: 'image', isStreaming: true,
     duration: 0, firstTokenMs: 100, completionMs: null });
-  assert.match(image, /首响 100ms/);
-  assert.doesNotMatch(image, /tone-fuchsia[^>]*>首字 /);
-  assert.doesNotMatch(image, /速度 /);
+  assert.match(textOf(image), /首响100ms/);
+  assert.doesNotMatch(image, /data-timing-metric="content"/);
+  assert.doesNotMatch(textOf(image), /速度/);
   for (const requestFamily of ['image', 'claude', 'codex']) {
     const completed = render({ status: 'processing', requestFamily, isStreaming: true,
       duration: 0, firstTokenMs: 100, completionMs: 900, firstContentMs: null, firstContentAt: '' });
-    assert.match(completed, /首响 100ms/);
-    assert.doesNotMatch(completed, /tone-fuchsia[^>]*>首字 /);
-    assert.match(completed, /生成 900ms/);
-    assert.doesNotMatch(completed, /速度 /);
+    assert.match(textOf(completed), /首响100ms/);
+    assert.doesNotMatch(completed, /data-timing-metric="content"/);
+    assert.match(textOf(completed), /生成900ms/);
+    assert.doesNotMatch(textOf(completed), /速度/);
   }
 });
 
@@ -287,15 +342,16 @@ test('详情首响与生成和列表口径一致，新旧数据只差首字与�
   const request = { status: 'completed', isStreaming: true, duration: 20000,
     upstreamWriteMs: 983, firstTokenMs: 3680, firstContentMs: 8083, completionMs: 14720 };
   const html = render(request);
-  assert.match(html, /首响 3\.68s/);
-  assert.match(html, /首字 7\.10s/);
-  assert.match(html, /生成 14\.7s/);
-  assert.ok(html.indexOf('首响 3.68s') < html.indexOf('首字 7.10s'));
-  assert.ok(html.indexOf('首字 7.10s') < html.indexOf('生成 14.7s'));
+  const text = textOf(html);
+  assert.match(text, /首响3\.68s/);
+  assert.match(text, /首字7\.10s/);
+  assert.match(text, /生成14\.7s/);
+  assert.ok(text.indexOf('首响3.68s') < text.indexOf('首字7.10s'));
+  assert.ok(text.indexOf('首字7.10s') < text.indexOf('生成14.7s'));
   const legacy = render({ ...request, firstContentMs: null });
-  assert.match(legacy, /首响 3\.68s/);
-  assert.match(legacy, /生成 14\.7s/);
-  assert.doesNotMatch(legacy, /tone-fuchsia[^>]*>首字 /);
+  assert.match(textOf(legacy), /首响3\.68s/);
+  assert.match(textOf(legacy), /生成14\.7s/);
+  assert.doesNotMatch(legacy, /data-timing-metric="content"/);
 });
 
 test('进行中首内容实时事件先到时立即显示首字，首响只认后端真实值', () => {
@@ -303,12 +359,12 @@ test('进行中首内容实时事件先到时立即显示首字，首响只认�
     completionMs: null, firstContentMs: null, firstTokenStartAt: '2026-10-30T00:00:00.983Z',
     firstContentAt: '2026-10-30T00:00:08.083Z' };
   const html = render(request);
-  assert.match(html, /首字 7\.10s/);
-  assert.doesNotMatch(html, />首响 |生成 /);
+  assert.match(textOf(html), /首字7\.10s/);
+  assert.doesNotMatch(html, /data-timing-metric="first"|data-timing-metric="completion"/);
   const completedTiming = render({ ...request, firstTokenMs: 3680, completionMs: 14720 });
-  assert.match(completedTiming, /首响 3\.68s/);
-  assert.match(completedTiming, /首字 7\.10s/);
-  assert.match(completedTiming, /生成 14\.7s/);
+  assert.match(textOf(completedTiming), /首响3\.68s/);
+  assert.match(textOf(completedTiming), /首字7\.10s/);
+  assert.match(textOf(completedTiming), /生成14\.7s/);
   assert.match(completedTiming, /进行中，完成后显示完整耗时/);
 });
 
@@ -316,7 +372,8 @@ test('选路前的本地响应也展示实际字节与交付结果', () => {
   for (const [outcome, label] of [['delivered', '已完整交付'], ['partial_or_failed', '交付不完整'], ['aborted', '交付已中止']]) {
     const html = renderFlow({ transport: 'http', downstream_bytes_written: outcome === 'aborted' ? 0 : 92, downstream_delivery_outcome: outcome });
     const text = html.replace(/<[^>]*>/g, '');
-    assert.ok(text.includes('0 段选路 · 0 次联系'));
+    assert.ok(text.includes('收到请求'));
+    assert.doesNotMatch(text, /0 段选路|0 次联系/);
     assert.ok(text.includes(label));
     if (outcome !== 'aborted') assert.ok(text.includes('下行 92 B'));
   }

@@ -11,7 +11,7 @@ export default function StreamPhaseProperties({ request }) {
   return <>
     {stop.label && <Property label="结束原因"><span className={stop.className} title={stop.raw}>{stop.label}</span></Property>}
     {id && <Property label="上游请求 ID" truncate={false}>
-      <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="inline-flex min-w-0 items-center gap-1">
         <span className="font-mono text-xs" title={id}>{id.length > 14 ? `${id.slice(0, 14)}…` : id}</span>
         <button type="button" title="复制上游请求 ID" aria-label="复制上游请求 ID" className={ICON_BUTTON} onClick={() => copyTextToClipboard(id, '上游请求 ID')}>
           <Copy size={13} />

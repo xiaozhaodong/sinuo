@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { ArrowDown, ArrowRight, Check, ChevronDown, CircleAlert, Clock, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, Ban, Check, ChevronDown, CircleAlert, Clock, X } from 'lucide-react';
 import { Property, PropertyList } from '@components/desktop/Inspector.jsx';
 import { summarizeTerminalReason } from '../utils/lifecycle.js';
 import { formatBytesCompact } from '../utils/requestFlow.js';
@@ -20,6 +20,14 @@ const DELIVERY = {
 };
 
 const SUCCESS = new Set(['completed', 'success', 'ok']);
+const NON_SUCCESS_REQUEST_STATUSES = new Set(['failed', 'error', 'timeout', 'cancelled', 'interrupted']);
+const CANCEL_REASON = /cancel|disconnect/i;
+// 链路轨迹特有的兜底结果码，不污染全局终态失败归类表。
+const CONTACT_REASON_LABELS = {
+  leg_switched: '切换上游',
+  attempt_failed: '尝试失败',
+  subscription_client_disconnected: '已中断'
+};
 const hasTime = (ms) => Number.isFinite(ms) && ms >= 0;
 // 分节点的明细保留毫秒精度，便于区分只差几毫秒的事件。
 const formatTime = (ms) => ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(3)} s`;
@@ -34,7 +42,8 @@ function timingFacts(points) {
 }
 
 function contactSummary(contacts, legsBySeq, legCount, contactCount) {
-  if (legCount === 1 && contactCount === 1) return '';
+  // 0 次或单段单次联系无需额外多段汇总，避免本地拦截场景露出「0 段选路 · 0 次联系」。
+  if (legCount <= 1 && contactCount <= 1) return '';
   if (contactCount > 1 && contacts.length === contactCount) {
     const accounts = contacts.map(contact => legsBySeq.get(contact.leg_seq)?.target_snapshot);
     if (accounts.every(target => target?.upstream_type === 'account' && target.upstream_id > 0)) {
@@ -70,10 +79,21 @@ function contactRelation(contact, previous, target, previousTarget) {
 function contactState(contact, settled) {
   const { http_status_code: status, outcome_code: outcome, end_offset_ms: end } = contact;
   const failureCode = outcome && !SUCCESS.has(outcome) ? outcome : null;
+  // 客户端主动取消或断开在整页统一为中性态，不按红色失败告警。
+  if (!(status >= 400) && failureCode && CANCEL_REASON.test(failureCode)) {
+    const label = CONTACT_REASON_LABELS[failureCode] || summarizeTerminalReason(failureCode) || '已取消';
+    return { label, tone: 'neutral', icon: Ban, reason: failureCode, reasonLabel: '结束原因' };
+  }
   if (status >= 400 || failureCode) {
     const reason = failureCode || `HTTP ${status}`;
-    if (status === 429) return { label: '限流', tone: 'warning', icon: CircleAlert, reason };
-    return { label: summarizeTerminalReason(failureCode) || '失败', tone: 'failure', icon: X, reason };
+    const summarized = failureCode ? (CONTACT_REASON_LABELS[failureCode] || summarizeTerminalReason(failureCode)) : null;
+    if (status === 429 || summarized === '限流') {
+      return { label: '限流', tone: 'warning', icon: CircleAlert, reason, reasonLabel: '失败原因' };
+    }
+    if (!(status >= 400) && failureCode === 'leg_switched') {
+      return { label: '切换上游', tone: 'warning', icon: CircleAlert, reason, reasonLabel: '结束原因' };
+    }
+    return { label: summarized || '失败', tone: 'failure', icon: X, reason, reasonLabel: '失败原因' };
   }
   if (SUCCESS.has(outcome)) return { label: '响应完成', tone: 'success', icon: Check };
   if (hasTime(end)) return { label: '已结束', tone: 'neutral', icon: Clock };
@@ -118,9 +138,12 @@ function TraceCard({ title, meta, time, timeLabel = '距请求开始', times, fa
         {meta && <span className="flex flex-wrap items-center gap-x-1.5 text-[11px] leading-4 text-fg-muted [overflow-wrap:anywhere]">{meta}</span>}
       </span>
       <span className="flex shrink-0 items-center gap-1 pt-px">
-        {time && <span title={`${timeLabel} ${time}`} className="font-mono text-[11px] tabular-nums text-fg-body">
-          <span className="sr-only">{timeLabel} </span>{time}
-        </span>}
+        {time && (
+          <span title={`${timeLabel} ${time}`} className="inline-flex items-baseline">
+            <span className="sr-only select-none">{timeLabel} </span>
+            <span className="font-mono text-[11px] tabular-nums text-fg-body">{time}</span>
+          </span>
+        )}
         {expandable && <ChevronDown size={13} aria-hidden="true" className="text-fg-muted group-open/node:rotate-180 motion-safe:transition-transform" />}
       </span>
     </>
@@ -172,25 +195,40 @@ function ContactNode({ contact, target, reason, relation, settled, ws }) {
           ['联系结束', end]
         ]}
         facts={[
-          ['失败原因', state.reason],
+          [state.reasonLabel || '失败原因', state.reason],
           ['本次耗时', duration === null ? null : formatTime(duration)],
-          ['选路原因', reason && (summarizeTerminalReason(reason) || reason)]
+          ['选路原因', reason && (CONTACT_REASON_LABELS[reason] || summarizeTerminalReason(reason) || reason)]
         ]}
       />
     </TraceNode>
   );
 }
 
-function DeliveryNode({ flow, settled }) {
+function DeliveryNode({ flow, settled, requestStatus }) {
   const bytes = formatBytesCompact(flow.downstream_bytes_written);
   const end = flow.downstream_delivery_done_offset_ms;
   const started = hasTime(flow.first_client_write_offset_ms) || Boolean(bytes);
-  const state = DELIVERY[flow.downstream_delivery_outcome] || {
+  const baseState = DELIVERY[flow.downstream_delivery_outcome] || {
     label: settled ? '交付结果未记录' : started ? '交付中' : '等待下行交付',
     tone: !settled && started ? 'active' : 'neutral',
     icon: Clock
   };
-  const detail = [bytes && `下行 ${bytes}`, flow.downstream_flush_error && 'Flush 异常'].filter(Boolean).join(' · ');
+  // 存在 Flush 异常时取消绿色成功态；失败/取消请求写回错误响应时用中性色避免误读为请求成功。
+  const state = flow.downstream_delivery_outcome === 'delivered'
+    ? (flow.downstream_flush_error
+      ? { ...baseState, tone: 'warning', icon: CircleAlert }
+      : (NON_SUCCESS_REQUEST_STATUSES.has(requestStatus) ? { ...baseState, tone: 'neutral' } : baseState))
+    : baseState;
+  const detail = (bytes || flow.downstream_flush_error) ? (
+    <>
+      {bytes && <span>下行 {bytes}</span>}
+      {flow.downstream_flush_error && (
+        <span className={bytes ? 'border-l border-line pl-1.5 font-medium text-warn' : 'font-medium text-warn'}>
+          Flush 异常
+        </span>
+      )}
+    </>
+  ) : null;
   return (
     <TraceNode icon={state.icon} tone={state.tone}>
       <TraceCard
@@ -215,7 +253,7 @@ function ContactGap({ count }) {
   );
 }
 
-export default function RequestFlowTrail({ flow, settled }) {
+export default function RequestFlowTrail({ flow, settled, requestStatus }) {
   const legs = Array.isArray(flow.legs) ? flow.legs : [];
   const contacts = Array.isArray(flow.contacts) ? flow.contacts : [];
   const legsBySeq = new Map(legs.map(leg => [leg.leg_seq, leg]));
@@ -242,9 +280,9 @@ export default function RequestFlowTrail({ flow, settled }) {
         const previous = contacts[index - 1];
         const target = leg?.target_snapshot;
         const previousTarget = legsBySeq.get(previous?.leg_seq)?.target_snapshot;
-        const omitted = contact.contact_seq - (previous?.contact_seq ?? 0) - 1;
+        const omitted = contact.contact_seq > 0 ? contact.contact_seq - (previous?.contact_seq ?? 0) - 1 : 0;
         return (
-          <Fragment key={contact.contact_seq}>
+          <Fragment key={contact.contact_seq || `c-${index}`}>
             {omitted > 0 && <ContactGap count={omitted} />}
             <ContactNode
               contact={contact}
@@ -265,11 +303,11 @@ export default function RequestFlowTrail({ flow, settled }) {
             meta="已选定上游"
             time={offsetBadge(lastSelection.selected_offset_ms)}
             times={[['选定上游', lastSelection.selected_offset_ms]]}
-            facts={[['选路原因', summarizeTerminalReason(lastSelection.reason_code) || lastSelection.reason_code]]}
+            facts={[['选路原因', CONTACT_REASON_LABELS[lastSelection.reason_code] || summarizeTerminalReason(lastSelection.reason_code) || lastSelection.reason_code]]}
           />
         </TraceNode>
       )}
-      <DeliveryNode flow={flow} settled={settled} />
+      <DeliveryNode flow={flow} settled={settled} requestStatus={requestStatus} />
     </ol>
   );
 }

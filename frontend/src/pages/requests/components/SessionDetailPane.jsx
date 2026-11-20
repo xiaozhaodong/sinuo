@@ -6,6 +6,7 @@ import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { formatSessionCost, formatSessionNumber, isInputSpike } from '../utils/sessionUsage.js';
 
 const SMALL_BUTTON = 'inline-flex items-center gap-1 rounded border border-line px-2 py-0.5 text-xs text-fg-body hover:bg-surface-mut disabled:opacity-40';
+const ICON_BUTTON = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-mut hover:text-fg';
 
 export default function SessionDetailPane({ sessions, onClose }) {
   const { selected: row, trend, point, trendError } = sessions;
@@ -35,14 +36,14 @@ export default function SessionDetailPane({ sessions, onClose }) {
   const spike = isInputSpike(point);
   return (
     <section ref={containerRef} className="flex min-h-0 flex-1 flex-col" aria-label="会话用量详情">
-      <div className="flex min-h-8 shrink-0 items-center gap-2 border-b border-line px-3 text-xs">
+      <div className="flex h-[36px] shrink-0 items-center gap-2 border-b border-line bg-surface-sub/80 pl-4 pr-2.5 text-xs">
         <strong className="font-semibold">会话详情</strong>
         {row && <><span className="text-fg-muted">{row.request_family}</span><span className="truncate font-mono" title={row.session_id}>{row.session_id.slice(0, 12)}</span></>}
         <span className="flex-1" />
         <button type="button" disabled={!point || sessions.locating} onClick={() => sessions.navigate()} className={`${SMALL_BUTTON} shrink-0 text-accent`}>
           {sessions.locating ? '正在定位…' : '只看此会话'}<ArrowUpRight size={12} />
         </button>
-        <button type="button" aria-label="关闭会话详情" onClick={onClose} className="text-fg-muted hover:text-fg"><X size={14} /></button>
+        <button type="button" aria-label="关闭会话详情" onClick={onClose} className={ICON_BUTTON}><X size={14} /></button>
       </div>
       {!row ? <div className="grid flex-1 place-items-center text-xs text-fg-subtle">选择会话查看完整输入走势</div>
         : trendError ? <div role="alert" className="p-4 text-xs text-danger">走势加载失败：{trendError}<button className="ml-2 text-accent" onClick={() => sessions.loadTrend()}>重试</button></div>

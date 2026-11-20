@@ -1,12 +1,13 @@
 // ============================================
 // RequestDetailPane - 请求详情面板（请求追踪页底部）
 // 2026-10-07 桌面化：替代双击打开的详情弹窗。选中行即显示，进行中的请求随 request:update 事件刷新。
+// 2026-11-20 三栏配平：生命周期与链路 ｜ 概要与模型 ｜ Token 与计费；三栏独立滚动、顶栏常驻摘要锚点。
 // ============================================
-// 三栏（窄时两栏 / 一栏）：生命周期 ｜ 概要 ｜ 模型与思考 + Token 与成本。
 // 详情接口为权威数据源（F3）；列表行只用于选中瞬间的先行渲染。
 // ⚠️ 这里从 request 上读的每个字段都必须在 mergeRequestRows 的 COMPARED_FIELDS 里（静态扫描用例锁定），
 //    否则该字段变化会被行引用复用吃掉，面板首帧显示过期值。
 
+import { useEffect, useRef } from 'react';
 import RequestBilling from './RequestBilling.jsx';
 import { AlertCircle, Copy, MousePointerClick, RefreshCw, Waves, X } from 'lucide-react';
 import { InspectorEmpty, Property, PropertyList } from '@components/desktop/Inspector.jsx';
@@ -21,6 +22,8 @@ import { formatRouteMode, getRequestPresentation } from '../utils/requestPresent
 import { fullInputTokens, requestInputIncludesCache } from '../utils/requestInputUsage.js';
 import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
+import { formatTimingBadge } from '../utils/timing.js';
+import { formatSessionRatio } from '../utils/sessionUsage.js';
 
 // 请求种类展示：legacy 是历史与旧入口记录，不额外占一行
 const REQUEST_KIND_LABELS = {
@@ -126,10 +129,17 @@ const ModelConsistencySection = ({ request }) => {
   );
 };
 
-const TokenFigure = ({ label, value, title, tone }) => (
-  <div className="flex min-w-0 items-baseline justify-between gap-2" title={title}>
+const TokenFigure = ({ label, value, title, tone, className = '' }) => (
+  <div className={`flex min-w-0 items-baseline justify-between gap-2 ${className}`} title={title}>
     <span className="truncate text-fg-muted">{label}</span>
     <span className={`shrink-0 font-mono text-xs tabular-nums ${tone}`}>{value}</span>
+  </div>
+);
+
+const TokenPairRow = ({ left, right }) => (
+  <div className="grid grid-cols-2 items-baseline gap-3">
+    <TokenFigure {...left} />
+    <TokenFigure {...right} className="border-l border-line-soft pl-3" />
   </div>
 );
 
@@ -150,6 +160,14 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
   const cacheCreationTokens = request.cacheCreationTokens;
   const inputIncludesCache = requestInputIncludesCache(request.requestFamily, request.path);
   const fullInput = fullInputTokens(inputIncludesCache, inputTokens, cacheCreationTokens, cacheReadTokens);
+  // 直接复用规范化后的 request.cacheRatio，与列表缓存率列保持唯一口径：
+  // 缺失分项字段时为 null（留空不伪造比例），确定零命中时为 0（展示 0.0%）。
+  const cacheHitRatio = usageKnown && typeof request.cacheRatio === 'number' && Number.isFinite(request.cacheRatio)
+    ? request.cacheRatio
+    : null;
+  const cacheHitTone = cacheHitRatio > 0
+    ? 'border-success-line bg-success-soft text-success'
+    : 'border-line bg-surface-sub text-fg-muted';
   const waitingWriteSplit = inputIncludesCache && usageKnown && cacheCreationTokens > 0 && lifecycleLoading && !decision;
   const separateWrites = decision?.separate_cache_writes;
   const billableInput = inputIncludesCache
@@ -167,31 +185,82 @@ const TokenSection = ({ request, decision, lifecycleLoading = false }) => {
   const reasoningTokens = request.requestFamily === 'codex'
     ? parseReasoning(request.responseReasoning).reasoning_tokens
     : undefined;
+  const totalDisplay = fullInput === null ? '—' : formatUsage(fullInput + outputTokens);
+  const costDisplay = costKnown ? formatCost(request.cost) : '—';
+  const showCodexCacheSplit = inputIncludesCache && (separateWrites || request.cacheCreation30mTokens != null || request.cacheCreation12hTokens != null);
 
   return (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px]">
-      <TokenFigure label="输入" value={formatUsage(request.inputTokens)} tone={usageTone} />
-      <TokenFigure label="输出" value={formatUsage(request.outputTokens)} tone={usageTone} />
-      <TokenFigure label="缓存读取" value={formatUsage(request.cacheReadTokens)} tone={usageTone} />
-      <TokenFigure label="缓存创建" value={cacheCreationTokens == null ? '—' : formatUsage(cacheCreationTokens)} title={inputIncludesCache ? '缓存写入 Token，已包含在输入总量中' : '5 分钟与 1 小时缓存创建合计'} tone={usageTone} />
-      {inputIncludesCache && (separateWrites || request.cacheCreation30mTokens != null || request.cacheCreation12hTokens != null) && (
-        <>
-          <TokenFigure label="创建 30m" value={request.cacheCreation30mTokens == null ? '—' : formatUsage(request.cacheCreation30mTokens)} tone={usageTone} />
-          <TokenFigure label="创建 12h" value={request.cacheCreation12hTokens == null ? '—' : formatUsage(request.cacheCreation12hTokens)} tone={usageTone} />
-        </>
-      )}
-      {!inputIncludesCache && (
-        <>
-          <TokenFigure label="创建 5m" value={formatUsage(request.cacheCreation5mTokens)} tone={usageTone} />
-          <TokenFigure label="创建 1h" value={formatUsage(request.cacheCreation1hTokens)} tone={usageTone} />
-        </>
-      )}
-      {reasoningTokens !== undefined && (
-        <TokenFigure label="推理" value={(Number(reasoningTokens) || 0).toLocaleString()} title="推理 Token，含在输出 Token 内" tone="text-fg" />
-      )}
-      <TokenFigure label="合计" value={fullInput === null ? '—' : formatUsage(fullInput + outputTokens)} title={totalHint} tone={usageTone} />
-      <TokenFigure label="计费输入" value={waitingWriteSplit ? '—' : formatUsage(billableInput)} title={billableHint} tone={waitingWriteSplit ? 'text-fg-subtle' : usageTone} />
-      <TokenFigure label="成本" value={costKnown ? formatCost(request.cost) : '—'} tone={costKnown ? 'font-medium text-warn' : 'text-fg-subtle'} />
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-[11.5px] font-semibold tracking-[0.02em] text-fg-body">Token 与成本</h3>
+        {cacheHitRatio !== null && (
+          <span
+            className={`shrink-0 rounded-full border px-2 py-px font-mono text-[11px] tabular-nums ${cacheHitTone}`}
+            title="按本条记录计算：缓存读取 ÷ 完整输入"
+          >
+            缓存命中 {formatSessionRatio(cacheHitRatio)}
+          </span>
+        )}
+      </div>
+
+      {/* 顶置汇总头：默认 280px 高度下首屏直见本次成本与合计 Token，避免被下方明细淹没 */}
+      <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-[11.5px] text-fg-muted">本次成本</div>
+          <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight tabular-nums ${costKnown ? 'text-warn' : 'text-fg-subtle'}`}>
+            {costDisplay}
+          </div>
+        </div>
+        <div className="min-w-0 border-l border-line-soft pl-3" title={totalHint}>
+          <div className="text-[11.5px] text-fg-muted">合计 Token</div>
+          <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight tabular-nums ${usageTone}`}>
+            {totalDisplay}
+          </div>
+        </div>
+      </div>
+
+      {/* 成对明细：右列带细竖线防止左列数字与右列标签串行 */}
+      <div className="mt-2.5 space-y-1.5 text-[12.5px]">
+        <TokenPairRow
+          left={{ label: '输入', value: formatUsage(request.inputTokens), tone: usageTone }}
+          right={{ label: '输出', value: formatUsage(request.outputTokens), tone: usageTone }}
+        />
+        <TokenPairRow
+          left={{ label: '缓存读取', value: formatUsage(request.cacheReadTokens), tone: usageTone }}
+          right={{
+            label: '缓存创建',
+            value: cacheCreationTokens == null ? '—' : formatUsage(cacheCreationTokens),
+            title: inputIncludesCache ? '缓存写入 Token，已包含在输入总量中' : '5 分钟与 1 小时缓存创建合计',
+            tone: usageTone
+          }}
+        />
+        {showCodexCacheSplit && (
+          <TokenPairRow
+            left={{ label: '创建 30m', value: request.cacheCreation30mTokens == null ? '—' : formatUsage(request.cacheCreation30mTokens), tone: usageTone }}
+            right={{ label: '创建 12h', value: request.cacheCreation12hTokens == null ? '—' : formatUsage(request.cacheCreation12hTokens), tone: usageTone }}
+          />
+        )}
+        {!inputIncludesCache && (
+          <TokenPairRow
+            left={{ label: '创建 5m', value: formatUsage(request.cacheCreation5mTokens), tone: usageTone }}
+            right={{ label: '创建 1h', value: formatUsage(request.cacheCreation1hTokens), tone: usageTone }}
+          />
+        )}
+        {reasoningTokens !== undefined ? (
+          <TokenPairRow
+            left={{ label: '计费输入', value: waitingWriteSplit ? '—' : formatUsage(billableInput), title: billableHint, tone: waitingWriteSplit ? 'text-fg-subtle' : usageTone }}
+            right={{ label: '推理', value: (Number(reasoningTokens) || 0).toLocaleString(), title: '推理 Token，含在输出 Token 内', tone: 'text-fg' }}
+          />
+        ) : (
+          <TokenFigure
+            label="计费输入"
+            value={waitingWriteSplit ? '—' : formatUsage(billableInput)}
+            title={billableHint}
+            tone={waitingWriteSplit ? 'text-fg-subtle' : usageTone}
+            className="border-t border-line-soft pt-1.5"
+          />
+        )}
+      </div>
     </div>
   );
 };
@@ -238,16 +307,23 @@ const OutcomeNote = ({ request, presentation }) => {
 };
 
 const SessionValue = ({ sessionId, onFilter }) => {
-  if (!sessionId) return <span>—</span>;
+  if (!sessionId) return <span className="text-fg-subtle">—</span>;
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
+    <span className="inline-flex min-w-0 items-center gap-1">
       <span className="font-mono text-xs" title={sessionId}>{sessionId.slice(0, 8)}</span>
       <button type="button" title="复制会话 ID" aria-label="复制会话 ID" onClick={() => copyTextToClipboard(sessionId, '会话 ID')} className={ICON_BUTTON}>
         <Copy size={13} />
       </button>
-      {onFilter && <button type="button" onClick={() => onFilter(sessionId)} className="shrink-0 text-xs text-accent hover:text-accent-fg">只看此会话</button>}
+      {onFilter && <button type="button" onClick={() => onFilter(sessionId)} className="ml-0.5 shrink-0 text-xs font-medium text-accent hover:text-accent-fg">只看此会话</button>}
     </span>
   );
+};
+
+const resolveHttpStatusTone = (status) => {
+  if (status >= 500) return 'text-danger';
+  if (status >= 400) return 'text-warn';
+  if (status >= 200 && status < 300) return 'text-success';
+  return 'text-fg';
 };
 
 const SummarySection = ({ request, presentation, onFilterSession }) => {
@@ -267,7 +343,7 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
             {kindLabel && <span className="text-fg-muted">{kindLabel}</span>}
           </span>
         </Property>
-        <Property label="上游" title={request.upstreamName}>{request.upstreamName || '未知上游'}</Property>
+        <Property label="上游" title={request.upstreamName}><span className="font-medium">{request.upstreamName || '未知上游'}</span></Property>
         <Property label="会话" truncate={false}><SessionValue sessionId={request.sessionId} onFilter={onFilterSession} /></Property>
         <Property label="路由">{formatRouteMode(request.routeMode)}</Property>
         {request.requestedEndpoint && (
@@ -280,7 +356,11 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
           <Property label="回退原因" title={request.fallbackReason}>{request.fallbackReason}</Property>
         )}
         <Property label="请求" title={requestLine}><span className="font-mono text-xs">{requestLine}</span></Property>
-        <Property label="HTTP">{httpStatus || '-'}</Property>
+        <Property label="HTTP">
+          {httpStatus
+            ? <span className={`font-mono text-xs font-medium tabular-nums ${resolveHttpStatusTone(httpStatus)}`}>{httpStatus}</span>
+            : <span className="text-fg-subtle">-</span>}
+        </Property>
       </PropertyList>
       <OutcomeNote request={request} presentation={presentation} />
     </>
@@ -289,18 +369,34 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
 
 const PaneHeader = ({ request, presentation, timestampText, onClose }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
+  const settled = !UNSETTLED_STATUSES.has(request.status);
+  const costKnown = settled && request.costKnown !== false;
   return (
-    <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-line pl-4 pr-2">
-      <span className="truncate font-mono text-[12.5px] font-medium text-fg">{request.requestId}</span>
-      <button type="button" title="复制请求 ID" aria-label="复制请求 ID" onClick={() => copyTextToClipboard(request.requestId, '请求 ID')} className={ICON_BUTTON}>
-        <Copy size={13} />
-      </button>
+    <div className="@container flex h-[36px] shrink-0 items-center gap-2.5 border-b border-line bg-surface-sub/80 pl-4 pr-2.5">
+      <span className="inline-flex min-w-0 items-center gap-1">
+        <span className="truncate font-mono text-[12.5px] font-semibold text-fg">{request.requestId}</span>
+        <button type="button" title="复制请求 ID" aria-label="复制请求 ID" onClick={() => copyTextToClipboard(request.requestId, '请求 ID')} className={ICON_BUTTON}>
+          <Copy size={13} />
+        </button>
+      </span>
       <RequestStatusBadge status={presentation.status} />
       <span className="inline-flex shrink-0 items-center gap-1 text-xs text-fg-muted">
         <StreamIcon size={12} className={request.isStreaming ? 'text-info' : undefined} />
         {request.isStreaming ? '流式' : '常规'}
       </span>
       <span className="flex-1" />
+      <span
+        data-header-anchor
+        className="hidden shrink-0 items-center gap-2 rounded-md border border-line bg-surface px-2 py-0.5 text-xs @2xl:inline-flex"
+      >
+        <span className={settled ? 'font-mono tabular-nums text-fg-body' : 'text-fg-subtle'}>
+          {settled ? formatTimingBadge(request.duration) : '进行中'}
+        </span>
+        <span className="h-3 w-px bg-line" aria-hidden="true" />
+        <span className={`font-mono font-semibold tabular-nums ${costKnown ? 'text-warn' : 'text-fg-subtle'}`}>
+          {costKnown ? formatCost(request.cost) : '—'}
+        </span>
+      </span>
       <span className="shrink-0 text-xs tabular-nums text-fg-muted">{timestampText}</span>
       <button type="button" title="隐藏详情面板" aria-label="隐藏详情面板" onClick={onClose} className={ICON_BUTTON}>
         <X size={14} />
@@ -309,16 +405,25 @@ const PaneHeader = ({ request, presentation, timestampText, onClose }) => {
   );
 };
 
-const PaneSection = ({ title, className = '', children }) => (
-  <section className={`min-w-0 px-4 py-3 ${className}`}>
-    <h3 className="mb-2 text-[11.5px] font-semibold text-fg-muted">{title}</h3>
-    {children}
-  </section>
+const SectionHeading = ({ children, className = '' }) => (
+  <h3 className={`mb-2 text-[11.5px] font-semibold tracking-[0.02em] text-fg-body ${className}`}>{children}</h3>
 );
 
 const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }) => {
   const { formatTimestamp } = useTimezone();
-  const { lifecycle, lifecycleLoading } = useRequestLifecycleDetail(initialRequest?.requestId, Boolean(initialRequest));
+  const scrollRootRef = useRef(null);
+  const selectedRequestId = initialRequest?.requestId ?? null;
+  const { lifecycle, lifecycleLoading } = useRequestLifecycleDetail(selectedRequestId, Boolean(initialRequest));
+
+  // 仅在切换请求 ID 时复位外层容器与三栏的纵向滚动位置；同一请求实时刷新时保持当前阅读位置。
+  useEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root) return;
+    root.scrollTop = 0;
+    for (const column of root.querySelectorAll('[data-detail-scroll]')) {
+      column.scrollTop = 0;
+    }
+  }, [selectedRequestId]);
 
   if (!initialRequest) {
     return <InspectorEmpty icon={MousePointerClick}>选择一条请求查看详情</InspectorEmpty>;
@@ -342,31 +447,31 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
   return (
     <>
       <PaneHeader request={request} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
-      {/* 列间 1px 分隔：网格底色当线，单元格铺面板底色；第三栏在两栏布局下占满一行 */}
-      <div className="@container min-h-0 flex-1 overflow-y-auto">
-        <div className="grid min-h-full grid-cols-1 gap-px bg-line-soft @xl:grid-cols-2 @4xl:grid-cols-[1.3fr_1fr_1.1fr]">
-          <PaneSection title="生命周期" className="bg-inspector">
+      {/* 列间 1px 清晰分隔：桌面三栏独立纵向滚动，窄屏退回整区滚动 */}
+      <div ref={scrollRootRef} className="@container min-h-0 flex-1 overflow-y-auto @4xl:overflow-hidden">
+        <div className="grid min-h-full grid-cols-1 gap-px bg-line @xl:grid-cols-2 @4xl:h-full @4xl:grid-cols-[1.35fr_1fr_1.05fr]">
+          <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @4xl:min-h-0 @4xl:overflow-y-auto">
             {/* 按请求重挂载：候选决策的展开状态不跨请求保留 */}
             <LifecyclePanel key={request.requestId} request={request} lifecycle={lifecycle} lifecycleLoading={lifecycleLoading} />
-          </PaneSection>
-          <PaneSection title="概要" className="bg-inspector">
+          </section>
+          <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @4xl:min-h-0 @4xl:overflow-y-auto">
+            <SectionHeading>概要</SectionHeading>
             <SummarySection request={request} presentation={presentation} onFilterSession={onFilterSession} />
-          </PaneSection>
-          <div className="min-w-0 bg-inspector @xl:col-span-2 @4xl:col-span-1">
-            <PaneSection title="模型与思考">
+            <div className="mt-3.5 border-t border-line pt-3">
+              <SectionHeading>模型与思考</SectionHeading>
               <ModelConsistencySection request={request} />
-            </PaneSection>
-            <PaneSection title="Token 与成本" className="pt-1">
-              <TokenSection request={request} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
-              <div className="mt-3 border-t border-line-soft pt-3 empty:hidden">
-                {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
-                  <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}
-                    id={request.requestId} usageKnown={request.usageKnown !== false} version={lifecycle?.billingRateId} decision={lifecycle?.billingDecision}
-                    officialRecalculation={lifecycle?.officialRecalculation} billingMultipliers={lifecycle?.billingMultipliers}
-                    pending={UNSETTLED_STATUSES.has(request.status)} />}
-              </div>
-            </PaneSection>
-          </div>
+            </div>
+          </section>
+          <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @xl:col-span-2 @4xl:col-span-1 @4xl:min-h-0 @4xl:overflow-y-auto">
+            <TokenSection request={request} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
+            <div className="mt-3.5 border-t border-line pt-3 empty:hidden">
+              {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
+                <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}
+                  id={request.requestId} usageKnown={request.usageKnown !== false} version={lifecycle?.billingRateId} decision={lifecycle?.billingDecision}
+                  officialRecalculation={lifecycle?.officialRecalculation} billingMultipliers={lifecycle?.billingMultipliers}
+                  pending={UNSETTLED_STATUSES.has(request.status)} />}
+            </div>
+          </section>
         </div>
       </div>
     </>

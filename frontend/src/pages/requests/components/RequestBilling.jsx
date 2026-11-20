@@ -78,8 +78,9 @@ export default function RequestBilling({ id, version, decision, pending, usageKn
   const showRule = Number.isFinite(decision?.model_multiplier) && (decision.rule_id > 0 || decision.model_multiplier !== 1);
   return (
     <div className="space-y-2 text-xs">
+      <h4 className="text-[11.5px] font-semibold tracking-[0.02em] text-fg-body">计费依据</h4>
       {(decision || showMultipliers) && (
-        <PropertyList labelWidth={64} align="start">
+        <PropertyList labelWidth={60} align="start">
           {decision && (
             <>
               <Property label="计费档位" truncate={false} title={version > 0 ? `费率版本 #${version}` : undefined}>
@@ -91,15 +92,15 @@ export default function RequestBilling({ id, version, decision, pending, usageKn
                 )}
               </Property>
               {usageKnown && Number.isFinite(decision.full_input) && (
-                <Property label="完整输入">{`${Number(decision.full_input).toLocaleString()} Token`}</Property>
+                <Property label="完整输入"><span className="font-mono tabular-nums">{`${Number(decision.full_input).toLocaleString()} Token`}</span></Property>
               )}
-              {showRule && <Property label="模型规则">×{decision.model_multiplier}</Property>}
+              {showRule && <Property label="模型规则"><span className="font-mono tabular-nums">×{decision.model_multiplier}</span></Property>}
             </>
           )}
           {showMultipliers && (
             <Property label="渠道倍率" truncate={false}>
-              {unified ? `统一 ×${billingMultipliers.unified}` : (
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {unified ? <span className="font-mono tabular-nums">{`统一 ×${billingMultipliers.unified}`}</span> : (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono tabular-nums">
                   {split.map(([key, label]) => (
                     <span key={key} className="whitespace-nowrap">{`${label} ×${billingMultipliers[key]}`}</span>
                   ))}
