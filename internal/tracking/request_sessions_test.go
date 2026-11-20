@@ -111,7 +111,7 @@ func TestRequestSessions_HotArchiveDedupAndLocation(t *testing.T) {
 	for i := 0; i < 70; i++ {
 		seedSessionRequest(t, tr, fmt.Sprintf("req-%03d", i), "codex", "session", now.Add(time.Duration(i)*time.Second), 100, 0, 50, 1.0)
 	}
-	// 比数据库请求更旧的热池记录仍排在正式表前面。
+	// 比数据库请求更旧的热池记录应按时间顺序排在数据库请求之后（最后一页末尾）。
 	seedSessionRequest(t, tr, "overlap", "codex", "old-session", now, 100, 0, 50, 9.0)
 	err := tr.hotPool.Add(&ActiveRequest{RequestID: "overlap", RequestFamily: "codex", SessionID: "session", StartTime: now.Add(-time.Minute), RequestKind: "generation", UpstreamType: "account", Status: "completed", InputTokens: 1000, CacheReadTokens: 900, UsageKnown: true, CostKnown: true, CostOverrideUSD: ptrSessionCost(3)})
 	if err != nil {
@@ -133,10 +133,14 @@ func TestRequestSessions_HotArchiveDedupAndLocation(t *testing.T) {
 		t.Fatalf("归档重叠重复计数或旧分组泄漏: %+v %v", result, err)
 	}
 	opts := &QueryOptions{RequestFamily: "codex", SessionID: "session", Limit: 20}
+	wantPages := map[string]int{"overlap": 4, "req-000": 4, "req-050": 1}
 	for _, id := range []string{"overlap", "req-000", "req-050"} {
 		page, err := tr.LocateRequestPage(ctx, opts, id, 20)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if page != wantPages[id] {
+			t.Fatalf("目标 %s 页码 = %d, want %d", id, page, wantPages[id])
 		}
 		opts.Offset = (page - 1) * 20
 		rows, count, err := tr.QueryRequestDetailsWithHotPool(ctx, opts)
@@ -146,6 +150,9 @@ func TestRequestSessions_HotArchiveDedupAndLocation(t *testing.T) {
 		}
 		if err != nil || count != 71 || !found {
 			t.Fatalf("实际页中必须找到目标 %s page=%d count=%d err=%v", id, page, count, err)
+		}
+		if id == "overlap" && rows[len(rows)-1].RequestID != "overlap" {
+			t.Fatalf("最旧热池记录 overlap 必须落在最后一页最后一条，got last=%s", rows[len(rows)-1].RequestID)
 		}
 	}
 	// 旧分组不能在正式请求表里复活。

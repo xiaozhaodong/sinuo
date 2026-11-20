@@ -110,9 +110,9 @@ func (ut *UsageTracker) sessionSource(opts *QueryOptions) (string, []interface{}
 		CASE WHEN read_archived_cost THEN (SELECT total_cost_usd FROM request_logs WHERE request_id = hot_raw.request_id)
 		ELSE total_cost_usd END AS total_cost_usd FROM hot_raw),
 		session_records AS (
-		SELECT ` + strings.Join(columns, ", ") + `, 0 AS hot_order FROM request_logs
+		SELECT ` + strings.Join(columns, ", ") + ` FROM request_logs
 		WHERE request_id NOT IN (SELECT request_id FROM hot)
-		UNION ALL SELECT *, 1 AS hot_order FROM hot),
+		UNION ALL SELECT * FROM hot),
 		scoped AS (SELECT *, ` + tokenusage.FullInputSQL + ` AS full_input FROM session_records WHERE 1=1`
 	args := []interface{}{string(encoded)}
 	source := requestQuerySourceAll
@@ -256,7 +256,7 @@ func (ut *UsageTracker) QueryRequestSessionTrend(ctx context.Context, opts *Quer
 	return result, rows.Err()
 }
 
-// LocateRequestPage 与正式请求表保持热池优先、时间倒序、ID 倒序的稳定顺序。
+// LocateRequestPage 与正式请求表保持统一的时间倒序、ID 倒序（热池与数据库统一排序）。
 // 目标不在范围内时明确报错，不能仅保留详情快照假装完成定位。
 func (ut *UsageTracker) LocateRequestPage(ctx context.Context, opts *QueryOptions, requestID string, size int) (int, error) {
 	if requestID == "" || size < 1 || size > 100 {
@@ -267,7 +267,7 @@ func (ut *UsageTracker) LocateRequestPage(ctx context.Context, opts *QueryOption
 		return 0, err
 	}
 	query := base + `, positions AS (SELECT request_id, ROW_NUMBER() OVER
-		(ORDER BY hot_order DESC, ` + requestDetailsOrderBy + `) AS position FROM scoped)
+		(ORDER BY ` + requestDetailsOrderBy + `) AS position FROM scoped)
 		SELECT position FROM positions WHERE request_id = ?`
 	var position int
 	err = ut.readDB.QueryRowContext(ctx, query, append(args, requestID)...).Scan(&position)

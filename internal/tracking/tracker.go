@@ -517,6 +517,9 @@ type UsageTracker struct {
 	// 按请求保留待持久化的写入缺口。
 	gapMu       sync.RWMutex
 	pendingGaps map[string]string
+
+	// 仅同包测试使用：分页归并每拉取完一批数据库结果后触发，用于模拟跨批并发写入。
+	onMergeDBBatchLoaded func(batchIndex int)
 }
 
 func (ut *UsageTracker) reconnectDatabases() error {
@@ -2287,12 +2290,38 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 	}
 }
 
-// QueryRequestDetailsWithHotPool 双源查询：热池 + 数据库
-// 返回合并后的请求列表，热池中的活跃请求排在前面
-// 🔧 [修复] 2025-12-11: 正确处理分页，确保返回数量不超过 limit
+// storageOrderTime 将时间对齐到数据库 StorageLayout 的微秒 UTC 精度，
+// 避免热池纳秒尾数在归档前后引起排序或边界抖动，并与 SQLite 排序及 LocateRequestPage 保持一致。
+func storageOrderTime(t time.Time) time.Time {
+	utc := t.UTC()
+	return utc.Add(-time.Duration(utc.Nanosecond() % int(time.Microsecond)))
+}
+
+// requestDetailComesBefore 按与 SQL `ORDER BY start_time DESC, request_id DESC`
+// 一致的口径比较两条请求。
+func requestDetailComesBefore(a, b RequestDetail) bool {
+	aTime := storageOrderTime(a.StartTime)
+	bTime := storageOrderTime(b.StartTime)
+	if aTime.Equal(bTime) {
+		return a.RequestID > b.RequestID
+	}
+	return aTime.After(bTime)
+}
+
+// QueryRequestDetailsWithHotPool 双源查询：热池 + 数据库。
+// 热池与数据库按统一的 `start_time DESC, request_id DESC` 有序归并分页，
+// 避免长请求在归档落库前后因切换数据源而发生列表位置跳动。
+// 捕获热池快照后，计数与该页全部数据库分批查询共享同一个 SQLite 只读事务，
+// 保证总数一致且多批续拉不会因并发写入导致 OFFSET 漂移或同页重复请求。
 func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts *QueryOptions) ([]RequestDetail, int64, error) {
+	if ut.readDB == nil {
+		return nil, 0, fmt.Errorf("read database not initialized")
+	}
 	if opts == nil {
 		opts = &QueryOptions{}
+	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, 0, err
 	}
 
 	// 获取分页参数
@@ -2304,137 +2333,199 @@ func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts
 	if offset < 0 {
 		offset = 0
 	}
-	results := make([]RequestDetail, 0, limit)
 
-	// 1. 从热池获取所有符合过滤条件的活跃请求（用于计算总数和分页）
+	// 1. 先捕获全部热池快照并收集去重 ID，再按筛选条件过滤。
+	// 必须在开启数据库读事务之前捕获：若请求在捕获前刚 ConfirmArchived 移出热池，
+	// 其落库事务必然已提交，随后的读事务必定可见，避免过渡窗口丢行。
+	// 即使热池新状态不匹配筛选，也必须排除数据库中的同 ID 旧状态。
 	hotSnapshot := ut.requestHotPoolSnapshot()
+	hotPoolRequestIDs := make([]string, 0, len(hotSnapshot))
+	for _, req := range hotSnapshot {
+		hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
+	}
 	allHotPoolRequests := ut.filterHotPoolRequests(hotSnapshot, opts)
 	hotPoolCount := len(allHotPoolRequests)
 
-	// 2. 获取数据库总数（用于分页计算）
-	dbCount, err := ut.CountRequestDetails(ctx, opts)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count database requests: %w", err)
-	}
-
-	// 3. 热池数据按开始时间倒序排列（最新的在前）
-	if hotPoolCount > 0 {
+	// 2. 热池数据按统一时间序倒序排列（start_time DESC, request_id DESC）
+	if hotPoolCount > 1 {
 		sort.Slice(allHotPoolRequests, func(i, j int) bool {
-			if allHotPoolRequests[i].StartTime.Equal(allHotPoolRequests[j].StartTime) {
-				return allHotPoolRequests[i].RequestID > allHotPoolRequests[j].RequestID
-			}
-			return allHotPoolRequests[i].StartTime.After(allHotPoolRequests[j].StartTime)
+			return requestDetailComesBefore(allHotPoolRequests[i], allHotPoolRequests[j])
 		})
 	}
 
-	// 创建热池请求ID集合用于去重
-	hotPoolIDs := make(map[string]struct{}, hotPoolCount)
-	hotPoolRequestIDs := make([]string, 0, hotPoolCount)
-	// 即使热池新状态不匹配筛选，也要排除数据库中的旧状态。
-	for _, req := range hotSnapshot {
-		if _, exists := hotPoolIDs[req.RequestID]; exists {
-			continue
-		}
-		hotPoolIDs[req.RequestID] = struct{}{}
-		hotPoolRequestIDs = append(hotPoolRequestIDs, req.RequestID)
-	}
-
-	// 4. 计算去重后的总数（DB + 热池唯一请求）
-	overlapCount, err := ut.countRequestDetailsOverlapsByRequestIDs(ctx, opts, hotPoolRequestIDs)
+	// 3. 在单一只读事务内完成总数统计、重叠扣减与该页全部 DB 分批读取，锁定一致快照。
+	tx, err := ut.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count hot pool overlap requests: %w", err)
+		return nil, 0, fmt.Errorf("failed to begin read transaction: %w", err)
 	}
-	if overlapCount > dbCount {
-		overlapCount = dbCount
+	defer tx.Rollback()
+
+	// 4. 计算去重后的总数（热池匹配数 + 数据库排除热池 ID 后的匹配数）
+	dbOnlyCount, err := ut.countRequestDetailsExcludingIDs(ctx, tx, opts, hotPoolRequestIDs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count database requests: %w", err)
 	}
-	totalCount := int64(hotPoolCount + dbCount - overlapCount)
-	if totalCount < 0 {
-		totalCount = 0
+	totalCount := int64(hotPoolCount + dbOnlyCount)
+
+	// 5. 快速边界：offset 已超出总条数，直接返回空切片
+	if offset >= hotPoolCount+dbOnlyCount {
+		return []RequestDetail{}, totalCount, nil
 	}
 
-	// 5. 先填充热池数据（热池优先）
-	if offset < hotPoolCount {
-		hotPoolEnd := offset + limit
-		if hotPoolEnd > hotPoolCount {
-			hotPoolEnd = hotPoolCount
+	// 6. 快速路径：数据库无匹配记录，直接切热池有序结果
+	if dbOnlyCount == 0 {
+		end := offset + limit
+		if end > hotPoolCount {
+			end = hotPoolCount
 		}
-		results = append(results, allHotPoolRequests[offset:hotPoolEnd]...)
+		results := make([]RequestDetail, end-offset)
+		copy(results, allHotPoolRequests[offset:end])
+		return results, totalCount, nil
 	}
 
-	// 6. 从数据库补齐（排除热池重复，并正确跳过 offset 对应的唯一 DB 记录）
-	remaining := limit - len(results)
-	if remaining > 0 {
-		dbSkip := offset - hotPoolCount
-		if dbSkip < 0 {
-			dbSkip = 0
-		}
-		dbRequests, err := ut.queryRequestDetailsFromDBExcludingHotPool(ctx, opts, dbSkip, remaining, hotPoolIDs)
+	// 7. 快速路径：热池无匹配记录，直接按 offset/limit 查库
+	if hotPoolCount == 0 {
+		dbOpts := *opts
+		dbOpts.Offset = offset
+		dbOpts.Limit = limit
+		dbRequests, err := ut.queryRequestDetailsExcludingIDs(ctx, tx, &dbOpts, hotPoolRequestIDs)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("failed to query database: %w", err)
 		}
-		results = append(results, dbRequests...)
+		if dbRequests == nil {
+			dbRequests = []RequestDetail{}
+		}
+		return dbRequests, totalCount, nil
 	}
 
+	// 8. 两路有序归并分页：将热池有序切片与同一只读快照下的数据库有序序列合并后取 [offset, offset+limit)
+	results, err := ut.mergeRequestDetailsPage(ctx, tx, opts, allHotPoolRequests, hotPoolRequestIDs, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
 	return results, totalCount, nil
 }
 
-func (ut *UsageTracker) queryRequestDetailsFromDBExcludingHotPool(
+const requestDetailsMergeDBChunkLimit = 256
+
+// mergeRequestDetailsPage 将有序热池记录 hot 与排除 excludedIDs 后的有序数据库记录 D
+// 按 requestDetailComesBefore 统一归并，返回合并后 [offset, offset+limit) 区间。
+//
+// 当 offset >= len(hot) 时，设 dbStart = offset - len(hot)：
+// 若 D[dbStart] 存在，在 hot 中二分定位首个不排在 D[dbStart] 之前的下标 p，
+// 则全局排在 D[dbStart] 之前的记录恰好为 hot[0..p-1] ∪ D[0..dbStart-1]（共 p + dbStart 条）。
+// 后续只需从 (hot[p..], D[dbStart..]) 归并，跳过 offset - (p + dbStart) = len(hot) - p 条后取 limit 条。
+// 这样即使翻到深页且热池有活跃请求，也无需从数据库偏移 0 扫描。
+func (ut *UsageTracker) mergeRequestDetailsPage(
 	ctx context.Context,
+	q requestQueryExecutor,
 	opts *QueryOptions,
-	skip int,
+	hot []RequestDetail,
+	excludedIDs []string,
+	offset int,
 	limit int,
-	hotPoolIDs map[string]struct{},
 ) ([]RequestDetail, error) {
-	if limit <= 0 {
-		return nil, nil
+	hotCount := len(hot)
+	dbOffset := 0
+	hotIdx := 0
+	toSkip := offset
+	anchorResolved := offset < hotCount
+	if !anchorResolved {
+		dbOffset = offset - hotCount
 	}
 
-	if opts == nil {
-		opts = &QueryOptions{}
+	initialNeed := offset + limit
+	if !anchorResolved {
+		initialNeed = hotCount + limit
+	}
+	chunkSize := initialNeed
+	if chunkSize > requestDetailsMergeDBChunkLimit {
+		chunkSize = requestDetailsMergeDBChunkLimit
+		if chunkSize < limit {
+			chunkSize = limit
+		}
 	}
 
 	results := make([]RequestDetail, 0, limit)
-	skipped := 0
-	fetchOffset := 0
-	chunkSize := limit + len(hotPoolIDs)
-	if chunkSize < 64 {
-		chunkSize = 64
-	}
-	if chunkSize > 512 {
-		chunkSize = 512
-	}
+	var dbBatch []RequestDetail
+	dbIdx := 0
+	dbExhausted := false
+	batchCount := 0
 
-	for {
+	loadNextDBBatch := func(remaining int) error {
+		if dbExhausted {
+			return nil
+		}
+		fetchLimit := chunkSize
+		if remaining > 0 && remaining < fetchLimit {
+			fetchLimit = remaining
+		}
 		dbOpts := *opts
-		dbOpts.Offset = fetchOffset
-		dbOpts.Limit = chunkSize
+		dbOpts.Offset = dbOffset
+		dbOpts.Limit = fetchLimit
 
-		batch, err := ut.QueryRequestDetails(ctx, &dbOpts)
+		batch, err := ut.queryRequestDetailsExcludingIDs(ctx, q, &dbOpts, excludedIDs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query database: %w", err)
+			return fmt.Errorf("failed to query database: %w", err)
 		}
-		if len(batch) == 0 {
+		dbBatch = batch
+		dbIdx = 0
+		dbOffset += len(batch)
+		if len(batch) < fetchLimit {
+			dbExhausted = true
+		}
+		currentBatch := batchCount
+		batchCount++
+		if ut.onMergeDBBatchLoaded != nil {
+			ut.onMergeDBBatchLoaded(currentBatch)
+		}
+		return nil
+	}
+
+	if err := loadNextDBBatch(initialNeed); err != nil {
+		return nil, err
+	}
+
+	if !anchorResolved {
+		if len(dbBatch) == 0 {
+			// |D| <= offset - len(hot)，因此 |hot| + |D| <= offset
+			return results, nil
+		}
+		anchor := dbBatch[0]
+		hotIdx = sort.Search(hotCount, func(i int) bool {
+			return !requestDetailComesBefore(hot[i], anchor)
+		})
+		toSkip = hotCount - hotIdx
+	}
+
+	for len(results) < limit {
+		if dbIdx >= len(dbBatch) && !dbExhausted {
+			remaining := toSkip + (limit - len(results))
+			if err := loadNextDBBatch(remaining); err != nil {
+				return nil, err
+			}
+		}
+
+		hasHot := hotIdx < hotCount
+		hasDB := dbIdx < len(dbBatch)
+		if !hasHot && !hasDB {
 			break
 		}
 
-		for _, req := range batch {
-			if _, exists := hotPoolIDs[req.RequestID]; exists {
-				continue
-			}
-			if skipped < skip {
-				skipped++
-				continue
-			}
-			results = append(results, req)
-			if len(results) >= limit {
-				return results, nil
-			}
+		var pick RequestDetail
+		if hasHot && (!hasDB || requestDetailComesBefore(hot[hotIdx], dbBatch[dbIdx])) {
+			pick = hot[hotIdx]
+			hotIdx++
+		} else {
+			pick = dbBatch[dbIdx]
+			dbIdx++
 		}
 
-		if len(batch) < chunkSize {
-			break
+		if toSkip > 0 {
+			toSkip--
+			continue
 		}
-		fetchOffset += len(batch)
+		results = append(results, pick)
 	}
 
 	return results, nil
@@ -2555,11 +2646,11 @@ func (ut *UsageTracker) filterHotPoolRequests(activeRequests []*ActiveRequest, o
 			if opts.UpstreamName != "" && req.UpstreamName != opts.UpstreamName {
 				continue
 			}
-			// 时间范围过滤
-			if opts.StartDate != nil && req.StartTime.Before(*opts.StartDate) {
+			// 时间范围过滤（按微秒存储精度对齐，与 SQL FormatStorage 边界保持一致）
+			if opts.StartDate != nil && storageOrderTime(req.StartTime).Before(storageOrderTime(*opts.StartDate)) {
 				continue
 			}
-			if opts.EndDate != nil && !req.StartTime.Before(*opts.EndDate) {
+			if opts.EndDate != nil && !storageOrderTime(req.StartTime).Before(storageOrderTime(*opts.EndDate)) {
 				continue
 			}
 		}

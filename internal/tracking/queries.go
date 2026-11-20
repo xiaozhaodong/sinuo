@@ -386,8 +386,26 @@ func (ut *UsageTracker) scanRequestDetailsRows(rows *sql.Rows) ([]RequestDetail,
 	return details, nil
 }
 
+type requestQueryExecutor interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+func appendExcludedRequestIDsFilter(query string, args []interface{}, excludedRequestIDs []string) (string, []interface{}, error) {
+	if len(excludedRequestIDs) == 0 {
+		return query, args, nil
+	}
+	encoded, err := json.Marshal(excludedRequestIDs)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode excluded request IDs: %w", err)
+	}
+	query += " AND request_id NOT IN (SELECT value FROM json_each(?))"
+	args = append(args, string(encoded))
+	return query, args, nil
+}
+
 func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) ([]RequestDetail, error) {
-	rows, err := openRequestDetailRows(ctx, ut.readDB, opts, source)
+	rows, err := openRequestDetailRows(ctx, ut.readDB, opts, source, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +413,7 @@ func (ut *UsageTracker) queryRequestDetailsBySource(ctx context.Context, opts *Q
 	return ut.scanRequestDetailsRows(rows)
 }
 
-func openRequestDetailRows(ctx context.Context, db *sql.DB, opts *QueryOptions, source requestQuerySource) (*sql.Rows, error) {
+func buildRequestDetailsQuery(opts *QueryOptions, source requestQuerySource, excludedRequestIDs []string) (string, []interface{}, error) {
 	columns := requestDetailsColumnsBase
 	if opts != nil && opts.SkipArchivedBillingBasis {
 		columns = requestDetailsUsageColumns + "''" + requestDetailsPrivacyColumn
@@ -403,70 +421,137 @@ func openRequestDetailRows(ctx context.Context, db *sql.DB, opts *QueryOptions, 
 	query := "SELECT " + columns + " FROM request_logs WHERE 1=1"
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
+	var err error
+	query, args, err = appendExcludedRequestIDsFilter(query, args, excludedRequestIDs)
+	if err != nil {
+		return "", nil, err
+	}
 	query += " ORDER BY " + requestDetailsOrderBy
 
 	if opts != nil {
 		if opts.Limit > 0 {
 			query += " LIMIT ?"
 			args = append(args, opts.Limit)
+		} else if opts.Offset > 0 {
+			query += " LIMIT -1"
 		}
 		if opts.Offset > 0 {
 			query += " OFFSET ?"
 			args = append(args, opts.Offset)
 		}
 	}
+	return query, args, nil
+}
 
-	rows, err := db.QueryContext(ctx, query, args...)
+func openRequestDetailRows(ctx context.Context, q requestQueryExecutor, opts *QueryOptions, source requestQuerySource, excludedRequestIDs []string) (*sql.Rows, error) {
+	query, args, err := buildRequestDetailsQuery(opts, source, excludedRequestIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query request details: %w", err)
 	}
 	return rows, nil
 }
 
+func (ut *UsageTracker) queryRequestDetailsExcludingIDs(ctx context.Context, q requestQueryExecutor, opts *QueryOptions, excludedRequestIDs []string) ([]RequestDetail, error) {
+	if q == nil {
+		return nil, fmt.Errorf("read database not initialized")
+	}
+	if opts == nil {
+		opts = &QueryOptions{}
+	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return nil, err
+	}
+
+	source := resolveRequestQuerySource(opts.UpstreamType)
+	rows, err := openRequestDetailRows(ctx, q, opts, source, excludedRequestIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ut.scanRequestDetailsRows(rows)
+}
+
 func (ut *UsageTracker) countRequestDetailsBySource(ctx context.Context, opts *QueryOptions, source requestQuerySource) (int, error) {
+	return ut.countRequestDetailsWithQuerier(ctx, ut.readDB, opts, source)
+}
+
+func (ut *UsageTracker) countRequestDetailsWithQuerier(ctx context.Context, q requestQueryExecutor, opts *QueryOptions, source requestQuerySource) (int, error) {
 	query := requestCountBaseQueryForSource(source)
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
 
 	var count int
-	if err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("failed to count request details: %w", err)
 	}
 	return count, nil
 }
 
-func (ut *UsageTracker) countRequestDetailsBySourceAndRequestIDs(ctx context.Context, opts *QueryOptions, source requestQuerySource, requestIDs []string) (int, error) {
-	query := requestCountBaseQueryForSource(source)
-	args := make([]interface{}, 0, 16+len(requestIDs))
+// buildRequestOverlapCountQuery 构造热池 ID 与数据库筛选集的交集计数查询。
+// 用 CROSS JOIN 固定外层遍历少量热池 ID、内层走 request_logs.request_id 唯一索引点查，
+// 避免大范围筛选（如十万级匹配记录）被逐行 NOT IN 拖慢，同时通过 json_each 规避 SQLite 变量数上限。
+func buildRequestOverlapCountQuery(opts *QueryOptions, source requestQuerySource, requestIDs []string) (string, []interface{}, error) {
+	encoded, err := json.Marshal(requestIDs)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode overlap request IDs: %w", err)
+	}
+	query := "WITH hot_ids(hot_request_id) AS (SELECT DISTINCT value FROM json_each(?)) " +
+		"SELECT COUNT(*) FROM hot_ids CROSS JOIN request_logs ON request_logs.request_id = hot_ids.hot_request_id WHERE 1=1"
+	args := make([]interface{}, 0, 17)
+	args = append(args, string(encoded))
 	query, args = appendRequestQueryFilters(query, args, opts, source)
-	query, args = appendRequestIDInFilter(query, args, requestIDs)
+	return query, args, nil
+}
+
+func (ut *UsageTracker) countRequestDetailsOverlapWithQuerier(ctx context.Context, q requestQueryExecutor, opts *QueryOptions, source requestQuerySource, requestIDs []string) (int, error) {
+	if len(requestIDs) == 0 {
+		return 0, nil
+	}
+	query, args, err := buildRequestOverlapCountQuery(opts, source, requestIDs)
+	if err != nil {
+		return 0, err
+	}
 
 	var count int
-	if err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("failed to count request details by request IDs: %w", err)
+	if err := q.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count overlapping request details: %w", err)
 	}
 	return count, nil
 }
 
-func (ut *UsageTracker) countRequestDetailsOverlapsByRequestIDs(ctx context.Context, opts *QueryOptions, requestIDs []string) (int, error) {
-	if ut.readDB == nil {
+// countRequestDetailsExcludingIDs 在同一只读事务中先算总匹配数，再按热池 ID 索引点查扣减重叠数。
+func (ut *UsageTracker) countRequestDetailsExcludingIDs(ctx context.Context, q requestQueryExecutor, opts *QueryOptions, excludedRequestIDs []string) (int, error) {
+	if q == nil {
 		return 0, fmt.Errorf("read database not initialized")
 	}
-	if len(requestIDs) == 0 {
-		return 0, nil
-	}
-
 	if opts == nil {
 		opts = &QueryOptions{}
 	}
+	if err := validateQueryRequestKinds(opts); err != nil {
+		return 0, err
+	}
 
 	source := resolveRequestQuerySource(opts.UpstreamType)
-	switch source {
-	case requestQuerySourceAll, requestQuerySourceEndpoint, requestQuerySourceAccount, requestQuerySourceSubscription, requestQuerySourceRaw:
-		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, source, requestIDs)
-	default:
-		return ut.countRequestDetailsBySourceAndRequestIDs(ctx, opts, requestQuerySourceRaw, requestIDs)
+	dbCount, err := ut.countRequestDetailsWithQuerier(ctx, q, opts, source)
+	if err != nil {
+		return 0, err
 	}
+	if dbCount == 0 || len(excludedRequestIDs) == 0 {
+		return dbCount, nil
+	}
+	overlapCount, err := ut.countRequestDetailsOverlapWithQuerier(ctx, q, opts, source, excludedRequestIDs)
+	if err != nil {
+		return 0, err
+	}
+	if overlapCount >= dbCount {
+		return 0, nil
+	}
+	return dbCount - overlapCount, nil
 }
 
 // QueryOptions represents options for querying usage data
@@ -687,17 +772,14 @@ func (ut *UsageTracker) queryAggregatedRequestStatsBySource(ctx context.Context,
 	query := aggregatedRequestStatsSelectBase
 	args := make([]interface{}, 0, 16)
 	query, args = appendRequestQueryFilters(query, args, opts, source)
-	if len(excludedRequestIDs) > 0 {
-		encoded, err := json.Marshal(excludedRequestIDs)
-		if err != nil {
-			return nil, fmt.Errorf("encode excluded request IDs: %w", err)
-		}
-		query += " AND request_id NOT IN (SELECT value FROM json_each(?))"
-		args = append(args, string(encoded))
+	var err error
+	query, args, err = appendExcludedRequestIDsFilter(query, args, excludedRequestIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	var stats AggregatedRequestStats
-	err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
+	err = ut.readDB.QueryRowContext(ctx, query, args...).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRequests,
 		&stats.FailedRequests,
