@@ -36,7 +36,7 @@ const MAX_ROW_SHIFT_PX = 320;
 // 自动表格布局下，为内容宽度容易变化的列保留最小宽度。
 const COLUMN_MIN_WIDTH = {
   requestId: 'min-w-[116px]',
-  model: 'min-w-[116px]',
+  model: 'w-[152px] min-w-[116px]',
   upstreamName: 'min-w-[88px]',
   duration: 'min-w-[132px]',
   cost: 'min-w-[68px]'
