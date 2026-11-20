@@ -369,6 +369,44 @@ func TestBillingChannel_PeriodThresholdAndEstimatedSpeed(t *testing.T) {
 	}
 }
 
+func TestBillingChannel_WeeklyRateSheet(t *testing.T) {
+	tracker, err := tracking.NewUsageTracker(&tracking.Config{Enabled: true, DatabasePath: filepath.Join(t.TempDir(), "weekly.db")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
+	prices := store.NewSQLiteModelPricingStore(tracker.GetWriteDB())
+	low, peak := .15, .30
+	week := []int{1, 2, 3, 4, 5}
+	sheet := store.RateSheet{
+		Timezone: "Asia/Shanghai",
+		Periods: []store.RatePeriod{{Name: "低峰", Default: true}, {Name: "高峰", Windows: []store.RateWindow{
+			{Weekdays: week, StartMinute: 540, EndMinute: 720}, {Weekdays: week, StartMinute: 840, EndMinute: 1080},
+		}}},
+		Rows: []store.RateRow{{Period: "低峰", Input: &low, Output: &low}, {Period: "高峰", Input: &peak, Output: &peak}},
+	}
+	require.NoError(t, prices.PublishRateSheet(t.Context(), billingTestModel, store.RateSourceCustom, sheet))
+	require.NoError(t, tracker.LoadBaseRates(t.Context(), prices))
+	loc, err := time.LoadLocation(sheet.Timezone)
+	require.NoError(t, err)
+	now := time.Now().In(loc)
+	nextFriday := now.AddDate(0, 0, 1+(11-int(now.Weekday()))%7)
+	at := time.Date(nextFriday.Year(), nextFriday.Month(), nextFriday.Day(), 10, 0, 0, 0, loc)
+	require.Equal(t, time.Friday, at.Weekday())
+	for _, tc := range []struct {
+		name  string
+		days  int
+		price float64
+	}{{"高峰", 0, peak}, {"低峰", 1, low}} {
+		req := startBillingRequest(t, tracker, tc.name, true)
+		req.SetUpstream("endpoint", "test", "test-endpoint", 5)
+		req.SetFirstTokenStartTime(at.AddDate(0, 0, tc.days))
+		req.CompleteRequest(&tracking.TokenUsage{InputTokens: 1000000})
+		detail := waitBillingRecord(t, tracker, req, func(r *tracking.RequestDetail) bool { return r.Status == "completed" })
+		require.True(t, detail.CostKnown)
+		require.Equal(t, tc.name, detail.BillingDecision.ChannelPeriod)
+		require.InDelta(t, tc.price, detail.TotalCostUSD, 1e-9)
+	}
+}
+
 func TestBillingChannel_MigratesEndpointMultiplierWithoutChangingRuntimeState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", path)

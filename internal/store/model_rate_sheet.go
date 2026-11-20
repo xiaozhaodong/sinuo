@@ -15,10 +15,13 @@ type RateSheet struct {
 	ContextLimits []int64      `json:"context_limits,omitempty"`
 	Rows          []RateRow    `json:"rows"`
 	location      *time.Location
+	weekly        *weeklyRateSchedule
 }
 type RatePeriod struct {
-	Name        string `json:"name"`
-	StartMinute int    `json:"start_minute"` // 当地午夜起分钟数，最后一个时段延续到次日第一个时段。
+	Name        string       `json:"name"`
+	StartMinute int          `json:"start_minute"`      // 当地午夜起分钟数，最后一个时段延续到次日第一个时段。
+	Default     bool         `json:"default,omitempty"` // 周价表的首档覆盖所有未命中窗口的时间。
+	Windows     []RateWindow `json:"windows,omitempty"`
 }
 type RateRow struct {
 	Period    string   `json:"period,omitempty"`
@@ -39,6 +42,9 @@ func (s *RateSheet) PeriodAt(at time.Time) string {
 	}
 	t := at.In(s.location)
 	minute := t.Hour()*60 + t.Minute()
+	if s.weekly != nil {
+		return s.weekly.periodAt(t.Weekday(), minute, s.Periods[0].Name)
+	}
 	i := sort.Search(len(s.Periods), func(i int) bool { return s.Periods[i].StartMinute > minute })
 	if i == 0 {
 		i = len(s.Periods)
@@ -69,9 +75,17 @@ func (s *RateSheet) validate() error {
 		}
 		s.location = loc
 	}
+	var err error
+	s.weekly, err = compileWeeklyRateSchedule(s.Periods)
+	if err != nil {
+		return err
+	}
 	for i, p := range s.Periods {
-		if strings.TrimSpace(p.Name) == "" || p.Name != strings.TrimSpace(p.Name) || periods[p.Name] || p.StartMinute < 0 || p.StartMinute >= 1440 || (i > 0 && p.StartMinute <= s.Periods[i-1].StartMinute) {
+		if strings.TrimSpace(p.Name) == "" || p.Name != strings.TrimSpace(p.Name) || periods[p.Name] {
 			return fmt.Errorf("无效或重复的时段 %q", p.Name)
+		}
+		if s.weekly == nil && (p.StartMinute < 0 || p.StartMinute >= 1440 || (i > 0 && p.StartMinute <= s.Periods[i-1].StartMinute)) {
+			return fmt.Errorf("无效或重复的时段起点 %q", p.Name)
 		}
 		periods[p.Name] = true
 	}

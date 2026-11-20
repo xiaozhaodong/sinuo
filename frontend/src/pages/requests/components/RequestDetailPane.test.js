@@ -170,6 +170,28 @@ test('详情顶栏与本次成本均显示查询返回的原始小额费用', ()
   assert.match(textOf(html), /本次成本\$0\.00023合计 Token/);
 });
 
+test('详情顶栏与本次成本最多显示六位小数', () => {
+  const row = normalizeRequest({ status: 'completed', total_cost_usd: 0.019312199999999998 });
+  const html = renderPane(row);
+  assert.match(html, /data-header-anchor[\s\S]*?>\$0\.019312<\/span>/);
+  assert.match(textOf(html), /本次成本\$0\.019312合计 Token/);
+  assert.doesNotMatch(html, /01931219999/);
+});
+
+test('详情两处成本使用一致的阈值，悬停精度不会把阈值下方的费用进位到阈值', () => {
+  for (const [cost, display, title] of [
+    [2.3e-9, '&lt;$0.000001', '$0.0000000023'],
+    [9.999999e-7, '&lt;$0.000001', '$0.0000009999999'],
+    [9.999999999999997e-7, '&lt;$0.000001', '$0.0000009999999999999997'],
+    [0.000001, '$0.000001', '$0.000001'],
+    [0.0009999, '&lt;$0.001', '$0.0009999'],
+    [0.001, '$0.001', '$0.001']
+  ]) {
+    const html = renderPane(normalizeRequest({ status: 'completed', total_cost_usd: cost }));
+    assert.equal(html.split(`title="${title}">${display}<`).length - 1, 2, String(cost));
+  }
+});
+
 test('滚动复位仅跟随切换后的请求 ID，不因同请求实时刷新跳回顶部', () => {
   const source = readFileSync(new URL('./RequestDetailPane.jsx', import.meta.url), 'utf8');
   const effect = source.match(/useEffect\(\(\) => \{[\s\S]*?scrollTop = 0;[\s\S]*?\n  \}, \[([^\]]*)\]\);/);

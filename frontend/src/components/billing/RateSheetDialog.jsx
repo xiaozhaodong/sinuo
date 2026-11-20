@@ -6,9 +6,10 @@ import { Button, CustomSelect } from '@components/ui';
 import useConfirm from '@hooks/useConfirm.js';
 import { useTimezone } from '@contexts/TimezoneContext.jsx';
 import { resolveErrorMessage } from '@utils/errors.js';
-import { RATE_SOURCE_LABELS, appendPeriod, buildSheet, nextPeriodIndices, parseLimits, priceColumns, sheetDraft, unconfiguredRateRows, withoutContextTiers, withoutPeriods } from './billingForms.js';
+import { RATE_SOURCE_LABELS, appendPeriod, buildSheet, nextPeriodIndices, parseLimits, priceColumns, restoreDailyBoundaries, sheetDraft, unconfiguredRateRows, withWeeklyWindows, withoutContextTiers, withoutPeriods } from './billingForms.js';
 import { publishRateSheet } from './pricingApi.js';
 import RatePeriods from './RatePeriods.jsx';
+import WeeklyRatePeriods from './WeeklyRatePeriods.jsx';
 import BillingTimezoneSelect from './BillingTimezoneSelect.jsx';
 
 const field = 'desk-field w-full min-w-0';
@@ -76,6 +77,16 @@ export default function RateSheetDialog({ model, info, onClose, onPublished }) {
     }));
   };
   const periodEnabled = draft.periods.length > 0;
+  const weekly = Boolean(draft.periods[0]?.default);
+  const enableWeeklyWindows = () => {
+    try {
+      setDraft(withWeeklyWindows(draft, endLinks));
+      setEndLinks(null);
+      setError('');
+    } catch (err) {
+      setError(resolveErrorMessage(err, '转换星期窗口失败'));
+    }
+  };
   const contextEnabled = draft.limits !== null;
   const togglePeriods = async (enabled) => {
     if (enabled) {
@@ -256,21 +267,44 @@ export default function RateSheetDialog({ model, info, onClose, onPublished }) {
             )}
           </section>
           {periodEnabled && (
-            <RatePeriods
-              periods={draft.periods}
-              nextIndices={nextIndices}
-              onAdd={addPeriod}
-              onRemove={removePeriod}
-              onName={(i, name) => updatePeriod(i, { name })}
-              onStart={(i, time) => {
-                setEndLinks(null);
-                updatePeriod(i, { time });
-              }}
-              onEnd={(next, time) => {
-                setEndLinks(nextIndices);
-                updatePeriod(next, { time });
-              }}
-            />
+            <>
+              {(!weekly || draft.periods[0].dailyIndex != null) && (
+                <div className="mt-3 flex justify-end">
+                  {weekly ? (
+                    <Button type="button" size="sm" variant="secondary"
+                      title="恢复本次切换前的每日分界，保留当前价格档和单价"
+                      onClick={() => {
+                        setDraft(restoreDailyBoundaries);
+                        setEndLinks(null);
+                        setError('');
+                      }}>
+                      撤销星期转换
+                    </Button>
+                  ) : (
+                    <Button type="button" size="sm" variant="secondary" onClick={enableWeeklyWindows}>按星期设置时间窗口</Button>
+                  )}
+                </div>
+              )}
+              {weekly ? (
+                <WeeklyRatePeriods periods={draft.periods} onChange={updatePeriod} onAdd={addPeriod} onRemove={removePeriod} />
+              ) : (
+                <RatePeriods
+                  periods={draft.periods}
+                  nextIndices={nextIndices}
+                  onAdd={addPeriod}
+                  onRemove={removePeriod}
+                  onName={(i, name) => updatePeriod(i, { name })}
+                  onStart={(i, time) => {
+                    setEndLinks(null);
+                    updatePeriod(i, { time });
+                  }}
+                  onEnd={(next, time) => {
+                    setEndLinks(nextIndices);
+                    updatePeriod(next, { time });
+                  }}
+                />
+              )}
+            </>
           )}
           <FormSection
             title="各档单价"

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { normalizeRequest } from '../pages/requests/utils/normalizeRequest.js';
+import { resolveRequestTypeBadge } from '../pages/requests/utils/requestSource.js';
 import { visibleRetryCount } from '../pages/requests/utils/retryTiming.js';
 
 import {
@@ -61,6 +62,39 @@ const loadRequestMappingBindings = async (requests = [22, 0, undefined].map((fir
   });
   return import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 };
+
+test('列表与详情按客户端标识显示 DSH，筛选仍用 Claude 请求族', async (t) => {
+  const dsh = 'deepseek-harness/0.2.2-rc.5 (+https://github.com/deepseek-ai/deepseek-harness) dsh-profile/desktop';
+  const samples = [
+    [dsh, 'deepseek-flash', 'DSH'],
+    ['deepseek-harness/1.0', 'another-model', 'DSH'],
+    ['claude-cli/2.1.0', 'deepseek-flash', 'Claude'],
+    ['other/1.0 (+https://example.com/deepseek-harness/)', 'deepseek-flash', 'Claude'],
+    [undefined, 'deepseek-flash', 'Claude']
+  ];
+  const records = samples.map(([userAgent, model], i) => ({
+    request_id: `client-${i}`, request_family: 'claude', path: '/v1/messages', user_agent: userAgent, model
+  }));
+  const bindings = await loadRequestMappingBindings(records);
+  const originalWindow = globalThis.window;
+  t.mock.method(console, 'log', () => {});
+  try {
+    globalThis.window = { location: { protocol: 'wails:' } };
+    const list = await bindings.getRequests();
+    for (const [index, [, , label]] of samples.entries()) {
+      for (const source of [list.requests[index], records[index]]) {
+        const request = normalizeRequest(source);
+        const badge = resolveRequestTypeBadge(request);
+        assert.equal(request.requestFamily, 'claude');
+        assert.equal(badge.label, label);
+        if (label === 'DSH') assert.match(badge.title, /Claude Messages/);
+      }
+    }
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
 
 test('GetRequests 保留隐私异常码，列表刷新后仍能显示异常', async (t) => {
   const bindings = await loadRequestMappingBindings([{ request_id: 'notice', privacy_warnings: ['request_fail_open', 'response_bypassed'] }]);

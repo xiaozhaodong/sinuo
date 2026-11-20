@@ -23,12 +23,16 @@ export const isCodexSearchRequest = (request = {}) => (
   String(request.path || '').trim().toLowerCase() === CODEX_SEARCH_PATH
 );
 
-// 类型徽章：联网搜索单独用 Search 徽章（宽度与 Codex 相当，列不会被撑宽），其余按请求族
 const CODEX_SEARCH_BADGE = { label: 'Search', className: 'grad-tone family-tone-search', title: `Codex 联网搜索 · ${CODEX_SEARCH_PATH}` };
+const DSH_BADGE = { label: 'DSH', className: 'grad-tone model-tone-deepseek', title: 'DeepSeek Harness · Claude Messages 协议' };
 
-export const resolveRequestTypeBadge = (request = {}) => (
-  isCodexSearchRequest(request) ? CODEX_SEARCH_BADGE : getRequestFamilyMeta(request.requestFamily)
-);
+export const resolveRequestTypeBadge = (request = {}) => {
+  if (isCodexSearchRequest(request)) return CODEX_SEARCH_BADGE;
+  if (request.requestFamily === 'claude' && /^\s*deepseek-harness\/\S+/i.test(String(request.userAgent ?? ''))) {
+    return DSH_BADGE;
+  }
+  return getRequestFamilyMeta(request.requestFamily);
+};
 
 export const UNKNOWN_UPSTREAM_LABEL = '未知上游';
 

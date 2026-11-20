@@ -1073,6 +1073,7 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * @property {string} request_id
  * @property {string} timestamp
  * @property {string} request_family
+ * @property {string} [user_agent]
  * @property {string} endpoint - Claude 路由诊断兼容字段
  * @property {string} model
  * @property {string} status

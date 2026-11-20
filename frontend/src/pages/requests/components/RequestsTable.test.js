@@ -43,15 +43,18 @@ const renderStatus = (fields) => renderToStaticMarkup(createElement(RequestsTabl
 
 const countMatches = (html, pattern) => [...html.matchAll(pattern)].length;
 
-test('成本列保留三位小数，悬停显示原金额，未结算或缺失的费用不透露金额', () => {
+test('成本列保留三位小数，悬停按详情精度显示，未结算或缺失的费用不透露金额', () => {
   const renderCost = (raw) => renderToStaticMarkup(createElement(RequestsTable, {
     requests: [normalizeRequest({ request_id: 'cost-row', status: 'completed', ...raw })],
     visibleColumns: ['cost'], columnConfigs: TABLE_COLUMNS
   }));
   for (const [cost, display, exact] of [
     [0, '$0.000', '$0'], [0.00023, '&lt;$0.001', '$0.00023'], [0.0009999, '&lt;$0.001', '$0.0009999'],
+    [0.0009999999999999998, '&lt;$0.001', '$0.0009999999999999998'],
+    [9.999999e-7, '&lt;$0.001', '$0.0000009999999'],
     [0.001, '$0.001', '$0.001'], [0.02375, '$0.024', '$0.02375'], [2, '$2.000', '$2'],
-    [1.2345, '$1.235', '$1.2345'], [2.3e-9, '&lt;$0.001', '$0.0000000023']
+    [1.2345, '$1.235', '$1.2345'], [2.3e-9, '&lt;$0.001', '$0.0000000023'],
+    [0.019312199999999998, '$0.019', '$0.019312'], [0.000001, '&lt;$0.001', '$0.000001']
   ]) {
     assert.ok(renderCost({ total_cost_usd: cost }).includes(`title="${exact}">${display}</span>`));
   }

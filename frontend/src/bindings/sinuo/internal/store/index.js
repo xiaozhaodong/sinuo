@@ -34,3 +34,8 @@ import * as $models from "./models.js";
  * RateSheet 的行号从 1 开始，与已发布的版本 ID 共同唯一标识历史费率行。
  * @typedef {$models.RateSheet} RateSheet
  */
+
+/**
+ * RateWindow 按价表时区匹配；星期一为 1，星期日为 7。跨午夜窗口归开始日。
+ * @typedef {$models.RateWindow} RateWindow
+ */

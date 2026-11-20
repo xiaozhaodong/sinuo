@@ -1362,6 +1362,7 @@ export const getRequests = async (params = {}) => {
     timestamp: r.timestamp,
     start_time: r.timestamp,
     request_family: r.request_family || 'other',
+    user_agent: r.user_agent || '',
     request_source: r.request_source || '',
     request_kind: r.request_kind || 'legacy',
     upstream_type: r.upstream_type || 'endpoint',

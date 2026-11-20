@@ -46,6 +46,8 @@
  * @typedef {Object} RatePeriod
  * @property {string} name
  * @property {number} start_minute - 当地午夜起分钟数，最后一个时段延续到次日第一个时段。
+ * @property {boolean} [default] - 周价表的首档覆盖所有未命中窗口的时间。
+ * @property {RateWindow[] | null} [windows]
  */
 
 /**
@@ -69,6 +71,14 @@
  * @property {RatePeriod[] | null} [periods]
  * @property {number[] | null} [context_limits]
  * @property {RateRow[] | null} rows
+ */
+
+/**
+ * RateWindow 按价表时区匹配；星期一为 1，星期日为 7。跨午夜窗口归开始日。
+ * @typedef {Object} RateWindow
+ * @property {number[] | null} weekdays
+ * @property {number} start_minute
+ * @property {number} end_minute - 右边界，1440 表示午夜。
  */
 
 // In interface mode, this file is likely to contain just comments.

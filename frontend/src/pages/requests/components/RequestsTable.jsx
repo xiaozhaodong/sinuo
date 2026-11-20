@@ -16,7 +16,7 @@ import PrivacyWarningBadge from './PrivacyWarningBadge.jsx';
 import { CODEX_SEARCH_USAGE_HINT, isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
 import { buildModelAlert } from '../utils/modelConsistency.js';
 import { formatSessionRatio } from '../utils/sessionUsage.js';
-import { formatExactRequestCost, formatRequestListCost, getSettledRequestCost } from '../utils/requestPresentation.js';
+import { formatRequestDetailCost, formatRequestListCost, getSettledRequestCost } from '../utils/requestPresentation.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
 import { assignStableZebraParity, NO_ROW_ANIMATIONS } from '../utils/rowEnterAnimation.js';
 import { prefersReducedMotion } from '@utils/motion.js';
@@ -110,7 +110,7 @@ const renderCell = (columnId, request, formatTime, enterAnimation) => {
     case 'cost': {
       const cost = getSettledRequestCost(request);
       return (
-        <ValueCell pending={cost === null} tone="text-warn font-medium" title={cost === null ? usageHint : formatExactRequestCost(cost)}>
+        <ValueCell pending={cost === null} tone="text-warn font-medium" title={cost === null ? usageHint : formatRequestDetailCost(cost, { expandTiny: true })}>
           {cost !== null && formatRequestListCost(cost)}
         </ValueCell>
       );

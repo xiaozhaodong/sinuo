@@ -9,13 +9,73 @@ import {
   normalizeRuleDraft,
   parseLimits,
   nextPeriodIndices,
+  restoreDailyBoundaries,
   ruleDraft,
   sheetDraft,
   unconfiguredRateRows,
   validateCostMultipliers,
+  withWeeklyWindows,
   withoutContextTiers,
   withoutPeriods
 } from './billingForms.js';
+
+test('撤销星期转换恢复草稿原顺序、名称和跨日分界，后续价格编辑与增删档位保留', () => {
+  const daily = sheetDraft({ timezone: 'UTC', periods: [
+    { name: '晚', start_minute: 1200 }, { name: '早', start_minute: 360 }, { name: '午', start_minute: 720 }
+  ], rows: [{ period: '早', input: 3, output: 4 }] });
+  daily.periods[0].time = '21:15';
+  daily.periods[1].name = ' 早档 ';
+  const weekly = withWeeklyWindows(daily);
+  assert.deepEqual(restoreDailyBoundaries(weekly), daily);
+  assert.equal(JSON.stringify(buildSheet(weekly)).includes('dailyIndex'), false);
+  const changed = appendPeriod(weekly, 'UTC');
+  changed.periods = changed.periods.filter((p) => p.key !== '午');
+  changed.periods[0] = { ...changed.periods[0], name: '晨间' };
+  changed.rows = [{ ...changed.rows[0], input: '9' }];
+  changed.limits = '1000';
+  const restored = restoreDailyBoundaries(changed);
+  assert.deepEqual(restored.periods.map((p) => [p.name, p.time]), [['晚', '21:15'], ['晨间', '06:00'], ['时段 4', '']]);
+  assert.throws(() => buildSheet(restored), /开始时间/);
+  restored.periods[2].time = '16:30';
+  const sheet = buildSheet(restored);
+  assert.deepEqual(sheet.context_limits, [1000]);
+  assert.deepEqual([sheet.rows[0].period, sheet.rows[0].input], ['晨间', 9]);
+});
+
+test('每日和星期价表均优先提示未填写的名称', () => {
+  const draft = sheetDraft({ timezone: 'UTC', periods: [
+    { name: '早', start_minute: 0 }, { name: '晚', start_minute: 720 }
+  ], rows: [] });
+  const weekly = withWeeklyWindows(draft);
+  for (const [form, message] of [[draft, /请填写时段名称/], [weekly, /请填写价格档名称/]]) {
+    form.periods.forEach((p) => { p.name = ' '; });
+    assert.throws(() => buildSheet(form), message);
+    form.periods.forEach((p) => { p.name = '重复'; });
+    assert.throws(() => buildSheet(form), /时段名称必须唯一/);
+  }
+});
+
+test('每日价表转为星期窗口后保留价格档，默认档填补间隙，跨午夜的结束值可往返', () => {
+  const sheet = { timezone: 'Asia/Shanghai', periods: [
+    { name: '低峰', start_minute: 0 }, { name: '高峰', start_minute: 540 }
+  ], rows: [{ period: '低峰', input: .15, output: .6 }, { period: '高峰', input: .3, output: 1.2 }] };
+  const draft = withWeeklyWindows(sheetDraft(sheet));
+  assert.deepEqual(draft.periods[1].windows, [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start: '09:00', end: '00:00' }]);
+  assert.equal(buildSheet(draft).periods[1].windows[0].end_minute, 1440);
+  draft.periods[1].name = '峰';
+  draft.periods[1].windows = ['09:00', '14:00'].map((start, i) => ({
+    weekdays: [1, 2, 3, 4, 5], start, end: i ? '18:00' : '12:00'
+  }));
+  const saved = buildSheet(draft);
+  assert.deepEqual(saved.periods[0], { name: '低峰', default: true });
+  assert.deepEqual(saved.periods[1].windows.map((w) => [w.start_minute, w.end_minute]), [[540, 720], [840, 1080]]);
+  assert.equal(saved.rows[1].period, '峰');
+  assert.deepEqual(buildSheet(sheetDraft(saved)), saved);
+  assert.equal(buildSheet(withoutPeriods(draft)).rows[0].input, .15);
+  assert.throws(() => buildSheet(appendPeriod(draft, 'UTC')), /开始和结束时间/);
+  draft.periods[1].windows[0].weekdays = [];
+  assert.throws(() => buildSheet(draft), /生效星期/);
+});
 
 test('首次分时依程序时区，新加时段和重开保留已选时区，关闭后再启用依当前程序时区', () => {
   const plain = sheetDraft({ rows: [{ input: 1, output: 2 }] });

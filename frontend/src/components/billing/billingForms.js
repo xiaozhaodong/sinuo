@@ -78,6 +78,16 @@ export const timeText = (minute) =>
   [Math.floor(minute / 60), minute % 60].map((n) => String(n).padStart(2, '0')).join(':');
 
 const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
+const minuteOfDay = (text) => {
+  const [hour, minute] = text.split(':').map(Number);
+  return hour * 60 + minute;
+};
+
+const windowDraft = (w) => ({
+  weekdays: [...w.weekdays], start: timeText(w.start_minute), end: timeText(w.end_minute % 1440)
+});
+
+export const newWeeklyWindow = () => ({ weekdays: [1, 2, 3, 4, 5], start: '', end: '' });
 
 // 按计费时间串起所有分界点。新加且尚未填写的时段依次接在已填时段之后。
 export function nextPeriodIndices(periods) {
@@ -91,7 +101,9 @@ export function nextPeriodIndices(periods) {
 
 export const sheetDraft = (sheet) => ({
   timezone: sheet?.periods?.length ? sheet.timezone || '' : '',
-  periods: (sheet?.periods || []).map((p) => ({ key: p.name, name: p.name, time: timeText(p.start_minute) })),
+  periods: (sheet?.periods || []).map((p) => sheet.periods[0].default
+    ? { key: p.name, name: p.name, default: Boolean(p.default), windows: (p.windows || []).map(windowDraft) }
+    : { key: p.name, name: p.name, time: timeText(p.start_minute) }),
   limits: sheet?.context_limits?.length ? sheet.context_limits.join(', ') : null,
   rows: (sheet?.rows || []).map((row) => ({
     ...row,
@@ -110,7 +122,9 @@ export const appendPeriod = (draft, appTimezone) => {
   return {
     ...draft,
     timezone: first ? appTimezone : draft.timezone,
-    periods: [...draft.periods, { key: name, name, time: first ? '00:00' : '' }],
+    periods: [...draft.periods, draft.periods[0]?.default
+      ? { key: name, name, windows: [newWeeklyWindow()] }
+      : { key: name, name, time: first ? '00:00' : '' }],
     rows: first ? draft.rows.map((r) => ({ ...r, period: name })) : draft.rows
   };
 };
@@ -149,25 +163,66 @@ export const withoutPeriods = (draft) => {
   };
 };
 
-export const buildSheet = (draft, endLinks) => {
-  const context_limits = parseLimits(draft.limits);
-  if (draft.limits != null && !context_limits.length) throw new Error('请填写上下文阈值，或关闭上下文分档');
+const dailyPeriods = (draft, endLinks) => {
   const periods = draft.periods
     .map((p) => {
       const name = p.name.trim();
       if (!name || !clockTime.test(p.time)) throw new Error('请填写时段名称与开始时间');
-      const [hour, minute] = p.time.split(':').map(Number);
-      return { name, start_minute: hour * 60 + minute };
+      return { name, start_minute: minuteOfDay(p.time) };
     })
     .sort((a, b) => a.start_minute - b.start_minute);
-  const names = new Map(draft.periods.map((p) => [p.key, p.name.trim()]));
-  if (new Set(names.values()).size !== periods.length) throw new Error('时段名称必须唯一');
   if (periods.some((p, i) => i > 0 && p.start_minute === periods[i - 1].start_minute)) {
     throw new Error('时段开始时间不能重复');
   }
   if (endLinks && nextPeriodIndices(draft.periods).some((next, i) => next !== endLinks[i])) {
     throw new Error('结束时间跨过了其他时段，请调整分界时间后再发布');
   }
+  return periods;
+};
+
+// 现有每日分界转换为每周七天相同的窗口，保留跨午夜档以及所有费率行的 key。
+export function withWeeklyWindows(draft, endLinks) {
+  const sorted = dailyPeriods(draft, endLinks);
+  const byName = new Map(draft.periods.map((p, dailyIndex) => [p.name.trim(), { ...p, dailyIndex }]));
+  if (byName.size !== sorted.length) throw new Error('时段名称必须唯一');
+  return { ...draft, periods: sorted.map((p, i) => ({
+    ...byName.get(p.name), default: i === 0,
+    windows: i === 0 ? [] : [{
+      weekdays: [1, 2, 3, 4, 5, 6, 7], start: timeText(p.start_minute),
+      end: timeText(sorted[(i + 1) % sorted.length].start_minute)
+    }]
+  })) };
+}
+
+// 每日顺序与开始时间仅存在于本次转换的草稿；新增价格档恢复后由用户填写分界。
+export const restoreDailyBoundaries = (draft) => ({
+  ...draft,
+  periods: [...draft.periods]
+    .sort((a, b) => (a.dailyIndex ?? Number.MAX_SAFE_INTEGER) - (b.dailyIndex ?? Number.MAX_SAFE_INTEGER))
+    .map(({ key, name, time = '' }) => ({ key, name, time }))
+});
+
+const weeklyPeriod = (p) => {
+  const name = p.name.trim();
+  if (!name) throw new Error('请填写价格档名称');
+  if (p.default) return { name, default: true };
+  if (!p.windows.length) throw new Error(`请为「${name}」添加时间窗口`);
+  return { name, windows: p.windows.map((w) => {
+    if (!w.weekdays.length) throw new Error(`请选择「${name}」的生效星期`);
+    if (!clockTime.test(w.start) || !clockTime.test(w.end)) throw new Error(`请填写「${name}」的开始和结束时间`);
+    const start_minute = minuteOfDay(w.start);
+    const end_minute = minuteOfDay(w.end) || 1440;
+    if (start_minute === end_minute) throw new Error(`「${name}」的时间窗口不能为空`);
+    return { weekdays: w.weekdays, start_minute, end_minute };
+  }) };
+};
+
+export const buildSheet = (draft, endLinks) => {
+  const context_limits = parseLimits(draft.limits);
+  if (draft.limits != null && !context_limits.length) throw new Error('请填写上下文阈值，或关闭上下文分档');
+  const periods = draft.periods[0]?.default ? draft.periods.map(weeklyPeriod) : dailyPeriods(draft, endLinks);
+  const names = new Map(draft.periods.map((p) => [p.key, p.name.trim()]));
+  if (new Set(names.values()).size !== draft.periods.length) throw new Error('时段名称必须唯一');
   const rows = draft.rows.map((r, i) => ({
     period: names.get(r.period) ?? r.period,
     tier: Number(r.tier),

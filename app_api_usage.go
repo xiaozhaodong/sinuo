@@ -254,6 +254,7 @@ type RequestRecord struct {
 	RequestID               string  `json:"request_id"`
 	Timestamp               string  `json:"timestamp"`
 	RequestFamily           string  `json:"request_family"`
+	UserAgent               string  `json:"user_agent,omitempty"`
 	Endpoint                string  `json:"endpoint"` // Claude 路由诊断兼容字段
 	Model                   string  `json:"model"`
 	Status                  string  `json:"status"`
@@ -450,6 +451,7 @@ func requestDetailToRecord(r tracking.RequestDetail) RequestRecord {
 		RequestID:               r.RequestID,
 		Timestamp:               formatAPITime(r.StartTime),
 		RequestFamily:           r.RequestFamily,
+		UserAgent:               r.UserAgent,
 		Endpoint:                r.EndpointName,
 		Model:                   r.ModelName,
 		Status:                  r.Status,

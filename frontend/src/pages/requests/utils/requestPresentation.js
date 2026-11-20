@@ -32,8 +32,11 @@ export const formatRouteMode = (mode) => ROUTE_MODE_LABELS[mode] || '自动';
 const listDollars = new Intl.NumberFormat('en-US', {
   useGrouping: false, minimumFractionDigits: 3, maximumFractionDigits: 3
 });
-// API 返回双精度数值。保留其有效数字，同时让极小金额以普通十进制可读。
-const exactDollars = new Intl.NumberFormat('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
+const detailDollars = new Intl.NumberFormat('en-US', { useGrouping: false, maximumFractionDigits: 6 });
+const tinyDollars = new Intl.NumberFormat('en-US', { useGrouping: false, maximumSignificantDigits: 6 });
+const preciseDollars = new Intl.NumberFormat('en-US', { useGrouping: false, maximumSignificantDigits: 17 });
+const listCostThreshold = 0.001;
+const detailCostThreshold = 0.000001;
 
 export const getSettledRequestCost = (request) => {
   if (UNSETTLED_STATUSES.has(request.status) || request.costKnown === false) return null;
@@ -41,6 +44,16 @@ export const getSettledRequestCost = (request) => {
 };
 
 export const formatRequestListCost = (cost) =>
-  cost > 0 && cost < 0.001 ? '<$0.001' : `$${listDollars.format(cost)}`;
+  cost > 0 && cost < listCostThreshold ? `<$${listCostThreshold}` : `$${listDollars.format(cost)}`;
 
-export const formatExactRequestCost = (cost) => `$${exactDollars.format(cost)}`;
+export const formatRequestDetailCost = (cost, { expandTiny = false } = {}) => {
+  const tiny = cost > 0 && cost < detailCostThreshold;
+  if (tiny && !expandTiny) return `<$${detailCostThreshold}`;
+  const rounded = (tiny ? tinyDollars : detailDollars).format(cost);
+  const threshold = tiny ? detailCostThreshold : listCostThreshold;
+  // 金额实际低于阈值、舍入却恰好触阈时，正文保留上界，悬停展开可区分的精度。
+  if (cost < threshold && Number(rounded) === threshold) {
+    return expandTiny ? `$${preciseDollars.format(cost)}` : `<$${threshold}`;
+  }
+  return `$${rounded}`;
+};

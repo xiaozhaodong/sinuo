@@ -17,7 +17,7 @@ import LifecyclePanel from './LifecyclePanel.jsx';
 import useRequestLifecycleDetail from '../hooks/useRequestLifecycleDetail.js';
 import { copyTextToClipboard } from './clipboard.js';
 import { isCodexSearchRequest, resolveRequestTypeBadge } from '../utils/requestSource.js';
-import { formatExactRequestCost, formatRouteMode, getRequestPresentation, getSettledRequestCost } from '../utils/requestPresentation.js';
+import { formatRequestDetailCost, formatRouteMode, getRequestPresentation, getSettledRequestCost } from '../utils/requestPresentation.js';
 import { fullInputTokens, requestInputIncludesCache } from '../utils/requestInputUsage.js';
 import { assessModel, assessReasoning, formatSpeed, parseReasoning, MODEL_LEVELS, REASONING_LEVELS } from '../utils/modelConsistency.js';
 import { UNSETTLED_STATUSES } from '../utils/constants.js';
@@ -146,7 +146,7 @@ const TokenPairRow = ({ left, right }) => (
  * 「Token 与成本」。未知用量与成本显示占位符（与列表同口径）：在途时后端还没写这几个字段，
  * 终态但没收到 usage 时同理 —— 0 是「还不知道」而不是「用了 0 个」。
  */
-const TokenSection = ({ request, costText, decision, lifecycleLoading = false }) => {
+const TokenSection = ({ request, costText, costTitle, decision, lifecycleLoading = false }) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   const usageKnown = !pending && request.usageKnown !== false;
   const usageTone = usageKnown ? 'text-fg' : 'text-fg-subtle';
@@ -204,7 +204,7 @@ const TokenSection = ({ request, costText, decision, lifecycleLoading = false })
       <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface px-3 py-2">
         <div className="min-w-0">
           <div className="text-[11.5px] text-fg-muted">本次成本</div>
-          <div className={`selectable mt-0.5 break-all font-mono text-[15px] font-semibold leading-tight tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`}>
+          <div className={`selectable mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`} title={costTitle}>
             {costText ?? '—'}
           </div>
         </div>
@@ -336,7 +336,7 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
         <Property label="类型" truncate={false}>
           <span className="inline-flex items-center gap-1.5">
             {/* 文字包一层 span：grad-tone 的渐变字只作用于内层 span */}
-            <span className={`inline-flex items-center rounded border px-1.5 text-[11px] font-semibold leading-4 ${family.className}`}><span>{family.label}</span></span>
+            <span className={`inline-flex items-center rounded border px-1.5 text-[11px] font-semibold leading-4 ${family.className}`} title={family.title}><span>{family.label}</span></span>
             {kindLabel && <span className="text-fg-muted">{kindLabel}</span>}
           </span>
         </Property>
@@ -364,7 +364,7 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
   );
 };
 
-const PaneHeader = ({ request, costText, presentation, timestampText, onClose }) => {
+const PaneHeader = ({ request, costText, costTitle, presentation, timestampText, onClose }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
   const settled = !UNSETTLED_STATUSES.has(request.status);
   return (
@@ -389,7 +389,7 @@ const PaneHeader = ({ request, costText, presentation, timestampText, onClose })
           {settled ? formatTimingBadge(request.duration) : '进行中'}
         </span>
         <span className="h-3 w-px bg-line" aria-hidden="true" />
-        <span className={`max-w-[24ch] truncate font-mono font-semibold tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`} title={costText ?? undefined}>
+        <span className={`max-w-[24ch] truncate font-mono font-semibold tabular-nums ${costText !== null ? 'text-warn' : 'text-fg-subtle'}`} title={costTitle}>
           {costText ?? '—'}
         </span>
       </span>
@@ -440,11 +440,12 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
     : initialRequest;
   const presentation = getRequestPresentation(request);
   const cost = getSettledRequestCost(request);
-  const costText = cost === null ? null : formatExactRequestCost(cost);
+  const costText = cost === null ? null : formatRequestDetailCost(cost);
+  const costTitle = cost === null ? undefined : formatRequestDetailCost(cost, { expandTiny: true });
 
   return (
     <>
-      <PaneHeader request={request} costText={costText} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
+      <PaneHeader request={request} costText={costText} costTitle={costTitle} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
       {/* 列间 1px 清晰分隔：桌面三栏独立纵向滚动，窄屏退回整区滚动 */}
       <div ref={scrollRootRef} className="@container min-h-0 flex-1 overflow-y-auto @4xl:overflow-hidden">
         <div className="grid min-h-full grid-cols-1 gap-px bg-line @xl:grid-cols-2 @4xl:h-full @4xl:grid-cols-[1.35fr_1fr_1.05fr]">
@@ -461,7 +462,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
             </div>
           </section>
           <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @xl:col-span-2 @4xl:col-span-1 @4xl:min-h-0 @4xl:overflow-y-auto">
-            <TokenSection request={request} costText={costText} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
+            <TokenSection request={request} costText={costText} costTitle={costTitle} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
             <div className="mt-3.5 border-t border-line pt-3 empty:hidden">
               {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
                 <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}

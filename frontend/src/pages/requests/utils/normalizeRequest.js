@@ -25,6 +25,7 @@ export const normalizeRequest = (request = {}) => normalizeRequestSource({
   ...request,
   privacyWarnings: normalizePrivacyWarnings(pick(request, ['privacy_warnings', 'privacyWarnings'], [])),
   requestFamily: pick(request, ['request_family', 'requestFamily'], 'other'),
+  userAgent: pick(request, ['user_agent', 'userAgent'], ''),
   upstreamType: pick(request, ['upstream_type', 'upstreamType'], 'endpoint'),
   upstreamName: pick(request, ['upstream_name', 'upstreamName'], ''),
   upstreamSourceName: pick(request, ['upstream_source_name', 'upstreamSourceName'], ''),

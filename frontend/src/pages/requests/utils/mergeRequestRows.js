@@ -17,6 +17,7 @@ const TABLE_FIELDS = [
   'privacyWarnings',
   'model',
   'requestFamily',
+  'userAgent',
   'upstreamName',
   'duration',
   'firstTokenMs',
