@@ -18,6 +18,7 @@ const useResizablePane = ({ storageKey, defaultHeight, minHeight, minRemaining }
   const visibleKey = `${storageKey}.visible`;
   const [height, setHeight] = useState(() => parseStoredPaneHeight(readStorage(heightKey), defaultHeight));
   const [visible, setVisibleState] = useState(() => parseStoredPaneVisible(readStorage(visibleKey)));
+  const [dragging, setDragging] = useState(false);
 
   const setVisible = useCallback((next) => {
     setVisibleState(next);
@@ -42,12 +43,14 @@ const useResizablePane = ({ storageKey, defaultHeight, minHeight, minRemaining }
       setHeight(latest);
     };
     const handleEnd = () => {
+      setDragging(false);
       handle.removeEventListener('pointermove', handleMove);
       handle.removeEventListener('pointerup', handleEnd);
       handle.removeEventListener('pointercancel', handleEnd);
       writeStorage(heightKey, latest);
     };
 
+    setDragging(true);
     handle.setPointerCapture(event.pointerId);
     handle.addEventListener('pointermove', handleMove);
     handle.addEventListener('pointerup', handleEnd);
@@ -66,7 +69,11 @@ const useResizablePane = ({ storageKey, defaultHeight, minHeight, minRemaining }
     show,
     hide,
     toggle,
-    splitterProps: { onPointerDown: handlePointerDown, onDoubleClick: resetHeight }
+    splitterProps: {
+      onPointerDown: handlePointerDown,
+      onDoubleClick: resetHeight,
+      'data-dragging': dragging ? 'true' : undefined
+    }
   };
 };
 
