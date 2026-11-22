@@ -9,10 +9,12 @@ package proxy
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"sinuo/internal/codexidentity"
+	"sinuo/internal/proxy/subscriptionws"
 	svc "sinuo/internal/service"
 )
 
@@ -308,11 +310,23 @@ var subscriptionDroppedResponseHeaders = map[string]struct{}{
 	"Set-Cookie": {},
 }
 
-// copySubscriptionWebSocketHandshakeHeaders 只把上游 101 的提示类头补进下游握手响应：
-// x-codex-*、x-openai-* 与 x-models-etag。Sec-WebSocket-* 由 WS 库按两侧各自协商结果设置，
-// Set-Cookie、hop-by-hop 与其他头一律不复制。
-func copySubscriptionWebSocketHandshakeHeaders(dst, src http.Header) {
+const subscriptionWSMaxMessageHeader = "X-Codex-Websocket-Max-Message-Bytes"
+
+// copySubscriptionWebSocketHandshakeHeaders 复制上游 101 的提示头，并报告本地及上游声明中较小的消息上限。
+func copySubscriptionWebSocketHandshakeHeaders(dst, src http.Header, localLimit int64) {
+	if localLimit <= 0 {
+		localLimit = subscriptionws.DefaultReadLimit
+	}
+	advertisedLimit := uint64(localLimit)
 	for key, values := range src {
+		if key == subscriptionWSMaxMessageHeader {
+			for _, value := range values {
+				if limit, err := strconv.ParseUint(value, 10, 64); err == nil && limit < advertisedLimit {
+					advertisedLimit = limit
+				}
+			}
+			continue
+		}
 		if key != "X-Models-Etag" && !strings.HasPrefix(key, "X-Codex-") && !strings.HasPrefix(key, "X-Openai-") {
 			continue
 		}
@@ -320,6 +334,7 @@ func copySubscriptionWebSocketHandshakeHeaders(dst, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+	dst.Set(subscriptionWSMaxMessageHeader, strconv.FormatUint(advertisedLimit, 10))
 }
 
 // copySubscriptionResponseHeaders 复制上游响应头：保留 x-codex-*、x-models-etag、Location、Content-Type 等，

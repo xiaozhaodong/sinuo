@@ -745,6 +745,10 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "schedule_snapshot_json = ?")
 		args = append(args, *opts.ScheduleSnapshotJSON)
 	}
+	if opts.InputCompositionJSON != nil {
+		setParts = append(setParts, "input_composition_json = ?")
+		args = append(args, *opts.InputCompositionJSON)
+	}
 	if opts.PrivacyScanJSON != nil {
 		setParts = append(setParts, "privacy_scan_json = ?")
 		args = append(args, *opts.PrivacyScanJSON)

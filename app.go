@@ -1332,6 +1332,7 @@ func (a *App) applySettingsToConfig() {
 
 	// 数据保留：追踪器先于设置服务创建，启动与每次保存时同步保留天数。
 	a.applyRetentionSettings(ctx)
+	a.applyInputWindows(ctx)
 
 	a.logger.Debug("已从数据库加载设置")
 

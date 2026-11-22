@@ -1,0 +1,100 @@
+/* 请求输入构成样式：沿用桌面语义色与双主题，只补充点阵和微缩占比条。 */
+:root {
+  --ctx-files: #14a395;
+  --ctx-tools: #3b76e8;
+  --ctx-chat: #8b5cf6;
+  --ctx-results: #e05a74;
+  --ctx-system: #64748b;
+  --ctx-memory: #df9026;
+  --ctx-skills: #2b9ad6;
+  --ctx-unassigned: #9b8475;
+  --ctx-free: rgb(15 23 42 / 0.065);
+}
+
+.dark {
+  --ctx-files: #2dd4bf;
+  --ctx-tools: #60a5fa;
+  --ctx-chat: #a78bfa;
+  --ctx-results: #fb7185;
+  --ctx-system: #94a3b8;
+  --ctx-memory: #fbbf24;
+  --ctx-skills: #38bdf8;
+  --ctx-unassigned: #b8a396;
+  --ctx-free: rgb(255 255 255 / 0.075);
+}
+
+/* 正方格点阵（30 列 × 8 行 = 240 格，窄容器退到 24 列 × 10 行，两边均无残行） */
+.ctx-matrix-wrap {
+  container-type: inline-size;
+}
+
+.ctx-matrix {
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  gap: 2.5px;
+}
+
+@container (max-width: 300px) {
+  .ctx-matrix {
+    grid-template-columns: repeat(24, minmax(0, 1fr));
+    gap: 2px;
+  }
+}
+
+.ctx-cell {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--tile);
+  cursor: pointer;
+  transition: opacity 140ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ctx-cell[data-free='true'] {
+  background: var(--ctx-free);
+  cursor: default;
+}
+
+.ctx-cell[data-dim='true'] {
+  opacity: 0.2;
+}
+
+.ctx-cell[data-active='true'] {
+  transform: scale(1.14);
+  z-index: 1;
+}
+
+/* 概览第 3 栏内的 5px 迷你构成条 */
+.ctx-mini-bar {
+  display: flex;
+  height: 5px;
+  width: 100%;
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ctx-free);
+}
+
+.ctx-mini-seg {
+  height: 100%;
+  min-width: 2px;
+  background: var(--tile);
+}
+
+/* 条目明细行内柔和占比底纹 */
+.ctx-item-fill {
+  background: color-mix(in srgb, var(--tile) 11%, transparent);
+}
+
+.dark .ctx-item-fill {
+  background: color-mix(in srgb, var(--tile) 16%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-cell {
+    transition: none;
+  }
+  .ctx-cell[data-active='true'] {
+    transform: none;
+  }
+}

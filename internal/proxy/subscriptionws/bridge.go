@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	// DefaultReadLimit 单条完整解压消息上限（与请求体上限同量级）。
-	DefaultReadLimit = 64 << 20
+	// DefaultReadLimit 是 Codex 订阅 WebSocket 单条消息解压后的默认上限。
+	DefaultReadLimit = 128 << 20
 	// DefaultWriteTimeout 单次写入超时。
 	DefaultWriteTimeout = 30 * time.Second
 	// writeTimeoutGraceBytes 以内的消息只用基础写入超时。

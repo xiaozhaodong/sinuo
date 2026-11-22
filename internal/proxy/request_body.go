@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	requestBodyReadInitCap             = 512
-	requestBodyReadMaxInitCap          = 1 << 20
-	defaultEncodedRequestBodyMaxBytes  = 64 << 20
+	requestBodyReadInitCap    = 512
+	requestBodyReadMaxInitCap = 1 << 20
+	// defaultEncodedRequestBodyMaxBytes 是 zstd 入站请求体（压缩体及解压后明文）的默认上限，
+	// 与 subscriptionws.DefaultReadLimit 保持一致，避免 WS 降级或切到 HTTP 时出现上限倒挂。
+	defaultEncodedRequestBodyMaxBytes  = 128 << 20
 	requestContentEncodingIdentity     = "identity"
 	requestContentEncodingZstd         = "zstd"
 	requestBodyCodeReadFailed          = "request_body_read_failed"
@@ -134,10 +136,7 @@ func normalizeRequestBodyWithMetadata(w http.ResponseWriter, req *http.Request, 
 		return nil, encodingErr
 	}
 
-	limit := requestBodyMaxBytes(cfg)
-	if contentEncoding == requestContentEncodingZstd && limit <= 0 {
-		limit = defaultEncodedRequestBodyMaxBytes
-	}
+	limit := effectiveRequestBodyMaxBytes(contentEncoding, cfg)
 	if originalBody != nil && limit > 0 {
 		req.Body = http.MaxBytesReader(w, originalBody, limit)
 	}
@@ -388,6 +387,14 @@ func buildDecodedRequestBodyTooLargeMessage(limit int64) string {
 
 func buildZstdWindowTooLargeMessage(limit int64) string {
 	return fmt.Sprintf("Zstd frame window exceeds request body limit of %s", formatRequestBodyLimit(limit))
+}
+
+func effectiveRequestBodyMaxBytes(contentEncoding string, cfg *config.Config) int64 {
+	limit := requestBodyMaxBytes(cfg)
+	if contentEncoding == requestContentEncodingZstd && limit <= 0 {
+		return defaultEncodedRequestBodyMaxBytes
+	}
+	return limit
 }
 
 func requestBodyMaxBytes(cfg *config.Config) int64 {

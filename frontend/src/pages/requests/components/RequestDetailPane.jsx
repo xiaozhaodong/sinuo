@@ -7,7 +7,9 @@
 // ⚠️ 这里从 request 上读的每个字段都必须在 mergeRequestRows 的 COMPARED_FIELDS 里（静态扫描用例锁定），
 //    否则该字段变化会被行引用复用吃掉，面板首帧显示过期值。
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ContextMiniBar, ContextViewTabs, ContextWorkbench } from './InputCompositionPanel.jsx';
+import { inputComposition } from '../utils/inputComposition.js';
 import RequestBilling from './RequestBilling.jsx';
 import { AlertCircle, Copy, MousePointerClick, RefreshCw, Waves, X } from 'lucide-react';
 import { InspectorEmpty, Property, PropertyList } from '@components/desktop/Inspector.jsx';
@@ -146,7 +148,7 @@ const TokenPairRow = ({ left, right }) => (
  * 「Token 与成本」。未知用量与成本显示占位符（与列表同口径）：在途时后端还没写这几个字段，
  * 终态但没收到 usage 时同理 —— 0 是「还不知道」而不是「用了 0 个」。
  */
-const TokenSection = ({ request, costText, costTitle, decision, lifecycleLoading = false }) => {
+const TokenSection = ({ request, costText, costTitle, decision, lifecycleLoading = false, composition, onOpenContext }) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   const usageKnown = !pending && request.usageKnown !== false;
   const usageTone = usageKnown ? 'text-fg' : 'text-fg-subtle';
@@ -215,6 +217,8 @@ const TokenSection = ({ request, costText, costTitle, decision, lifecycleLoading
           </div>
         </div>
       </div>
+
+      <ContextMiniBar data={composition} onOpen={onOpenContext} />
 
       {/* 成对明细：右列带细竖线防止左列数字与右列标签串行 */}
       <div className="mt-2.5 space-y-1.5 text-[12.5px]">
@@ -364,7 +368,7 @@ const SummarySection = ({ request, presentation, onFilterSession }) => {
   );
 };
 
-const PaneHeader = ({ request, costText, costTitle, presentation, timestampText, onClose }) => {
+const PaneHeader = ({ request, costText, costTitle, presentation, timestampText, onClose, children }) => {
   const StreamIcon = request.isStreaming ? Waves : RefreshCw;
   const settled = !UNSETTLED_STATUSES.has(request.status);
   return (
@@ -380,6 +384,7 @@ const PaneHeader = ({ request, costText, costTitle, presentation, timestampText,
         <StreamIcon size={12} className={request.isStreaming ? 'text-info' : undefined} />
         {request.isStreaming ? '流式' : '常规'}
       </span>
+      {children}
       <span className="flex-1" />
       <span
         data-header-anchor
@@ -408,8 +413,12 @@ const SectionHeading = ({ children, className = '' }) => (
 const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }) => {
   const { formatTimestamp } = useTimezone();
   const scrollRootRef = useRef(null);
+  const [view, setView] = useState('detail');
   const selectedRequestId = initialRequest?.requestId ?? null;
   const { lifecycle, lifecycleLoading } = useRequestLifecycleDetail(selectedRequestId, Boolean(initialRequest));
+
+  const composition = useMemo(() => lifecycle?.request
+    ? inputComposition(lifecycle.inputComposition, lifecycle.request) : null, [lifecycle]);
 
   // 仅在切换请求 ID 时复位外层容器与三栏的纵向滚动位置；同一请求实时刷新时保持当前阅读位置。
   useEffect(() => {
@@ -445,9 +454,14 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
 
   return (
     <>
-      <PaneHeader request={request} costText={costText} costTitle={costTitle} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose} />
+      <PaneHeader request={request} costText={costText} costTitle={costTitle} presentation={presentation} timestampText={formatTimestamp(request.timestamp)} onClose={onClose}>
+        <span className="h-3.5 w-px shrink-0 bg-line" aria-hidden="true" />
+        <ContextViewTabs data={composition} value={view} onChange={setView} />
+      </PaneHeader>
       {/* 列间 1px 清晰分隔：桌面三栏独立纵向滚动，窄屏退回整区滚动 */}
-      <div ref={scrollRootRef} className="@container min-h-0 flex-1 overflow-y-auto @4xl:overflow-hidden">
+      {view === 'context'
+        ? <ContextWorkbench key={request.requestId} data={composition} loading={lifecycleLoading} error={lifecycle?.error} />
+        : <div role="tabpanel" aria-label="概览" ref={scrollRootRef} className="@container min-h-0 flex-1 overflow-y-auto @4xl:overflow-hidden">
         <div className="grid min-h-full grid-cols-1 gap-px bg-line @xl:grid-cols-2 @4xl:h-full @4xl:grid-cols-[1.35fr_1fr_1.05fr]">
           <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @4xl:min-h-0 @4xl:overflow-y-auto">
             {/* 按请求重挂载：候选决策的展开状态不跨请求保留 */}
@@ -462,7 +476,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
             </div>
           </section>
           <section data-detail-scroll className="custom-scrollbar min-w-0 bg-inspector px-4 py-3 @xl:col-span-2 @4xl:col-span-1 @4xl:min-h-0 @4xl:overflow-y-auto">
-            <TokenSection request={request} costText={costText} costTitle={costTitle} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} />
+            <TokenSection request={request} costText={costText} costTitle={costTitle} decision={lifecycle?.billingDecision} lifecycleLoading={lifecycleLoading} composition={composition} onOpenContext={() => setView('context')} />
             <div className="mt-3.5 border-t border-line pt-3 empty:hidden">
               {lifecycleLoading ? <p className="text-xs text-fg-muted">正在读取计费依据…</p> :
                 <RequestBilling key={`${request.requestId}:${lifecycle?.requestRevision ?? 0}:${lifecycle?.billingRateId ?? 0}`}
@@ -472,7 +486,7 @@ const RequestDetailPane = ({ request: initialRequest, onClose, onFilterSession }
             </div>
           </section>
         </div>
-      </div>
+      </div>}
     </>
   );
 };

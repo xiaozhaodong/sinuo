@@ -110,6 +110,9 @@ func (p *subscriptionPassthrough) serve(w http.ResponseWriter, r *http.Request, 
 		streaming = strings.Contains(r.Header.Get("Accept"), "text/event-stream") || gjson.GetBytes(body.normalizedBody, "stream").Bool()
 	}
 	track.setRequestProfile(requestModel, requestReasoning, streaming)
+	if track.active {
+		track.setInputComposition(captureInput(observer.tracker, route.InternalPath, body.normalizedBody, requestModel))
+	}
 	privacyState := handlers.NewPrivacyRequestState(requestID)
 	privacyState.SessionID = clientSessionID(r)
 	privacyState.SetSummaryRecorder(track.recordPrivacySummary)

@@ -24,6 +24,7 @@ type RequestLifecycleData struct {
 	UpstreamDispatchMs      *int64
 	UpstreamConnMs          *int64
 	ScheduleSnapshotJSON    string
+	InputCompositionJSON    string
 	PrivacyScanJSON         string
 	Flow                    *RequestFlow
 	RequestRevision         int64
@@ -85,6 +86,7 @@ func (ut *UsageTracker) hotRequestLifecycleData(snapshot *ActiveRequest) *Reques
 		UpstreamDispatchMs:      snapshot.UpstreamDispatchMs,
 		UpstreamConnMs:          snapshot.UpstreamConnMs,
 		ScheduleSnapshotJSON:    snapshot.ScheduleSnapshotJSON,
+		InputCompositionJSON:    snapshot.InputCompositionJSON,
 		PrivacyScanJSON:         snapshot.PrivacyScanJSON,
 		Flow:                    flow,
 		RequestRevision:         snapshot.RequestRevision,
@@ -96,7 +98,7 @@ func (ut *UsageTracker) hotRequestLifecycleData(snapshot *ActiveRequest) *Reques
 func (ut *UsageTracker) readRequestLifecycleData(ctx context.Context, requestID string) (*RequestLifecycleData, error) {
 	row := ut.readDB.QueryRowContext(ctx, "SELECT "+requestDetailsColumnsBase+`,
     upstream_dispatch_ms, upstream_conn_ms, first_reasoning_ms, reasoning_hidden, upstream_request_id,
-    COALESCE(schedule_snapshot_json, ''), COALESCE(request_flow_json, ''), COALESCE(request_revision, 0), `+archivedRateColumns+`
+    COALESCE(schedule_snapshot_json, ''), COALESCE(input_composition_json, ''), COALESCE(request_flow_json, ''), COALESCE(request_revision, 0), `+archivedRateColumns+`
     FROM request_logs q`+archivedRateJoin+` WHERE q.request_id = ?`, requestID)
 
 	var flowJSON string
@@ -104,7 +106,7 @@ func (ut *UsageTracker) readRequestLifecycleData(ctx context.Context, requestID 
 	data := &RequestLifecycleData{Source: "database"}
 	dest := []any{
 		&data.UpstreamDispatchMs, &data.UpstreamConnMs, &data.FirstReasoningMs, &data.ReasoningHidden,
-		&data.UpstreamRequestID, &data.ScheduleSnapshotJSON, &flowJSON, &data.RequestRevision,
+		&data.UpstreamRequestID, &data.ScheduleSnapshotJSON, &data.InputCompositionJSON, &flowJSON, &data.RequestRevision,
 	}
 	dest = append(dest, billing.rate.dest()...)
 	detail, err := ut.scanRequestDetailRow(row, &data.PrivacyScanJSON, &billing, dest...)

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_conn_ms INTEGER,               -- 最终尝试取得可用连接的偏移；HTTP 链路记录
     schedule_snapshot_json TEXT,            -- v6.2+: 账号池/端点调度快照（白名单 DTO JSON，终态覆盖写）
     request_flow_json TEXT,                 -- 实际转发路径 JSON，记录目标选择、上游联系和响应交付；NULL 表示无路径记录
+    input_composition_json TEXT,            -- 输入分类估算、窗口来源；旧行留空
     privacy_scan_json TEXT,                 -- v6.2: 隐私扫描摘要 JSON（只有规则名/计数，绝无命中原文）
     request_source TEXT NOT NULL DEFAULT 'legacy_proxy'
         CHECK (request_source IN ('legacy_proxy', 'codex_subscription_proxy')),

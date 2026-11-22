@@ -75,6 +75,7 @@ type ActiveRequest struct {
 	UpstreamDispatchMs      *int64 `json:"upstream_dispatch_ms,omitempty"`
 	UpstreamConnMs          *int64 `json:"upstream_conn_ms,omitempty"`
 	ScheduleSnapshotJSON    string `json:"schedule_snapshot_json,omitempty"`
+	InputCompositionJSON    string `json:"-"` // 仅显式详情接口可读
 	PrivacyScanJSON         string `json:"privacy_scan_json,omitempty"`
 
 	// v6.3 模型一致性字段（请求两项随 start 写入；其余三项终态 finalizer 合并）
@@ -312,6 +313,7 @@ func cloneActiveRequestSummary(req *ActiveRequest) *ActiveRequest {
 		DurationMs:            req.DurationMs,
 		TotalCostUSD:          req.TotalCostUSD,
 		ScheduleSnapshotJSON:  req.ScheduleSnapshotJSON,
+		InputCompositionJSON:  req.InputCompositionJSON,
 		PrivacyScanJSON:       req.PrivacyScanJSON,
 		RequestModel:          req.RequestModel,
 		UpstreamModel:         req.UpstreamModel,

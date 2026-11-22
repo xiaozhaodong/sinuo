@@ -7,9 +7,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"sinuo/internal/inputcomposition"
 	timezonepolicy "sinuo/internal/timezone"
 	"sinuo/internal/tokenusage"
 	"sinuo/internal/tracking"
@@ -533,6 +535,7 @@ type RequestLifecycleDetail struct {
 	UpstreamDispatchMs      *int64                                      `json:"upstream_dispatch_ms,omitempty"`
 	UpstreamConnMs          *int64                                      `json:"upstream_conn_ms,omitempty"`
 	ScheduleSnapshotJSON    string                                      `json:"schedule_snapshot_json,omitempty"`
+	InputCompositionJSON    string                                      `json:"input_composition_json,omitempty"`
 	PrivacyScanJSON         string                                      `json:"privacy_scan_json,omitempty"`
 	RequestRevision         int64                                       `json:"request_revision"`
 	Flow                    *tracking.RequestFlow                       `json:"flow,omitempty"`
@@ -558,6 +561,15 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 	}
 
 	record := requestDetailToRecord(data.Detail)
+	composition := data.InputCompositionJSON
+	if record.RequestFamily == "claude" || record.Path == "/v1/messages" {
+		composition, err = inputcomposition.WithHistoricalMessagesWindow(composition,
+			record.ResponseModel, record.UpstreamModel, record.RequestModel, record.Model)
+		if err != nil {
+			slog.Warn("无法解析历史输入构成", "request_id", requestID, "error", err)
+			composition = data.InputCompositionJSON
+		}
+	}
 	return RequestLifecycleDetail{
 		OfficialRecalculation:   data.OfficialRecalculation,
 		BillingMultipliers:      data.BillingMultipliers,
@@ -574,6 +586,7 @@ func (a *App) GetRequestLifecycleDetail(requestID string) (RequestLifecycleDetai
 		UpstreamDispatchMs:      data.UpstreamDispatchMs,
 		UpstreamConnMs:          data.UpstreamConnMs,
 		ScheduleSnapshotJSON:    data.ScheduleSnapshotJSON,
+		InputCompositionJSON:    composition,
 		PrivacyScanJSON:         data.PrivacyScanJSON,
 		RequestRevision:         data.RequestRevision,
 		Flow:                    data.Flow,

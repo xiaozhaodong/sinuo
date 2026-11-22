@@ -332,6 +332,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 开始请求跟踪（传递流式标记）
 	lifecycleManager.StartRequest(r.RemoteAddr, r.UserAgent(), r.Method, r.URL.Path, isSSE)
+	lifecycleManager.inputComposition = captureInput(lifecycleManager.usageTracker, r.URL.Path, bodyBytes, requestModel)
+	lifecycleManager.inputComposition.record(lifecycleManager.usageTracker, lifecycleManager.requestID)
 	w = lifecycleManager.WrapDownstreamWriter(w)
 	defer lifecycleManager.finishDownstreamDelivery()
 

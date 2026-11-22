@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestRequestHistoryMigrationPreservesLifecycleColumns 源表已有三列且带值 → 重建后值保留（防重跑丢数据）。
+// TestRequestHistoryMigrationPreservesLifecycleColumns 源表已有详情列且带值 → 重建后值保留（防重跑丢数据）。
 func TestRequestHistoryMigrationPreservesLifecycleColumns(t *testing.T) {
 	db := openLegacyFixtureDB(t)
 	defer db.Close()
@@ -16,6 +16,7 @@ func TestRequestHistoryMigrationPreservesLifecycleColumns(t *testing.T) {
 		`ALTER TABLE request_logs ADD COLUMN upstream_write_ms INTEGER`,
 		`ALTER TABLE request_logs ADD COLUMN schedule_snapshot_json TEXT`,
 		`ALTER TABLE request_logs ADD COLUMN privacy_scan_json TEXT`,
+		`ALTER TABLE request_logs ADD COLUMN input_composition_json TEXT`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -24,7 +25,8 @@ func TestRequestHistoryMigrationPreservesLifecycleColumns(t *testing.T) {
 	if _, err := db.Exec(`UPDATE request_logs SET
 		upstream_write_ms = 321,
 		schedule_snapshot_json = '{"request_id":"req-fixture-codex","final_outcome":"success"}',
-		privacy_scan_json = '{"action":"redact","hit_count":1}'
+		privacy_scan_json = '{"action":"redact","hit_count":1}',
+		input_composition_json = '{"version":1,"items":[{"group":"chat","name":"用户消息","estimate":2}]}'
 		WHERE request_id = 'req-fixture-codex'`); err != nil {
 		t.Fatal(err)
 	}
@@ -42,10 +44,10 @@ func TestRequestHistoryMigrationPreservesLifecycleColumns(t *testing.T) {
 	}
 
 	var upstreamWriteMs sql.NullInt64
-	var scheduleJSON, privacyJSON sql.NullString
-	if err := db.QueryRow(`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json
+	var scheduleJSON, privacyJSON, compositionJSON sql.NullString
+	if err := db.QueryRow(`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json, input_composition_json
 		FROM request_logs WHERE request_id = 'req-fixture-codex'`).Scan(
-		&upstreamWriteMs, &scheduleJSON, &privacyJSON,
+		&upstreamWriteMs, &scheduleJSON, &privacyJSON, &compositionJSON,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +59,9 @@ func TestRequestHistoryMigrationPreservesLifecycleColumns(t *testing.T) {
 	}
 	if !privacyJSON.Valid || privacyJSON.String == "" {
 		t.Fatalf("privacy_scan_json = %v, want preserved value", privacyJSON)
+	}
+	if !compositionJSON.Valid || compositionJSON.String == "" {
+		t.Fatalf("input_composition_json = %v, want preserved value", compositionJSON)
 	}
 }
 
@@ -78,14 +83,14 @@ func TestRequestHistoryMigrationLifecycleColumnsFallbackNull(t *testing.T) {
 	}
 
 	var upstreamWriteMs sql.NullInt64
-	var scheduleJSON, privacyJSON sql.NullString
-	if err := db.QueryRow(`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json
+	var scheduleJSON, privacyJSON, compositionJSON sql.NullString
+	if err := db.QueryRow(`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json, input_composition_json
 		FROM request_logs WHERE request_id = 'req-fixture-claude'`).Scan(
-		&upstreamWriteMs, &scheduleJSON, &privacyJSON,
+		&upstreamWriteMs, &scheduleJSON, &privacyJSON, &compositionJSON,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if upstreamWriteMs.Valid || scheduleJSON.Valid || privacyJSON.Valid {
-		t.Fatalf("expected NULL fallbacks, got %v / %v / %v", upstreamWriteMs, scheduleJSON, privacyJSON)
+	if upstreamWriteMs.Valid || scheduleJSON.Valid || privacyJSON.Valid || compositionJSON.Valid {
+		t.Fatalf("expected NULL fallbacks, got %v / %v / %v / %v", upstreamWriteMs, scheduleJSON, privacyJSON, compositionJSON)
 	}
 }

@@ -237,6 +237,12 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 		{
 			table:       "request_logs",
+			checkColumn: "input_composition_json",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN input_composition_json TEXT",
+			description: "请求输入构成摘要",
+		},
+		{
+			table:       "request_logs",
 			checkColumn: "privacy_scan_json",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN privacy_scan_json TEXT",
 			description: "隐私扫描摘要字段（生命周期面板）",

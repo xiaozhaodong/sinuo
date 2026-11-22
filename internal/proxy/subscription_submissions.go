@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"sinuo/internal/inputcomposition"
 	"sinuo/internal/monitor"
 	"sinuo/internal/privacy"
 	"sinuo/internal/proxy/handlers"
@@ -52,6 +53,9 @@ type subscriptionSubmission struct {
 	restore            *restorestream.Writer
 	restoreStatus      string
 	terminalRead       *ParseResult
+	inputHistory       *inputcomposition.History
+	inputHistoryReady  chan struct{} // 终态历史快照计算期间非 nil，写回后置 nil 并关闭
+	outputItems        map[int]*inputcomposition.History
 	successorView      *privacy.RestoreView
 	dispatched         bool
 	restoreBypassed    bool
@@ -88,8 +92,11 @@ type subscriptionSubmissionState struct {
 
 const subscriptionRecentResponseIDLimit = 256
 
-// 最近终态只保留去重和迟到回执所需的数据，不持有请求或回填字典。
+// 只有最近 16 个终态收据保留输入分类，收据本身继续用于去重与迟到帧。
+const subscriptionHistoryLimit = 16
+
 type subscriptionCompletedResponse struct {
+	history        *inputcomposition.History
 	streamID       string
 	restored       bool
 	bypassed       bool
@@ -130,6 +137,30 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 		s.warn("submission_after_close")
 		return nil, true, nil
 	}
+	var parent *inputcomposition.History
+	if create.Generate && create.PreviousResponseID != "" {
+		var waitSub *subscriptionSubmission
+		var waitReady <-chan struct{}
+		parent, waitSub, waitReady = s.lookupParentHistoryLocked(create.PreviousResponseID)
+		if waitReady != nil {
+			s.mu.Unlock()
+			select {
+			case <-waitReady:
+			case <-s.baseContext.Done():
+			}
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				s.warn("submission_after_close")
+				return nil, true, nil
+			}
+			if waitSub.terminalRead != nil {
+				parent = waitSub.inputHistory
+			} else {
+				parent, _, _ = s.lookupParentHistoryLocked(create.PreviousResponseID)
+			}
+		}
+	}
 	requestID, err := s.requestIDs.Next(s.baseContext)
 	if err != nil {
 		s.mu.Unlock()
@@ -166,6 +197,7 @@ func (s *subscriptionSubmissionState) beginCreate(payload []byte) (*subscription
 
 	if s.observer != nil {
 		s.observer.SubmissionStarted(submission)
+		s.trackCreateInput(submission, payload, parent)
 		s.observer.BindPrivacyState(privacyState, submission)
 	}
 	return submission, true, nil
@@ -250,11 +282,13 @@ func (s *subscriptionSubmissionState) observeDecodedUpstream(payload []byte, msg
 		}
 	}
 	s.responseProgress(ev.submission, ev.result, int64(len(payload)))
+	s.observeToolEcho(ev, payload)
 	if ev.terminal && ev.submission != nil {
-		s.mu.Lock()
-		ev.submission.terminalRead = ev.result
-		s.mu.Unlock()
+		s.completeInputHistory(ev, payload)
 	} else if ev.typ != "response.created" && !ev.terminal {
+		if ev.typ == "response.output_item.done" && ev.submission != nil {
+			s.noteCompletedOutput(ev.submission, payload)
+		}
 		s.mergeIntermediateDiagnostics(ev.submission, ev.result)
 	}
 	return ev, nil
@@ -562,7 +596,7 @@ func (s *subscriptionSubmissionState) removeSubmissionLocked(target *subscriptio
 }
 
 func (s *subscriptionSubmissionState) rememberCompletedLocked(sub *subscriptionSubmission) {
-	receipt := subscriptionCompletedResponse{streamID: sub.StreamID, restored: sub.restore != nil, bypassed: sub.restoreBypassed}
+	receipt := subscriptionCompletedResponse{history: sub.inputHistory, streamID: sub.StreamID, restored: sub.restore != nil, bypassed: sub.restoreBypassed}
 	if receipt.bypassed {
 		s.bypassed.Add(1)
 	}
@@ -571,6 +605,12 @@ func (s *subscriptionSubmissionState) rememberCompletedLocked(sub *subscriptionS
 	}
 	s.recentIDs[sub.ResponseID] = receipt
 	s.recentOrder = append(s.recentOrder, sub.ResponseID)
+	if n := len(s.recentOrder); n > subscriptionHistoryLimit {
+		id := s.recentOrder[n-subscriptionHistoryLimit-1]
+		old := s.recentIDs[id]
+		old.history = nil
+		s.recentIDs[id] = old
+	}
 	if len(s.recentOrder) <= subscriptionRecentResponseIDLimit {
 		return
 	}

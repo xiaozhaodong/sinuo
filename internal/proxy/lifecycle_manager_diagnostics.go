@@ -30,6 +30,13 @@ func (rlm *RequestLifecycleManager) SetUpstreamModel(model string) {
 	rlm.modelMu.Lock()
 	defer rlm.modelMu.Unlock()
 	rlm.upstreamModel = strings.TrimSpace(model)
+	effective := rlm.upstreamModel
+	if effective == "" {
+		effective = rlm.requestModel
+	}
+	if rlm.inputComposition.setModel(effective) {
+		rlm.inputComposition.record(rlm.usageTracker, rlm.requestID)
+	}
 }
 
 // SetResponseModel 记录仅由响应解析得到的模型；非空才覆盖。与 SetModelWithComparison 并列调用。
@@ -41,6 +48,9 @@ func (rlm *RequestLifecycleManager) SetResponseModel(model string) {
 	rlm.modelMu.Lock()
 	defer rlm.modelMu.Unlock()
 	rlm.responseModel = model
+	if rlm.inputComposition.setResponseModel(model) {
+		rlm.inputComposition.record(rlm.usageTracker, rlm.requestID)
+	}
 }
 
 // SetResponseReasoning 记录响应侧思考信息累计串；非空才覆盖。

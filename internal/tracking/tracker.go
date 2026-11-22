@@ -17,6 +17,7 @@ import (
 
 	"sinuo/config"
 	"sinuo/internal/appdir"
+	"sinuo/internal/inputcomposition"
 	"sinuo/internal/privacy"
 	timezonepolicy "sinuo/internal/timezone"
 	"sinuo/internal/tokenusage"
@@ -451,6 +452,7 @@ type UpdateOptions struct {
 	UpstreamDispatchMs      *int64  // 最终尝试开始取连接偏移（毫秒），即重试段终点；HTTP 链路记录
 	UpstreamConnMs          *int64  // 最终尝试连接就绪偏移（毫秒），HTTP 链路
 	ScheduleSnapshotJSON    *string // 账号池/端点调度快照 JSON（裁剪 DTO），覆盖写
+	InputCompositionJSON    *string // 仅详情读取的有界输入分类摘要
 	PrivacyScanJSON         *string // 隐私扫描摘要 JSON，覆盖写
 
 	// v6.3 模型一致性（中间态尽力挂载；终态由 ResponseDiagnostics 原子落库）
@@ -467,6 +469,7 @@ type UpdateOptions struct {
 
 // UsageTracker 使用跟踪器
 type UsageTracker struct {
+	InputWindows inputcomposition.Windows
 	// 原有字段（兼容性）
 	db            *sql.DB
 	eventChan     chan RequestEvent
@@ -2090,6 +2093,11 @@ func (ut *UsageTracker) GetArchiveStats() *ArchiveStats {
 	}
 	stats := ut.archiveManager.GetStats()
 	return &stats
+}
+
+// TrackingEnabled 供正文采集在追踪关闭时跳过解析。
+func (ut *UsageTracker) TrackingEnabled() bool {
+	return ut != nil && ut.config != nil && ut.config.Enabled
 }
 
 // IsHotPoolEnabled 检查热池模式是否启用

@@ -213,6 +213,10 @@ func TestBillingChannel_OfficialAvailabilityIndependentOfChannelCost(t *testing.
 	for _, tc := range cases {
 		req := proxy.NewRequestLifecycleManager(tracker, nil, tc.model, nil)
 		req.SetModel(tc.model)
+		if tc.model == "speed" {
+			// 请求了 Fast 但响应未确认时，渠道同价仍可结算，官方双档价无法确定。
+			req.SetRequestProfile(tc.model, "speed:fast")
+		}
 		req.StartRequest("127.0.0.1", "billing-test", "POST", "/v1/messages", false)
 		req.SetEndpointAttempt(channel.Name, channel.ID, 1)
 		if tc.written {
@@ -304,7 +308,9 @@ func TestBillingChannel_PeriodThresholdAndEstimatedSpeed(t *testing.T) {
 			// 取下一次 01:00，确保调用实际写出时刻落在已发布版本的跨日谷段。
 			tomorrow := time.Now().In(loc).AddDate(0, 0, 1)
 			at := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 1, 0, 0, 0, loc)
-			for _, tc := range []struct {
+			endpoint := store.BillingChannel{Type: "endpoint", ID: 5, Name: "test-endpoint"}
+			api := store.BillingChannel{Type: "account", ID: 21, Name: "public"}
+			cases := []struct {
 				id                        string
 				c                         store.BillingChannel
 				path, requested, response string
@@ -315,10 +321,20 @@ func TestBillingChannel_PeriodThresholdAndEstimatedSpeed(t *testing.T) {
 				{"estimated", codex, "/v1/responses", "priority", "default", 150000, 3.6, .9, true, true},
 				{"boundary", codex, "/v1/responses", "", "default", 128000, .512, .256, true, true},
 				{"next", codex, "/v1/responses", "", "default", 128001, 1.024008, .256002, true, true},
-				{"public", store.BillingChannel{Type: "account", ID: 21, Name: "public"}, "/v1/responses", "priority", "default", 150000, .3, .3, true, false},
+				{"public", api, "/v1/responses", "priority", "default", 150000, .3, .3, true, false},
+				{"api-no-speed", api, "/v1/responses", "", "", 150000, .3, .3, true, true},
+				{"api-compact-auto", api, "/v1/responses/compact", "auto", "auto", 150000, .3, .3, true, true},
+				{"api-reported-priority", api, "/v1/responses", "", "priority", 150000, .9, .9, true, false},
+				{"api-unconfirmed-priority", api, "/v1/responses", "priority", "", 150000, 0, 0, false, false},
+				{"subscription-no-speed", codex, "/v1/responses", "", "", 150000, 1.2, .3, true, true},
+				{"subscription-unconfirmed-priority", codex, "/v1/responses", "priority", "", 150000, 3.6, .9, true, true},
 				{"claude", store.BillingChannel{Type: "subscription", Name: "claude-subscription"}, "/v1/messages", "fast", "fast", 150000, .9, .9, true, false},
-				{"missing", codex, "/v1/responses", "", "", 150000, 0, 0, false, false},
-			} {
+				{"claude-default", endpoint, "/v1/messages", "", "", 150000, .3, .3, true, true},
+				{"claude-standard", endpoint, "/v1/messages", "standard", "", 150000, .3, .3, true, true},
+				{"claude-reported-fast", endpoint, "/v1/messages", "", "fast", 150000, .9, .9, true, false},
+				{"claude-unconfirmed-fast", endpoint, "/v1/messages", "fast", "", 150000, 0, 0, false, false},
+			}
+			for _, tc := range cases {
 				request := proxy.NewRequestLifecycleManager(tracker, nil, tc.id, nil)
 				request.SetModel(billingTestModel)
 				requested := ""
@@ -336,6 +352,8 @@ func TestBillingChannel_PeriodThresholdAndEstimatedSpeed(t *testing.T) {
 				detail := waitBillingRecord(t, tracker, request, func(r *tracking.RequestDetail) bool { return r.Status == "completed" })
 				require.Equal(t, tc.known, detail.CostKnown, tc.id)
 				require.NotNil(t, detail.BillingDecision)
+				require.Equal(t, tc.requested, detail.BillingDecision.RequestedSpeed, tc.id)
+				require.Equal(t, tc.response, detail.BillingDecision.ResponseSpeed, tc.id)
 				require.Equal(t, tc.estimated, detail.BillingDecision.Estimated, tc.id)
 				require.Equal(t, tc.c, detail.BillingDecision.Channel)
 				require.InDelta(t, tc.want, detail.TotalCostUSD, 1e-9, tc.id)
@@ -347,13 +365,16 @@ func TestBillingChannel_PeriodThresholdAndEstimatedSpeed(t *testing.T) {
 			st := store.NewSQLiteModelPricingStore(again.GetWriteDB())
 			require.NoError(t, st.SaveChannelModelRule(ctx, codex, billingTestModel, store.ChannelModelRule{}))
 			require.NoError(t, again.LoadBaseRates(ctx, st))
-			for id, want := range map[string]float64{"estimated": .9, "boundary": .256, "next": .256002, "public": .3, "claude": .9} {
-				ref, err := again.RecalculateOfficialBaseCost(ctx, id)
+			for _, tc := range cases {
+				ref, err := again.RecalculateOfficialCost(ctx, tc.id)
+				if !tc.known {
+					require.ErrorContains(t, err, "缺少实际服务档位", tc.id)
+					continue
+				}
 				require.NoError(t, err)
-				require.InDelta(t, want, ref.TotalCost, 1e-9, id)
+				require.InDelta(t, tc.official, ref.TotalCost, 1e-9, tc.id)
+				require.Equal(t, tc.estimated, ref.Decision.Estimated, tc.id)
 			}
-			_, err = again.RecalculateOfficialBaseCost(ctx, "missing")
-			require.Error(t, err)
 			again.RecoverRequestTokens("estimated", billingTestModel, &tracking.TokenUsage{InputTokens: 250000})
 			reader, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 			require.NoError(t, err)
@@ -540,14 +561,19 @@ func TestBillingChannel_OAuthSubscriptionAccountEstimatesSpeed(t *testing.T) {
 	}{
 		{"oauth-fast", "priority", "default", "fast", .6},
 		{"oauth-standard", "standard", "default", "standard", .2},
+		{"oauth-no-speed", "", "", "standard", .2},
 	} {
 		req := proxy.NewRequestLifecycleManager(tr, nil, tc.id, nil)
 		req.SetModel(billingTestModel)
-		req.SetRequestProfile(billingTestModel, "speed:"+tc.reqSpeed)
+		if tc.reqSpeed != "" {
+			req.SetRequestProfile(billingTestModel, "speed:"+tc.reqSpeed)
+		}
 		req.StartRequest("127.0.0.1", "oauth-test", "POST", "/v1/responses", false)
 		at, ms := time.Now(), int64(1)
 		tr.RecordRequestUpdate(tc.id, tracking.UpdateOptions{FirstTokenStartAt: &at, UpstreamWriteMs: &ms, BillingChannel: oauthChannel})
-		req.SetResponseReasoning("speed:" + tc.respSpeed)
+		if tc.respSpeed != "" {
+			req.SetResponseReasoning("speed:" + tc.respSpeed)
+		}
 		req.CompleteRequest(&tracking.TokenUsage{InputTokens: 100000})
 		got := waitBillingRecord(t, tr, req, func(d *tracking.RequestDetail) bool { return d.Status == "completed" })
 		require.True(t, got.CostKnown, tc.id)

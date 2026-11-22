@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"sinuo/internal/reasoning"
 	"sinuo/internal/store"
 )
 
@@ -43,26 +44,37 @@ func speedValue(reasoning string) string {
 	}
 	return ""
 }
-func (d *BillingDecision) resolveSpeed() {
+func (d *BillingDecision) resolveSpeed(path string) {
 	sub := d.Channel.SubscriptionAccount || (d.Channel.Type == "subscription" && d.Channel.Name == "chatgpt-subscription")
-	if sub && (d.ResponseSpeed == "" || d.ResponseSpeed == "default" || d.ResponseSpeed == "auto") {
-		if d.RequestedSpeed == "priority" || d.RequestedSpeed == "fast" {
-			d.Speed = "fast"
-			d.Estimated = true
-			return
-		}
-		if d.ResponseSpeed == "default" && (d.RequestedSpeed == "" || d.RequestedSpeed == "default" || d.RequestedSpeed == "auto" || d.RequestedSpeed == "standard") {
-			d.Speed = "standard"
-			d.Estimated = true
-			return
-		}
-		return
-	}
 	switch d.ResponseSpeed {
 	case "fast", "priority":
 		d.Speed = "fast"
-	case "default", "standard":
+		return
+	case "standard":
 		d.Speed = "standard"
+		return
+	case "default":
+		if !sub {
+			d.Speed = "standard"
+			return
+		}
+	case "", "auto":
+		// 没有明确的响应档位，按请求和渠道判断估算档位。
+	default:
+		return
+	}
+
+	switch d.RequestedSpeed {
+	case "fast", "priority":
+		if sub {
+			d.Speed, d.Estimated = "fast", true
+		}
+	case "", "standard", "default", "auto":
+		family := reasoning.FamilyForPath(path)
+		claudeStandard := family == reasoning.FamilyClaude && d.ResponseSpeed == "" && d.RequestedSpeed != "auto"
+		if family == reasoning.FamilyCodex || claudeStandard || d.ResponseSpeed == "default" {
+			d.Speed, d.Estimated = "standard", true
+		}
 	}
 }
 func (d *BillingDecision) unsupportedResponseSpeed() bool {
@@ -207,7 +219,7 @@ func settleChannelUsage(base store.BaseRateVersion, found bool, u *TokenUsage, p
 	if b.Written {
 		d.SentAtNS = b.AtNS
 	}
-	d.resolveSpeed()
+	d.resolveSpeed(path)
 	result := baseSettlement{decision: &d}
 	if found {
 		result.rateID = base.ID

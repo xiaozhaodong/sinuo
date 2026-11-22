@@ -33,7 +33,7 @@ type Config struct {
 	Auth                AuthConfig                 `yaml:"auth"`
 	TUI                 TUIConfig                  `yaml:"tui"`                    // TUI configuration (DEPRECATED: TUI has been removed)
 	GlobalTimeout       time.Duration              `yaml:"global_timeout"`         // Global timeout for non-streaming requests
-	RequestBodyMaxBytes int64                      `yaml:"request_body_max_bytes"` // Optional max request body size in bytes, 0 = unlimited
+	RequestBodyMaxBytes int64                      `yaml:"request_body_max_bytes"` // 可选单次请求体/WS 消息上限（字节）；0 表示明文 HTTP 不限制，zstd HTTP 与订阅 WS 使用默认 128 MiB 上限
 	Timezone            string                     `yaml:"timezone"`               // Global timezone setting for all components
 	Endpoints           []EndpointConfig           `yaml:"-"`                      // Runtime 只从 SQLite 加载
 }

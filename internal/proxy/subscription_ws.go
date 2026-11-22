@@ -97,9 +97,8 @@ func (p *subscriptionWSProxy) serve(w http.ResponseWriter, r *http.Request, rout
 	}
 	cancelHandshake()
 
-	// 101 之前的响应头：只补上游的 x-codex-* / x-models-etag 等提示信息；
-	// Sec-WebSocket-* 由库按两侧各自协商结果设置，不能复制。
-	copySubscriptionWebSocketHandshakeHeaders(w.Header(), upstreamResp.Header)
+	// 在下游 101 握手中告知客户端有效的消息上限；Sec-WebSocket-* 由库独立协商。
+	copySubscriptionWebSocketHandshakeHeaders(w.Header(), upstreamResp.Header, options.ReadLimit)
 
 	downstream, err := subscriptionws.AcceptDownstream(w, r, options)
 	if err != nil {
@@ -486,9 +485,9 @@ func buildSubscriptionWebSocketHeaders(src http.Header, route *subscriptionRoute
 
 // subscriptionWSBridgeOptions 按配置快照与请求体上限给出桥接参数。
 func subscriptionWSBridgeOptions(snap *SubscriptionProxySnapshot, cfg *config.Config) subscriptionws.Options {
-	readLimit := int64(defaultEncodedRequestBodyMaxBytes)
-	if limit := requestBodyMaxBytes(cfg); limit > 0 {
-		readLimit = limit
+	readLimit := requestBodyMaxBytes(cfg)
+	if readLimit == 0 {
+		readLimit = subscriptionws.DefaultReadLimit
 	}
 	options := subscriptionws.Options{
 		ReadLimit:        readLimit,

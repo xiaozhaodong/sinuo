@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"sinuo/internal/service"
@@ -192,4 +193,38 @@ func codexModelCatalogToInfo(catalog service.CodexModelCatalog) CodexModelCatalo
 		Models:         models,
 		EffectiveCount: len(normalized.EffectiveModels()),
 	}
+}
+
+// 目录只在设置加载或更新时解析。转发线程按模型读取不可变快照，无需启动数据库查询。
+func (a *App) applyInputWindows(ctx context.Context) {
+	if !a.usageTracker.TrackingEnabled() {
+		return
+	}
+	catalog, err := a.settingsService.GetCodexModelCatalog(ctx)
+	if err != nil {
+		slog.Warn("输入构成无法读取模型窗口", "error", err)
+		a.usageTracker.InputWindows.Replace(nil)
+		return
+	}
+	windows := make(map[string]int64)
+	if catalog.Enabled && catalog.Mode == service.CodexModelsModeLocal {
+		list, skipped := catalog.BuildListResponse()
+		for _, err := range skipped {
+			slog.Warn("输入构成跳过无效的模型窗口配置", "error", err)
+		}
+		for _, metadata := range list.Models {
+			var entry struct {
+				Model  string `json:"slug"`
+				Window int64  `json:"context_window"`
+			}
+			if err := json.Unmarshal(metadata, &entry); err != nil {
+				slog.Warn("无法解析模型窗口", "error", err)
+				continue
+			}
+			if entry.Window > 0 && len(entry.Model) <= 256 {
+				windows[entry.Model] = entry.Window
+			}
+		}
+	}
+	a.usageTracker.InputWindows.Replace(windows)
 }

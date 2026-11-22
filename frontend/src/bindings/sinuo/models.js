@@ -1023,6 +1023,7 @@ import * as tracking$0 from "./internal/tracking/models.js";
  * @property {number | null} [upstream_dispatch_ms]
  * @property {number | null} [upstream_conn_ms]
  * @property {string} [schedule_snapshot_json]
+ * @property {string} [input_composition_json]
  * @property {string} [privacy_scan_json]
  * @property {number} request_revision
  * @property {tracking$0.RequestFlow | null} [flow]

@@ -53,6 +53,7 @@ type RequestLifecycleManager struct {
 	modelMu                          sync.RWMutex                  // 保护模型字段的读写锁
 	stateMu                          sync.RWMutex                  // 保护生命周期状态字段
 	modelName                        string                        // 模型名称（计费模型）
+	inputComposition                 requestInputComposition       // 与模型改写同由 modelMu 保护
 	requestModel                     string                        // v6.3 客户端原始请求模型
 	requestReasoning                 string                        // v6.3 客户端请求思考配置（归一化串）
 	clientSessionID                  string                        // 客户端原始会话，随开始记录写入

@@ -132,21 +132,22 @@ type subscriptionRequestTracking struct {
 	active               bool
 	settled              bool
 
-	requestID     string
-	connectionID  string
-	startedAt     time.Time
-	path          string
-	requestFamily string
-	model         string
-	streaming     bool
-	responseModel string                  // v6.3 仅由响应解析写入
-	responseState reasoning.ResponseState // v6.3 响应思考按字段累计（created 的 effort + completed 的 reasoning_tokens）
-	httpStatus    *int
-	outboundAt    time.Time
-	firstOutputAt time.Time
-	requestBytes  int64
-	responseBytes int64
-	flow          subscriptionFlowState
+	requestID        string
+	connectionID     string
+	startedAt        time.Time
+	path             string
+	requestFamily    string
+	model            string
+	streaming        bool
+	responseModel    string                  // v6.3 仅由响应解析写入
+	responseState    reasoning.ResponseState // v6.3 响应思考按字段累计（created 的 effort + completed 的 reasoning_tokens）
+	inputComposition requestInputComposition // 在 mu 下维护，随响应模型与回显工具同步更新
+	httpStatus       *int
+	outboundAt       time.Time
+	firstOutputAt    time.Time
+	requestBytes     int64
+	responseBytes    int64
+	flow             subscriptionFlowState
 }
 
 func (t *subscriptionRequestTracking) SetModel(model string) {
@@ -289,6 +290,9 @@ func (t *subscriptionRequestTracking) MergeResponseFields(model string, fields r
 	}
 	if model != "" {
 		t.responseModel = model
+		if t.inputComposition.setResponseModel(model) {
+			t.inputComposition.record(t.observer.tracker, t.requestID)
+		}
 	}
 	t.responseState.MergeCodexFields(fields)
 }

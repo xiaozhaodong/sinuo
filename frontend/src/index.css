@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./pages/requests/components/input-composition.css";
 
 /* ============================================================
  * 暗黑模式：class 驱动的 dark 变体

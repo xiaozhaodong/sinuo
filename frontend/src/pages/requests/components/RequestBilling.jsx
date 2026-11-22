@@ -18,7 +18,7 @@ const MULTIPLIER_LABELS = [
 const speedLabel = (speed) => SPEED_LABELS[speed] || '未确定';
 const levelLabel = (level) => (level ? `长档 ${level}` : '基础档');
 const tierText = (period, level) => [period || '全天', levelLabel(level)].join(' · ');
-const estimateLabel = (speed) => (speed === 'fast' ? '按请求 Fast 估算' : '标准档估算');
+const estimateLabel = (speed) => (speed === 'fast' ? '按 Fast 估算' : '标准档估算');
 
 function formatDecisionTier(decision, usageKnown) {
   const knownSpeed = SPEED_LABELS[decision.speed] || '';

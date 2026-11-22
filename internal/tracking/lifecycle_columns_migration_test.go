@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	updated_at DATETIME
 )`
 
-// TestInitSchemaAddsLifecycleColumnsToLegacyDB 旧库（无三个新列）经 InitSchema 后补齐三列，且重复执行幂等。
+// TestInitSchemaAddsLifecycleColumnsToLegacyDB 旧库经 InitSchema 后补齐详情列，且重复执行幂等。
 func TestInitSchemaAddsLifecycleColumnsToLegacyDB(t *testing.T) {
 	adapter, err := NewSQLiteAdapter(DatabaseConfig{DatabasePath: ":memory:"})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestInitSchemaAddsLifecycleColumnsToLegacyDB(t *testing.T) {
 		t.Fatalf("InitSchema on legacy db failed: %v", err)
 	}
 
-	for _, column := range []string{"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json"} {
+	for _, column := range []string{"upstream_write_ms", "schedule_snapshot_json", "privacy_scan_json", "input_composition_json"} {
 		var count int
 		if err := db.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('request_logs') WHERE name = ?`, column,
@@ -90,14 +90,14 @@ func TestInitSchemaAddsLifecycleColumnsToLegacyDB(t *testing.T) {
 
 	// 旧行保留且新列默认 NULL。
 	var upstreamWriteMs interface{}
-	var scheduleJSON, privacyJSON interface{}
+	var scheduleJSON, privacyJSON, compositionJSON interface{}
 	if err := db.QueryRow(
-		`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json FROM request_logs WHERE request_id = 'legacy-row'`,
-	).Scan(&upstreamWriteMs, &scheduleJSON, &privacyJSON); err != nil {
+		`SELECT upstream_write_ms, schedule_snapshot_json, privacy_scan_json, input_composition_json FROM request_logs WHERE request_id = 'legacy-row'`,
+	).Scan(&upstreamWriteMs, &scheduleJSON, &privacyJSON, &compositionJSON); err != nil {
 		t.Fatalf("query legacy row failed: %v", err)
 	}
-	if upstreamWriteMs != nil || scheduleJSON != nil || privacyJSON != nil {
-		t.Fatalf("expected NULL defaults for new columns, got %v / %v / %v", upstreamWriteMs, scheduleJSON, privacyJSON)
+	if upstreamWriteMs != nil || scheduleJSON != nil || privacyJSON != nil || compositionJSON != nil {
+		t.Fatalf("expected NULL defaults for new columns, got %v / %v / %v / %v", upstreamWriteMs, scheduleJSON, privacyJSON, compositionJSON)
 	}
 
 	// 重复执行必须幂等。

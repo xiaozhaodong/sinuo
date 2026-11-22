@@ -216,6 +216,10 @@ func applyUpdateOptionsToActiveRequest(req *ActiveRequest, opts UpdateOptions, n
 		req.ScheduleSnapshotJSON = *opts.ScheduleSnapshotJSON
 		changed = true
 	}
+	if opts.InputCompositionJSON != nil && req.InputCompositionJSON != *opts.InputCompositionJSON {
+		req.InputCompositionJSON = *opts.InputCompositionJSON
+		changed = true
+	}
 	if opts.PrivacyScanJSON != nil && req.PrivacyScanJSON != *opts.PrivacyScanJSON {
 		req.PrivacyScanJSON = *opts.PrivacyScanJSON
 		changed = true
