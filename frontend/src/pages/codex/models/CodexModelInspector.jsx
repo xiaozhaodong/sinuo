@@ -91,7 +91,7 @@ const CodexModelInspector = ({ model, models, isNew, saving, onSave, onCancelNew
   };
 
   return (
-    <Inspector label="Codex 模型详情" width={360}>
+    <Inspector label="Codex 模型详情" width={360} forceOpen={isNew}>
       <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
         <InspectorHeader title={isNew ? '新建模型' : model.display_name || model.id} subtitle={isNew ? '保存后出现在 Codex 模型目录' : model.id}
           badges={<div className="flex shrink-0 flex-wrap gap-1">

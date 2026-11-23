@@ -51,7 +51,7 @@ const ClaudeModelInspector = ({ model, models = [], isNew, saving, onSave, onCan
   const subtitle = isNew ? '保存后出现在 Claude Code 的 /model 列表' : model.id;
 
   return (
-    <Inspector label="模型详情">
+    <Inspector label="模型详情" forceOpen={isNew}>
       <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
         <InspectorHeader
           title={title}

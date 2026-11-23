@@ -5,7 +5,10 @@
 //            筛选从「外置标签 + 下拉框」改为标签写在按钮里的弹出按钮，生效中的条件高亮
 // ============================================
 
-import { ChevronDown, RotateCcw, Search, Sparkles, TestTube2, UserRoundCheck, Rows3 } from 'lucide-react';
+import { useRef } from 'react';
+import { ChevronDown, RotateCcw, Search, Sparkles, TestTube2, UserRoundCheck, Rows3, X } from 'lucide-react';
+import useSearchShortcut from '@hooks/useSearchShortcut.js';
+import { formatShortcut } from '@utils/platform.js';
 
 const BATCH_LABELS = {
   test: '批量测试',
@@ -89,6 +92,9 @@ const AccountInventoryFilters = ({
   onOpenMenu,
   viewSwitcher = null
 }) => {
+  const searchInputRef = useRef(null);
+  useSearchShortcut(searchInputRef);
+
   const testAction = findAction(batchActions, 'batch-test', 'test');
   const refreshAction = findAction(batchActions, 'batch-refresh-profile', 'refresh-profile');
   const toggleAction = findAction(batchActions, 'batch-toggle', 'toggle-enabled');
@@ -109,17 +115,35 @@ const AccountInventoryFilters = ({
     <div className="shrink-0 border-b border-line bg-inspector px-3 py-1.5">
       {/* 单行工具栏：查询条件与结果工具共用一条基线；窄屏时按组换行 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="relative w-40 shrink-0">
+        <div className="relative w-44 shrink-0">
           <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle" />
           <input
+            ref={searchInputRef}
             id="account-inventory-search"
             type="search"
             aria-label="搜索账号"
             value={searchTerm}
             placeholder="搜索账号名 / 备注 / 标签"
+            title={`搜索账号  ${formatShortcut('F')}`}
             onChange={(event) => onSearchTermChange?.(event.target.value)}
-            className="desk-field w-full pl-7 pr-10 text-xs placeholder:text-fg-subtle"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && searchTerm) {
+                event.stopPropagation();
+                onSearchTermChange?.('');
+              }
+            }}
+            className={`desk-field w-full pl-7 text-xs placeholder:text-fg-subtle [&::-webkit-search-cancel-button]:hidden ${searchTerm ? 'pr-14' : 'pr-10'}`}
           />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => onSearchTermChange?.('')}
+              aria-label="清空搜索"
+              className="absolute right-8 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-fg-subtle hover:text-fg"
+            >
+              <X size={11} />
+            </button>
+          )}
           <span
             className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-surface-mut px-1.5 text-[10px] font-medium leading-4 tabular-nums text-fg-muted"
             title={`当前筛选结果：${resultCount} 个账号`}

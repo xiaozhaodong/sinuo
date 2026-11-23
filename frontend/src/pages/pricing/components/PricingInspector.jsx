@@ -90,7 +90,7 @@ const PricingInspector = ({ pricing, isNew, saving, onSave, onCancelNew, onDelet
   const priceError = PRICE_FIELDS.some(({ key }) => errors[key]);
 
   return (
-    <Inspector label="定价详情">
+    <Inspector label="定价详情" forceOpen={isNew}>
       <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
         <InspectorHeader
           title={isNew ? '新建定价' : (pricing.displayName || pricing.modelName)}

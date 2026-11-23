@@ -3,19 +3,23 @@
 // 2026-03-21
 // 2026-10-07 桌面化：由右侧滑出的抽屉改为常驻右侧的检查器，选中行即显示；
 //            「额度 / 健康 / 路由配置 / 动作」四块内容与动作不变
+// 2026-11：高频操作（测试、编辑、删除）固定到底部 InspectorFooter，复制原始响应接入全局 Toast
 // ============================================
 
-import { AlertTriangle, Copy, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Copy, Pencil, Trash2, Users } from 'lucide-react';
 import { Button } from '@components/ui';
+import { ToolbarButton } from '@components/layout/ToolbarButton.jsx';
 import {
   Inspector,
   InspectorBody,
   InspectorEmpty,
+  InspectorFooter,
   InspectorHeader,
   InspectorSection,
   Property,
   PropertyList
 } from '@components/desktop/Inspector.jsx';
+import { copyTextToClipboard } from '@pages/requests/components/clipboard.js';
 import { parseCodexModelRewriteSettings } from '../utils.js';
 import { PLAN_BADGE_CLASS, normalizePlanLabel } from './inventoryBadgeStyles.js';
 
@@ -74,7 +78,7 @@ const AccountErrorDetails = ({ display }) => {
     return <div className="text-xs text-fg-subtle">最近异常：暂无错误记录</div>;
   }
 
-  const copyRawError = () => navigator.clipboard.writeText(display.raw);
+  const copyRawError = () => copyTextToClipboard(display.raw, '原始响应');
 
   return (
     <div className={`rounded-md border px-2.5 py-2 text-xs ${ERROR_TONE_CLASS[display.tone] || ERROR_TONE_CLASS.slate}`}>
@@ -215,7 +219,11 @@ const AccountDetailsDrawer = ({
 
         <InspectorSection title="动作">
           <div className="grid grid-cols-2 gap-1.5">
-            {account.state === 'cooldown' && <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(account)}>解除冷却</Button>}
+            {account.state === 'cooldown' && (
+              <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onClearAccountCooldown?.(account)}>
+                解除冷却
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="sm"
@@ -224,14 +232,8 @@ const AccountDetailsDrawer = ({
             >
               {enabled ? '停用账号' : '启用账号'}
             </Button>
-            <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onTestAccount?.(account)}>
-              测试账号
-            </Button>
             <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onRefreshAccountProfile?.(account)}>
               刷新画像
-            </Button>
-            <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => onEditAccount?.(account)}>
-              编辑账号
             </Button>
           </div>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
@@ -259,18 +261,19 @@ const AccountDetailsDrawer = ({
               );
             })}
           </div>
-          <div className="mt-2.5 border-t border-line-soft pt-2.5">
-            <button
-              type="button"
-              disabled={actionBusy}
-              onClick={() => onDeleteAccount?.(account)}
-              className="inline-flex h-6 w-full items-center justify-center rounded-md border border-line bg-surface text-xs font-medium text-danger shadow-xs transition-colors hover:bg-danger-soft disabled:opacity-50"
-            >
-              删除账号…
-            </button>
-          </div>
         </InspectorSection>
       </InspectorBody>
+
+      <InspectorFooter>
+        <Button variant="secondary" icon={Activity} disabled={actionBusy} onClick={() => onTestAccount?.(account)}>
+          测试账号
+        </Button>
+        <Button variant="secondary" icon={Pencil} disabled={actionBusy} onClick={() => onEditAccount?.(account)}>
+          编辑账号
+        </Button>
+        <span className="flex-1" />
+        <ToolbarButton icon={Trash2} title="删除账号…" disabled={actionBusy} onClick={() => onDeleteAccount?.(account)} />
+      </InspectorFooter>
     </Inspector>
   );
 };

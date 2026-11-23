@@ -87,7 +87,7 @@ const OverviewPage = ({ onNavigate }) => {
   const caption = periodCaption(period);
 
   return (
-    <div className="motion-page flex-1 space-y-3 bg-pane p-4">
+    <div className="motion-page @container flex-1 space-y-3 bg-pane p-4">
       <PageToolbar subtitle={`快照 · ${lastUpdate || '—'} 更新`}>
         <ToolbarSpacer />
         <ToolbarButton icon={RefreshCw} title="刷新数据" onClick={refreshAll} loading={refreshing} />
@@ -130,8 +130,8 @@ const OverviewPage = ({ onNavigate }) => {
           <SegmentedControl options={OVERVIEW_PERIODS} value={period} onChange={setPeriod} ariaLabel="时段统计时间范围" />
         </div>
         <div className="space-y-3">
-          {/* 请求趋势 + 模型调用：整行定高，模型表在面板内滚动，首屏能看到这一行 */}
-          <div className="grid h-[312px] grid-cols-2 gap-3">
+          {/* 请求趋势 + 模型调用：宽容器下双栏定高 312px，窄容器自动叠成单栏并各自保持 312px */}
+          <div className="grid grid-cols-1 gap-3 [&>*]:h-[312px] @[880px]:h-[312px] @[880px]:grid-cols-2 @[880px]:[&>*]:h-full">
             <RequestTrendChart
               data={snapshot.trend}
               period={period}
@@ -150,7 +150,7 @@ const OverviewPage = ({ onNavigate }) => {
           </div>
 
           {/* 上游成本排行 + Token 使用分布 */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 @[880px]:grid-cols-2">
             <UpstreamCostRanking
               data={snapshot.endpointCosts}
               periodCaption={caption}

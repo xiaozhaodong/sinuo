@@ -5,6 +5,7 @@ import { FormSection } from '@components/desktop/FormSection.jsx';
 import { ToolbarButton } from '@components/layout/ToolbarButton.jsx';
 import { ErrorMessage, LoadingSpinner } from '@components/ui';
 import useConfirm from '@hooks/useConfirm.js';
+import { useNavigationGuard } from '@contexts/NavigationGuardContext.jsx';
 import { useNotice } from '@pages/account-pool/hooks';
 import SettingItem from '@pages/settings/components/SettingItem.jsx';
 import { resolveErrorMessage } from '@utils/errors.js';
@@ -48,6 +49,12 @@ const CodexImagesPage = ({ active = true, headerTarget = null }) => {
   }, [loadSettings]);
 
   const changeCount = Object.keys(changes).length;
+  useNavigationGuard(changeCount > 0, {
+    title: '放弃未保存的图像生成设置？',
+    message: `当前有 ${changeCount} 项更改尚未保存，离开后将丢失。`,
+    confirmText: '放弃并离开',
+    danger: true
+  });
   const handleChange = (category, key, value) => {
     const setting = settings.find((item) => item.category === category && item.key === key);
     if (!setting) return;

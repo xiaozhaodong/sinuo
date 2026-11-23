@@ -4,6 +4,7 @@
 // 2026-10-07：桌面化——系统设置式单行（左侧名称与说明、右侧控件），开关 / 输入框改为桌面尺寸
 // ============================================
 
+import { RotateCcw } from 'lucide-react';
 import { CustomSelect } from '../../../components/ui';
 import Switch from '@components/desktop/Switch.jsx';
 import { FormBlock, FormRow } from '@components/desktop/FormSection.jsx';
@@ -55,12 +56,33 @@ const RestartBadge = () => (
   <span className="rounded border border-warn-line px-1 text-[10.5px] leading-[15px] text-warn">需重启</span>
 );
 
-const CodexIdentityModeSetting = ({ value, onChange, disabled }) => (
+const ModifiedDot = () => (
+  <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-ring" title="已修改，尚未保存" aria-label="已修改" />
+);
+
+const RevertButton = ({ onClick, disabled, label }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    title={`撤销「${label}」的更改`}
+    aria-label={`撤销「${label}」的更改`}
+    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-surface-mut hover:text-fg disabled:opacity-40"
+  >
+    <RotateCcw size={12} />
+  </button>
+);
+
+const CodexIdentityModeSetting = ({ value, onChange, disabled, modified = false, onRevert }) => (
   <FormBlock>
     <div className="flex items-center justify-between gap-4">
-      <span className="text-[13px] text-fg">身份处理</span>
-      <span className="text-xs text-fg-muted">
+      <span className="inline-flex items-center gap-1.5 text-[13px] text-fg">
+        {modified && <ModifiedDot />}
+        身份处理
+      </span>
+      <span className="inline-flex items-center gap-1.5 text-xs text-fg-muted">
         {CODEX_IDENTITY_MODE_OPTIONS.find((option) => option.value === value)?.label || value}
+        {modified && onRevert && <RevertButton onClick={onRevert} disabled={disabled} label="身份处理" />}
       </span>
     </div>
     <p className="mt-1 text-[11.5px] leading-snug text-fg-muted">{CODEX_IDENTITY_MODE_HELP[value]}</p>
@@ -84,7 +106,9 @@ const SettingItem = ({
   setting,
   value,
   onChange,
-  disabled = false
+  disabled = false,
+  modified = false,
+  onRevert
 }) => {
   // 检测值类型（优先使用 setting.value_type，然后尝试自动检测）
   const valueType = setting.value_type || (
@@ -99,20 +123,35 @@ const SettingItem = ({
   // 显示标签（优先使用 label，没有则使用 key）
   const displayLabel = setting.label || setting.key;
   const emit = (nextValue) => onChange(setting.category, setting.key, nextValue);
+  const revertControl = modified && onRevert ? <RevertButton onClick={() => onRevert(setting.category, setting.key)} disabled={disabled} label={displayLabel} /> : null;
   const rowProps = {
-    label: displayLabel,
+    label: modified ? (
+      <span className="inline-flex items-center gap-1.5">
+        <ModifiedDot />
+        <span>{displayLabel}</span>
+      </span>
+    ) : displayLabel,
     description: setting.description,
     badge: setting.requires_restart ? <RestartBadge /> : null
   };
 
   if (setting.category === 'codex_identity' && setting.key === 'mode') {
-    return <CodexIdentityModeSetting value={value} onChange={emit} disabled={disabled} />;
+    return (
+      <CodexIdentityModeSetting
+        value={value}
+        onChange={emit}
+        disabled={disabled}
+        modified={modified}
+        onRevert={onRevert ? () => onRevert(setting.category, setting.key) : undefined}
+      />
+    );
   }
 
   // 布尔类型使用开关
   if (valueType === 'bool') {
     return (
       <FormRow {...rowProps}>
+        {revertControl}
         <Switch checked={value === 'true' || value === true} onChange={(checked) => emit(checked ? 'true' : 'false')} disabled={disabled} label={displayLabel} />
       </FormRow>
     );
@@ -123,6 +162,7 @@ const SettingItem = ({
   if (selectOptions) {
     return (
       <FormRow {...rowProps}>
+        {revertControl}
         <CustomSelect options={selectOptions} value={value} onChange={emit} disabled={disabled} size="md" />
       </FormRow>
     );
@@ -131,6 +171,7 @@ const SettingItem = ({
   // 其他类型使用文本/数字输入框
   const input = (
     <FormRow {...rowProps}>
+      {revertControl}
       <input
         type={config.type}
         autoComplete={valueType === 'password' ? 'new-password' : undefined}

@@ -13,14 +13,14 @@ const KPICardsGrid = ({ today, yesterday, todayUnavailable = false, comparisonUn
   const chart = useChartTheme();
 
   return (
-    <section aria-label="今日核心指标" className="grid grid-cols-4 divide-x divide-line-soft overflow-hidden rounded-lg border border-line bg-surface">
+    <section aria-label="今日核心指标" className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line-soft @[880px]:grid-cols-4">
       {cards.map((card) => {
         const { comparison } = card;
         const points = trends[card.key];
         const hasTrend = points.filter((point) => Number.isFinite(point.value)).length >= 2;
         const color = chart.series[SERIES_KEYS[card.key]];
         return (
-          <article key={card.key} className="flex min-w-0 items-end gap-3 px-3.5 pb-3 pt-2.5">
+          <article key={card.key} className="flex min-w-0 items-end gap-3 bg-surface px-3.5 pb-3 pt-2.5">
             <div className="min-w-0 flex-1">
               <h3 className="text-xs text-fg-muted">{card.title}</h3>
               <div className="mt-0.5 truncate text-[22px] font-semibold leading-tight tracking-tight text-fg tabular-nums" title={card.value}>{card.value}</div>

@@ -73,11 +73,11 @@ const Toolbar = ({
   onDetailPaneToggle
 }) => {
   return (
-    <div className="flex flex-nowrap items-center justify-start gap-1.5 min-w-0 overflow-x-auto max-[1100px]:gap-1">
+    <div className="flex flex-nowrap items-center justify-start gap-1.5 min-w-0 overflow-x-auto @max-[760px]:gap-1">
       {sessionsSupported && <><SegmentedControl ariaLabel="聚合方式" value={viewMode} onChange={onViewModeChange}
         options={[{ value: 'requests', label: '按请求' }, { value: 'sessions', label: '按会话' }]} /><ToolbarSeparator /></>}
       {/* Claude 接入与端点策略快捷切换（入口未启用时即端点切换器） */}
-      <div className="shrink-0 max-[1100px]:[&_button]:max-w-[130px]"><ClaudeAccessSwitcher
+      <div className="shrink-0 @max-[760px]:[&_button]:max-w-[120px] @max-[640px]:[&_button]:max-w-[96px]"><ClaudeAccessSwitcher
         endpoints={endpoints}
         routingState={claudeRoutingState}
         modelRoutingEnabled={modelRoutingEnabled}
@@ -91,7 +91,7 @@ const Toolbar = ({
         loading={routeSwitching}
       /></div>
 
-      <div className="shrink-0 max-[1100px]:[&_button]:max-w-[130px]"><CodexAccessSwitcher
+      <div className="shrink-0 @max-[760px]:[&_button]:max-w-[120px] @max-[640px]:[&_button]:max-w-[96px]"><CodexAccessSwitcher
         codexModelRoutingEnabled={codexModelRoutingEnabled}
         bindings={codexModelRouteBindings}
         accounts={accounts}

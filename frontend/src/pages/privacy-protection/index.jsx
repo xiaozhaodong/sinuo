@@ -5,20 +5,24 @@
 //            运行状态收进底部状态栏；部分规则未激活时在范围条下方给一条警示
 // ============================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
+  ChevronDown,
   Download,
   FlaskConical,
   PackagePlus,
   Plus,
-  Save
+  Save,
+  SlidersHorizontal
 } from 'lucide-react';
 import { Button, CustomSelect, ErrorMessage, LoadingSpinner } from '@components/ui';
 import { PageToolbar } from '@components/layout/AppToolbar.jsx';
 import PageTabs from '@components/layout/PageTabs.jsx';
 import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.jsx';
 import { StatusBar, StatusItem, StatusSpacer } from '@components/desktop/StatusBar.jsx';
+import useAnchoredPanel from '@hooks/useAnchoredPanel.js';
 import { fetchEndpoints, fetchUpstreamAccounts, exportPrivacyRules } from '@utils/api.js';
 import usePrivacyProtection from './hooks/usePrivacyProtection.js';
 import useConfirm from '@hooks/useConfirm.js';
@@ -60,7 +64,7 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
               ? 'bg-inverted text-fg-inverted shadow-sm'
               : opt.value === 'detect'
                 ? 'bg-warn-solid text-white shadow-sm'
-                : 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-accent-solid text-white shadow-sm'
             : 'text-fg-muted hover:text-fg'
         } ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
       >
@@ -70,58 +74,102 @@ const ModeSegmentedControl = ({ mode, busy, onChange }) => (
   </div>
 );
 
-// 扫描参数（点击保存生效，避免误触）：范围条右侧一组 24px 控件
+// 扫描参数弹出浮层（点击保存生效，避免误触，同时为范围条腾出垂直空间）
 // 注意：调用方通过 key 在 settings 变化时重挂载本组件，初始 state 直接取自 settings
 const ScanSettingsBar = ({ settings, busy, onSave }) => {
+  const [open, setOpen] = useState(false);
   const [restore, setRestore] = useState(settings.response_restore_enabled);
   const [scanMaxBytes, setScanMaxBytes] = useState(settings.scan_max_bytes);
   const [overLimitAction, setOverLimitAction] = useState(settings.over_limit_action);
   const [onError, setOnError] = useState(settings.on_error);
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const position = useAnchoredPanel({ open, setOpen, triggerRef, panelRef, maxWidth: 320 });
 
   const dirty = restore !== settings.response_restore_enabled || Number(scanMaxBytes) !== settings.scan_max_bytes
     || overLimitAction !== settings.over_limit_action
     || onError !== settings.on_error;
 
+  const summary = `${formatScanBytes(settings.scan_max_bytes)} · ${settings.response_restore_enabled ? '回填开' : '回填关'}`;
+
+  const handleSave = async () => {
+    const saved = await onSave({
+      response_restore_enabled: restore,
+      scan_max_bytes: Number(scanMaxBytes),
+      over_limit_action: overLimitAction,
+      on_error: onError
+    });
+    if (saved) {
+      setOpen(false);
+    }
+  };
+
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-fg-muted">
-      <label className="flex items-center gap-1.5">
-        扫描上限
-        <input
-          type="number"
-          min="1024"
-          value={scanMaxBytes}
-          onChange={(e) => setScanMaxBytes(e.target.value)}
-          className="desk-field w-24 text-xs tabular-nums"
-        />
-        字节
-      </label>
-      <span className="flex items-center gap-1.5" title="扫描超限独立按此设置处理；开启响应回填时，截断扫描将整份原文放行并停用本轮回填。">
-        超限
-        <CustomSelect size="xs" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-[104px]" />
-      </span>
-      <span className="flex items-center gap-1.5" title="出错放行会发送隐私处理前的完整原文，并在请求详情中提示隐私保护未完成；不会发送部分改写的正文。">
-        出错
-        <CustomSelect size="xs" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-20" />
-      </span>
-      <label className="flex items-center gap-2 text-xs" title="脱敏模式可回填 Claude 普通端点、Codex 账号池及两者订阅直通的 SSE 和 JSON 响应。Codex 订阅直通也支持原生 WebSocket。">
-        <input type="checkbox" className="app-checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
-        响应回填
-      </label>
-      <Button
-        size="sm"
-        variant="secondary"
-        icon={Save}
-        disabled={!dirty || busy}
-        onClick={() => onSave({
-          response_restore_enabled: restore,
-          scan_max_bytes: Number(scanMaxBytes),
-          over_limit_action: overLimitAction,
-          on_error: onError
-        })}
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-xs transition-colors ${
+          dirty || open
+            ? 'border-accent-line bg-accent-soft text-accent-fg'
+            : 'border-line bg-surface text-fg-body hover:bg-surface-sub'
+        }`}
+        title="配置扫描上限、超限/出错策略与响应回填"
       >
-        保存
-      </Button>
-    </div>
+        <SlidersHorizontal size={12} className="shrink-0" />
+        <span>扫描参数</span>
+        <span className="text-[11px] opacity-75">{summary}</span>
+        {dirty && <span className="h-1.5 w-1.5 rounded-full bg-warn-solid" aria-label="有未保存更改" />}
+        <ChevronDown size={11} className="shrink-0 opacity-60" />
+      </button>
+
+      {open && position && createPortal(
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label="扫描参数"
+          style={position}
+          className="fixed z-50 rounded-[10px] border border-line bg-surface/95 p-3 text-xs text-fg shadow-xl ring-1 ring-hairline backdrop-blur-xl motion-popover origin-top-right"
+        >
+          <div className="mb-2.5 text-[11px] font-semibold text-fg-subtle">扫描与回填参数</div>
+          <div className="space-y-2.5">
+            <label className="flex items-center justify-between gap-2 text-fg-body">
+              <span>扫描上限</span>
+              <span className="flex items-center gap-1.5 text-fg-muted">
+                <input
+                  type="number"
+                  min="1024"
+                  value={scanMaxBytes}
+                  onChange={(e) => setScanMaxBytes(e.target.value)}
+                  className="desk-field w-24 text-right text-xs tabular-nums"
+                />
+                字节
+              </span>
+            </label>
+            <div className="flex items-center justify-between gap-2 text-fg-body" title="扫描超限独立按此设置处理；开启响应回填时，截断扫描将整份原文放行并停用本轮回填。">
+              <span>超限策略</span>
+              <CustomSelect size="xs" ariaLabel="超限策略" options={PRIVACY_OVER_LIMIT_OPTIONS} value={overLimitAction} onChange={setOverLimitAction} className="w-[120px]" />
+            </div>
+            <div className="flex items-center justify-between gap-2 text-fg-body" title="出错放行会发送隐私处理前的完整原文，并在请求详情中提示隐私保护未完成；不会发送部分改写的正文。">
+              <span>出错策略</span>
+              <CustomSelect size="xs" ariaLabel="出错策略" options={PRIVACY_ON_ERROR_OPTIONS} value={onError} onChange={setOnError} className="w-[120px]" />
+            </div>
+            <label className="flex items-center justify-between gap-2 pt-0.5 text-fg-body" title="脱敏模式可回填 Claude 普通端点、Codex 账号池及两者订阅直通的 SSE 和 JSON 响应。Codex 订阅直通也支持原生 WebSocket。">
+              <span>响应回填</span>
+              <input type="checkbox" className="app-checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
+            </label>
+          </div>
+          <div className="mt-3 flex justify-end gap-1.5 border-t border-line-soft pt-2.5">
+            <Button size="sm" variant="secondary" onClick={() => setOpen(false)}>关闭</Button>
+            <Button size="sm" icon={Save} disabled={!dirty || busy} loading={busy} onClick={handleSave}>保存</Button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 };
 
@@ -203,8 +251,10 @@ const PrivacyProtectionPage = () => {
     setActionError('');
     try {
       await action();
+      return true;
     } catch (err) {
       setActionError(err.message || String(err));
+      return false;
     } finally {
       setBusy(false);
     }

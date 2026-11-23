@@ -17,6 +17,7 @@ import useContextMenu from '@components/desktop/useContextMenu.jsx';
 import useListKeyboard from '@components/desktop/useListKeyboard.js';
 import ListEmpty from '@components/desktop/ListEmpty.jsx';
 import useConfirm from '@hooks/useConfirm.js';
+import { useNavigationGuard } from '@contexts/NavigationGuardContext.jsx';
 import { resolveErrorMessage } from '@utils/errors.js';
 import { copyTextToClipboard } from '@pages/requests/components/clipboard.js';
 import {
@@ -96,6 +97,8 @@ const PricingPage = () => {
   const handleDirtyChange = useCallback((value) => {
     dirtyRef.current = value;
   }, []);
+
+  useNavigationGuard(() => dirtyRef.current, DISCARD_CONFIRM);
 
   const confirmDiscard = useCallback(async () => {
     if (!dirtyRef.current) return true;

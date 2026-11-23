@@ -168,7 +168,7 @@ test('请求趋势与模型调用整行定高，模型表在面板内滚动，�
     readSource('./components/RequestTrendChart.jsx')
   ]);
 
-  assert.match(pageSource, /<div className="grid h-\[312px\] grid-cols-2 gap-3">\s*<RequestTrendChart/);
+  assert.match(pageSource, /<div className="grid grid-cols-1 gap-3 \[&\>\*\]:h-\[312px\] @\[880px\]:h-\[312px\] @\[880px\]:grid-cols-2 @\[880px\]:\[&\>\*\]:h-full">\s*<RequestTrendChart/);
   assert.doesNotMatch(tableSource, /max-h-\[290px\]|min-h-\[220px\]/);
   assert.match(tableSource, /@container min-h-0 flex-1 overflow-auto/);
   assert.match(trendSource, /relative min-h-\[180px\] w-full flex-1/);

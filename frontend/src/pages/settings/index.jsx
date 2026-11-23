@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Settings,
   RefreshCw,
+  RotateCcw,
   Save,
   AlertCircle,
   CheckCircle2,
@@ -27,6 +28,8 @@ import { ToolbarButton, ToolbarSpacer } from '@components/layout/ToolbarButton.j
 import { AccessShortcutCard, SettingItem, SettingsSection, PortInfo } from './components';
 import AppUpdatePanel from '@components/app-update/AppUpdatePanel.jsx';
 import useConfirm from '@hooks/useConfirm.js';
+import { useNavigationGuard } from '@contexts/NavigationGuardContext.jsx';
+import { formatShortcut, isMacPlatform } from '@utils/platform.js';
 import { SUBSCRIPTION_PROXY_CONFIG_CATEGORY } from '@components/codex-access/subscriptionProxyViewModel.js';
 import { IMAGE_GENERATION_CATEGORY } from '@pages/codex/images/imageSettingsView.js';
 import {
@@ -192,14 +195,41 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess, focus
     return grouped;
   }, [settings]);
 
-  // 处理设置变更
+  // 处理设置变更：改回原值时自动移出变更集，避免虚假脏状态
   const handleSettingChange = useCallback((category, key, value) => {
     const changeKey = `${category}.${key}`;
-    setChanges(prev => ({
-      ...prev,
-      [changeKey]: value
-    }));
+    const original = settings.find((item) => item.category === category && item.key === key);
+    setChanges((prev) => {
+      if (original && String(value) === String(original.value ?? '')) {
+        if (!(changeKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[changeKey];
+        return next;
+      }
+      return {
+        ...prev,
+        [changeKey]: value
+      };
+    });
+  }, [settings]);
+
+  const handleRevertSetting = useCallback((category, key) => {
+    const changeKey = `${category}.${key}`;
+    setChanges((prev) => {
+      if (!(changeKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[changeKey];
+      return next;
+    });
   }, []);
+
+  const handleDiscardAll = useCallback(async () => {
+    const count = Object.keys(changes).length;
+    if (count === 0) return;
+    if (!(await confirm({ title: '放弃未保存的设置？', message: `将撤销 ${count} 项尚未保存的更改。`, confirmText: '放弃更改', danger: true }))) return;
+    setChanges({});
+    setSaveMessage(null);
+  }, [changes, confirm]);
 
   // 获取当前值（优先使用变更值）
   const getCurrentValue = useCallback((setting) => {
@@ -282,38 +312,82 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess, focus
   // 判断是否有未保存的变更
   const hasChanges = Object.keys(changes).length > 0;
   const changeCount = Object.keys(changes).length;
+  const dirtyCategories = useMemo(
+    () => new Set(Object.keys(changes).map((changeKey) => changeKey.split('.')[0])),
+    [changes]
+  );
+
+  // 离开设置页时拦截未保存的更改
+  useNavigationGuard(hasChanges, {
+    title: '放弃未保存的设置？',
+    message: `当前有 ${changeCount} 项设置更改尚未保存，离开后将丢失。`,
+    confirmText: '放弃并离开',
+    danger: true
+  });
+
+  // ⌘S / Ctrl+S 快捷保存
+  useEffect(() => {
+    const mac = isMacPlatform();
+    const handleKeyDown = (event) => {
+      const primary = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+      if (!primary || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      if (hasChanges && !saving && !loading) {
+        void handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleSave, hasChanges, loading, saving]);
 
   // 左侧目录与右侧分组同序：客户端接入 → 服务端口 → 其余分类
   const serverCategory = categories.find((category) => category.name === 'server');
   const otherCategories = categories.filter((category) => category.name !== 'server');
   const sections = [
-    { id: ACCESS_SECTION_ID, label: '客户端接入', icon: KeyRound },
+    { id: ACCESS_SECTION_ID, name: null, label: '客户端接入', icon: KeyRound },
     ...(serverCategory ? [serverCategory] : []).concat(otherCategories).map((category) => ({
       id: sectionIdOf(category.name),
+      name: category.name,
       label: category.label,
       icon: CATEGORY_ICONS[category.name] || Settings
     }))
   ];
 
-  const renderItems = (categoryName) => settingsByCategory[categoryName]?.map((setting) => (
-    <SettingItem
-      key={`${setting.category}.${setting.key}`}
-      setting={setting}
-      value={getCurrentValue(setting)}
-      onChange={handleSettingChange}
-      disabled={saving}
-    />
-  ));
+  const renderItems = (categoryName) => settingsByCategory[categoryName]?.map((setting) => {
+    const changeKey = `${setting.category}.${setting.key}`;
+    return (
+      <SettingItem
+        key={changeKey}
+        setting={setting}
+        value={getCurrentValue(setting)}
+        onChange={handleSettingChange}
+        modified={changeKey in changes}
+        onRevert={handleRevertSetting}
+        disabled={saving}
+      />
+    );
+  });
 
   return (
     <div className="motion-page flex min-h-0 flex-1 bg-pane">
       <PageToolbar subtitle={hasChanges ? `${changeCount} 项更改未保存` : '大部分设置保存后即时生效'}>
         <ToolbarSpacer />
+        {hasChanges && (
+          <ToolbarButton
+            variant="bordered"
+            icon={RotateCcw}
+            label="放弃更改"
+            onClick={handleDiscardAll}
+            disabled={saving || loading}
+          />
+        )}
         <ToolbarButton icon={RefreshCw} title="重新载入" onClick={loadSettings} disabled={saving || loading} />
         <ToolbarButton
           variant="primary"
           icon={Save}
           label={hasChanges ? `保存 (${changeCount})` : '保存'}
+          title={`保存设置  ${formatShortcut('S')}`}
           onClick={handleSave}
           disabled={saving || loading || !hasChanges}
           loading={saving}
@@ -321,21 +395,27 @@ const SettingsPage = ({ onNavigateToCodexAccess, onNavigateToClaudeAccess, focus
       </PageToolbar>
 
       {/* 分组目录：点击滚到对应分组，滚动时高亮当前分组 */}
-      <nav aria-label="设置分组" className="w-[172px] shrink-0 overflow-y-auto border-r border-line px-2 py-3">
-        {sections.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => scrollToSection(id)}
-            aria-current={activeSection === id ? 'true' : undefined}
-            className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px] ${
-              activeSection === id ? 'bg-sidebar-sel font-medium text-fg' : 'text-fg-body'
-            }`}
-          >
-            <Icon size={14} strokeWidth={1.75} className="sidebar-icon shrink-0" />
-            <span className="truncate">{label}</span>
-          </button>
-        ))}
+      <nav aria-label="设置分组" className="w-[152px] shrink-0 overflow-y-auto border-r border-line px-2 py-3 xl:w-[172px]">
+        {sections.map(({ id, name, label, icon: Icon }) => {
+          const isDirtyCategory = Boolean(name && dirtyCategories.has(name));
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => scrollToSection(id)}
+              aria-current={activeSection === id ? 'true' : undefined}
+              className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px] transition-colors ${
+                activeSection === id
+                  ? 'bg-sidebar-sel font-medium text-fg'
+                  : 'text-fg-body hover:bg-sidebar-sel/55 hover:text-fg'
+              }`}
+            >
+              <Icon size={14} strokeWidth={1.75} className="sidebar-icon shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {isDirtyCategory && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-ring" title="此分组有未保存更改" />}
+            </button>
+          );
+        })}
       </nav>
 
       <div ref={scrollRef} onScroll={handleScroll} className="relative min-w-0 flex-1 overflow-y-auto px-7 pb-12">
