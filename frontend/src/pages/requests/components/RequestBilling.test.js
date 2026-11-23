@@ -24,7 +24,7 @@ const compiled = await build({
   plugins: [{
     name: 'shared-react',
     setup(builder) {
-      builder.onResolve({ filter: /^(react(?:\/.*)?|lucide-react)$/ }, ({ path }) => ({
+      builder.onResolve({ filter: /^(react(?:-dom)?(?:\/.*)?|lucide-react)$/ }, ({ path }) => ({
         path: pathToFileURL(require.resolve(path)).href,
         external: true
       }));

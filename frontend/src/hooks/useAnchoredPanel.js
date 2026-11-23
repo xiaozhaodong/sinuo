@@ -3,6 +3,7 @@
 // 点外部或按 Esc 关闭。dismissible=false（如确认弹窗打开中）时暂停这两种关闭方式。
 
 import { useEffect, useState } from 'react';
+import { isInFloatingLayer } from '../utils/floatingLayer.js';
 
 const VIEWPORT_MARGIN = 12;
 const TRIGGER_GAP = 8;
@@ -50,6 +51,8 @@ const useAnchoredPanel = ({ open, setOpen, triggerRef, panelRef, maxWidth, dismi
   useEffect(() => {
     if (!open || !dismissible) return undefined;
     const outside = (event) => {
+      // 面板内下拉框的菜单挂在 body 下，点选项不算点外部
+      if (isInFloatingLayer(event.target)) return;
       if (!triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false);
     };
     const escape = (event) => {

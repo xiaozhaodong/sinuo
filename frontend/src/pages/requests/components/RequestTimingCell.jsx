@@ -32,7 +32,7 @@ export const TimingTooltip = ({ anchorRect, items, notes = [] }) => {
   if (!anchorRect) return null;
   return createPortal(
     <div ref={tooltipRef} role="tooltip"
-      className="pointer-events-none fixed z-[10001] w-max max-w-[calc(100vw-16px)] rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-body shadow-lg ring-1 ring-hairline"
+      className="pointer-events-none fixed z-[140] w-max max-w-[calc(100vw-16px)] rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg-body shadow-lg ring-1 ring-hairline"
       style={{ left: 0, top: 0 }}>
       <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
         {items.map((item) => <React.Fragment key={item.label}>

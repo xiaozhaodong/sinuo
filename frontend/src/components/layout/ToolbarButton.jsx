@@ -10,7 +10,7 @@ import { Loader2 } from 'lucide-react';
 const VARIANTS = {
   plain: 'text-fg-muted hover:bg-surface-mut hover:text-fg',
   bordered: 'border border-line bg-surface text-fg-body shadow-xs hover:bg-surface-sub',
-  primary: 'bg-indigo-600 text-white hover:bg-indigo-700 dark:hover:bg-indigo-500'
+  primary: 'bg-accent-solid text-white hover:bg-accent-solid-hover'
 };
 
 const PRESSED = 'bg-accent-soft text-accent';

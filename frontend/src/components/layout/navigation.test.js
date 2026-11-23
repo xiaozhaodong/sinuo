@@ -44,7 +44,7 @@ test('工具栏标题来自导航配置，隐藏页给固定标题，未知页�
 test('外壳：侧边栏 + 统一工具栏，内容区不再限宽、不再铺点阵纹理', async () => {
   const appSource = await readFile(appSourcePath, 'utf8');
   assert.match(appSource, /<Sidebar\b/);
-  assert.match(appSource, /<AppToolbar title=\{pageTitleOf\(activeTab\)\} \/>/);
+  assert.match(appSource, /<AppToolbar title=\{pageTitleOf\(activeTab\)\}/);
   assert.match(appSource, /useNavigationShortcuts\(switchTab\)/);
   assert.match(appSource, /<main id="app-scroll-container"/);
   assert.doesNotMatch(appSource, /max-w-7xl/);

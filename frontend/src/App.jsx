@@ -2,12 +2,15 @@
 // 主 App 组件 - Dashboard 入口
 // 2025-11-28 (Updated 2025-12-12)
 // 2026-10-07：桌面化外壳——左侧边栏 + 统一工具栏，内容区铺满窗口
+// 2026-11：支持侧边栏与检查器显隐、跨页未保存防丢保护与快捷键速查
 // ============================================
 
-import { useState, Suspense, lazy, useCallback, useEffect, startTransition } from 'react';
+import { useState, Suspense, lazy, useCallback, useEffect, useRef, startTransition } from 'react';
 import Sidebar from '@components/layout/Sidebar.jsx';
 import useAppUpdate from '@components/app-update/useAppUpdate.js';
-import { AppToolbar, ToolbarProvider } from '@components/layout/AppToolbar.jsx';
+import { resolveUpdateTrigger } from '@components/app-update/appUpdateView.js';
+import { AppToolbar, ToolbarProvider, useShellLayout } from '@components/layout/AppToolbar.jsx';
+import ShortcutsDialog from '@components/layout/ShortcutsDialog.jsx';
 import { pageTitleOf } from '@components/layout/navigation.js';
 import StartupScreen from '@components/layout/StartupScreen.jsx';
 import ToastHost from '@components/notifications/ToastHost.jsx';
@@ -15,6 +18,7 @@ import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
 import useGlobalToasts from '@hooks/useGlobalToasts.js';
 import useNavigationShortcuts from '@hooks/useNavigationShortcuts.js';
+import useShellShortcuts from '@hooks/useShellShortcuts.js';
 import useWindowFocus from '@hooks/useWindowFocus.js';
 import { getMigrationStatus, getSystemStatus, isWailsEnvironment } from '@utils/wailsApi.js';
 import { connectTrayNavigation } from '@utils/trayNavigation.js';
@@ -22,6 +26,7 @@ import { setPendingRequestsFilters } from '@utils/overviewHandoff.js';
 import { ThemeProvider } from '@contexts/ThemeContext.jsx';
 import { ToastProvider } from '@contexts/ToastContext.jsx';
 import { TimezoneProvider } from '@/contexts/TimezoneContext.jsx';
+import { NavigationGuardProvider, useBeforeNavigate } from '@contexts/NavigationGuardContext.jsx';
 // 概览是启动首屏，直接打进入口：懒加载只会在启动时多出一段 Suspense 占位（React 19 至少停留 300ms）
 import OverviewPage from '@pages/overview/index.jsx';
 
@@ -79,6 +84,78 @@ const preloadPages = () => {
 };
 
 // ============================================
+// 桌面外壳（消费 ToolbarProvider 的侧边栏 / 检查器 / 快捷键状态）
+// ============================================
+
+const AppShell = ({
+  activeTab,
+  onTabChange,
+  connectionStatus,
+  proxyStatus,
+  appUpdate,
+  onOpenUpdateSettings,
+  onOpenServerSettings,
+  onOpenClaudeAccess,
+  onOpenCodexAccess,
+  windowFocused,
+  toasts,
+  pendingCount,
+  onDismissToast,
+  children
+}) => {
+  const shell = useShellLayout();
+  const updateTrigger = resolveUpdateTrigger(appUpdate.status);
+  const toggleShortcuts = useCallback(() => {
+    shell?.setShortcutsOpen((open) => !open);
+  }, [shell]);
+
+  useShellShortcuts({
+    onToggleSidebar: shell?.toggleSidebar,
+    onToggleInspector: shell?.toggleInspector,
+    canToggleInspector: Boolean(shell?.hasInspector),
+    onToggleShortcuts: toggleShortcuts
+  });
+
+  return (
+    <div className={`motion-app flex h-screen overflow-hidden bg-canvas font-sans text-fg ${windowFocused ? '' : 'window-inactive'}`}>
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={onTabChange}
+        connectionStatus={connectionStatus}
+        proxyStatus={proxyStatus}
+        appUpdate={appUpdate}
+        onOpenUpdateSettings={onOpenUpdateSettings}
+        onOpenServerSettings={onOpenServerSettings}
+        onOpenClaudeAccess={onOpenClaudeAccess}
+        onOpenCodexAccess={onOpenCodexAccess}
+        collapsed={Boolean(shell?.sidebarCollapsed)}
+        onToggleCollapse={shell?.toggleSidebar}
+        onOpenShortcuts={() => shell?.setShortcutsOpen(true)}
+      />
+      {appUpdate.dialogs}
+      <ShortcutsDialog open={Boolean(shell?.shortcutsOpen)} onClose={() => shell?.setShortcutsOpen(false)} />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <AppToolbar title={pageTitleOf(activeTab)} sidebarNotice={updateTrigger?.badge ? `有新版本 ${appUpdate.status.latest_version}` : ''} />
+
+        {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
+        <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={onDismissToast} />
+
+        {/* 主内容区：铺满窗口，不加统一内边距——列表页贴边（表格 + 检查器），
+            滚动型页面自己加 p-5。内层固定为窗口剩余高度（h-full 而不是 min-h-full）：
+            列表页（flex-1 + min-h-0）恰好占满、在内部滚动，内容再高也不会把整页撑长、把状态栏挤出窗口；
+            滚动型页面的内容超出时照常由 main 滚动 */}
+        <main id="app-scroll-container" className="relative min-h-0 flex-1 overflow-y-auto overscroll-none">
+          <div className="flex h-full flex-col">
+            {children}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
 // App 组件
 // ============================================
 
@@ -88,6 +165,7 @@ const AppRoutes = () => {
   const [activeClaudeTab, setActiveClaudeTab] = useState('endpoints');
   const [settingsFocusSection, setSettingsFocusSection] = useState(null);
   const appUpdate = useAppUpdate();
+  const beforeNavigate = useBeforeNavigate();
   // 请求页只在挂载时消费一次筛选交接；托盘带条件跳转时若已停在请求页，换 key 让它重新挂载
   const [requestsPageKey, setRequestsPageKey] = useState(0);
   const [migrationStatus, setMigrationStatus] = useState({ state: 'initializing' });
@@ -130,55 +208,74 @@ const AppRoutes = () => {
   // SSE 连接状态（用于全局状态指示）
   const { connectionStatus } = useSSE(handleRealtimeEvent, { events: 'status,notification' });
 
-  // 切页一律走 transition：新页面代码未就绪时保留当前页，而不是露出 Suspense 兜底。
+  // 切页一律走 transition 并经过未保存更改保护：新页面代码未就绪时保留当前页，而不是露出 Suspense 兜底。
   // 兜底一旦露出，React 19 会让它至少停留 300ms 才换成内容，切页会显得拖沓。
+  const runGuardedNavigation = useCallback(async (targetTab, apply) => {
+    if (targetTab !== activeTab && !(await beforeNavigate())) return;
+    startTransition(apply);
+  }, [activeTab, beforeNavigate]);
+
+  // 托盘导航只订阅一次，经 ref 取到最新的保护逻辑
+  const guardedNavigationRef = useRef(runGuardedNavigation);
+  useEffect(() => {
+    guardedNavigationRef.current = runGuardedNavigation;
+  }, [runGuardedNavigation]);
+
   const switchTab = useCallback((tab) => {
-    startTransition(() => setActiveTab(tab));
-  }, []);
+    void runGuardedNavigation(tab, () => setActiveTab(tab));
+  }, [runGuardedNavigation]);
 
   useNavigationShortcuts(switchTab);
   const windowFocused = useWindowFocus();
 
   const navigateToCodexAccess = useCallback(() => {
-    startTransition(() => {
+    void runGuardedNavigation('account-pool', () => {
       setActiveCodexTab('client-access');
       setActiveTab('account-pool');
     });
-  }, []);
+  }, [runGuardedNavigation]);
 
   const navigateToAppUpdate = useCallback(() => {
-    startTransition(() => {
+    void runGuardedNavigation('settings', () => {
       setSettingsFocusSection('app_update');
       setActiveTab('settings');
     });
-  }, []);
+  }, [runGuardedNavigation]);
+
+  const navigateToServerSettings = useCallback(() => {
+    void runGuardedNavigation('settings', () => {
+      setSettingsFocusSection('server');
+      setActiveTab('settings');
+    });
+  }, [runGuardedNavigation]);
+
   const clearSettingsFocus = useCallback(() => setSettingsFocusSection(null), []);
 
   const navigateToClaudeAccess = useCallback(() => {
-    startTransition(() => {
+    void runGuardedNavigation('endpoints', () => {
       setActiveClaudeTab('client-access');
       setActiveTab('endpoints');
     });
-  }, []);
+  }, [runGuardedNavigation]);
 
   const navigateToClaudeModelRouting = useCallback(() => {
-    startTransition(() => {
+    void runGuardedNavigation('endpoints', () => {
       setActiveClaudeTab('routing');
       setActiveTab('endpoints');
     });
-  }, []);
+  }, [runGuardedNavigation]);
 
   const navigateToCodexModelRouting = useCallback(() => {
-    startTransition(() => {
+    void runGuardedNavigation('account-pool', () => {
       setActiveCodexTab('routing');
       setActiveTab('account-pool');
     });
-  }, []);
+  }, [runGuardedNavigation]);
 
   useEffect(() => {
     if (!isWailsEnvironment()) return undefined;
     return connectTrayNavigation(() => import('@wailsio/runtime'), (route) => {
-      startTransition(() => {
+      void guardedNavigationRef.current(route.tab, () => {
         setActiveTab(route.tab);
         if (route.claudeTab) setActiveClaudeTab(route.claudeTab);
         if (route.codexTab) setActiveCodexTab(route.codexTab);
@@ -269,36 +366,25 @@ const AppRoutes = () => {
     <ToastProvider showToast={showToast}>
       <TimezoneProvider>
         <ToolbarProvider>
-          <div className={`motion-app flex h-screen overflow-hidden bg-canvas font-sans text-fg ${windowFocused ? '' : 'window-inactive'}`}>
-            <Sidebar
-              activeTab={activeTab}
-              onTabChange={switchTab}
-              connectionStatus={connectionStatus}
-              proxyStatus={proxyStatus}
-              appUpdate={appUpdate}
-              onOpenUpdateSettings={navigateToAppUpdate}
-            />
-            {appUpdate.dialogs}
-
-            <div className="flex min-w-0 flex-1 flex-col">
-              <AppToolbar title={pageTitleOf(activeTab)} />
-
-              {/* 应用窗口内全局 Toast；不会调用 macOS 通知中心。 */}
-              <ToastHost toasts={toasts} pendingCount={pendingCount} onDismiss={dismissToast} />
-
-              {/* 主内容区：铺满窗口，不加统一内边距——列表页贴边（表格 + 检查器），
-                  滚动型页面自己加 p-5。内层固定为窗口剩余高度（h-full 而不是 min-h-full）：
-                  列表页（flex-1 + min-h-0）恰好占满、在内部滚动，内容再高也不会把整页撑长、把状态栏挤出窗口；
-                  滚动型页面的内容超出时照常由 main 滚动 */}
-              <main id="app-scroll-container" className="relative min-h-0 flex-1 overflow-y-auto overscroll-none">
-                <div className="flex h-full flex-col">
-                  <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
-                    {renderPage()}
-                  </Suspense>
-                </div>
-              </main>
-            </div>
-          </div>
+          <AppShell
+            activeTab={activeTab}
+            onTabChange={switchTab}
+            connectionStatus={connectionStatus}
+            proxyStatus={proxyStatus}
+            appUpdate={appUpdate}
+            onOpenUpdateSettings={navigateToAppUpdate}
+            onOpenServerSettings={navigateToServerSettings}
+            onOpenClaudeAccess={navigateToClaudeAccess}
+            onOpenCodexAccess={navigateToCodexAccess}
+            windowFocused={windowFocused}
+            toasts={toasts}
+            pendingCount={pendingCount}
+            onDismissToast={dismissToast}
+          >
+            <Suspense fallback={<LoadingSpinner text="加载页面..." />}>
+              {renderPage()}
+            </Suspense>
+          </AppShell>
         </ToolbarProvider>
       </TimezoneProvider>
     </ToastProvider>
@@ -311,7 +397,9 @@ const AppRoutes = () => {
 function App() {
   return (
     <ThemeProvider>
-      <AppRoutes />
+      <NavigationGuardProvider>
+        <AppRoutes />
+      </NavigationGuardProvider>
     </ThemeProvider>
   );
 }

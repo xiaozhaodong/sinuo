@@ -23,7 +23,7 @@ const ModelTooltip = ({ anchorRect, children, tooltipId }) => {
     <span
       id={tooltipId}
       role="tooltip"
-      className="pointer-events-none fixed z-[10001] max-w-[360px] -translate-x-1/2 break-all rounded-lg border border-line bg-inverted px-3 py-2 text-xs font-mono leading-5 whitespace-normal text-fg-inverted shadow-lg"
+      className="pointer-events-none fixed z-[140] max-w-[360px] -translate-x-1/2 break-all rounded-lg border border-line bg-inverted px-3 py-2 text-xs font-mono leading-5 whitespace-normal text-fg-inverted shadow-lg"
       style={{ left: `${centerX}px`, top: `${anchorRect.bottom + 6}px` }}
     >
       {children}

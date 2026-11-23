@@ -1,4 +1,5 @@
 import { lockAppScroll } from '../utils/scrollLock.js';
+import { isInFloatingLayer } from '../utils/floatingLayer.js';
 
 const getDocumentTarget = () => (typeof document === 'undefined' ? null : document);
 
@@ -34,6 +35,8 @@ export const createModalLifecycleManager = () => {
           return;
         }
         if (event.key !== 'Tab' || !focusTrapElement) return;
+        // 焦点在本模态弹出的浮层（下拉菜单）里时，Tab 交给浮层自己处理
+        if (isInFloatingLayer(documentTarget?.activeElement)) return;
         const elements = getFocusableElements(focusTrapElement);
         const index = elements.indexOf(documentTarget?.activeElement);
         // 中间控件沿用浏览器的 Tab 顺序；仅在边界或焦点游离时接管。
@@ -46,6 +49,8 @@ export const createModalLifecycleManager = () => {
 
       const handleFocusIn = (event) => {
         if (stack[stack.length - 1] !== entry || focusTrapElement.contains(event.target)) return;
+        // 下拉菜单等浮层挂在 body 下，属于当前模态的一部分，不把焦点拉回
+        if (isInFloatingLayer(event.target)) return;
         (getFocusableElements(focusTrapElement)[0] || focusTrapElement).focus();
       };
 

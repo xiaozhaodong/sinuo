@@ -1,45 +1,12 @@
 import { useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Button } from '@components/ui';
-import useModalLifecycle from '@hooks/useModalLifecycle.js';
+import { AlertDialog } from '@components/ui/ConfirmDialog.jsx';
 
 const CLEAR_CONFIRM_TEXT = '清空本地敏感值';
 
-const DialogFrame = ({ title, loading, onClose, initialFocusRef, width = 340, children }) => {
-  const dialogRef = useRef(null);
-  const handleRequestClose = () => {
-    if (!loading) onClose();
-  };
-
-  useModalLifecycle({
-    open: true,
-    onClose: handleRequestClose,
-    initialFocusRef: initialFocusRef ?? dialogRef,
-    focusTrapRef: dialogRef
-  });
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[18vh]">
-      <div className="motion-overlay absolute inset-0 bg-overlay" onClick={handleRequestClose} />
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        style={{ maxWidth: width }}
-        className="motion-dialog relative w-full rounded-xl border border-line bg-surface p-5 shadow-2xl ring-1 ring-hairline focus:outline-none"
-      >
-        {children}
-      </div>
-    </div>,
-    document.body
-  );
-};
-
 export const DeleteExactSecretDialog = ({ secret, loading, onConfirm, onClose }) => (
-  <DialogFrame title="确认删除本地敏感值" loading={loading} onClose={onClose}>
+  <AlertDialog title="确认删除本地敏感值" busy={loading} onClose={onClose}>
     <AlertTriangle className="text-danger" size={28} strokeWidth={1.75} />
     <h3 className="mt-3 text-[13px] font-semibold text-fg">确认删除</h3>
     <p className="mt-1.5 text-xs text-fg-muted">删除后将立即停止匹配，且无法恢复</p>
@@ -58,7 +25,7 @@ export const DeleteExactSecretDialog = ({ secret, loading, onConfirm, onClose })
         确认删除
       </Button>
     </div>
-  </DialogFrame>
+  </AlertDialog>
 );
 
 export const ClearExactSecretsDialog = ({ loading, onConfirm, onClose }) => {
@@ -72,7 +39,7 @@ export const ClearExactSecretsDialog = ({ loading, onConfirm, onClose }) => {
   };
 
   return (
-    <DialogFrame title="确认清空本地敏感值" loading={loading} onClose={onClose} width={400} initialFocusRef={confirmInputRef}>
+    <AlertDialog title="确认清空本地敏感值" busy={loading} onClose={onClose} width={400} initialFocusRef={confirmInputRef}>
       <form onSubmit={handleSubmit}>
         <AlertTriangle className="text-danger" size={28} strokeWidth={1.75} />
         <h3 className="mt-3 text-[13px] font-semibold text-fg">确认清空</h3>
@@ -99,6 +66,6 @@ export const ClearExactSecretsDialog = ({ loading, onConfirm, onClose }) => {
           </Button>
         </div>
       </form>
-    </DialogFrame>
+    </AlertDialog>
   );
 };

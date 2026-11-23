@@ -121,7 +121,7 @@ const ContextMenu = ({ x, y, anchorRect = null, anchorElement = null, items, onC
               onClose();
               item.onSelect?.();
             }}
-            className={`group flex h-6 w-full items-center gap-2 whitespace-nowrap rounded px-2 text-left hover:bg-indigo-600 hover:text-white focus-visible:bg-indigo-600 focus-visible:text-white focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 ${
+            className={`group flex h-6 w-full items-center gap-2 whitespace-nowrap rounded px-2 text-left hover:bg-accent-solid hover:text-white focus-visible:bg-accent-solid focus-visible:text-white focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 ${
               item.danger ? 'text-danger' : 'text-fg'
             }`}
           >

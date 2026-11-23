@@ -14,7 +14,7 @@ const Switch = ({ checked = false, onChange, disabled = false, label, title }) =
     disabled={disabled}
     onClick={() => onChange?.(!checked)}
     className={`relative block h-[18px] w-8 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-      checked ? 'bg-indigo-600' : 'bg-line-strong'
+      checked ? 'bg-accent-solid' : 'bg-line-strong'
     }`}
   >
     <span

@@ -43,6 +43,8 @@
   --app-accent-soft: #eef2ff;
   --app-accent-line: #c7d2fe;
   --app-accent-ring: #6366f1;
+  --app-accent-solid: #4f46e5;
+  --app-accent-solid-hover: #4338ca;
 
   /* 状态：成功 */
   --app-success: #047857;
@@ -71,10 +73,11 @@
   --app-sidebar: #eef1f5;
   --app-sidebar-sel: rgb(15 23 42 / 0.08);
 
-  /* 桌面化内容区：分组表单 / 仪表盘的浅灰底、检查器底色、表格斑马纹与选中行 */
+  /* 桌面化内容区：分组表单 / 仪表盘的浅灰底、检查器底色、表格斑马纹、悬停行与选中行 */
   --app-pane: #f4f5f7;
   --app-inspector: #fbfcfd;
   --app-zebra: #f8fafc;
+  --app-row-hover: #f1f5f9;
   --app-row-selected: color-mix(in srgb, var(--app-accent-ring) 13%, transparent);
 
   /* 不随主题反转：暗色需更深 / 换白色微透（方案 §4.3） */
@@ -119,6 +122,8 @@
   --app-accent-soft: #232045;
   --app-accent-line: #3730a3;
   --app-accent-ring: #818cf8;
+  --app-accent-solid: #4f46e5;
+  --app-accent-solid-hover: #6366f1;
 
   --app-success: #6ee7b7;
   --app-success-soft: #052e23;
@@ -142,6 +147,7 @@
   --app-pane: #0b1120;
   --app-inspector: #111a2c;
   --app-zebra: rgb(255 255 255 / 0.022);
+  --app-row-hover: rgb(255 255 255 / 0.055);
   --app-row-selected: color-mix(in srgb, var(--app-accent-ring) 22%, transparent);
 
   --app-overlay: rgb(2 6 23 / 0.66);
@@ -183,6 +189,8 @@
   --color-accent-soft: var(--app-accent-soft);
   --color-accent-line: var(--app-accent-line);
   --color-accent-ring: var(--app-accent-ring);
+  --color-accent-solid: var(--app-accent-solid);
+  --color-accent-solid-hover: var(--app-accent-solid-hover);
 
   --color-success: var(--app-success);
   --color-success-soft: var(--app-success-soft);
@@ -755,10 +763,17 @@
   }
 }
 
-/* 自定义滚动条 */
+/* 全局统一细滚动条（兼容显式 .custom-scrollbar）：
+   在 Windows / Linux 及 macOS「始终显示滚动条」下保持一致的 6px 外观，避免同一窗口混用粗细两种滚动条。 */
+*::-webkit-scrollbar,
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
+}
+
+*::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -766,11 +781,13 @@
   border-radius: 3px;
 }
 
+*::-webkit-scrollbar-thumb,
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
+*::-webkit-scrollbar-thumb:hover,
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
@@ -779,9 +796,22 @@
    Chromium 121+ / Safari 18.2+ 一旦看到 scrollbar-color 就切标准渲染，
    会忽略上面的伪元素规则，6px 宽度失效。 */
 @supports not selector(::-webkit-scrollbar) {
+  *,
   .custom-scrollbar {
     scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) transparent;
+  }
+
+  .custom-scrollbar {
     scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+  }
+}
+
+/* 统一键盘焦点环：置于 base 层，组件若声明了 focus-visible:outline-none 或 focus-visible:ring-* 可直接覆盖。 */
+@layer base {
+  :is(button, a, summary, [role="button"], [role="tab"], [role="radio"], [role="switch"]):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--app-accent-ring) 70%, transparent);
+    outline-offset: 1px;
   }
 }
 
@@ -908,6 +938,11 @@ input[type="number"]::-webkit-outer-spin-button {
 
   .desk-table.requests-table tbody tr[data-zebra="1"] > td {
     background-color: var(--app-zebra);
+  }
+
+  /* 静态管理表的轻悬停底色：避开分组行、已选中行与高频更新的 requests-table */
+  .desk-table:not(.requests-table) tbody tr:not(.desk-group):not([aria-selected="true"]):hover > td {
+    background-color: var(--app-row-hover);
   }
 
   .desk-table tbody tr[aria-selected="true"] > td,

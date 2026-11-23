@@ -1,12 +1,24 @@
 // ============================================
 // 布局组件 - 侧边栏导航
 // 2026-10-07：替代顶部胶囊页签，分「监控 / 路由 / 策略」三组，设置与代理状态固定在底部
+// 2026-11：支持折叠收起（⌥⌘S）、导航轻悬停态、底部状态直达与快捷键速查入口
 // ============================================
 // 顶部 52px 与工具栏同高：macOS 下留给系统红绿灯（统一工具栏，实测横跨 x≈19–79pt），
 // 其他平台没有红绿灯，放品牌标识。
 
-import { Activity, Boxes, LayoutDashboard, ScrollText, Server, Settings, ShieldCheck, Tag } from 'lucide-react';
-import { formatShortcut, isMacPlatform } from '@utils/platform.js';
+import {
+  Activity,
+  Boxes,
+  Keyboard,
+  LayoutDashboard,
+  PanelLeftClose,
+  ScrollText,
+  Server,
+  Settings,
+  ShieldCheck,
+  Tag
+} from 'lucide-react';
+import { formatAltShortcut, formatShortcut, isMacPlatform } from '@utils/platform.js';
 import useClaudeCodeEntry from '@components/claude-code-entry/useClaudeCodeEntry.js';
 import useCodexSubscriptionProxy from '@components/codex-access/useCodexSubscriptionProxy.js';
 import BrandMark from './BrandMark.jsx';
@@ -34,8 +46,10 @@ const NavItem = ({ item, active, onSelect, className = '' }) => {
       onClick={() => onSelect(item.name)}
       aria-current={active ? 'page' : undefined}
       title={`${item.label}  ${formatShortcut(item.shortcut)}`}
-      className={`flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] ${
-        active ? 'bg-sidebar-sel font-medium text-fg' : 'text-fg-body'
+      className={`flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors ${
+        active
+          ? 'bg-sidebar-sel font-medium text-fg'
+          : 'text-fg-body hover:bg-sidebar-sel/55 hover:text-fg'
       } ${className}`}
     >
       <Icon size={16} strokeWidth={1.75} className="sidebar-icon shrink-0" />
@@ -44,19 +58,24 @@ const NavItem = ({ item, active, onSelect, className = '' }) => {
   );
 };
 
-const StatusRow = ({ row }) => (
-  <div className="flex items-center gap-2 text-xs text-fg-body" title={row.title}>
+const StatusRow = ({ row, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={onClick ? `${row.title}（点击前往配置）` : row.title}
+    className="flex w-full items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs text-fg-body transition-colors hover:bg-sidebar-sel/60 hover:text-fg"
+  >
     <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${row.dot}`} />
     <span className="truncate">
       {row.name}
       {row.detail && <span className="text-fg-muted"> · {row.detail}</span>}
     </span>
     {row.port > 0 && <span className="ml-auto shrink-0 font-mono text-[11.5px] text-fg-muted">:{row.port}</span>}
-  </div>
+  </button>
 );
 
-// 主端口固定显示；两个独立入口运行中才各占一行
-const ProxyStatusList = ({ connectionStatus, proxyStatus }) => {
+// 主端口固定显示；两个独立入口运行中才各占一行，点击直达对应配置页
+const ProxyStatusList = ({ connectionStatus, proxyStatus, onOpenServerSettings, onOpenClaudeAccess, onOpenCodexAccess }) => {
   const { info: claudeCodeEntry } = useClaudeCodeEntry();
   const codexEntry = useCodexSubscriptionProxy();
   const rows = [
@@ -65,25 +84,71 @@ const ProxyStatusList = ({ connectionStatus, proxyStatus }) => {
     resolveCodexEntryStatus(codexEntry)
   ].filter(Boolean);
 
+  const handlerFor = (key) => {
+    if (key === 'main') return onOpenServerSettings;
+    if (key === 'claude-code') return onOpenClaudeAccess;
+    if (key === 'codex') return onOpenCodexAccess;
+    return undefined;
+  };
+
   return (
-    <div className="flex flex-col gap-1 px-2 pb-1.5 pt-1">
-      {rows.map((row) => <StatusRow key={row.key} row={row} />)}
+    <div className="flex flex-col gap-0.5 px-0.5 pb-1.5 pt-1">
+      {rows.map((row) => <StatusRow key={row.key} row={row} onClick={handlerFor(row.key)} />)}
     </div>
   );
 };
 
-const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {}, appUpdate, onOpenUpdateSettings }) => {
+const Sidebar = ({
+  activeTab,
+  onTabChange,
+  connectionStatus = 'connected',
+  proxyStatus = {},
+  appUpdate,
+  onOpenUpdateSettings,
+  onOpenServerSettings,
+  onOpenClaudeAccess,
+  onOpenCodexAccess,
+  collapsed = false,
+  onToggleCollapse,
+  onOpenShortcuts
+}) => {
   const mac = isMacPlatform();
+
+  if (collapsed) return null;
 
   return (
     <nav aria-label="主导航" className="flex w-[220px] shrink-0 flex-col border-r border-line bg-sidebar">
-      <div className="app-drag flex h-[52px] shrink-0 items-center px-4">
+      <div className="app-drag flex h-[52px] shrink-0 items-center px-3">
         {!mac && (
-          <div className="flex items-center gap-2 text-xs font-medium text-fg-body">
+          <div className="flex items-center gap-2 pl-1 text-xs font-medium text-fg-body">
             <BrandMark className="h-3.5 w-3.5" />
             Sinuo
           </div>
         )}
+        <div className="ml-auto flex items-center gap-0.5">
+          {onOpenShortcuts && (
+            <button
+              type="button"
+              onClick={onOpenShortcuts}
+              aria-label="快捷键速查"
+              title={`快捷键速查  ${formatShortcut('/')}`}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-fg-muted transition-colors hover:bg-sidebar-sel hover:text-fg"
+            >
+              <Keyboard size={15} strokeWidth={1.75} />
+            </button>
+          )}
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              aria-label="隐藏侧边栏"
+              title={`隐藏侧边栏  ${formatAltShortcut('S')}`}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-fg-muted transition-colors hover:bg-sidebar-sel hover:text-fg"
+            >
+              <PanelLeftClose size={15} strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 pb-2.5">
@@ -98,7 +163,13 @@ const Sidebar = ({ activeTab, onTabChange, connectionStatus = 'connected', proxy
       </div>
 
       <div className="border-t border-line px-2.5 pb-2.5 pt-2">
-        <ProxyStatusList connectionStatus={connectionStatus} proxyStatus={proxyStatus} />
+        <ProxyStatusList
+          connectionStatus={connectionStatus}
+          proxyStatus={proxyStatus}
+          onOpenServerSettings={onOpenServerSettings}
+          onOpenClaudeAccess={onOpenClaudeAccess}
+          onOpenCodexAccess={onOpenCodexAccess}
+        />
         <div className="flex items-center gap-1">
           <NavItem item={SETTINGS_NAV_ITEM} active={activeTab === SETTINGS_NAV_ITEM.name} onSelect={onTabChange} className="flex-1" />
           <AppUpdateTrigger update={appUpdate} onOpenSettings={onOpenUpdateSettings} />
