@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { resolveErrorMessage } from '../utils/errors.js';
 import {
+  appendLogBatch,
+  createInitialLogBuffer,
+  replaceRecentLogs,
+} from './useWailsLogs.helpers.js';
+import {
   getRecentLogs,
   getLogStreamStatus,
   startLogStream,
@@ -18,7 +23,7 @@ import {
  * @param {boolean} options.autoStart 是否自动启动流（默认true）
  * @param {string} options.levelFilter 日志级别过滤（默认null，显示全部）
  * @param {boolean} options.isActive 页面是否可见（默认true）
- * @returns {Object} { logs, loading, error, isStreaming, start, stop, clear, refresh }
+ * @returns {Object} { logs, receivedCount, loading, error, isStreaming, start, stop, clear, refresh }
  */
 export function useWailsLogs(options = {}) {
   const {
@@ -28,7 +33,8 @@ export function useWailsLogs(options = {}) {
     isActive = true, // 新增：页面可见性
   } = options;
 
-  const [logs, setLogs] = useState([]);
+  const [logBuffer, setLogBuffer] = useState(createInitialLogBuffer);
+  const { logs, receivedCount } = logBuffer;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -40,12 +46,6 @@ export function useWailsLogs(options = {}) {
   // 唯一实例 ID，用于防止 StrictMode 下的重复订阅
   const instanceIdRef = useRef(Date.now().toString(36) + Math.random().toString(36).slice(2));
 
-  // 日志级别过滤
-  const filterLogs = useCallback((logList) => {
-    if (!levelFilter) return logList;
-    return logList.filter(log => log.level === levelFilter);
-  }, [levelFilter]);
-
   // 加载历史日志
   const loadRecentLogs = useCallback(async () => {
     try {
@@ -53,7 +53,7 @@ export function useWailsLogs(options = {}) {
       setError(null);
       const recentLogs = await getRecentLogs(maxLogs);
       if (isMountedRef.current) {
-        setLogs(filterLogs(recentLogs || []));
+        setLogBuffer((prevBuffer) => replaceRecentLogs(prevBuffer, recentLogs || [], maxLogs, levelFilter));
       }
     } catch (err) {
       console.error('❌ 加载历史日志失败:', err);
@@ -65,7 +65,7 @@ export function useWailsLogs(options = {}) {
         setLoading(false);
       }
     }
-  }, [maxLogs, filterLogs]);
+  }, [maxLogs, levelFilter]);
 
   // 启动日志流
   const startStreaming = useCallback(async () => {
@@ -102,11 +102,7 @@ export function useWailsLogs(options = {}) {
           return;
         }
 
-        setLogs(prevLogs => {
-          // 合并新日志，限制总数
-          const newLogs = [...prevLogs, ...batchLogs];
-          return filterLogs(newLogs.slice(-maxLogs));
-        });
+        setLogBuffer((prevBuffer) => appendLogBatch(prevBuffer, batchLogs, maxLogs, levelFilter));
       });
 
       unsubscribeRef.current = unsubscribe;
@@ -122,7 +118,7 @@ export function useWailsLogs(options = {}) {
     } finally {
       isStartingRef.current = false;
     }
-  }, [maxLogs, filterLogs]);
+  }, [maxLogs, levelFilter]);
 
   // 停止日志流
   const stopStreaming = useCallback(async () => {
@@ -150,7 +146,7 @@ export function useWailsLogs(options = {}) {
 
   // 清空日志
   const clearLogs = useCallback(() => {
-    setLogs([]);
+    setLogBuffer(createInitialLogBuffer());
   }, []);
 
   // 刷新日志
@@ -206,6 +202,7 @@ export function useWailsLogs(options = {}) {
 
   return {
     logs,
+    receivedCount,
     loading,
     error,
     isStreaming,
