@@ -27,7 +27,7 @@ import (
 
 // 版本信息
 var (
-	Version   = "6.4.4"
+	Version   = "6.5.0"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
