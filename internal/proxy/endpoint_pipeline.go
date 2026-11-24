@@ -180,7 +180,7 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			EndpointName: ep.Config.Name,
 			RouteMode:    routeDecision.Mode,
 		}, nextLegReason, false)
-		lifecycleManager.UpdateStatus("forwarding", i, 0)
+		lifecycleManager.UpdateStatus("forwarding", 0)
 		*r = *r.WithContext(context.WithValue(r.Context(), "selected_endpoint", ep.Config.Name))
 
 		resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardForPipeline(
@@ -212,7 +212,6 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 			bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 		}
 		decision := decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
-		lifecycleManager.IncrementAttempt()
 
 		// §9.2 普通 429 同端点短重试（最多 1 次；gate 未取得或等待超限则跳过）
 		if decision.Action == EndpointForwardRateLimited {
@@ -248,7 +247,6 @@ func (h *Handler) handleEndpointPipeline(ctx context.Context, w http.ResponseWri
 									bodySample = readAndRestoreResponseBody(resp, endpointClientErrorBodySampleLimit)
 								}
 								decision = decideEndpointForwardOutcome(forwardErr, resp, traceState, bodySample)
-								lifecycleManager.IncrementAttempt()
 							}
 						}
 					}
@@ -532,7 +530,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 // onStreamFailure 在流式失败（非取消）时调用，端点管线用它记软失败；订阅直通传 nil。
 func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, flusher http.Flusher, lifecycleManager *RequestLifecycleManager, endpointName string, onStreamFailure func(), upstreamCancel context.CancelFunc) (EndpointProcessOutcome, string) {
 	connID := lifecycleManager.GetRequestID()
-	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
+	lifecycleManager.UpdateStatus("processing", resp.StatusCode)
 	w.WriteHeader(resp.StatusCode)
 
 	tokenParser := NewTokenParserWithUsageTracker(connID, lifecycleManager.usageTracker)
@@ -640,7 +638,7 @@ func (h *Handler) processEndpointStreamingResponse(ctx context.Context, w http.R
 // processEndpointRegularResponse P2 常规响应处理（自旧循环壳迁移，内部逻辑只搬不改）
 func (h *Handler) processEndpointRegularResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, lifecycleManager *RequestLifecycleManager, endpointName string) (EndpointProcessOutcome, string) {
 	connID := lifecycleManager.GetRequestID()
-	lifecycleManager.UpdateStatus("processing", lifecycleManager.GetAttemptCount(), resp.StatusCode)
+	lifecycleManager.UpdateStatus("processing", resp.StatusCode)
 	defer resp.Body.Close()
 
 	responseBytes, err := h.readRegularResponse(resp, connID)

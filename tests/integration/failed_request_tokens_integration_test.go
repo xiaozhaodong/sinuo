@@ -47,7 +47,7 @@ func TestFailedRequestTokensIntegration(t *testing.T) {
 	rlm.StartRequest("192.168.1.100", "integration-test-client", "POST", "/v1/messages", false)
 
 	// 更新状态为处理中
-	rlm.UpdateStatus("processing", 0, 200)
+	rlm.UpdateStatus("processing", 200)
 
 	// 模拟处理过程中收到一些Token然后失败
 	tokens := &tracking.TokenUsage{

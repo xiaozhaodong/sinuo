@@ -267,8 +267,8 @@ func TestRouteDecisionAt_IsRequestScoped(t *testing.T) {
 	}, "endpoint-b")
 
 	// B 后写，A 再更新状态；A 仍必须使用自己的请求级决策时间。
-	requestB.UpdateStatus("forwarding", 0, 0)
-	requestA.UpdateStatus("forwarding", 0, 0)
+	requestB.UpdateStatus("forwarding", 0)
+	requestA.UpdateStatus("forwarding", 0)
 
 	dataA, err := tracker.GetRequestLifecycleData(ctx, "req-route-a")
 	if err != nil {

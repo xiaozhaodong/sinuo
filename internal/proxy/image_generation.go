@@ -131,7 +131,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	defer releaseClient()
-	lifecycleManager.UpdateStatus("forwarding", 0, 0)
+	lifecycleManager.UpdateStatus("forwarding", 0)
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -146,7 +146,7 @@ func (h *Handler) handleImageAPIRequest(ctx context.Context, w http.ResponseWrit
 	defer resp.Body.Close()
 	lifecycleManager.SetUpstreamResponse(resp)
 
-	lifecycleManager.UpdateStatus("processing", 0, resp.StatusCode)
+	lifecycleManager.UpdateStatus("processing", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		status, reason, writeErr := writeImageAPIUpstreamFailure(w, resp)
 		if writeErr != nil {

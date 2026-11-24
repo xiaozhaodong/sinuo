@@ -23,23 +23,6 @@ type MonitoringMiddlewareInterface interface {
 	RecordFailedRequestTokens(connID, endpoint string, tokens *monitor.TokenUsage, failureReason string) // 新增方法
 }
 
-// RetryDecision 重试决策结果
-type RetryDecision struct {
-	RetrySameEndpoint bool   // 是否重试同一端点
-	FinalStatus       string // 最终状态
-	Reason            string // 决策原因
-}
-
-// RetryContext 重试上下文信息
-type RetryContext struct {
-	RequestID     string             // 请求ID
-	Endpoint      *endpoint.Endpoint // 端点信息
-	Attempt       int                // 当前尝试次数
-	AttemptGlobal int                // 全局尝试次数
-	Error         *ErrorContext      // 错误上下文
-	IsStreaming   bool               // 是否为流式请求
-}
-
 // RequestLifecycleManager 请求生命周期管理器
 // 负责管理请求的完整生命周期，确保所有请求都有完整的跟踪记录
 type RequestLifecycleManager struct {
@@ -75,7 +58,6 @@ type RequestLifecycleManager struct {
 	effectiveEndpoint                string                // 本请求实际选中端点
 	fallbackReason                   string                // 本请求 fallback/阻塞原因
 	routeDecisionAt                  time.Time             // 本请求最近一次路由决策时间
-	retryCount                       int                   // 重试计数
 	lastStatus                       string                // 最后状态
 	lastError                        error                 // 最后一次错误
 	finalStatusCode                  int                   // 最终状态码
@@ -91,8 +73,6 @@ type RequestLifecycleManager struct {
 	phaseStopReason                  *string               // 上游结束原因原文，在 timingMu 下维护
 	phasesRecorded                   bool                  // 阶段快照已落定，在 timingMu 下拒绝后续采集
 	timingMu                         sync.RWMutex          // 保护首响计时字段
-	attemptCounter                   int                   // 内部尝试计数器（语义修复：统一重试计数）
-	attemptMu                        sync.Mutex            // 保护尝试计数器的互斥锁
 	pendingErrorContext              *ErrorContext         // 预先计算的错误上下文，仅对下一个HandleError有效
 	pendingErrorOriginal             error                 // 预先计算上下文对应的原始错误，用于校验匹配
 	pendingErrorMu                   sync.Mutex            // 保护预先计算错误上下文的互斥锁
@@ -295,7 +275,7 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("completed", state.retryCount, 200)
+	rlm.notifyStatusChange("completed", 200)
 }
 
 // CompleteRequestWithCost 完成不按 Token 计价的请求，并记录调用方计算的固定成本。
@@ -314,7 +294,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithCost(costUSD float64) {
 			"cost_usd", costUSD,
 			"duration_ms", duration.Milliseconds())
 	}
-	rlm.notifyStatusChange("completed", state.retryCount, http.StatusOK)
+	rlm.notifyStatusChange("completed", http.StatusOK)
 }
 
 // CompleteRequestWithQuality 完成请求并标记数据质量问题
@@ -369,7 +349,7 @@ func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("completed", state.retryCount, 200)
+	rlm.notifyStatusChange("completed", 200)
 }
 
 // HandleNonTokenResponse 处理非Token响应的Fallback机制
@@ -820,7 +800,6 @@ func (rlm *RequestLifecycleManager) billingModelName() string {
 // FailRequest 标记请求最终失败
 // Phase 3新增: 专门用于标记最终失败的方法
 // 设置状态为"failed"并记录失败原因和错误详情
-// 注意: 失败追踪由 handler 层根据 RetryDecision.ShouldRecord 决定，这里不重复记录
 func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail string, httpStatus int) {
 	rlm.finishUpstreamContacts()
 	rlm.finalizeFlowTerminal("failed", failureReason)
@@ -848,7 +827,7 @@ func (rlm *RequestLifecycleManager) FailRequest(failureReason, errorDetail strin
 	slog.Error(logMessage)
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("failed", state.retryCount, httpStatus)
+	rlm.notifyStatusChange("failed", httpStatus)
 }
 
 func (rlm *RequestLifecycleManager) attachRouteDiagnostics(opts *tracking.UpdateOptions, state lifecycleStateSnapshot) bool {
@@ -889,7 +868,7 @@ func (rlm *RequestLifecycleManager) CancelRequest(cancelReason string, tokens *t
 	}
 
 	// 调用统一的状态通知方法
-	rlm.notifyStatusChange("cancelled", state.retryCount, 499)
+	rlm.notifyStatusChange("cancelled", 499)
 }
 
 // GetLastError 获取最后一次错误

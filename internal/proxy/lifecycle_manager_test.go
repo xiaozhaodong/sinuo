@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -61,14 +60,14 @@ func TestRequestLifecycleManager_UpdateStatus(t *testing.T) {
 	rlm.SetEndpoint("test-endpoint")
 
 	// 更新状态
-	rlm.UpdateStatus("processing", 1, 200)
+	rlm.UpdateStatus("processing", 200)
 
 	// 验证状态更新
 	if rlm.lastStatus != "processing" {
 		t.Errorf("Expected status 'processing', got '%s'", rlm.lastStatus)
 	}
-	if rlm.retryCount != 0 {
-		t.Errorf("未联系上游时重试数应为0，got %d", rlm.retryCount)
+	if rlm.GetRetryCount() != 0 {
+		t.Errorf("未联系上游时重试数应为0，got %d", rlm.GetRetryCount())
 	}
 }
 
@@ -232,13 +231,13 @@ func TestRequestLifecycleManager_IsCompleted(t *testing.T) {
 	}
 
 	// 更新状态为处理中
-	rlm.UpdateStatus("processing", 0, 200)
+	rlm.UpdateStatus("processing", 200)
 	if rlm.IsCompleted() {
 		t.Error("Processing state should not be completed")
 	}
 
 	// 更新状态为完成
-	rlm.UpdateStatus("completed", 0, 200)
+	rlm.UpdateStatus("completed", 200)
 	if !rlm.IsCompleted() {
 		t.Error("Completed state should be completed")
 	}
@@ -251,7 +250,7 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 	// 设置一些状态
 	rlm.SetEndpoint("stats-endpoint")
 	rlm.SetModel("claude-3-haiku")
-	rlm.UpdateStatus("processing", 2, 200)
+	rlm.UpdateStatus("processing", 200)
 
 	// 获取统计信息
 	stats := rlm.GetStats()
@@ -277,7 +276,7 @@ func TestRequestLifecycleManager_GetStats(t *testing.T) {
 		t.Errorf("Expected status 'processing', got %v", stats["status"])
 	}
 	if stats["retry_count"] != 0 {
-		t.Errorf("次数参数不能改变联系上游计数，got %v", stats["retry_count"])
+		t.Errorf("未联系上游时重试数应为0，got %v", stats["retry_count"])
 	}
 }
 
@@ -341,173 +340,16 @@ func TestRequestLifecycleManager_AnalyzeResponseType(t *testing.T) {
 	}
 }
 
-// TestRequestLifecycleManager_AttemptCounter 测试尝试计数器的核心功能（语义修复）
-func TestRequestLifecycleManager_AttemptCounter(t *testing.T) {
-	requestID := "test-attempt-808"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-
-	// 验证初始状态：attemptCounter应该为0
-	initialCount := rlm.GetAttemptCount()
-	if initialCount != 0 {
-		t.Errorf("Expected initial attempt count 0, got %d", initialCount)
-	}
-
-	// 测试第一次增加尝试计数
-	count1 := rlm.IncrementAttempt()
-	if count1 != 1 {
-		t.Errorf("Expected first increment to return 1, got %d", count1)
-	}
-
-	// 验证GetAttemptCount返回正确值
-	currentCount := rlm.GetAttemptCount()
-	if currentCount != 1 {
-		t.Errorf("Expected current attempt count 1, got %d", currentCount)
-	}
-
-	// 测试多次增加
-	for i := 2; i <= 5; i++ {
-		count := rlm.IncrementAttempt()
-		if count != i {
-			t.Errorf("Expected increment %d to return %d, got %d", i, i, count)
-		}
-	}
-
-	// 验证最终计数
-	finalCount := rlm.GetAttemptCount()
-	if finalCount != 5 {
-		t.Errorf("Expected final attempt count 5, got %d", finalCount)
-	}
-}
-
-// TestRequestLifecycleManager_UpdateStatusWithAttemptCounter 测试UpdateStatus与尝试计数器的集成
-func TestRequestLifecycleManager_UpdateStatusWithAttemptCounter(t *testing.T) {
-	requestID := "test-update-attempt-909"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-
-	// 设置端点信息
-	rlm.SetEndpoint("test-endpoint")
-
-	// 增加尝试计数器
-	rlm.IncrementAttempt()
-	rlm.IncrementAttempt()
-	rlm.IncrementAttempt()
-
-	// 次数参数 -1 不再使用旧内部计数器
-	rlm.UpdateStatus("suspended", -1, 0)
-
-	// 未联系上游时，旧计数器不影响重试数
-	if rlm.lastStatus != "suspended" {
-		t.Errorf("Expected status 'suspended', got '%s'", rlm.lastStatus)
-	}
-	if rlm.retryCount != 0 {
-		t.Errorf("旧尝试计数器不能改变重试数，got %d", rlm.retryCount)
-	}
-
-	// 显式次数参数同样被忽略
-	rlm.UpdateStatus("processing", 5, 200)
-	if rlm.retryCount != 0 {
-		t.Errorf("显式次数参数不能改变重试数，got %d", rlm.retryCount)
-	}
-}
-
-// TestRequestLifecycleManager_AttemptCounterThreadSafety 测试尝试计数器的线程安全性
-func TestRequestLifecycleManager_AttemptCounterThreadSafety(t *testing.T) {
-	requestID := "test-threadsafe-1010"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-
-	const numGoroutines = 100
-	const incrementsPerGoroutine = 10
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	// 并发增加计数器
-	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < incrementsPerGoroutine; j++ {
-				rlm.IncrementAttempt()
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	// 验证最终计数是否正确
-	expectedCount := numGoroutines * incrementsPerGoroutine
-	actualCount := rlm.GetAttemptCount()
-	if actualCount != expectedCount {
-		t.Errorf("Expected final count %d, got %d", expectedCount, actualCount)
-	}
-}
-
-// TestRequestLifecycleManager_UpdateStatusSemanticFix 测试语义修复的完整流程
-func TestRequestLifecycleManager_UpdateStatusSemanticFix(t *testing.T) {
-	requestID := "test-semantic-1111"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-
+// TestRequestLifecycleManager_SuspendedStatus 挂起状态只改状态，不制造重试次数
+func TestRequestLifecycleManager_SuspendedStatus(t *testing.T) {
+	rlm := NewRequestLifecycleManager(nil, nil, "test-suspended-1111", nil)
 	rlm.SetEndpoint("endpoint1")
-
-	// 模拟流式请求的挂起逻辑
-	rlm.IncrementAttempt() // 第一次尝试
-	rlm.IncrementAttempt() // 第二次尝试
-	rlm.IncrementAttempt() // 第三次尝试
-
-	// 获取真实尝试次数
-	actualAttemptCount := rlm.GetAttemptCount()
-	if actualAttemptCount != 3 {
-		t.Errorf("Expected 3 attempts, got %d", actualAttemptCount)
-	}
-
-	// 保留 -1 调用形式，验证旧计数器不再参与新口径
-	rlm.UpdateStatus("suspended", -1, 0)
-
-	// 没有取连接事件，重试数仍为0
-	if rlm.GetRetryCount() != 0 {
-		t.Errorf("没有联系上游时重试数应为0，got %d", rlm.GetRetryCount())
-	}
-
-	// 验证状态正确设置为suspended而不是retry
+	rlm.UpdateStatus("suspended", 0)
 	if rlm.GetLastStatus() != "suspended" {
 		t.Errorf("Expected status 'suspended', got '%s'", rlm.GetLastStatus())
 	}
-}
-
-// TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount 测试尝试计数器与retryCount的独立性
-func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testing.T) {
-	requestID := "test-independent-1212"
-	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
-
-	// 增加尝试计数器
-	rlm.IncrementAttempt()
-	rlm.IncrementAttempt()
-
-	// 模拟旧路径传入候选下标
-	rlm.UpdateStatus("processing", 5, 200)
-
-	// 验证attemptCounter和retryCount是独立的
-	attemptCount := rlm.GetAttemptCount()
-	retryCount := rlm.GetRetryCount()
-
-	if attemptCount != 2 {
-		t.Errorf("Expected attempt count 2, got %d", attemptCount)
-	}
-	if retryCount != 0 {
-		t.Errorf("候选下标不能改变重试数，got %d", retryCount)
-	}
-
-	// 继续增加尝试计数器
-	rlm.IncrementAttempt()
-
-	// 验证attemptCounter增加了，但retryCount不变
-	newAttemptCount := rlm.GetAttemptCount()
-	sameRetryCount := rlm.GetRetryCount()
-
-	if newAttemptCount != 3 {
-		t.Errorf("Expected new attempt count 3, got %d", newAttemptCount)
-	}
-	if sameRetryCount != 0 {
-		t.Errorf("重试数应保持0，got %d", sameRetryCount)
+	if rlm.GetRetryCount() != 0 {
+		t.Errorf("没有联系上游时重试数应为0，got %d", rlm.GetRetryCount())
 	}
 }
 

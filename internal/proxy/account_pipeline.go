@@ -226,7 +226,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 		}
 		lifecycleManager.setUpstream("account", upstreamSource, accountName, acc.ID, accountauth.IsChatGPTOAuthProvider(acc.ProviderType))
 		lifecycleManager.SetEndpoint(accountName)
-		lifecycleManager.UpdateStatus("forwarding", idx, 0)
+		lifecycleManager.UpdateStatus("forwarding", 0)
 		attemptStartedAt := time.Now()
 		hasNextAccount := hasNextAccountFailoverCandidate(accounts, idx)
 
@@ -458,7 +458,7 @@ func (h *Handler) handleAccountPipeline(ctx context.Context, w http.ResponseWrit
 			return
 		}
 
-		lifecycleManager.UpdateStatus("processing", idx, resp.StatusCode)
+		lifecycleManager.UpdateStatus("processing", resp.StatusCode)
 		var processErr error
 		if isSSE {
 			processErr = h.processAccountStreamingResponse(ctx, w, resp, lifecycleManager, accountName, upstreamCancel)

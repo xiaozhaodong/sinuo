@@ -87,9 +87,7 @@ func TestUpstreamRetry_ContactWriteAndStatusAuthority(t *testing.T) {
 	if *data.UpstreamFirstDispatchMs != 10 || *data.UpstreamDispatchMs != 100 || rlm.persistedContacts != 2 {
 		t.Fatalf("首次/最终计时: %+v", data)
 	}
-	rlm.IncrementAttempt()
-	rlm.IncrementRetry()
-	rlm.UpdateStatus("processing", 99, 200)
+	rlm.UpdateStatus("processing", 200)
 	requireRetryObservation(t, timingLifecycleData(t, tracker, rlm.requestID), 1)
 	events := timingEvents(bus.published, requestChangeUpstreamRetry)
 	if len(events) != 1 || events[0].Data["retry_count"] != 1 ||
@@ -100,6 +98,35 @@ func TestUpstreamRetry_ContactWriteAndStatusAuthority(t *testing.T) {
 	rlm.RecordUpstreamGetConn(handlers.UpstreamConnAttempt{At: time.Now()})
 	if rlm.GetRetryCount() != 1 {
 		t.Fatal("首响后计数必须冻结")
+	}
+}
+
+// UpdateStatus 自己必须写出权威次数：两次联系、尚未写完时就更新状态（此时热池记录仍为 0），
+// 进行中请求的热池记录与 status_changed 事件都应为 1。
+func TestUpstreamRetry_UpdateStatusWritesContactCountBeforeWrite(t *testing.T) {
+	tracker := newLifecyclePanelTestTracker(t)
+	bus := &subscriptionPresentationEventBus{}
+	rlm := NewRequestLifecycleManager(tracker, nil, "retry-status-before-write", bus)
+	rlm.StartRequest("127.0.0.1", "test", "POST", "/v1/messages", true)
+	for range 2 {
+		rlm.RecordUpstreamGetConn(handlers.UpstreamConnAttempt{At: time.Now()})
+	}
+	rlm.UpdateStatus("processing", 200)
+	if got := timingLifecycleData(t, tracker, rlm.requestID).Detail.RetryCount; got != 1 {
+		t.Fatalf("UpdateStatus 应写入 retry_count=1，got %d", got)
+	}
+	var statusEvents int
+	for _, ev := range bus.published {
+		if ev.Data["change_type"] != "status_changed" {
+			continue
+		}
+		statusEvents++
+		if ev.Data["retry_count"] != 1 {
+			t.Fatalf("status_changed 事件 retry_count: %+v", ev.Data)
+		}
+	}
+	if statusEvents == 0 {
+		t.Fatal("缺少 status_changed 事件")
 	}
 }
 
@@ -171,10 +198,6 @@ func TestUpstreamRetry_FirstResponseBeforeWriteAndFinalFailure(t *testing.T) {
 	rlm.RecordFirstToken()
 	requireRetryObservation(t, timingLifecycleData(t, tracker, rlm.requestID), 1)
 	ctx := &ErrorContext{RequestID: rlm.requestID, AttemptCount: 99, OriginalError: errors.New("interrupted")}
-	if err := rlm.errorRecovery.ExecuteRetry(context.Background(), ctx); err != nil {
-		t.Fatal(err)
-	}
-	requireRetryObservation(t, timingLifecycleData(t, tracker, rlm.requestID), 1)
 	rlm.errorRecovery.HandleFinalFailure(ctx)
 	requireRetryObservation(t, timingLifecycleData(t, tracker, rlm.requestID), 1)
 }
@@ -184,14 +207,14 @@ func TestUpstreamRetry_ConcurrentContactWriteAndFirstResponse(t *testing.T) {
 	rlm := NewRequestLifecycleManager(tracker, nil, "retry-concurrent", nil)
 	rlm.StartRequest("127.0.0.1", "test", "POST", "/v1/messages", true)
 	var wg sync.WaitGroup
-	for i := range 20 {
+	for range 20 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			at := time.Now()
 			rlm.RecordUpstreamGetConn(handlers.UpstreamConnAttempt{At: at})
 			rlm.RecordUpstreamWrite(handlers.UpstreamWriteTiming{ConnStartAt: at, ConnReadyAt: at, WroteAt: time.Now()})
-			rlm.UpdateStatus("processing", i, 200)
+			rlm.UpdateStatus("processing", 200)
 		}()
 	}
 	wg.Wait()

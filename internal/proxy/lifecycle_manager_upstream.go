@@ -6,14 +6,13 @@ import (
 	"sinuo/internal/store"
 	"time"
 
-	"sinuo/internal/endpoint"
 	"sinuo/internal/events"
 	"sinuo/internal/proxy/handlers"
 	"sinuo/internal/tracking"
 )
 
-// UpdateStatus 更新请求状态；保留次数参数以兼容调用，参数已忽略，统一按联系上游次数计算。
-func (rlm *RequestLifecycleManager) UpdateStatus(status string, _ int, httpStatus int) {
+// UpdateStatus 更新请求状态；重试次数统一按联系上游次数计算。
+func (rlm *RequestLifecycleManager) UpdateStatus(status string, httpStatus int) {
 	state := rlm.snapshotState()
 	currentModel := rlm.GetModelName()
 	rlm.modelUpdateMu.Lock()
@@ -41,17 +40,16 @@ func (rlm *RequestLifecycleManager) UpdateStatus(status string, _ int, httpStatu
 		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
 	}
 	rlm.timingMu.Unlock()
-	rlm.notifyStatusChange(status, retries, httpStatus)
+	rlm.notifyStatusChange(status, httpStatus)
 }
 
 // notifyStatusChange 统一的状态通知方法
 // 负责更新内部状态、发布事件通知和记录状态变更日志
 // 这个方法被 UpdateStatus、CompleteRequest、FailRequest、CancelRequest 统一调用
-func (rlm *RequestLifecycleManager) notifyStatusChange(status string, _ int, httpStatus int) {
+func (rlm *RequestLifecycleManager) notifyStatusChange(status string, httpStatus int) {
 	retryCount := rlm.GetRetryCount()
 	// 更新内部状态
 	rlm.stateMu.Lock()
-	rlm.retryCount = retryCount
 	rlm.lastStatus = status
 	state := lifecycleStateSnapshot{
 		requestFamily:      rlm.requestFamily,
@@ -62,7 +60,7 @@ func (rlm *RequestLifecycleManager) notifyStatusChange(status string, _ int, htt
 		upstreamSourceName: rlm.upstreamSourceName,
 		upstreamName:       rlm.upstreamName,
 		upstreamID:         rlm.upstreamID,
-		retryCount:         rlm.retryCount,
+		retryCount:         retryCount,
 		lastStatus:         rlm.lastStatus,
 	}
 	rlm.stateMu.Unlock()
@@ -290,7 +288,7 @@ func (rlm *RequestLifecycleManager) finishUpstreamContacts() {
 	rlm.persistedContacts = rlm.upstreamContacts
 }
 
-// GetRetryCount 返回联系上游次数减一；旧 attemptCounter 不参与。
+// GetRetryCount 返回联系上游次数减一。
 func (rlm *RequestLifecycleManager) GetRetryCount() int {
 	rlm.timingMu.RLock()
 	defer rlm.timingMu.RUnlock()
@@ -301,62 +299,4 @@ func (rlm *RequestLifecycleManager) upstreamContactCount() int {
 	rlm.timingMu.RLock()
 	defer rlm.timingMu.RUnlock()
 	return rlm.upstreamContacts
-}
-
-// IncrementRetry 增加重试计数
-func (rlm *RequestLifecycleManager) IncrementRetry() {
-	rlm.stateMu.Lock()
-	rlm.retryCount++
-	retryCount := rlm.retryCount
-	rlm.stateMu.Unlock()
-	slog.Info(fmt.Sprintf("🔄 [重试计数] [%s] 重试次数: %d", rlm.requestID, retryCount))
-}
-
-// IncrementAttempt 线程安全地增加尝试计数
-// 用于统一重试计数语义，每次端点切换或重试时调用
-func (rlm *RequestLifecycleManager) IncrementAttempt() int {
-	rlm.attemptMu.Lock()
-	defer rlm.attemptMu.Unlock()
-	rlm.attemptCounter++
-	slog.Debug(fmt.Sprintf("🔢 [尝试计数] [%s] 当前尝试次数: %d", rlm.requestID, rlm.attemptCounter))
-	return rlm.attemptCounter
-}
-
-// GetAttemptCount 线程安全地获取当前尝试次数
-// 返回真实的尝试次数，用于数据库记录和监控
-func (rlm *RequestLifecycleManager) GetAttemptCount() int {
-	rlm.attemptMu.Lock()
-	defer rlm.attemptMu.Unlock()
-	return rlm.attemptCounter
-}
-
-// OnRetryDecision 处理重试决策结果
-func (rlm *RequestLifecycleManager) OnRetryDecision(decision RetryDecision, httpStatus int) {
-	actualRetryCount := rlm.GetAttemptCount()
-
-	if decision.RetrySameEndpoint {
-		rlm.UpdateStatus("retry", actualRetryCount, httpStatus)
-	} else if decision.FinalStatus != "" {
-		rlm.UpdateStatus(decision.FinalStatus, actualRetryCount, httpStatus)
-	}
-
-	// 记录决策原因
-	slog.Debug(fmt.Sprintf("📋 [重试决策记录] [%s] 状态: %s, 原因: %s",
-		rlm.requestID, decision.FinalStatus, decision.Reason))
-}
-
-// GetRetryContext 获取重试上下文信息
-func (rlm *RequestLifecycleManager) GetRetryContext(endpoint *endpoint.Endpoint, err error, attempt int) RetryContext {
-	errorRecovery := rlm.errorRecovery
-	state := rlm.snapshotState()
-	errorCtx := errorRecovery.ClassifyError(err, rlm.requestID, state.endpointName, attempt-1)
-
-	return RetryContext{
-		RequestID:     rlm.requestID,
-		Endpoint:      endpoint,
-		Attempt:       attempt,
-		AttemptGlobal: rlm.GetAttemptCount(),
-		Error:         errorCtx,
-		IsStreaming:   false, // 由调用方设置
-	}
 }

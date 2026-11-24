@@ -209,46 +209,6 @@ func TestErrorRecoveryManager_IsTimeoutError(t *testing.T) {
 	}
 }
 
-func TestErrorRecoveryManager_ExecuteRetry(t *testing.T) {
-	erm := NewErrorRecoveryManager(nil)
-
-	// Test with no delay
-	errorCtx := &ErrorContext{
-		RequestID:      "test-execute-789",
-		RetryableAfter: 0,
-		AttemptCount:   1,
-	}
-
-	ctx := context.Background()
-	err := erm.ExecuteRetry(ctx, errorCtx)
-	if err != nil {
-		t.Errorf("ExecuteRetry should not return error for no delay, got: %v", err)
-	}
-
-	// Test with short delay
-	errorCtx.RetryableAfter = 10 * time.Millisecond
-	start := time.Now()
-	err = erm.ExecuteRetry(ctx, errorCtx)
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Errorf("ExecuteRetry should not return error for short delay, got: %v", err)
-	}
-	if elapsed < errorCtx.RetryableAfter {
-		t.Errorf("ExecuteRetry should wait for the specified delay")
-	}
-
-	// Test with context cancellation
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	errorCtx.RetryableAfter = time.Second
-	err = erm.ExecuteRetry(cancelCtx, errorCtx)
-	if err != context.Canceled {
-		t.Errorf("ExecuteRetry should return context.Canceled when context is cancelled, got: %v", err)
-	}
-}
-
 func TestErrorRecoveryManager_SetRetryPolicy(t *testing.T) {
 	erm := NewErrorRecoveryManager(nil)
 

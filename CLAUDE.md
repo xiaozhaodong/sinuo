@@ -70,7 +70,7 @@
   - `speed` 记录请求与实际速度档位：Codex 请求读 `service_tier`，响应只采用终态 `service_tier`（忽略 `auto`，不采用开场回显）；Claude 请求读 `speed`，响应读 `usage.speed`，不把 Anthropic 的 `usage.service_tier` 当作 Fast。档位只在请求详情中展示「请求 / 上游回报」，不做一致性判定、不进列表告警与悬停提示（有中转按 Fast 计费却回报 `default`，回报值不代表实际处理档位）；只记录、不改变任何计费
   - `request_logs.session_id` 在开始记录时写入客户端原始会话：订阅代理优先读 context association 的 session / thread，其他入口依次读 `X-Claude-Code-Session-Id`、`session-id`、`session_id`、`thread-id`；池模式头被剥离后仍从 association 取值。会话筛选只在请求页生效，「只看此会话」与只看模型 / 上游一致，保留当前时间范围（跨天会话由用户手动扩大范围），列表与顶部统计同步筛选；会话列默认隐藏，历史不回填，会话 ID 不写入 Go 后端日志
   - 一致性判定只用 `response_model`，别名只认日期快照（`base-YYYYMMDD` / `-latest`），`gpt-5 → gpt-5-mini` 判不一致；不做「仅不一致」筛选、不回填历史
-- 请求重试可见化（v6.3.0）：`upstream_first_dispatch_ms` 记本次请求第一次取连接的偏移，本地处理只算到这里，到最终取连接之间为「重试」段；`retry_count` 统一为「联系上游次数 − 1」，由 `upstreamContactState` 一处维护（连接池换掉失效连接后的重取标记 `SameContact`，不计重试）；重试进行中经 `upstream_retry` 事件推送 `retry_count / retry_started_at`，列表不带这两个字段
+- 请求重试可见化（v6.3.0）：`upstream_first_dispatch_ms` 记本次请求第一次取连接的偏移，本地处理只算到这里，到最终取连接之间为「重试」段；`retry_count` 统一为「联系上游次数 − 1」，由 `upstreamContactState` 一处维护（连接池换掉失效连接后的重取标记 `SameContact`，不计重试）；重试进行中经 `upstream_retry` 事件推送 `retry_count / retry_started_at`；列表 DTO 带 `retry_count`，`retry_started_at` 只能从实时事件取得
 - 流式阶段观测（v6.3.0）：`request_logs` 新增 `first_content_ms / first_text_ms / first_reasoning_ms / reasoning_hidden / stream_flow_ms / stop_reason / upstream_request_id`，时间点只记最终尝试、只写一次，结束原因与请求 ID 以最终尝试覆盖；历史不回填，缺这些列的旧数据按旧规则显示
   - 内容分类在 `TokenParser` 原解析之上附加（`ContentKind` / `ThinkingBlock` / `ReasoningHidden` / `StopReason`），不改变 `HasVisibleText / HasStreamOutput / HasFallbackOutput` 与流完整性；Claude 有思考块却全程没有思考增量时记为不可见思考
   - 首响（`first_token_ms`）所有链路统一为上游第一个非空事件；「首字」= 写完到首个内容，只在详情顶部与列表悬停显示；列表两格固定为首响 / 生成，阈值按首响定，不要改成首字

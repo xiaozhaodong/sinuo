@@ -29,13 +29,13 @@ func TestRequestIDLogging(t *testing.T) {
 	t.Logf("2️⃣ 测试状态更新日志")
 
 	// 转发状态
-	lifecycleManager.UpdateStatus("forwarding", 0, 0)
+	lifecycleManager.UpdateStatus("forwarding", 0)
 
 	// 重试状态
-	lifecycleManager.UpdateStatus("retry", 1, 0)
+	lifecycleManager.UpdateStatus("retry", 0)
 
 	// 处理状态
-	lifecycleManager.UpdateStatus("processing", 1, 200)
+	lifecycleManager.UpdateStatus("processing", 200)
 
 	// 4. 测试完成
 	t.Logf("3️⃣ 测试请求完成日志")
@@ -66,21 +66,21 @@ func TestRequestIDLogging(t *testing.T) {
 		{
 			name: "转发日志格式",
 			action: func() {
-				lifecycleManager.UpdateStatus("forwarding", 0, 0)
+				lifecycleManager.UpdateStatus("forwarding", 0)
 			},
 			contains: fmt.Sprintf("[%s]", requestID),
 		},
 		{
 			name: "重试日志格式",
 			action: func() {
-				lifecycleManager.UpdateStatus("retry", 2, 0)
+				lifecycleManager.UpdateStatus("retry", 0)
 			},
 			contains: fmt.Sprintf("[%s]", requestID),
 		},
 		{
 			name: "错误日志格式",
 			action: func() {
-				lifecycleManager.UpdateStatus("error", 0, 500)
+				lifecycleManager.UpdateStatus("error", 500)
 			},
 			contains: fmt.Sprintf("[%s]", requestID),
 		},

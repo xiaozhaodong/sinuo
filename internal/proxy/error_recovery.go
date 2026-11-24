@@ -339,37 +339,6 @@ func (erm *ErrorRecoveryManager) ShouldRetry(errorCtx *ErrorContext) bool {
 	}
 }
 
-// ExecuteRetry 执行重试操作
-func (erm *ErrorRecoveryManager) ExecuteRetry(ctx context.Context, errorCtx *ErrorContext) error {
-	if errorCtx.RetryableAfter > 0 {
-		slog.Info(fmt.Sprintf("⏳ [重试延迟] [%s] 等待 %v 后重试",
-			errorCtx.RequestID, errorCtx.RetryableAfter))
-
-		select {
-		case <-time.After(errorCtx.RetryableAfter):
-			// 延迟完成，继续重试
-		case <-ctx.Done():
-			// 上下文取消，停止重试
-			return ctx.Err()
-		}
-	}
-
-	// 记录重试状态
-	if erm.usageTracker != nil && errorCtx.RequestID != "" {
-		opts := tracking.UpdateOptions{
-			EndpointName: &errorCtx.EndpointName,
-			Status:       stringPtr("retry"),
-			HttpStatus:   intPtr(0),
-		}
-		erm.usageTracker.RecordRequestUpdate(errorCtx.RequestID, opts)
-	}
-
-	slog.Info(fmt.Sprintf("🔄 [执行重试] [%s] 第 %d 次重试, 端点: %s",
-		errorCtx.RequestID, errorCtx.AttemptCount+1, errorCtx.EndpointName))
-
-	return nil
-}
-
 // HandleFinalFailure 处理最终失败情况
 func (erm *ErrorRecoveryManager) HandleFinalFailure(errorCtx *ErrorContext) {
 	// 记录最终失败状态

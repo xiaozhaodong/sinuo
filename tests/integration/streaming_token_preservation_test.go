@@ -357,7 +357,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		}
 
 		lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, "network_error")
-		lifecycleManager.UpdateStatus("network_error", 1, 200)
+		lifecycleManager.UpdateStatus("network_error", 200)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -472,7 +472,7 @@ data: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limit e
 		}
 
 		lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, failureReason)
-		lifecycleManager.UpdateStatus(failureReason, 1, 200)
+		lifecycleManager.UpdateStatus(failureReason, 200)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -583,7 +583,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		}
 
 		lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, "cancelled")
-		lifecycleManager.UpdateStatus("cancelled", 1, 200)
+		lifecycleManager.UpdateStatus("cancelled", 200)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -687,7 +687,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		}
 
 		lifecycleManager.RecordTokensForFailedRequest(finalTokenUsage, "timeout")
-		lifecycleManager.UpdateStatus("timeout", 1, 200)
+		lifecycleManager.UpdateStatus("timeout", 200)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -766,7 +766,7 @@ func TestStreamingFailureStatusIntegrity(t *testing.T) {
 			// 设置模型并记录失败Token
 			lifecycleManager.SetModel("claude-3-5-sonnet-20241022")
 			lifecycleManager.RecordTokensForFailedRequest(tokens, s.expectedStatus)
-			lifecycleManager.UpdateStatus(s.expectedStatus, 1, 200)
+			lifecycleManager.UpdateStatus(s.expectedStatus, 200)
 
 			// 等待处理完成
 			time.Sleep(100 * time.Millisecond)

@@ -28,9 +28,9 @@ func TestBillingDedup_RetryIntermediateStatesRecordOnlyFinalFailure(t *testing.T
 	rlm := startBillingRequest(t, tracker, "retry-final-failure", false)
 
 	for attempt := 1; attempt <= 3; attempt++ {
-		rlm.UpdateStatus("retry", attempt, 500)
+		rlm.UpdateStatus("retry", 500)
 	}
-	rlm.UpdateStatus("timeout", 3, 500)
+	rlm.UpdateStatus("timeout", 500)
 	rlm.RecordTokensForFailedRequest(&tracking.TokenUsage{InputTokens: 257, OutputTokens: 25}, "timeout")
 
 	record := waitBillingRecord(t, tracker, rlm, func(r *tracking.RequestDetail) bool {
@@ -44,9 +44,9 @@ func TestBillingDedup_SuccessAfterFailureOverridesFailedTokens(t *testing.T) {
 	tracker := newBillingTestTracker(t)
 	rlm := startBillingRequest(t, tracker, "fail-then-success", false)
 
-	rlm.UpdateStatus("timeout", 1, 500)
+	rlm.UpdateStatus("timeout", 500)
 	rlm.RecordTokensForFailedRequest(&tracking.TokenUsage{InputTokens: 100, OutputTokens: 50}, "timeout")
-	rlm.UpdateStatus("completed", 2, 200)
+	rlm.UpdateStatus("completed", 200)
 	rlm.CompleteRequest(&tracking.TokenUsage{InputTokens: 300, OutputTokens: 150})
 
 	record := waitBillingRecord(t, tracker, rlm, func(r *tracking.RequestDetail) bool {
@@ -79,7 +79,7 @@ func TestBillingDedup_PartialStreamKeepsParsedTokens(t *testing.T) {
 	tracker := newBillingTestTracker(t)
 	rlm := startBillingRequest(t, tracker, "partial-stream", true)
 
-	rlm.UpdateStatus("stream_error", 1, 0)
+	rlm.UpdateStatus("stream_error", 0)
 	rlm.RecordTokensForFailedRequest(&tracking.TokenUsage{InputTokens: 257, OutputTokens: 25}, "stream_interrupted")
 
 	record := waitBillingRecord(t, tracker, rlm, func(r *tracking.RequestDetail) bool {
@@ -99,7 +99,7 @@ func TestBillingDedup_InvalidTokensAreNotRecorded(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tracker := newBillingTestTracker(t)
 			rlm := startBillingRequest(t, tracker, "invalid-"+name, false)
-			rlm.UpdateStatus("error", 1, 500)
+			rlm.UpdateStatus("error", 500)
 			rlm.RecordTokensForFailedRequest(tokens, "invalid_tokens")
 
 			record := waitBillingRecord(t, tracker, rlm, func(r *tracking.RequestDetail) bool {

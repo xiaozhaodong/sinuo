@@ -48,7 +48,7 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 	h.claudeQuota.beginRequest(r.Header.Get("Authorization"), r.Header.Get("User-Agent"))
 	defer h.claudeQuota.endRequest()
 
-	lifecycleManager.UpdateStatus("forwarding", 0, 0)
+	lifecycleManager.UpdateStatus("forwarding", 0)
 	resp, upstreamCancel, traceState, forwardErr := h.forwarder.ForwardClaudeSubscription(
 		ctx, r, bodyBytes, h.claudeSubscriptionBaseURL, isSSE, isSSE && shouldEnableEndpointTailDrain(r), lifecycleManager.bindAttemptTrace())
 	recordEndpointUpstreamModel(lifecycleManager, traceState)
@@ -67,7 +67,6 @@ func (h *Handler) handleClaudeSubscription(ctx context.Context, w http.ResponseW
 		handlers.WritePrivacyPolicyErrorResponse(w, policyErr)
 		return
 	}
-	lifecycleManager.IncrementAttempt()
 	if forwardErr != nil {
 		h.failClaudeSubscriptionTransport(ctx, w, r, lifecycleManager, forwardErr)
 		return
