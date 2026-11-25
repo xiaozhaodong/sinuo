@@ -31,24 +31,6 @@ func openRequestIDAllocator(config DatabaseConfig) (*requestIDAllocator, error) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// 一次事务建表并保留历史 ID；重复初始化幂等，也兼容恢复的历史数据。
-	tx, err := adapter.BeginTx(ctx, nil)
-	if err == nil {
-		_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS request_id_reservations (
-			request_id TEXT PRIMARY KEY NOT NULL
-		) WITHOUT ROWID;
-		INSERT INTO request_id_reservations (request_id)
-		SELECT request_id FROM request_logs WHERE true
-		ON CONFLICT(request_id) DO NOTHING;`)
-		if err == nil {
-			err = tx.Commit()
-		} else {
-			err = errors.Join(err, tx.Rollback())
-		}
-	}
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("initialize request ID reservations: %w", err), adapter.Close())
-	}
 	// 历史表检查和占号在同一条写语句内执行；不使用先 SELECT 再 INSERT 的竞态流程。
 	stmt, err := adapter.db.PrepareContext(ctx, `INSERT INTO request_id_reservations (request_id)
 		SELECT ? WHERE NOT EXISTS (SELECT 1 FROM request_logs WHERE request_id = ?)

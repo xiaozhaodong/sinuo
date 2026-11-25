@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS request_logs (
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))
 );
 
+-- 追踪库内的一次性数据回填，完成标记与数据修改在同一事务提交。
+CREATE TABLE IF NOT EXISTS tracking_data_migrations (
+    name TEXT PRIMARY KEY NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS request_id_reservations (
+    request_id TEXT PRIMARY KEY NOT NULL
+) WITHOUT ROWID;
+
+-- 正常请求在入口已占号；通过历史导入等途径插入的 ID 也须在清理归档后永久保留。
+CREATE TRIGGER IF NOT EXISTS reserve_archived_request_id AFTER INSERT ON request_logs
+WHEN NOT EXISTS (SELECT 1 FROM request_id_reservations WHERE request_id = NEW.request_id)
+BEGIN
+    INSERT INTO request_id_reservations (request_id) VALUES (NEW.request_id);
+END;
+
 -- 热力图按天汇总缓存：只存配置时区「前天及更早」业务日的库内聚合（不含热池）。
 -- 纯缓存，清空只能 DELETE：下面的触发器引用此表，DROP 会让 request_logs 写入报错。
 CREATE TABLE IF NOT EXISTS usage_daily (

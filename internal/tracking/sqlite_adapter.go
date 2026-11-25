@@ -606,7 +606,7 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		}
 	}
 
-	if err := s.backfillCompletionMs(ctx); err != nil {
+	if err := s.migrateRequestHistory(ctx); err != nil {
 		return err
 	}
 	if err := s.ensurePrivacyExactSecretsSchema(ctx); err != nil {
@@ -832,28 +832,6 @@ func (s *SQLiteAdapter) ensureModelRoutingSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("failed to ensure model routing schema: %w", err)
 		}
-	}
-	return nil
-}
-
-func (s *SQLiteAdapter) backfillCompletionMs(ctx context.Context) error {
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE request_logs
-		SET completion_ms = CASE
-			WHEN duration_ms - first_token_ms < 0 THEN 0
-			ELSE duration_ms - first_token_ms
-		END
-		WHERE completion_ms IS NULL
-			AND duration_ms IS NOT NULL
-			AND first_token_ms IS NOT NULL
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to backfill completion_ms: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err == nil && rowsAffected > 0 {
-		s.logger.Info(fmt.Sprintf("✅ [数据库迁移] completion_ms 历史数据回填完成: %d 条", rowsAffected))
 	}
 	return nil
 }
