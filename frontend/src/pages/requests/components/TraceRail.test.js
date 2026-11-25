@@ -9,24 +9,22 @@ import { buildLifecycleSegments, railSegmentColors, lifecycleSegmentColors } fro
 import { carryLiveTiming } from '../utils/liveTiming.js';
 import { TABLE_COLUMNS, DEFAULT_VISIBLE_COLUMNS, UNSETTLED_STATUSES } from '../utils/constants.js';
 import {
-  applyLiveEnterRamp,
-  easeTraceRailSettle,
-  formatTraceElapsedBadge,
   getSettledRailSegments,
   getTraceRailPhase,
   quantizeSegmentsToCells,
-  resolveAsymptoticFilledCells,
-  resolveEffectiveLiveElapsed,
-  resolveLiveRailState,
-  resolveTraceRailSettleCells,
-  resolveTraceRailSettleDuration,
+  resolveFirstWaitMs,
+  resolveStepRailCells,
+  resolveStepRailColor,
+  resolveStepRailFrameKey,
+  resolveStepRailMeta,
   TRACE_RAIL_CELLS,
-  TRACE_RAIL_ENTER_RAMP_MS,
-  TRACE_RAIL_HALF_SATURATION_MS,
-  TRACE_RAIL_MAX_LIVE_FILLED,
-  TRACE_RAIL_SETTLE_BASE_MS,
-  TRACE_RAIL_SETTLE_PER_CELL_MS,
-  TRACE_RAIL_TAIL_GRACE_MS
+  TRACE_RAIL_LABEL_NEUTRAL,
+  TRACE_RAIL_LABEL_TONES,
+  TRACE_RAIL_SETTLE_MS,
+  TRACE_RAIL_STEPS,
+  TRACE_RAIL_SWEEP_CELLS,
+  TRACE_RAIL_SWEEP_STEP_MS,
+  traceRailLabelTone
 } from '../utils/traceRail.js';
 import { STATUS_CONFIG } from '../../../utils/constants.js';
 
@@ -48,6 +46,11 @@ const TABLE_CODE = stripComments(TABLE_SOURCE);
 
 const IN_FLIGHT = ['pending', 'forwarding', 'processing', 'retry'];
 
+const keysIn = (state, from, to) => state.cells.slice(from, to).map((cell) => cell.key);
+const litIn = (state, from, to) => state.cells.slice(from, to).filter((cell) => cell.key && !cell.dim).length;
+const PREP_END = 5;
+const FIRST_END = 13;
+
 test('阶段游标只用于正在执行的请求', () => {
   for (const status of Object.keys(STATUS_CONFIG)) {
     assert.equal(Boolean(getTraceRailPhase({ status })), IN_FLIGHT.includes(status), status);
@@ -57,18 +60,18 @@ test('阶段游标只用于正在执行的请求', () => {
 test('准备、转发、首响、生成和收尾按记录推进', () => {
   const timestamp = '2026-11-19T02:00:00Z';
   const sentAt = '2026-11-19T02:00:01Z';
-  for (const [request, key, color] of [
-    [{ status: 'pending' }, 'preparing', 'queue'],
-    [{ status: 'forwarding' }, 'forwarding', 'send'],
-    [{ status: 'processing', upstreamFirstDispatchMs: 0 }, 'forwarding', 'send'],
-    [{ status: 'processing', firstTokenStartAt: sentAt, duration: 900000 }, 'first', 'first'],
-    [{ status: 'processing', upstreamWriteMs: 0 }, 'first', 'first'],
-    [{ status: 'processing', firstTokenMs: 0 }, 'stream', 'stream'],
-    [{ status: 'processing', completionMs: 0 }, 'settling', 'tail']
+  for (const [request, key, step] of [
+    [{ status: 'pending' }, 'preparing', 0],
+    [{ status: 'forwarding' }, 'forwarding', 0],
+    [{ status: 'processing', upstreamFirstDispatchMs: 0 }, 'forwarding', 0],
+    [{ status: 'processing', firstTokenStartAt: sentAt, duration: 900000 }, 'first', 1],
+    [{ status: 'processing', upstreamWriteMs: 0 }, 'first', 1],
+    [{ status: 'processing', firstTokenMs: 0 }, 'stream', 2],
+    [{ status: 'processing', completionMs: 0 }, 'settling', 2]
   ]) {
     const phase = getTraceRailPhase({ timestamp, ...request });
     assert.equal(phase.key, key);
-    assert.equal(phase.color, color);
+    assert.equal(phase.step, step);
   }
 });
 
@@ -80,9 +83,9 @@ test('重试起点晚于上次写出时标为重试，收到本次实际写出�
     retryStartedAt: '2026-11-19T02:00:02Z',
     upstreamWriteMs: 1000
   };
-  assert.equal(getTraceRailPhase(request).color, 'retry');
-  assert.equal(getTraceRailPhase({ ...request, status: 'forwarding' }).color, 'retry');
-  assert.equal(getTraceRailPhase({ ...request, firstTokenStartAt: '2026-11-19T02:00:03Z' }).color, 'first');
+  assert.equal(getTraceRailPhase(request).key, 'retry');
+  assert.equal(getTraceRailPhase({ ...request, status: 'forwarding' }).key, 'retry');
+  assert.equal(getTraceRailPhase({ ...request, firstTokenStartAt: '2026-11-19T02:00:03Z' }).key, 'first');
   assert.equal(getTraceRailPhase({ ...request, status: 'suspended' }), null);
 });
 
@@ -90,28 +93,42 @@ test('已记录的首响和收尾优先于未更新的重试等待信息', () =>
   for (const status of ['processing', 'retry']) {
     for (const firstTokenStartAt of [undefined, '2026-11-19T02:00:01Z']) {
       const request = { status, firstTokenStartAt, retryStartedAt: '2026-11-19T02:00:02Z' };
-      assert.equal(getTraceRailPhase(request).color, 'retry');
-      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0 }).color, 'stream');
-      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0, completionMs: 200 }).color, 'tail');
+      assert.equal(getTraceRailPhase(request).key, 'retry');
+      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0 }).key, 'stream');
+      assert.equal(getTraceRailPhase({ ...request, firstTokenMs: 0, completionMs: 200 }).key, 'settling');
     }
   }
 });
 
-test('渐近生长时间尺随耗时单调增长且永不顶爆，始终留 1 格游标', () => {
+test('步进轨固定三段 21 格：走过的段整段亮、没到的段空槽、当前段只亮扫光两格', () => {
   assert.equal(TRACE_RAIL_CELLS, 21);
-  assert.equal(TRACE_RAIL_MAX_LIVE_FILLED, 20);
-  assert.equal(resolveAsymptoticFilledCells(0), 0);
-  assert.equal(resolveAsymptoticFilledCells(-100), 0);
-  assert.equal(resolveAsymptoticFilledCells(TRACE_RAIL_HALF_SATURATION_MS), 10);
+  assert.deepEqual(TRACE_RAIL_STEPS.map((step) => step.cells), [5, 8, 8]);
+  assert.equal(TRACE_RAIL_STEPS.reduce((sum, step) => sum + step.cells, 0), TRACE_RAIL_CELLS);
 
-  let prev = 0;
-  for (const ms of [400, 1500, 4000, 8000, 15000, 30000, 120000, 600000, 3600000]) {
-    const filled = resolveAsymptoticFilledCells(ms);
-    assert.ok(filled >= prev, `${ms}ms 的格数 ${filled} 不应小于前档 ${prev}`);
-    assert.ok(filled <= TRACE_RAIL_MAX_LIVE_FILLED, `${ms}ms 超过进行中上限`);
-    prev = filled;
+  const timestamp = '2026-11-19T02:00:00.000Z';
+  const now = Date.parse(timestamp) + 1000;
+  const streaming = { status: 'processing', timestamp, upstreamWriteMs: 200, firstTokenMs: 300 };
+  const heads = new Set();
+  for (let offset = 0; offset < 4000; offset += 40) {
+    const state = resolveStepRailCells(streaming, 'processing', now + offset);
+    assert.equal(state.cells.length, TRACE_RAIL_CELLS);
+    assert.deepEqual(keysIn(state, 0, PREP_END), Array(5).fill('send'));
+    assert.deepEqual(keysIn(state, PREP_END, FIRST_END), Array(8).fill('first'));
+    assert.ok(state.cells.slice(0, FIRST_END).every((cell) => !cell.dim), '走过的段整段亮');
+    assert.deepEqual(keysIn(state, FIRST_END, 21), Array(8).fill('stream'));
+    assert.ok(litIn(state, FIRST_END, 21) <= TRACE_RAIL_SWEEP_CELLS, '当前段最多亮扫光那两格');
+    heads.add(state.cells.findIndex((cell, index) => index >= FIRST_END && !cell.dim));
   }
-  assert.equal(resolveAsymptoticFilledCells(3600000), TRACE_RAIL_MAX_LIVE_FILLED);
+  assert.ok(heads.size > 4, '亮光应随时间在当前段内移动');
+
+  const pending = resolveStepRailCells({ status: 'pending', timestamp }, 'pending', now);
+  assert.ok(pending.cells.slice(PREP_END).every((cell) => cell.key === null), '没走到的段是空槽');
+
+  const still = resolveStepRailCells(streaming, 'processing', now, { sweep: false });
+  assert.equal(litIn(still, FIRST_END, 21), 8, '减弱动效时当前段整段静止点亮');
+
+  assert.equal(resolveStepRailCells({ status: 'completed' }, 'completed', now), null);
+  assert.equal(resolveStepRailCells({ status: 'suspended' }, 'suspended', now), null);
 });
 
 test('整格量化严格输出 21 格，0ms 终态与失败保底均不丢失', () => {
@@ -151,7 +168,7 @@ test('整格量化严格输出 21 格，0ms 终态与失败保底均不丢失', 
   }
 });
 
-test('进行中状态快照支持弹性阶段占比与慢首响预警，进入生成后恢复首响紫', () => {
+test('首响段按等待时长预警（与首响胶囊同阈值），重试段标黄，进入生成后首响段恢复紫色', () => {
   const startMs = Date.parse('2026-11-19T02:00:00Z');
   const base = {
     status: 'processing',
@@ -159,46 +176,74 @@ test('进行中状态快照支持弹性阶段占比与慢首响预警，进入�
     upstreamWriteMs: 300,
     firstTokenStartAt: '2026-11-19T02:00:00.300Z'
   };
+  const at = (ms, request = base) => resolveStepRailCells(request, request.status, startMs + ms, { sweep: false });
 
-  // 常规等首响（3s）
-  const normalWait = resolveLiveRailState(base, 'processing', 3000, startMs + 3000);
-  assert.equal(normalWait.cells.length, TRACE_RAIL_CELLS);
-  assert.equal(normalWait.cursorIndex, normalWait.filled);
-  assert.equal(normalWait.cursorColorKey, 'first');
-  assert.equal(normalWait.cells[normalWait.cursorIndex], 'first');
+  const normal = at(3000);
+  assert.equal(normal.phase.key, 'first');
+  assert.equal(normal.color, 'first');
+  assert.deepEqual(keysIn(normal, PREP_END, FIRST_END), Array(8).fill('first'));
+  assert.ok(normal.cells.slice(FIRST_END).every((cell) => cell.key === null));
 
-  // 慢首响 >8s -> 琥珀预警（retry）
-  const warnWait = resolveLiveRailState(base, 'processing', 9500, startMs + 9500);
-  assert.equal(warnWait.cursorColorKey, 'retry');
-  assert.ok(warnWait.filled > normalWait.filled, '等待越久已生长格数应越多');
+  // 等了恰好 8 秒不变色，超过才变黄；超过 15 秒变红
+  assert.equal(at(8300).color, 'first');
+  assert.equal(at(9500).color, 'retry');
+  assert.equal(at(18000).color, 'failure');
+  assert.deepEqual(keysIn(at(18000), PREP_END, FIRST_END), Array(8).fill('failure'));
 
-  // 极慢首响 >15s -> 玫瑰红预警（failure）
-  const critWait = resolveLiveRailState(base, 'processing', 18000, startMs + 18000);
-  assert.equal(critWait.cursorColorKey, 'failure');
+  const streaming = at(22000, { ...base, firstTokenMs: 14000, firstTokenAt: '2026-11-19T02:00:14.300Z' });
+  assert.equal(streaming.phase.key, 'stream');
+  assert.deepEqual(keysIn(streaming, PREP_END, FIRST_END), Array(8).fill('first'));
+  assert.deepEqual(keysIn(streaming, FIRST_END, 21), Array(8).fill('stream'));
 
-  // 收到首响进入生成 -> 首响定格紫罗兰，游标与新增部分为翠绿
-  const streaming = resolveLiveRailState(
-    { ...base, firstTokenMs: 14000, firstTokenAt: '2026-11-19T02:00:14.300Z' },
-    'processing',
-    22000,
-    startMs + 22000
-  );
-  assert.equal(streaming.cursorColorKey, 'stream');
-  assert.ok(streaming.cells.slice(0, streaming.filled).includes('first'));
-  assert.ok(streaming.cells.slice(0, streaming.filled).includes('stream'));
+  const retry = at(6000, { ...base, status: 'retry', retryStartedAt: '2026-11-19T02:00:05Z' });
+  assert.equal(retry.phase.key, 'retry');
+  assert.deepEqual(keysIn(retry, PREP_END, FIRST_END), Array(8).fill('retry'));
+});
+
+test('进行中阶段文字平时中性灰，只在重试与慢首响时随轨道变黄变红', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00Z');
+  const timestamp = '2026-11-19T02:00:00Z';
+  const waiting = { status: 'processing', timestamp, upstreamWriteMs: 300, firstTokenStartAt: '2026-11-19T02:00:00.300Z' };
+  const amber = TRACE_RAIL_LABEL_TONES.retry;
+  const rose = TRACE_RAIL_LABEL_TONES.failure;
+  const cases = [
+    [{ status: 'pending', timestamp }, 0, 'send', TRACE_RAIL_LABEL_NEUTRAL],
+    [{ status: 'forwarding', timestamp }, 0, 'send', TRACE_RAIL_LABEL_NEUTRAL],
+    [waiting, 3000, 'first', TRACE_RAIL_LABEL_NEUTRAL],
+    [waiting, 8300, 'first', TRACE_RAIL_LABEL_NEUTRAL],
+    [waiting, 9500, 'retry', amber],
+    [waiting, 18000, 'failure', rose],
+    [{ ...waiting, status: 'retry', retryStartedAt: '2026-11-19T02:00:05Z' }, 6000, 'retry', amber],
+    [{ ...waiting, firstTokenMs: 800 }, 5000, 'stream', TRACE_RAIL_LABEL_NEUTRAL],
+    [{ ...waiting, firstTokenMs: 800, completionMs: 2000 }, 5000, 'stream', TRACE_RAIL_LABEL_NEUTRAL]
+  ];
+  for (const [request, offset, colorKey, tone] of cases) {
+    const phase = getTraceRailPhase(request, request.status);
+    const label = `${phase.key} @${offset}ms`;
+    assert.equal(resolveStepRailColor(request, phase, startMs + offset), colorKey, label);
+    assert.equal(resolveStepRailCells(request, request.status, startMs + offset).color, colorKey, label);
+    assert.equal(traceRailLabelTone(colorKey), tone, label);
+  }
+  assert.equal(TRACE_RAIL_LABEL_NEUTRAL, 'text-fg-muted');
+  assert.equal(getTraceRailPhase(waiting).label, '等首响');
+  // 渲染期不读时钟：不传 now 时等首响按刚开始处理
+  assert.equal(resolveStepRailColor(waiting, getTraceRailPhase(waiting), undefined), 'first');
+  for (const [key, tone] of Object.entries(TRACE_RAIL_LABEL_TONES)) {
+    assert.match(tone, /^text-\w+-700 dark:text-\w+-300$/, `${key} 文字色需压深，暗色下提亮`);
+  }
 });
 
 test('最新一次写完距今很短时，滞后的 firstTokenStartAt 不会误报慢首响', () => {
   const startMs = Date.parse('2026-11-19T02:00:00Z');
-  const state = resolveLiveRailState({
+  const request = {
     status: 'processing',
     timestamp: '2026-11-19T02:00:00Z',
     // 旧的写入时间戳停在 100ms 处，但最新一次写完已是 16000ms，距今才 100ms
     firstTokenStartAt: '2026-11-19T02:00:00.100Z',
     upstreamWriteMs: 16000
-  }, 'processing', 16100, startMs + 16100);
-  assert.equal(state.cursorColorKey, 'first');
-  assert.equal(state.cells[state.cursorIndex], 'first');
+  };
+  assert.equal(resolveFirstWaitMs(request, startMs + 16100), 100);
+  assert.equal(resolveStepRailCells(request, 'processing', startMs + 16100).color, 'first');
 });
 
 test('查询已带回重试后的最新写出偏移而行内残留旧写出时间时，进入等待首响且不误报慢首响', () => {
@@ -221,18 +266,15 @@ test('查询已带回重试后的最新写出偏移而行内残留旧写出时�
     retryCount: 1
   };
   const [merged] = carryLiveTiming([prevRow], [queryRow]);
-  const state = resolveLiveRailState(merged, merged.status, 30000, startMs + 30000);
+  const state = resolveStepRailCells(merged, merged.status, startMs + 30000);
   assert.equal(state.phase.key, 'first');
-  assert.equal(state.cursorColorKey, 'first');
-  const byKey = Object.fromEntries(state.segments.map((seg) => [seg.key, seg.ms]));
-  assert.equal(byKey.retry, 29900);
-  assert.equal(byKey.first, 100);
+  assert.equal(state.color, 'first');
+  assert.equal(resolveFirstWaitMs(merged, startMs + 30000), 100);
 });
 
-test('重试后首响事件先到且写入时间未刷新时，优先按 firstTokenAt 分配生成段与重试段', () => {
+test('重试后首响事件先到且写入时间未刷新时，按已记录的首响直接进入生成段', () => {
   const startMs = Date.parse('2026-11-19T02:00:00Z');
-  // 第 1 次写出停在 200ms，18s 后重试并于 20s 收到首响（首响 1.2s），当前 25s（实际生成 5s）
-  const state = resolveLiveRailState({
+  const state = resolveStepRailCells({
     status: 'processing',
     timestamp: '2026-11-19T02:00:00Z',
     upstreamWriteMs: 200,
@@ -240,21 +282,18 @@ test('重试后首响事件先到且写入时间未刷新时，优先按 firstTo
     retryStartedAt: '2026-11-19T02:00:18.000Z',
     firstTokenMs: 1200,
     firstTokenAt: '2026-11-19T02:00:20.000Z'
-  }, 'processing', 25000, startMs + 25000);
-
-  const byKey = Object.fromEntries(state.segments.map((seg) => [seg.key, seg.ms]));
-  assert.equal(byKey.retry, 18800);
-  assert.equal(byKey.first, 1200);
-  assert.equal(byKey.stream, 5000);
+  }, 'processing', startMs + 25000, { sweep: false });
+  assert.equal(state.phase.key, 'stream');
+  assert.deepEqual(keysIn(state, PREP_END, FIRST_END), Array(8).fill('first'));
+  assert.deepEqual(keysIn(state, FIRST_END, 21), Array(8).fill('stream'));
 });
 
-test('状态列总耗时进行中降频，终态保持与 timing 同口径', () => {
-  assert.equal(formatTraceElapsedBadge(37, { live: true }), '0ms');
-  assert.equal(formatTraceElapsedBadge(382, { live: true }), '350ms');
-  assert.equal(formatTraceElapsedBadge(1432, { live: true }), '1.4s');
-  assert.equal(formatTraceElapsedBadge(12340, { live: true }), '12.3s');
-  assert.equal(formatTraceElapsedBadge(1432, { live: false }), '1.43s');
-  assert.equal(formatTraceElapsedBadge(0, { live: false }), '0ms');
+test('进行中总耗时显示占位符，跑秒只留在计时胶囊，结束才到货', () => {
+  assert.match(RAIL_CODE, /finalMs === null \? '—' : formatTimingBadge\(finalMs\)/);
+  assert.doesNotMatch(RAIL_CODE, /resolveElapsedMs|timeRef|textContent/, '状态列不应再跑总耗时');
+  // 进行中状态文字按轨道当前段判定：平时中性灰，重试与慢首响变黄变红，由共享时钟和格子同一拍改写
+  assert.match(RAIL_CODE, /paintLabel\(labelRef\.current, state\.color\)/);
+  assert.match(RAIL_CODE, /isLive \? liveLabelClassName\(resolveStepRailColor\(request, phase\)\)/);
 });
 
 test('railSegmentColors 覆盖 buildLifecycleSegments 可能产出的全部 key', () => {
@@ -306,11 +345,10 @@ test('格状轨道在深浅主题使用可辨别的亮色', () => {
 });
 
 test('运行中复用共享时钟原地更新格子，终态与挂起停止订阅', () => {
-  assert.match(RAIL_CODE, /resolveLiveRailState\(/);
-  assert.match(RAIL_CODE, /resolveElapsedMs\(currentStart, 0, now\)/);
+  assert.match(RAIL_CODE, /resolveStepRailCells\(/);
   assert.match(RAIL_CODE, /subscribeElapsedTick\(paint\)/);
-  assert.match(RAIL_CODE, /if \(!isLive\) \{[\s\S]*?return undefined;/);
-  assert.doesNotMatch(RAIL_CODE, /useState|setInterval/);
+  assert.match(RAIL_CODE, /if \(!isLive\) return undefined;/);
+  assert.doesNotMatch(RAIL_CODE, /useState|setInterval|requestAnimationFrame/);
 });
 
 test('入场与让位作用于整行，叠加位移并保留整行背景和事件命中', () => {
@@ -374,27 +412,28 @@ test('旧的整行扫光与逐列接力已彻底移除', () => {
   assert.doesNotMatch(TABLE_SOURCE, /--col-index/, '逐列接力已移除，--col-index 不应再下发');
 });
 
-test('21 格独立网格无亚像素，生长前沿游标独立呼吸', () => {
+test('21 格独立网格无亚像素，进行中不留原地明暗循环', () => {
   const rail = CSS_SOURCE.match(/\.trace-rail \{[^}]*\}/)?.[0];
   assert.match(rail, /grid-template-columns: repeat\(21, 4px\)/);
   assert.match(rail, /gap: 2px/);
   assert.match(rail, /width: 124px/);
   assert.match(rail, /height: 4px/);
-  const cursor = CSS_SOURCE.match(/\.trace-rail__cell--cursor \{[^}]*\}/)?.[0];
-  assert.match(cursor, /animation: trace-rail-cursor [^;]*infinite/);
+  assert.doesNotMatch(CSS_SOURCE, /trace-rail__cell--cursor|@keyframes trace-rail-cursor/, '光标的原地明暗循环已移除');
+  assert.doesNotMatch(RAIL_CODE, /trace-rail__cell--cursor/);
+  assert.match(CSS_SOURCE, /\.trace-rail__cell--dim \{\s*opacity: \.3;\s*\}/);
   // 空槽背景必须使用独立类，不能写在基础 .trace-rail__cell 上覆盖 Tailwind bg-*
   const baseCell = CSS_SOURCE.match(/\.trace-rail__cell \{[^}]*\}/)?.[0];
   assert.doesNotMatch(baseCell, /background/);
   assert.doesNotMatch(RAIL_CODE, /key=\{request\.timestamp\}/);
 });
 
-test('减弱动效保留静态生长前沿，关闭呼吸与过渡动画', () => {
+test('减弱动效时当前段整段静止点亮，关闭扫光过渡与结束换色', () => {
   const reducedBlock = CSS_SOURCE.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n}\n/)?.[0];
   assert.ok(reducedBlock, 'reduced-motion 段落未找到');
-  assert.match(reducedBlock, /\.trace-rail__cell--cursor,[^}]*animation: none/);
   assert.match(reducedBlock, /\.trace-rail--live \.trace-rail__cell \{[^}]*transition: none/);
-  assert.match(reducedBlock, /\.trace-rail__cell--cursor \{ opacity: \.68; \}/);
-  assert.match(RAIL_CODE, /!prefersReducedMotion\(\)/);
+  assert.match(reducedBlock, /\.trace-rail\[data-settling\] \.trace-rail__cell[\s\S]*?transition: none/);
+  assert.match(RAIL_CODE, /sweep: !prefersReducedMotion\(\)/);
+  assert.match(RAIL_CODE, /if \(prefersReducedMotion\(\)\) return undefined;/);
 });
 
 test('状态和轨道排在原有 32px 表格行高之内', () => {
@@ -453,119 +492,13 @@ test('状态列宽度写死 —— 它一抖后面每一列都跟着右移', () 
     '标签必须能被截住，否则未知状态的原始串会把整列撑开');
 });
 
-test('收尾延展缓动柔和起步并单调收敛到 1，自适应时长按剩余空槽计算', () => {
-  assert.equal(easeTraceRailSettle(0), 0);
-  assert.equal(easeTraceRailSettle(1), 1);
-  // 首帧（~5% 进度）柔和起速，避免像 easeOutExpo 一样单帧猛跳多格
-  assert.ok(easeTraceRailSettle(0.05) < 0.05, '起速过猛会在首帧产生跳跃感');
-  assert.ok(easeTraceRailSettle(0.5) > 0.7, '中后段应平稳减速贴近终态');
-
-  let prev = 0;
-  for (let i = 1; i <= 20; i += 1) {
-    const val = easeTraceRailSettle(i / 20);
-    assert.ok(val >= prev && val <= 1);
-    prev = val;
-  }
-
-  assert.equal(resolveTraceRailSettleDuration(TRACE_RAIL_CELLS), 0);
-  assert.equal(
-    resolveTraceRailSettleDuration(0),
-    TRACE_RAIL_SETTLE_BASE_MS + TRACE_RAIL_CELLS * TRACE_RAIL_SETTLE_PER_CELL_MS
-  );
-  assert.ok(resolveTraceRailSettleDuration(4) > resolveTraceRailSettleDuration(16));
-});
-
-test('收尾中间帧只填充前 visibleCount 格，右侧未扫过格保持空槽并顺滑推移分段边界', () => {
-  const segments = [
-    { key: 'first', ms: 1400 },
-    { key: 'stream', ms: 2600 }
-  ];
-  const settled = quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS);
-
-  const empty = resolveTraceRailSettleCells(segments, settled, 0);
-  assert.equal(empty.length, TRACE_RAIL_CELLS);
-  assert.ok(empty.every((cell) => cell === null));
-
-  const mid = resolveTraceRailSettleCells(segments, settled, 9);
-  assert.equal(mid.length, TRACE_RAIL_CELLS);
-  assert.ok(mid.slice(0, 9).every((cell) => cell !== null));
-  assert.ok(mid.slice(9).every((cell) => cell === null));
-  assert.ok(mid.slice(0, 9).includes('first') && mid.slice(0, 9).includes('stream'));
-
-  const full = resolveTraceRailSettleCells(segments, settled, TRACE_RAIL_CELLS);
-  assert.deepEqual(full, settled);
-});
-
-test('短防抖尾窗内锁定流式结束耗时并保留流式绿游标，真实慢尾段再切灰恢复计秒', () => {
-  const startMs = Date.parse('2026-11-19T02:00:00.000Z');
-  const req = {
-    status: 'processing',
-    isStreaming: true,
-    timestamp: '2026-11-19T02:00:00.000Z',
-    firstTokenAt: '2026-11-19T02:00:02.000Z',
-    firstTokenMs: 1800,
-    completionMs: 3000
-  };
-  const phase = getTraceRailPhase(req, 'processing');
-  assert.equal(phase.key, 'settling');
-
-  // 250ms 防抖窗口内（超过 streamEndOffset=5000ms 仅 220ms <= 350ms）
-  const inGrace = resolveEffectiveLiveElapsed(req, phase, 5220, startMs);
-  assert.equal(inGrace.elapsedMs, 5000);
-  assert.equal(inGrace.keepStreamCursor, true);
-
-  // 超过宽限窗口（滞后 500ms > 350ms）：确属真实慢收尾，恢复计秒并允许游标切灰
-  const slowTail = resolveEffectiveLiveElapsed(req, phase, 5000 + TRACE_RAIL_TAIL_GRACE_MS + 150, startMs);
-  assert.equal(slowTail.elapsedMs, 5000 + TRACE_RAIL_TAIL_GRACE_MS + 150);
-  assert.equal(slowTail.keepStreamCursor, false);
-});
-
-test('真实首响的 0ms 生成耗时，仅流式请求可在短尾窗保留绿游标', () => {
-  const timestamp = '2026-11-19T02:00:00.000Z';
-  const startMs = Date.parse(timestamp);
-  const request = {
-    status: 'processing', timestamp, firstTokenMs: 1800,
-    firstTokenAt: '2026-11-19T02:00:02.000Z', completionMs: 0
-  };
-  for (const isStreaming of [false, true]) {
-    const req = { ...request, isStreaming };
-    const phase = getTraceRailPhase(req);
-    assert.equal(phase.key, 'settling');
-    assert.deepEqual(resolveEffectiveLiveElapsed(req, phase, 2220, startMs), {
-      elapsedMs: isStreaming ? 2000 : 2220,
-      keepStreamCursor: isStreaming
-    });
-  }
-});
-
-test('新入场在途行在前 240ms 内从 0 格顺滑追上真实格数，避免挂载首帧跳格', () => {
-  const startMs = Date.parse('2026-11-19T02:00:00.000Z');
-  const liveState = resolveLiveRailState({
-    status: 'processing',
-    timestamp: '2026-11-19T02:00:00.000Z',
-    upstreamWriteMs: 180,
-    firstTokenStartAt: '2026-11-19T02:00:00.180Z'
-  }, 'processing', 2400, startMs + 2400);
-  assert.ok(liveState.filled >= 4);
-
-  const atZero = applyLiveEnterRamp(liveState, 0, TRACE_RAIL_ENTER_RAMP_MS);
-  assert.equal(atZero.filled, 0);
-  assert.equal(atZero.cursorIndex, 0);
-
-  const atMid = applyLiveEnterRamp(liveState, TRACE_RAIL_ENTER_RAMP_MS * 0.4, TRACE_RAIL_ENTER_RAMP_MS);
-  assert.ok(atMid.filled > 0 && atMid.filled <= liveState.filled);
-
-  const atEnd = applyLiveEnterRamp(liveState, TRACE_RAIL_ENTER_RAMP_MS, TRACE_RAIL_ENTER_RAMP_MS);
-  assert.equal(atEnd, liveState);
-});
-
 test('轨道与耗时节点恒定不卸载重建，收尾走平滑色块过渡而非闪暗关键帧', () => {
   assert.doesNotMatch(RAIL_CODE, /key=\{isLive \? 'live' : 'static'\}/, '切换终态不能卸载重建轨道 DOM');
   assert.doesNotMatch(RAIL_CODE, /key=\{canTick \? 'live' : 'static'\}/, '切换终态不能卸载重建耗时节点');
   assert.doesNotMatch(CSS_SOURCE, /@keyframes trace-rail-settle\b/, '旧版闪暗+缩放关键帧应彻底移除');
   assert.match(CSS_SOURCE, /\.trace-rail\[data-settling\] \.trace-rail__cell \{[^}]*transition: background-color 220ms/);
   assert.match(CSS_SOURCE, /\.trace-rail__label \{[^}]*transition: color/);
-  assert.match(TABLE_CODE, /<RequestTraceCell request=\{request\} enterAnimation=\{enterAnimation\} \/>/);
+  assert.match(TABLE_CODE, /<RequestTraceCell request=\{request\} \/>/);
   assert.match(TABLE_CODE, /useRowShiftFlip\(/);
   const reducedBlock = CSS_SOURCE.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n}\n/)?.[0];
   assert.match(reducedBlock, /\.trace-rail\[data-settling\] \.trace-rail__cell[\s\S]*?transition: none/);
@@ -804,7 +737,24 @@ function createFakeRailNode() {
   };
 }
 
-test('计时数据晚到（收尾刚铺满进入过渡窗或中途补入）时，轨道立即更新为最新分段配色不残留灰格', async (t) => {
+function renderTraceHook(runner, useTraceRail, rail, request, label = null) {
+  const { status } = request;
+  const isLive = Boolean(getTraceRailPhase(request, status));
+  const finalMs = !UNSETTLED_STATUSES.has(status) && Number.isFinite(request.duration) ? request.duration : null;
+  const segments = isLive ? [] : getSettledRailSegments(request, finalMs);
+  const settledCellKeys = segments.length > 0
+    ? quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS)
+    : Array.from({ length: TRACE_RAIL_CELLS }, () => null);
+  runner.render(() => {
+    const refs = useTraceRail({ request, status, isLive, settledCellKeys });
+    refs.railRef.current = rail;
+    if (label) refs.labelRef.current = label;
+  });
+}
+
+const countCells = (rail, pattern) => rail.children.filter((node) => node.className.includes(pattern)).length;
+
+test('计时数据晚到（结束换色播放中补入）时，轨道立即更新为最新分段配色，不打断也不残留灰格', async (t) => {
   const runner = createHookRunner();
   globalThis.__traceHookHost = runner.hooks;
   t.after(() => {
@@ -813,77 +763,43 @@ test('计时数据晚到（收尾刚铺满进入过渡窗或中途补入）时�
   });
   const env = createFakeBrowserEnv(t);
   const { useTraceRail } = await loadTraceRailHook();
-
   const rail = createFakeRailNode();
-  const timeNode = { textContent: '' };
-  const bindRefs = (result) => {
-    result.railRef.current = rail;
-    result.timeRef.current = timeNode;
-  };
+  const base = { requestId: 'req-late', timestamp: '2026-11-19T02:00:00.000Z' };
 
-  const renderReq = (req) => {
-    const status = req.status;
-    const isLive = Boolean(getTraceRailPhase(req, status));
-    const finalMs = !UNSETTLED_STATUSES.has(status) && Number.isFinite(req.duration) ? req.duration : null;
-    const segments = isLive ? [] : getSettledRailSegments(req, finalMs);
-    const settledCellKeys = segments.length > 0 ? quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS) : Array.from({ length: TRACE_RAIL_CELLS }, () => null);
-    runner.render(() => {
-      const refs = useTraceRail({
-        request: req,
-        status,
-        startedAt: isLive ? Date.parse(req.timestamp) : undefined,
-        isLive,
-        hasSegments: segments.length > 0,
-        segments,
-        settledCellKeys,
-        enterAnimation: null
-      });
-      bindRefs(refs);
-    });
-  };
+  // 1. 先在途运行（准备段点亮），再以仅含总耗时（全灰）的状态落定
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' });
+  assert.ok(countCells(rail, 'trace-rail__cell--empty') < TRACE_RAIL_CELLS, '进行中应点亮准备段');
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'completed', duration: 1000 });
+  assert.equal(rail.dataset.settling, '', '从进行中切到终态应播一次换色');
+  assert.equal(countCells(rail, 'bg-slate-300'), 21);
 
-  // 1. 先在途运行，再以仅含总耗时（全灰）的状态落定
-  renderReq({ requestId: 'req-late', status: 'processing', timestamp: '2026-11-19T02:00:00.000Z' });
-  renderReq({ requestId: 'req-late', status: 'completed', timestamp: '2026-11-19T02:00:00.000Z', duration: 1000 });
-  assert.equal(rail.dataset.settling, '');
-
-  // 2. 推完收尾 rAF（进入 260ms 尾段混合窗，teardownTimer 尚未触发）
-  env.advanceRaf(1000);
-  assert.equal(rail.dataset.settling, '', '应仍处于尾段色块混合窗');
-  assert.equal(rail.children.filter((n) => n.className.includes('bg-slate-300')).length, 21);
-
-  // 3. 此时补入首响 200ms + 流式输出 800ms（应为 5 格紫 + 16 格绿）
-  renderReq({
-    requestId: 'req-late',
-    status: 'completed',
-    timestamp: '2026-11-19T02:00:00.000Z',
-    duration: 1000,
-    firstTokenMs: 200,
-    completionMs: 800,
-    isStreaming: true
+  // 2. 换色播放中补入首响 200ms + 流式输出 800ms（应为 5 格紫 + 16 格绿）
+  renderTraceHook(runner, useTraceRail, rail, {
+    ...base, status: 'completed', duration: 1000, firstTokenMs: 200, completionMs: 800, isStreaming: true
   });
-  assert.equal(rail.children.filter((n) => n.className.includes('bg-violet-400')).length, 5);
-  assert.equal(rail.children.filter((n) => n.className.includes('bg-emerald-400')).length, 16);
+  assert.equal(countCells(rail, 'bg-violet-400'), 5);
+  assert.equal(countCells(rail, 'bg-emerald-400'), 16);
+  assert.equal(rail.dataset.settling, '', '计时晚到不打断正在播的换色');
 
-  // 4. 过渡窗结束后，21 格依然保持 5 紫 + 16 绿，绝不回退全灰
-  env.flushTimers(400);
+  // 3. 换色结束后摘掉标记，21 格依然保持 5 紫 + 16 绿，绝不回退全灰
+  env.flushTimers(TRACE_RAIL_SETTLE_MS + 50);
   assert.equal(rail.dataset.settling, undefined);
-  assert.equal(rail.children.filter((n) => n.className.includes('bg-violet-400')).length, 5);
-  assert.equal(rail.children.filter((n) => n.className.includes('bg-emerald-400')).length, 16);
+  assert.equal(countCells(rail, 'bg-violet-400'), 5);
+  assert.equal(countCells(rail, 'bg-emerald-400'), 16);
 });
 
-test('React StrictMode 双跑 effect 时，极速新请求不会跳过从 0 到 21 格的收尾动画', async (t) => {
+test('首次出现即已结束的行直接按比例着色，不补播结束换色（StrictMode 双跑也不例外）', async (t) => {
   const runner = createHookRunner();
   globalThis.__traceHookHost = runner.hooks;
   t.after(() => {
     runner.unmount();
     delete globalThis.__traceHookHost;
   });
-  const env = createFakeBrowserEnv(t);
+  createFakeBrowserEnv(t);
   const { useTraceRail } = await loadTraceRailHook();
-
   const rail = createFakeRailNode();
-  const fastReq = {
+
+  renderTraceHook(runner, useTraceRail, rail, {
     requestId: 'req-fast-strict',
     status: 'completed',
     timestamp: '2026-11-19T02:00:00.000Z',
@@ -891,46 +807,197 @@ test('React StrictMode 双跑 effect 时，极速新请求不会跳过从 0 到 
     firstTokenMs: 60,
     completionMs: 120,
     isStreaming: true
-  };
-  const segments = getSettledRailSegments(fastReq, 180);
-  const settledCellKeys = quantizeSegmentsToCells(segments, TRACE_RAIL_CELLS);
-
-  runner.render(() => {
-    const refs = useTraceRail({
-      request: fastReq,
-      status: 'completed',
-      startedAt: undefined,
-      isLive: false,
-      hasSegments: true,
-      segments,
-      settledCellKeys,
-      enterAnimation: { delayMs: 0 }
-    });
-    refs.railRef.current = rail;
   });
-
-  // 模拟 StrictMode：在浏览器触发 rAF 之前同步执行 cleanup + 重新执行 effect
   runner.simulateStrictRemount();
 
-  assert.equal(rail.dataset.settling, '', 'StrictMode 重挂后仍应保持收尾动画激活');
+  assert.equal(rail.dataset.settling, undefined, '已有整行入场，不再叠一次换色');
+  assert.equal(countCells(rail, 'trace-rail__cell--empty'), 0, '首帧就是终态配色');
+  assert.ok(countCells(rail, 'bg-violet-400') > 0 && countCells(rail, 'bg-emerald-400') > 0);
+});
+
+test('请求挂起时不播结束换色，挂起后真正结束才播一次', async (t) => {
+  const runner = createHookRunner();
+  globalThis.__traceHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__traceHookHost;
+  });
+  const env = createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+  const rail = createFakeRailNode();
+  const base = { requestId: 'req-suspend', timestamp: '2026-11-19T02:00:00.000Z' };
+
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' });
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'suspended' });
+  assert.equal(rail.dataset.settling, undefined, '挂起没有结束，不播结束换色');
+  assert.equal(countCells(rail, 'trace-rail__cell--empty'), TRACE_RAIL_CELLS, '挂起显示空槽');
+
+  renderTraceHook(runner, useTraceRail, rail, {
+    ...base, status: 'completed', duration: 1000, firstTokenMs: 200, completionMs: 800, isStreaming: true
+  });
+  assert.equal(rail.dataset.settling, '', '挂起后真正结束仍播一次');
+  assert.equal(countCells(rail, 'bg-violet-400'), 5);
+  env.flushTimers(TRACE_RAIL_SETTLE_MS + 50);
+  assert.equal(rail.dataset.settling, undefined);
+});
+
+test('慢首响时文字被时钟改成黄色，之后取消或挂起都会写回终态文字色', async (t) => {
+  createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+  for (const next of [{ status: 'cancelled', duration: 12000 }, { status: 'suspended' }]) {
+    const runner = createHookRunner();
+    globalThis.__traceHookHost = runner.hooks;
+    const rail = createFakeRailNode();
+    const label = { className: '' };
+    const base = {
+      requestId: `req-slow-${next.status}`,
+      timestamp: new Date(Date.now() - 12_000).toISOString(),
+      upstreamWriteMs: 300
+    };
+    renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' }, label);
+    assert.ok(label.className.includes(TRACE_RAIL_LABEL_TONES.retry), `等首响超过 8 秒应变黄：${label.className}`);
+
+    renderTraceHook(runner, useTraceRail, rail, { ...base, ...next }, label);
+    assert.ok(label.className.includes(TRACE_RAIL_LABEL_NEUTRAL), `${next.status} 应写回中性灰：${label.className}`);
+    assert.ok(!label.className.includes('amber'), `${next.status} 不应残留黄色`);
+    runner.unmount();
+  }
+  delete globalThis.__traceHookHost;
+});
+
+test('同拍、休止期与减弱动效下帧签名稳定，跨拍或跨慢首响阈值才触发重绘', () => {
+  const startMs = Date.parse('2026-11-19T02:00:00.000Z');
+  const waiting = {
+    requestId: 'req-frame-key',
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00.000Z',
+    upstreamWriteMs: 0
+  };
+  const meta = resolveStepRailMeta(waiting, 'processing', 0);
+
+  // 同一个 120ms 步进窗口内签名不变；跨入下一拍立即变化
+  const step0 = startMs;
   assert.equal(
-    rail.children.filter((n) => n.className.includes('trace-rail__cell--empty')).length,
-    21,
-    'StrictMode 重挂首帧应从全空槽起步，而不是直接跳成满格'
+    resolveStepRailFrameKey(meta, step0),
+    resolveStepRailFrameKey(meta, step0 + TRACE_RAIL_SWEEP_STEP_MS - 1)
+  );
+  assert.notEqual(
+    resolveStepRailFrameKey(meta, step0),
+    resolveStepRailFrameKey(meta, step0 + TRACE_RAIL_SWEEP_STEP_MS)
   );
 
-  // 推进 rAF 到中段与终点：应先部分填充，再满格落位
-  env.advanceRaf(220);
-  const midFilled = rail.children.filter((n) => !n.className.includes('trace-rail__cell--empty')).length;
-  assert.ok(midFilled > 0 && midFilled < 21, `中段应处于平滑推进中，实际 ${midFilled} 格`);
+  // 扫出 8 格段尾后的 5 拍休止期视觉全暗，签名折叠为同一值
+  const restStart = (8 + TRACE_RAIL_SWEEP_CELLS - 1) * TRACE_RAIL_SWEEP_STEP_MS;
+  const restKey = resolveStepRailFrameKey(meta, step0 + restStart);
+  for (let step = 1; step <= 4; step += 1) {
+    assert.equal(resolveStepRailFrameKey(meta, step0 + restStart + step * TRACE_RAIL_SWEEP_STEP_MS), restKey);
+  }
+  const restState = resolveStepRailCells(waiting, 'processing', step0 + restStart, { meta });
+  assert.equal(litIn(restState, PREP_END, FIRST_END), 0, '休止期当前段应全暗');
 
-  env.advanceRaf(600);
-  assert.equal(rail.children.filter((n) => !n.className.includes('trace-rail__cell--empty')).length, 21);
-  env.flushTimers(300);
+  // 减弱动效时仅跨慢首响阈值（8s / 15s）才改变签名
+  const stillEarly = resolveStepRailFrameKey(meta, startMs + 1000, { sweep: false });
+  assert.equal(resolveStepRailFrameKey(meta, startMs + 5000, { sweep: false }), stillEarly);
+  const stillWarn = resolveStepRailFrameKey(meta, startMs + 8500, { sweep: false });
+  assert.notEqual(stillWarn, stillEarly);
+  assert.notEqual(resolveStepRailFrameKey(meta, startMs + 15500, { sweep: false }), stillWarn);
+
+  // retry 与已超 8s 的 first 虽然同属 step 1 且同为黄色，签名仍须区分 phase.key
+  const retryMeta = resolveStepRailMeta({ ...waiting, status: 'retry', retryStartedAt: '2026-11-19T02:00:01.000Z' }, 'retry', 0);
+  assert.notEqual(
+    resolveStepRailFrameKey(retryMeta, startMs + 8500, { sweep: false }),
+    stillWarn
+  );
+});
+
+test('挂起后同拍恢复进行中，以及 retry 切入慢首响时，均不会被帧缓存拦住', async (t) => {
+  const runner = createHookRunner();
+  globalThis.__traceHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__traceHookHost;
+  });
+  createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+  const rail = createFakeRailNode();
+  const label = { className: '' };
+  const base = {
+    requestId: 'req-resume',
+    timestamp: new Date(Date.now() - 10_000).toISOString(),
+    upstreamWriteMs: 100
+  };
+
+  // 1. 进行中 → 挂起（清成空槽）→ 立刻恢复进行中，必须立刻重新点亮而不是停在空槽
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' }, label);
+  assert.ok(countCells(rail, 'trace-rail__cell--empty') < TRACE_RAIL_CELLS);
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'suspended' }, label);
+  assert.equal(countCells(rail, 'trace-rail__cell--empty'), TRACE_RAIL_CELLS);
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' }, label);
+  assert.ok(countCells(rail, 'trace-rail__cell--empty') < TRACE_RAIL_CELLS, '恢复进行中后应立即重绘');
+
+  // 2. retry 切入已超 8s 的慢首响（模拟 React 先把 label 改回中性灰），layout effect 必须立刻写回黄色
+  const retryReq = { ...base, status: 'retry', retryStartedAt: new Date(Date.now() - 1000).toISOString() };
+  renderTraceHook(runner, useTraceRail, rail, retryReq, label);
+  assert.ok(label.className.includes(TRACE_RAIL_LABEL_TONES.retry));
+  label.className = `trace-rail__label ${TRACE_RAIL_LABEL_NEUTRAL}`;
+  renderTraceHook(runner, useTraceRail, rail, { ...base, status: 'processing' }, label);
+  assert.ok(label.className.includes(TRACE_RAIL_LABEL_TONES.retry), '切入慢首响后文字应立刻保持黄色');
+});
+
+test('跨 requestId 复用组件时，前一条在途记录不会让新终态行误播结束换色', async (t) => {
+  const runner = createHookRunner();
+  globalThis.__traceHookHost = runner.hooks;
+  t.after(() => {
+    runner.unmount();
+    delete globalThis.__traceHookHost;
+  });
+  const env = createFakeBrowserEnv(t);
+  const { useTraceRail } = await loadTraceRailHook();
+  const rail = createFakeRailNode();
+
+  renderTraceHook(runner, useTraceRail, rail, {
+    requestId: 'req-a',
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:00.000Z'
+  });
+  renderTraceHook(runner, useTraceRail, rail, {
+    requestId: 'req-b',
+    status: 'completed',
+    timestamp: '2026-11-19T02:00:01.000Z',
+    duration: 400,
+    firstTokenMs: 100,
+    completionMs: 300,
+    isStreaming: true
+  });
+  assert.equal(rail.dataset.settling, undefined, '切换到另一条已结束请求不应补播换色');
+
+  // 正在播结束换色时切到另一条已结束请求，也应立即撤掉旧换色标记
+  renderTraceHook(runner, useTraceRail, rail, {
+    requestId: 'req-c',
+    status: 'processing',
+    timestamp: '2026-11-19T02:00:02.000Z'
+  });
+  renderTraceHook(runner, useTraceRail, rail, {
+    requestId: 'req-c',
+    status: 'completed',
+    timestamp: '2026-11-19T02:00:02.000Z',
+    duration: 500,
+    firstTokenMs: 200,
+    completionMs: 300,
+    isStreaming: true
+  });
+  assert.equal(rail.dataset.settling, '');
+  renderTraceHook(runner, useTraceRail, rail, {
+    requestId: 'req-d',
+    status: 'completed',
+    timestamp: '2026-11-19T02:00:03.000Z',
+    duration: 500,
+    firstTokenMs: 200,
+    completionMs: 300,
+    isStreaming: true
+  });
   assert.equal(rail.dataset.settling, undefined);
-
-  // 播完后即便再次模拟重跑 effect，也不应重播收尾动画
-  runner.simulateStrictRemount();
+  env.flushTimers(TRACE_RAIL_SETTLE_MS + 50);
   assert.equal(rail.dataset.settling, undefined);
 });
 

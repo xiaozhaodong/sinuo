@@ -111,7 +111,7 @@ test('0ms 结束记录显示带颜色和说明的 21 格满宽轨道，挂起显
 
   const suspended = renderStatus({ status: 'suspended', duration_ms: 0 });
   assert.match(suspended, />—<\/span>/);
-  assert.doesNotMatch(suspended, /trace-rail--live|trace-rail__cell--cursor/);
+  assert.doesNotMatch(suspended, /trace-rail--live|trace-rail__cell--dim/);
   assert.equal(countMatches(suspended, /class="trace-rail__cell trace-rail__cell--empty"/g), 21);
 });
 

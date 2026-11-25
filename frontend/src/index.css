@@ -663,23 +663,21 @@
   background-color: var(--trace-cell-empty);
 }
 
+/* 进行中的阶段步进轨：当前段压暗，亮光扫过的两格恢复不透明；
+   过渡让亮光的前后沿有一点拖尾，读起来是从左往右流，而不是逐格硬跳。 */
 .trace-rail--live .trace-rail__cell {
-  transition: background-color 180ms ease-out, opacity 180ms ease-out;
+  transition: background-color 180ms ease-out, opacity 160ms ease-out;
 }
 
-.trace-rail__cell--cursor {
-  animation: trace-rail-cursor 1350ms ease-in-out infinite;
+.trace-rail__cell--dim {
+  opacity: .3;
 }
 
-@keyframes trace-rail-cursor {
-  0%, 100% { opacity: .35; }
-  50%      { opacity: 1; }
-}
-
-/* 收尾延展期：拉长色块过渡至 220ms，配合 rAF 逐格推进形成柔和羽化波前，
-   同时让左侧既有分段边界在重算到 21 格时顺滑右移变色，不出现闪暗与硬切。 */
+/* 结束换色：从进行中切到终态的那一次，按格序号（--i）从左到右错开 14ms 换成真实比例配色，
+   只播一次；计时晚到时原地改 class，过渡自然承接，不闪暗、不硬切。 */
 .trace-rail[data-settling] .trace-rail__cell {
-  transition: background-color 220ms cubic-bezier(.22, 1, .36, 1), opacity 180ms ease-out;
+  transition: background-color 220ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease-out;
+  transition-delay: calc(var(--i, 0) * 14ms);
 }
 
 /* 状态文字与耗时胶囊（灰 → 语义彩）统一柔和过渡，与轨道收尾同频 */
@@ -736,7 +734,6 @@
 @media (prefers-reduced-motion: reduce) {
   .requests-table tr.request-row-enter,
   :where(table:not(.requests-table)) .request-row-enter > td > *,
-  .trace-rail__cell--cursor,
   .pending-send-dots--waiting > i,
   .kpi-value-flash {
     animation: none;
@@ -752,8 +749,6 @@
   .requests-table tbody tr[data-row-shift="run"] {
     transition: none;
   }
-
-  .trace-rail__cell--cursor { opacity: .68; }
 
   /* 关掉滑动后留一条静止满宽条，仍能表达「正在刷新」 */
   .indeterminate-bar {

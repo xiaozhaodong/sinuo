@@ -65,7 +65,7 @@ const ValueCell = ({ pending, tone, title, children }) => (
   </span>
 );
 
-const renderCell = (columnId, request, formatTime, enterAnimation) => {
+const renderCell = (columnId, request, formatTime) => {
   const pending = UNSETTLED_STATUSES.has(request.status);
   // 已落定但没有收到 usage 的记录与在途同理：0 是「还不知道」而不是「用了 0 个」。
   const usagePending = pending || request.usageKnown === false;
@@ -84,7 +84,7 @@ const renderCell = (columnId, request, formatTime, enterAnimation) => {
     case 'sessionId':
       return <span className="inline-block font-mono text-xs text-fg-muted" title={request.sessionId}>{request.sessionId?.slice(0, 8) || '—'}</span>;
     case 'status':
-      return <span className="inline-flex items-center gap-2"><RequestTraceCell request={request} enterAnimation={enterAnimation} /><PrivacyWarningBadge codes={request.privacyWarnings} /></span>;
+      return <span className="inline-flex items-center gap-2"><RequestTraceCell request={request} /><PrivacyWarningBadge codes={request.privacyWarnings} /></span>;
     case 'model':
       // 模型列宽由表格分配，标签只在已分配的空间内收缩，保留完整名称供悬停查看。
       return <div className="flex [contain:inline-size]"><ModelTag model={request.model} alert={buildModelAlert(request)} compact /></div>;
@@ -168,7 +168,7 @@ const RequestRow = ({ request, columns, selected, onSelect, onOpen, onContextMen
           且勾一下任意列就会自愈，只在首屏错。 */}
       {columns.map((col) => (
         <td key={col.id} className={col.align === 'right' ? 'text-right' : undefined}>
-          {renderCell(col.id, request, formatTime, entering ? initialEnterAnimation : null)}
+          {renderCell(col.id, request, formatTime)}
         </td>
       ))}
     </tr>

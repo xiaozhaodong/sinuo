@@ -1,122 +1,43 @@
 import { IN_FLIGHT_STATUSES } from './constants.js';
 import { buildRailLifecycleSegments, parseTimestampOrNull } from './lifecycle.js';
-import { formatTimingBadge, TIMING_THRESHOLDS_MS } from './timing.js';
+import { TIMING_THRESHOLDS_MS } from './timing.js';
 
 // 21 个 4px 色格 + 20 道 2px 间隙 = 精确 124px（零亚像素，首尾齐平）。
 export const TRACE_RAIL_CELLS = 21;
-// 进行中最多填满 20 格，末尾始终留 1 格给呼吸前沿游标，避免顶死或与终态混淆。
-export const TRACE_RAIL_MAX_LIVE_FILLED = TRACE_RAIL_CELLS - 1;
-// 渐近生长半饱和点（与首响警告阈值对齐：8s 刚好长到一半）。
-export const TRACE_RAIL_HALF_SATURATION_MS = TIMING_THRESHOLDS_MS.first.warning;
-// 短防抖尾窗：流式生成完成事件先于列表刷新 ~250ms 到达，
-// 350ms 内锁住预期流式结束耗时并保留绿色游标，仅真实尾段拖延超限时才切入灰游标并恢复计秒。
-export const TRACE_RAIL_TAIL_GRACE_MS = 350;
-// 新在途行因刷新防抖进表时可能已跑了几百毫秒，前 240ms 内从第 0 格顺滑长到当前真实格数。
-export const TRACE_RAIL_ENTER_RAMP_MS = 240;
-// 收尾连续延展参数（标准节奏）：随剩余空槽数自适应时长，配合 220ms 色块过渡形成羽化波前。
-export const TRACE_RAIL_SETTLE_BASE_MS = 220;
-export const TRACE_RAIL_SETTLE_PER_CELL_MS = 15;
-export const TRACE_RAIL_SETTLE_BLEND_MS = 220;
-// 首现即终态的极速新请求：配合行入场略微滞后 35ms 再开始铺满，观感更从容。
-export const TRACE_RAIL_FRESH_SETTLE_LEAD_MS = 35;
 
-// 柔和起速 + 绵长减速的 S-Out 贝塞尔曲线（cubic-bezier(0.26, 0, 0.14, 1)）：
-// 从游标自然起步不突兀，中段顺畅铺开，末尾轻柔制动贴合第 21 格。
-function createCubicBezier(x1, y1, x2, y2) {
-  const sampleX = (t) => ((3 * x1 - 3 * x2 + 1) * t + (3 * x2 - 6 * x1)) * t * t + 3 * x1 * t;
-  const sampleY = (t) => ((3 * y1 - 3 * y2 + 1) * t + (3 * y2 - 6 * y1)) * t * t + 3 * y1 * t;
-  return (x) => {
-    if (x <= 0) return 0;
-    if (x >= 1) return 1;
-    let lo = 0;
-    let hi = 1;
-    for (let i = 0; i < 12; i += 1) {
-      const mid = (lo + hi) * 0.5;
-      if (sampleX(mid) < x) lo = mid;
-      else hi = mid;
-    }
-    return sampleY((lo + hi) * 0.5);
-  };
-}
+// 进行中的阶段步进轨：21 格固定分三段，走过的段整段亮，没到的段是空槽，
+// 当前段压暗、只有一道亮光从左往右扫过。只表达「走到了哪一段」，不按已耗时生长：
+// 不知道真实进度时不画进度。思考不单独占段：进行中拿不准会不会有；结束后列表轨道也不拆思考
+// （buildRailLifecycleSegments 关闭了 streamPhases），只按首响 / 生成等分段着色，思考段只在详情的生命周期条里显示。
+export const TRACE_RAIL_STEPS = Object.freeze([
+  { key: 'prep', label: '准备', cells: 5, color: 'send' },
+  { key: 'first', label: '首响', cells: 8, color: 'first' },
+  { key: 'gen', label: '生成', cells: 8, color: 'stream' }
+]);
+// 进行中阶段文字平时用中性灰，只在异常时上色：重试，以及首响超过 8 秒变黄、超过 15 秒变红（与轨道当前段同一判定）。
+// 终态才上语义色，「生成中 → 完成」由灰变绿本身就是结束信号。黄 / 红与停止原因告警的文字色一致。
+export const TRACE_RAIL_LABEL_NEUTRAL = 'text-fg-muted';
+export const TRACE_RAIL_LABEL_TONES = Object.freeze({
+  retry: 'text-amber-700 dark:text-amber-300',
+  failure: 'text-rose-700 dark:text-rose-300'
+});
+export const traceRailLabelTone = (colorKey) => TRACE_RAIL_LABEL_TONES[colorKey] || TRACE_RAIL_LABEL_NEUTRAL;
 
-export const easeTraceRailSettle = createCubicBezier(0.26, 0.0, 0.14, 1.0);
-
-/**
- * 按当前已亮格数计算收尾推满时长：剩余空槽越多越从容，已满格（21 格）时返回 0。
- */
-export function resolveTraceRailSettleDuration(startCount) {
-  const clamped = Math.max(0, Math.min(TRACE_RAIL_CELLS, Math.round(startCount || 0)));
-  const remaining = TRACE_RAIL_CELLS - clamped;
-  return remaining > 0 ? TRACE_RAIL_SETTLE_BASE_MS + remaining * TRACE_RAIL_SETTLE_PER_CELL_MS : 0;
-}
-
-/**
- * 计算收尾延展中间帧的 21 格配色：前 visibleCount 格按终态分段实时量化，
- * 右侧未扫过格继续保持 null（空槽底色），避免第 0ms 瞬间涂满。
- */
-export function resolveTraceRailSettleCells(segments, settledCellKeys, visibleCount) {
-  if (visibleCount >= TRACE_RAIL_CELLS) return settledCellKeys;
-  if (visibleCount <= 0) return Array.from({ length: TRACE_RAIL_CELLS }, () => null);
-  const partialKeys = quantizeSegmentsToCells(segments, visibleCount);
-  return Array.from({ length: TRACE_RAIL_CELLS }, (_, idx) => (idx < partialKeys.length ? partialKeys[idx] : null));
-}
-
-/**
- * 解析进行中展示用的有效耗时：
- * 流式生成耗时（completionMs）先于终态查询到达后的短尾窗内，
- * 锁定在「首响时刻 + 生成耗时」并保留流式绿游标，避免 250ms 内闪灰与总耗时超跑回跳。
- */
-export function resolveEffectiveLiveElapsed(request, phase, rawElapsedMs, startedAt) {
-  if (phase?.key !== 'settling' || request?.isStreaming !== true || !hasTiming(request.completionMs)) {
-    return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
-  }
-  const firstTokenAt = parseTimestampOrNull(request.firstTokenAt)?.getTime();
-  if (!Number.isFinite(startedAt) || !Number.isFinite(firstTokenAt)) {
-    return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
-  }
-  const streamEndOffset = Math.max(0, firstTokenAt - startedAt) + Math.max(0, request.completionMs);
-  const tailLag = Math.max(0, rawElapsedMs - streamEndOffset);
-  if (tailLag <= TRACE_RAIL_TAIL_GRACE_MS) {
-    return { elapsedMs: streamEndOffset, keepStreamCursor: true };
-  }
-  return { elapsedMs: rawElapsedMs, keepStreamCursor: false };
-}
-
-/**
- * 新入场的在途行在前 240ms 内从第 0 格顺滑追上真实渐近格数，
- * 避免刷新防抖导致挂载首帧突然亮出多格。
- */
-export function applyLiveEnterRamp(state, sinceMountMs, rampMs = TRACE_RAIL_ENTER_RAMP_MS) {
-  if (!state || rampMs <= 0 || sinceMountMs >= rampMs) return state;
-  const progress = sinceMountMs <= 0 ? 0 : easeTraceRailSettle(sinceMountMs / rampMs);
-  const rampedFilled = Math.min(state.filled, Math.round(state.filled * progress));
-  const bodyKeys = rampedFilled > 0
-    ? quantizeSegmentsToCells(
-        state.segments.length > 0 ? state.segments : [{ key: state.cursorColorKey, ms: 1 }],
-        rampedFilled
-      )
-    : [];
-  const cells = Array.from({ length: TRACE_RAIL_CELLS }, () => null);
-  for (let i = 0; i < bodyKeys.length; i += 1) {
-    cells[i] = bodyKeys[i];
-  }
-  const cursorIndex = Math.min(rampedFilled, TRACE_RAIL_CELLS - 1);
-  cells[cursorIndex] = state.cursorColorKey;
-  return {
-    ...state,
-    filled: rampedFilled,
-    cursorIndex,
-    cells
-  };
-}
+// 亮光每 120ms 前进一格、宽 2 格，扫出段尾后停 5 拍再从段首开始。
+export const TRACE_RAIL_SWEEP_STEP_MS = 120;
+export const TRACE_RAIL_SWEEP_CELLS = 2;
+export const TRACE_RAIL_SWEEP_REST_STEPS = 5;
+// 结束换色：CSS 按格序号错开 14ms（index.css 的 transition-delay），总时长 = 错峰 + 单格过渡 + 余量。
+export const TRACE_RAIL_SETTLE_STAGGER_MS = 14;
+export const TRACE_RAIL_SETTLE_MS = TRACE_RAIL_CELLS * TRACE_RAIL_SETTLE_STAGGER_MS + 260;
 
 const PHASE = {
-  preparing: { key: 'preparing', label: '准备发送', color: 'queue' },
-  forwarding: { key: 'forwarding', label: '发往上游', color: 'send' },
-  retry: { key: 'retry', label: '重试中', color: 'retry' },
-  first: { key: 'first', label: '等待首响', color: 'first' },
-  stream: { key: 'stream', label: '生成中', color: 'stream' },
-  settling: { key: 'settling', label: '收尾', color: 'tail' }
+  preparing: { key: 'preparing', label: '准备发送', step: 0 },
+  forwarding: { key: 'forwarding', label: '发往上游', step: 0 },
+  retry: { key: 'retry', label: '重试中', step: 1 },
+  first: { key: 'first', label: '等首响', step: 1 },
+  stream: { key: 'stream', label: '生成中', step: 2 },
+  settling: { key: 'settling', label: '收尾', step: 2 }
 };
 
 const hasTiming = (ms) => Number.isFinite(ms) && ms >= 0;
@@ -162,32 +83,116 @@ export function getTraceRailPhase(request, status = request.status) {
   return PHASE.preparing;
 }
 
+const firstWaitStartAtOf = ({ startedAt, sentAt, writeOffset }) => (
+  Number.isFinite(startedAt)
+    ? startedAt + (writeOffset ?? 0)
+    : (Number.isFinite(sentAt) ? sentAt : null)
+);
+
 /**
- * 渐近时间尺：按已耗时将活跃格数平滑映射到 [0, 20]。
- * 短请求精悍、长请求持续拉长但越久越缓，永远留至少 1 格游标，不会撞顶卡死。
+ * 等首响已经多久：从最新一次写完上游算起。有请求起点时用最新写完偏移，
+ * 不拿可能滞后的 firstTokenStartAt 误报慢首响；没有起点才退回 firstTokenStartAt。
  */
-export function resolveAsymptoticFilledCells(elapsedMs) {
-  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
-  return Math.min(
-    TRACE_RAIL_MAX_LIVE_FILLED,
-    Math.round((TRACE_RAIL_MAX_LIVE_FILLED * elapsedMs) / (elapsedMs + TRACE_RAIL_HALF_SATURATION_MS))
-  );
+export function resolveFirstWaitMs(request, now) {
+  if (!Number.isFinite(now)) return 0;
+  const startAt = firstWaitStartAtOf(resolveLatestWriteInfo(request));
+  return startAt !== null ? Math.max(0, now - startAt) : 0;
+}
+
+// 与首响计时胶囊同一把尺子：超过 8 秒变黄、超过 15 秒变红
+const firstWaitColorKey = (waitMs) => {
+  if (waitMs > TIMING_THRESHOLDS_MS.first.critical) return 'failure';
+  if (waitMs > TIMING_THRESHOLDS_MS.first.warning) return 'retry';
+  return 'first';
+};
+
+// 各行亮光错开起点，避免整列同步扫动显得机械
+export const traceRailSweepSeed = (requestId) => {
+  let hash = 0;
+  for (const ch of String(requestId ?? '')) hash = (hash * 31 + ch.charCodeAt(0)) % 100_000;
+  return hash;
+};
+
+/**
+ * 轨道当前段的颜色键，进行中阶段文字也用它：重试黄；等首响按等待时长紫 → 黄 → 红；其余取所在段颜色。
+ * 不传 now 时按刚开始等待处理，供渲染期取初值（渲染里不读时钟）。
+ */
+export function resolveStepRailColor(request, phase, now) {
+  if (phase.key === 'retry') return 'retry';
+  if (phase.key === 'first') return firstWaitColorKey(resolveFirstWaitMs(request, now));
+  return TRACE_RAIL_STEPS[phase.step].color;
 }
 
 /**
- * 状态列右上角总耗时格式：
- *   - 终态沿用 formatTimingBadge，与详情/提示口径完全一致；
- *   - 进行中适当降频（1s 内按 50ms 步进、1s 以上保留 1 位小数），
- *     作为宏观参考，不与右侧「首响 / 生成」列的 0.01s 精密秒表抢焦点。
+ * 预解析进行中请求的静态元数据（阶段、分段长度、扫光周期与相位偏移、首响等待起点），
+ * 供高频时钟帧做轻量签名比对，避免在 60/120Hz 回调里重复解析时间戳与重建 21 格数组。
  */
-export function formatTraceElapsedBadge(ms, { live = false } = {}) {
-  if (!live) return formatTimingBadge(ms);
-  const value = Number.isFinite(ms) ? Math.max(ms, 0) : 0;
-  if (value < 1000) {
-    const stepped = Math.min(950, Math.floor(value / 50) * 50);
-    return `${stepped}ms`;
+export function resolveStepRailMeta(request, status = request.status, seed = traceRailSweepSeed(request.requestId)) {
+  const phase = getTraceRailPhase(request, status);
+  if (!phase) return null;
+  const length = TRACE_RAIL_STEPS[phase.step].cells;
+  return {
+    phase,
+    length,
+    cycle: length + TRACE_RAIL_SWEEP_CELLS + TRACE_RAIL_SWEEP_REST_STEPS,
+    seed,
+    firstWaitStartAt: phase.key === 'first' ? firstWaitStartAtOf(resolveLatestWriteInfo(request)) : null
+  };
+}
+
+const resolveMetaColor = (meta, now) => {
+  if (meta.phase.key === 'retry') return 'retry';
+  if (meta.phase.key === 'first') {
+    const waitMs = Number.isFinite(now) && meta.firstWaitStartAt !== null
+      ? Math.max(0, now - meta.firstWaitStartAt)
+      : 0;
+    return firstWaitColorKey(waitMs);
   }
-  return `${(value / 1000).toFixed(1)}s`;
+  return TRACE_RAIL_STEPS[meta.phase.step].color;
+};
+
+// 扫光休止期（当前段全暗）的多个 head 视觉完全一致，折叠为同一值以跳过休止期重绘。
+const resolveMetaSweepHead = (meta, now, sweep) => {
+  if (!sweep) return -1;
+  const raw = Math.floor((now + meta.seed) / TRACE_RAIL_SWEEP_STEP_MS) % meta.cycle;
+  const restStart = meta.length + TRACE_RAIL_SWEEP_CELLS - 1;
+  return raw >= restStart ? restStart : raw;
+};
+
+/**
+ * 当前时钟帧的视觉签名：阶段、段色与有效扫光位均未变化时，调用方可跳过格子计算与 DOM 遍历。
+ * 键中保留 phase.key（而非仅 step），避免 retry → 慢首响 切换时 React 重写文字 class 后误命中缓存。
+ */
+export function resolveStepRailFrameKey(meta, now, { sweep = true } = {}) {
+  if (!meta) return null;
+  return `${meta.phase.key}:${resolveMetaColor(meta, now)}:${resolveMetaSweepHead(meta, now, sweep)}`;
+}
+
+/**
+ * 进行中请求此刻的 21 格：cells[i] = { key, dim }，key 为 null 是空槽。
+ * sweep=false（减弱动效）时当前段整段静止点亮；seed 让各行亮光错开起点。
+ * 终态与挂起返回 null。
+ */
+export function resolveStepRailCells(request, status, now, { sweep = true, seed, meta } = {}) {
+  const resolved = meta ?? resolveStepRailMeta(request, status, seed ?? 0);
+  if (!resolved) return null;
+  const effectiveMeta = seed !== undefined && seed !== resolved.seed ? { ...resolved, seed } : resolved;
+  const color = resolveMetaColor(effectiveMeta, now);
+  const head = resolveMetaSweepHead(effectiveMeta, now, sweep);
+  const cells = [];
+  TRACE_RAIL_STEPS.forEach((step, index) => {
+    for (let offset = 0; offset < step.cells; offset += 1) {
+      if (index < effectiveMeta.phase.step) {
+        cells.push({ key: step.color, dim: false });
+      } else if (index > effectiveMeta.phase.step) {
+        cells.push({ key: null, dim: false });
+      } else {
+        const lit = !sweep || (offset <= head && offset > head - TRACE_RAIL_SWEEP_CELLS);
+        cells.push({ key: color, dim: !lit });
+      }
+    }
+  });
+  return { phase: effectiveMeta.phase, color, cells };
 }
 
 /**
@@ -258,161 +263,4 @@ export function quantizeSegmentsToCells(segments, budget = TRACE_RAIL_CELLS, { m
     }
   }
   return cells;
-}
-
-const resolveFirstWaitColorKey = (waitMs) => {
-  if (waitMs > TIMING_THRESHOLDS_MS.first.critical) return 'failure';
-  if (waitMs > TIMING_THRESHOLDS_MS.first.warning) return 'retry';
-  return 'first';
-};
-
-/**
- * 推导进行中请求截至此刻的真实已耗时分段（与终态 buildRailLifecycleSegments 同源），
- * 用于驱动 A2 方案已生长格内的弹性阶段着色与慢首响预警。
- */
-export function buildLiveRailSegments(request, phase, elapsedMs, now) {
-  const total = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
-  if (!phase) return { segments: [], cursorColorKey: null };
-
-  const { startedAt, sentAt, retryAt, writeOffset: rawWriteOffset } = resolveLatestWriteInfo(request);
-  const routeAt = parseTimestampOrNull(request.routeDecisionAt)?.getTime();
-  const firstTokenAt = parseTimestampOrNull(request.firstTokenAt)?.getTime();
-
-  const localOffset = hasTiming(request.upstreamFirstDispatchMs)
-    ? Math.min(request.upstreamFirstDispatchMs, total)
-    : (Number.isFinite(startedAt) && Number.isFinite(routeAt)
-      ? Math.min(Math.max(0, routeAt - startedAt), total)
-      : null);
-
-  const writeOffset = rawWriteOffset !== null ? Math.min(rawWriteOffset, total) : null;
-
-  const hadRetry = phase.key === 'retry' || Number.isFinite(retryAt);
-
-  const pushPrefix = (segments, prefixMs) => {
-    const bounded = Math.max(0, prefixMs);
-    if (bounded <= 0) return;
-    const queueMs = localOffset !== null ? Math.min(localOffset, bounded) : 0;
-    if (queueMs > 0) segments.push({ key: 'queue', ms: queueMs });
-    const restMs = Math.max(0, bounded - queueMs);
-    if (restMs > 0) segments.push({ key: hadRetry ? 'retry' : 'send', ms: restMs });
-  };
-
-  if (phase.key === 'preparing') {
-    return {
-      segments: total > 0 ? [{ key: 'queue', ms: total }] : [],
-      cursorColorKey: 'queue'
-    };
-  }
-
-  if (phase.key === 'forwarding') {
-    const segments = [];
-    if (total > 0) {
-      const queueMs = localOffset !== null ? Math.min(localOffset, total) : 0;
-      if (queueMs > 0) segments.push({ key: 'queue', ms: queueMs });
-      const sendMs = Math.max(0, total - queueMs);
-      if (sendMs > 0) segments.push({ key: hadRetry ? 'retry' : 'send', ms: sendMs });
-    }
-    return { segments, cursorColorKey: hadRetry ? 'retry' : 'send' };
-  }
-
-  if (phase.key === 'retry') {
-    const segments = [];
-    if (total > 0) {
-      const queueMs = localOffset !== null ? Math.min(localOffset, total) : 0;
-      if (queueMs > 0) segments.push({ key: 'queue', ms: queueMs });
-      const retryMs = Math.max(0, total - queueMs);
-      if (retryMs > 0) segments.push({ key: 'retry', ms: retryMs });
-    }
-    return { segments, cursorColorKey: 'retry' };
-  }
-
-  if (phase.key === 'first') {
-    const preWriteMs = writeOffset ?? 0;
-    // 有请求起点时 writeOffset 已取最新写出偏移，不能再用可能滞后的 sentAt 取 max 误报慢首响。
-    const waitMs = Number.isFinite(startedAt)
-      ? Math.max(0, total - preWriteMs)
-      : (Number.isFinite(sentAt) && Number.isFinite(now) ? Math.max(0, now - sentAt) : 0);
-    const waitColorKey = resolveFirstWaitColorKey(waitMs);
-    const segments = [];
-    pushPrefix(segments, preWriteMs);
-    if (waitMs > 0) segments.push({ key: waitColorKey, ms: waitMs });
-    return { segments, cursorColorKey: waitColorKey };
-  }
-
-  // stream / settling：首响已定格，保持常规紫罗兰，与终态色彩衔接一致。
-  const firstMs = hasTiming(request.firstTokenMs) ? Math.max(0, request.firstTokenMs) : 0;
-  const completionMs = hasTiming(request.completionMs) ? Math.max(0, request.completionMs) : null;
-  const retryOffset = Number.isFinite(startedAt) && Number.isFinite(retryAt)
-    ? Math.min(Math.max(0, retryAt - startedAt), total)
-    : null;
-
-  // 首响绝对时刻已到时，以 firstTokenAt 为权威交接点反推前置与生成时长，
-  // 避免重试后 upstreamWriteMs 尚未刷新时把前置重试等待误算进绿色生成段。
-  const hasFirstAnchor = Number.isFinite(startedAt) && Number.isFinite(firstTokenAt);
-  let preWriteMs;
-  let effectiveFirstMs = firstMs;
-  let streamEndOffset;
-
-  if (hasFirstAnchor) {
-    const firstOffset = Math.min(total, Math.max(0, firstTokenAt - startedAt));
-    preWriteMs = Math.max(0, firstOffset - firstMs);
-    effectiveFirstMs = Math.min(firstMs, firstOffset);
-    streamEndOffset = firstOffset;
-  } else {
-    const maxPreWrite = Math.max(0, total - firstMs - (completionMs ?? 0));
-    if (writeOffset !== null) {
-      const floorOffset = retryOffset !== null ? Math.max(writeOffset, retryOffset) : writeOffset;
-      preWriteMs = Math.min(floorOffset, Math.max(0, total - firstMs));
-    } else {
-      preWriteMs = maxPreWrite;
-    }
-    streamEndOffset = Math.min(total, preWriteMs + effectiveFirstMs);
-  }
-
-  const segments = [];
-  pushPrefix(segments, preWriteMs);
-  if (effectiveFirstMs > 0) segments.push({ key: 'first', ms: effectiveFirstMs });
-
-  if (phase.key === 'stream') {
-    const streamMs = Math.max(0, total - streamEndOffset);
-    if (streamMs > 0) segments.push({ key: 'stream', ms: streamMs });
-    return { segments, cursorColorKey: 'stream' };
-  }
-
-  if (completionMs !== null && completionMs > 0) {
-    segments.push({ key: 'stream', ms: completionMs });
-  }
-  const tailMs = Math.max(0, total - streamEndOffset - (completionMs ?? 0));
-  if (tailMs > 0) segments.push({ key: 'tail', ms: tailMs });
-  return { segments, cursorColorKey: 'tail' };
-}
-
-/**
- * 计算进行中请求的完整 21 格状态快照（方案 A2：渐近生长 + 内部弹性占比 + 活游标）。
- */
-export function resolveLiveRailState(request, status, elapsedMs, now) {
-  const phase = getTraceRailPhase(request, status);
-  if (!phase) return null;
-
-  const filled = resolveAsymptoticFilledCells(elapsedMs);
-  const { segments, cursorColorKey } = buildLiveRailSegments(request, phase, elapsedMs, now);
-  const bodyKeys = filled > 0
-    ? quantizeSegmentsToCells(segments.length > 0 ? segments : [{ key: cursorColorKey || phase.color, ms: 1 }], filled)
-    : [];
-
-  const cells = Array.from({ length: TRACE_RAIL_CELLS }, () => null);
-  for (let i = 0; i < bodyKeys.length; i += 1) {
-    cells[i] = bodyKeys[i];
-  }
-  const cursorIndex = Math.min(filled, TRACE_RAIL_CELLS - 1);
-  cells[cursorIndex] = cursorColorKey || phase.color;
-
-  return {
-    phase,
-    filled,
-    cursorIndex,
-    cursorColorKey: cursorColorKey || phase.color,
-    cells,
-    segments
-  };
 }
